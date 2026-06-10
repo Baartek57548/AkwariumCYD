@@ -43,6 +43,8 @@ constexpr int LDR_THEME_HYSTERESIS = 15;
 constexpr uint32_t UI_RUNTIME_SUBPAGE_MIN_FREE = 18000UL;
 constexpr uint32_t UI_RUNTIME_MODAL_MIN_FREE = 12000UL;
 constexpr uint32_t UI_RUNTIME_BIGGEST_MIN = 4096UL;
+constexpr uint32_t UI_RUNTIME_HARDWARE_MIN_FREE = 6000UL;
+constexpr uint32_t UI_RUNTIME_HARDWARE_MIN_LARGEST = 2048UL;
 
 enum class ScheduleMode : uint8_t {
     Schedule = 0,
@@ -342,6 +344,8 @@ static lv_obj_t *hw_ec_sw = nullptr;
 static lv_obj_t *hw_water_level_sw = nullptr;
 static lv_obj_t *hw_leak_sw = nullptr;
 static lv_obj_t *hw_flow_sw = nullptr;
+static lv_obj_t *hw_matrix = nullptr;
+static lv_obj_t *hw_summary_lbl = nullptr;
 static lv_obj_t *subpage_service = nullptr;
 static lv_obj_t *service_light_sw = nullptr;
 static lv_obj_t *service_filter_sw = nullptr;
@@ -559,11 +563,23 @@ struct PendingPinAction {
 };
 
 constexpr uint32_t PIN_AUTH_WINDOW_MS = 5UL * 60UL * 1000UL;
+// PinGuard must stay extremely small: this UI runs with a fragmented LVGL heap,
+// so the PIN prompt is intentionally one btnmatrix plus labels, not a tree of
+// separate buttons/cards. The same thresholds are used for init and fallback
+// because the object tree is now small enough to be rebuilt safely at runtime.
+constexpr uint32_t UI_PIN_INIT_MIN_FREE = 6000UL;
+constexpr uint32_t UI_PIN_INIT_MIN_LARGEST = 2048UL;
+constexpr uint32_t UI_RUNTIME_PIN_MIN_FREE = 6000UL;
+constexpr uint32_t UI_RUNTIME_PIN_MIN_LARGEST = 2048UL;
+constexpr char PIN_KEY_BACK[] = "DEL";
+constexpr char PIN_KEY_OK[] = "OK";
 static bool pin_authenticated = false;
 static uint32_t pin_auth_until_ms = 0;
 static PendingPinAction pending_pin_action = {PinAction::None, 0, false};
 static lv_obj_t *pin_overlay = nullptr;
 static lv_obj_t *pin_value_lbl = nullptr;
+static lv_obj_t *pin_status_lbl = nullptr;
+static lv_obj_t *pin_matrix = nullptr;
 static char pin_entry[5] = "";
 
 static bool is_scanning = false;
@@ -1536,6 +1552,95 @@ static lv_obj_t *create_button(lv_obj_t *parent, const char *text, lv_coord_t w,
     return btn;
 }
 
+static lv_obj_t *create_accent_bar(lv_obj_t *parent, lv_color_t color, lv_coord_t h);
+static void style_switch_cyd(lv_obj_t *sw);
+static void hw_switch_handler(lv_event_t *e);
+static void hardware_card_click_handler(lv_event_t *e);
+static lv_event_cb_t hardware_detail_cb_for_switch(lv_obj_t *sw);
+static bool hardware_toggle_metadata_for_switch(lv_obj_t *sw, HardwareToggle &toggle, bool &old_state);
+static void hardware_toggle_request(lv_obj_t *sw, bool state);
+static void make_object_clickable(lv_obj_t *obj, lv_event_cb_t cb, void *user_data);
+
+static lv_obj_t *create_heading_card(lv_obj_t *parent, lv_coord_t w, lv_coord_t h,
+                                     lv_coord_t x, lv_coord_t y,
+                                     const char *title, const char *subtitle,
+                                     lv_color_t accent) {
+    lv_obj_t *card = create_card(parent, w, h, x, y);
+    lv_obj_set_style_pad_all(card, 0, 0);
+    lv_obj_set_style_border_color(card, accent, 0);
+    create_accent_bar(card, accent, static_cast<lv_coord_t>(h - 12));
+
+    lv_obj_t *title_lbl = create_label(card, title, accent, &lv_font_montserrat_12);
+    lv_obj_set_width(title_lbl, static_cast<lv_coord_t>(w - 28));
+    lv_label_set_long_mode(title_lbl, LV_LABEL_LONG_DOT);
+    lv_obj_align(title_lbl, LV_ALIGN_TOP_LEFT, 10, 4);
+
+    if (subtitle != nullptr && subtitle[0] != '\0') {
+        lv_obj_t *subtitle_lbl = create_label(card, subtitle, theme_text_muted(), &lv_font_montserrat_12);
+        lv_obj_set_width(subtitle_lbl, static_cast<lv_coord_t>(w - 28));
+        lv_label_set_long_mode(subtitle_lbl, LV_LABEL_LONG_DOT);
+        lv_obj_align(subtitle_lbl, LV_ALIGN_BOTTOM_LEFT, 10, -6);
+    }
+
+    return card;
+}
+
+static lv_obj_t *create_toggle_card(lv_obj_t *parent, const char *title, const char *subtitle,
+                                    lv_color_t accent, lv_obj_t **sw_ptr,
+                                    bool initial_state, lv_event_cb_t cb) {
+    const bool has_subtitle = subtitle != nullptr && subtitle[0] != '\0';
+    const lv_coord_t height = has_subtitle ? 54 : 44;
+    lv_obj_t *card = create_card(parent, 300, height, 0, 0);
+    lv_obj_set_style_pad_all(card, 0, 0);
+    lv_obj_set_style_border_color(card, initial_state ? accent : theme_card_border(), 0);
+    create_accent_bar(card, accent, static_cast<lv_coord_t>(height - 12));
+
+    lv_obj_t *detail_btn = lv_btn_create(card);
+    lv_obj_set_size(detail_btn, 224, static_cast<lv_coord_t>(height - 8));
+    lv_obj_align(detail_btn, LV_ALIGN_LEFT_MID, 0, 0);
+    lv_obj_set_style_bg_opa(detail_btn, LV_OPA_TRANSP, 0);
+    lv_obj_set_style_border_width(detail_btn, 0, 0);
+    lv_obj_set_style_radius(detail_btn, 6, 0);
+    lv_obj_set_style_pad_all(detail_btn, 0, 0);
+    lv_obj_clear_flag(detail_btn, LV_OBJ_FLAG_SCROLLABLE);
+
+    lv_obj_t *title_lbl = create_label(detail_btn, title, initial_state ? lv_color_white() : theme_text_muted(), &lv_font_montserrat_12);
+    lv_obj_set_width(title_lbl, 176);
+    lv_label_set_long_mode(title_lbl, LV_LABEL_LONG_DOT);
+    lv_obj_align(title_lbl, has_subtitle ? LV_ALIGN_TOP_LEFT : LV_ALIGN_LEFT_MID, 10, has_subtitle ? 5 : 0);
+
+    lv_obj_t *subtitle_lbl = nullptr;
+    if (has_subtitle) {
+        subtitle_lbl = create_label(detail_btn, subtitle, theme_text_muted(), &lv_font_montserrat_12);
+        lv_obj_set_width(subtitle_lbl, 176);
+        lv_label_set_long_mode(subtitle_lbl, LV_LABEL_LONG_DOT);
+        lv_obj_align(subtitle_lbl, LV_ALIGN_BOTTOM_LEFT, 10, -6);
+    }
+
+    lv_obj_t *arrow_lbl = create_label(detail_btn, LV_SYMBOL_RIGHT, theme_text_muted(), &lv_font_montserrat_12);
+    lv_obj_align(arrow_lbl, LV_ALIGN_RIGHT_MID, -6, 0);
+
+    if (sw_ptr != nullptr) {
+        *sw_ptr = lv_switch_create(card);
+        lv_obj_set_size(*sw_ptr, 42, 22);
+        lv_obj_align(*sw_ptr, LV_ALIGN_RIGHT_MID, -10, 0);
+        style_switch_cyd(*sw_ptr);
+        if (initial_state) {
+            lv_obj_add_state(*sw_ptr, LV_STATE_CHECKED);
+        }
+        if (cb != nullptr) {
+            lv_obj_add_event_cb(*sw_ptr, cb, LV_EVENT_VALUE_CHANGED, nullptr);
+        }
+    }
+
+    if (cb != nullptr && sw_ptr != nullptr && *sw_ptr != nullptr) {
+        // Detail button needs the actual switch object, so the callback is bound
+        // only after the switch exists. This keeps the card behavior deterministic.
+        lv_obj_add_event_cb(detail_btn, hardware_card_click_handler, LV_EVENT_CLICKED, *sw_ptr);
+    }
+    return card;
+}
+
 static void delete_obj_async_cb(void *user_data) {
     lv_obj_t *obj = static_cast<lv_obj_t *>(user_data);
     if (obj != nullptr && lv_obj_is_valid(obj)) {
@@ -1561,17 +1666,6 @@ static bool pin_guard_is_authorized() {
     return true;
 }
 
-static void close_pin_overlay() {
-    lv_obj_t *overlay = pin_overlay;
-    pin_overlay = nullptr;
-    pin_value_lbl = nullptr;
-    pin_entry[0] = '\0';
-    if (overlay != nullptr && lv_obj_is_valid(overlay)) {
-        lv_obj_add_flag(overlay, LV_OBJ_FLAG_HIDDEN);
-        delete_obj_async(overlay);
-    }
-}
-
 static void pin_update_label() {
     if (pin_value_lbl == nullptr) {
         return;
@@ -1585,30 +1679,195 @@ static void pin_update_label() {
     lv_label_set_text(pin_value_lbl, masked[0] != '\0' ? masked : "----");
 }
 
-static void pin_key_cb(lv_event_t *e) {
-    const int key = static_cast<int>(reinterpret_cast<intptr_t>(lv_event_get_user_data(e)));
-    play_system_sound(SoundType::Click);
+static void pin_matrix_cb(lv_event_t *e);
+static void build_pin_guard_modal();
 
-    if (key >= 0 && key <= 9) {
-        const size_t len = strlen(pin_entry);
-        if (len < 4) {
-            pin_entry[len] = static_cast<char>('0' + key);
-            pin_entry[len + 1] = '\0';
-        }
-        pin_update_label();
+static void pin_set_status(const char *text, lv_color_t color) {
+    if (pin_status_lbl == nullptr) {
+        return;
+    }
+    lv_obj_set_style_text_color(pin_status_lbl, color, 0);
+    lv_label_set_text(pin_status_lbl, text != nullptr ? text : "");
+}
+
+static bool pin_guard_modal_is_ready() {
+    return pin_overlay != nullptr && lv_obj_is_valid(pin_overlay) &&
+           pin_matrix != nullptr && lv_obj_is_valid(pin_matrix);
+}
+
+static void close_pin_overlay() {
+    if (pin_overlay == nullptr) {
+        pin_value_lbl = nullptr;
+        pin_status_lbl = nullptr;
+        pin_matrix = nullptr;
+        pin_entry[0] = '\0';
+        return;
+    }
+    if (!lv_obj_is_valid(pin_overlay)) {
+        pin_overlay = nullptr;
+        pin_value_lbl = nullptr;
+        pin_status_lbl = nullptr;
+        pin_matrix = nullptr;
+        pin_entry[0] = '\0';
         return;
     }
 
-    if (key == 10) {
+    // Keep the modal alive and hidden instead of deleting it. Reallocating the
+    // keypad tree later is what caused the fragmented-heap failures in practice.
+    pin_entry[0] = '\0';
+    pin_update_label();
+    pin_set_status("", theme_text_muted());
+    if (pin_matrix != nullptr && lv_obj_is_valid(pin_matrix)) {
+        lv_btnmatrix_set_selected_btn(pin_matrix, LV_BTNMATRIX_BTN_NONE);
+    }
+    lv_obj_add_flag(pin_overlay, LV_OBJ_FLAG_HIDDEN);
+}
+
+static void prime_pin_guard_modal() {
+    if (pin_guard_modal_is_ready()) {
+        Serial.println("UI_PIN: prime skipped, modal already valid");
+        return;
+    }
+    // This runs after the main UI exists, so we keep the eager allocation
+    // small enough to avoid stealing memory from the visible startup screens.
+    if (!ensure_runtime_ui_heap("PinGuardInit", UI_PIN_INIT_MIN_FREE, UI_PIN_INIT_MIN_LARGEST)) {
+        Serial.println("UI_PIN: prime skipped, heap reserve too small");
+        return;
+    }
+    build_pin_guard_modal();
+    Serial.printf("UI_PIN: prime result overlay=%p valid=%d matrix=%p\n",
+                  static_cast<void *>(pin_overlay),
+                  pin_guard_modal_is_ready() ? 1 : 0,
+                  static_cast<void *>(pin_matrix));
+}
+
+static void build_pin_guard_modal() {
+    if (pin_guard_modal_is_ready()) {
+        return;
+    }
+    if (pin_overlay != nullptr && lv_obj_is_valid(pin_overlay)) {
+        lv_obj_del(pin_overlay);
+    }
+    pin_overlay = nullptr;
+    pin_value_lbl = nullptr;
+    pin_status_lbl = nullptr;
+    pin_matrix = nullptr;
+
+    pin_entry[0] = '\0';
+
+    pin_overlay = lv_obj_create(lv_scr_act());
+    if (pin_overlay == nullptr) {
+        Serial.println("UI_PIN: overlay allocation failed");
+        return;
+    }
+    lv_obj_set_size(pin_overlay, 320, 240);
+    lv_obj_set_pos(pin_overlay, 0, 0);
+    lv_obj_set_style_bg_color(pin_overlay, theme_screen_bg(), 0);
+    lv_obj_set_style_border_width(pin_overlay, 0, 0);
+    lv_obj_set_style_radius(pin_overlay, 0, 0);
+    lv_obj_set_style_pad_all(pin_overlay, 0, 0);
+    lv_obj_clear_flag(pin_overlay, LV_OBJ_FLAG_SCROLLABLE);
+
+    lv_obj_t *title = create_label(pin_overlay, "PIN Guard", theme_text_main(), &lv_font_montserrat_14);
+    lv_obj_align(title, LV_ALIGN_TOP_MID, 0, 6);
+
+    pin_value_lbl = create_label(pin_overlay, "----", lv_color_make(6, 182, 212), &lv_font_montserrat_24);
+    lv_obj_align(pin_value_lbl, LV_ALIGN_TOP_MID, 0, 28);
+
+    pin_status_lbl = create_label(pin_overlay, "PIN: OK potwierdza, DEL cofa/anuluje.", theme_text_muted(), &lv_font_montserrat_12);
+    lv_obj_set_width(pin_status_lbl, 300);
+    lv_label_set_long_mode(pin_status_lbl, LV_LABEL_LONG_CLIP);
+    lv_obj_set_style_text_align(pin_status_lbl, LV_TEXT_ALIGN_CENTER, 0);
+    lv_obj_align(pin_status_lbl, LV_ALIGN_TOP_MID, 0, 62);
+
+    // Three rows keep touch targets about twice as tall as the old 5-row
+    // keypad while preserving all digits. DEL on an empty PIN acts as cancel.
+    static const char *pin_map[] = {
+        "1", "2", "3", PIN_KEY_BACK,
+        "\n",
+        "4", "5", "6", PIN_KEY_OK,
+        "\n",
+        "7", "8", "9", "0",
+        ""
+    };
+
+    pin_matrix = lv_btnmatrix_create(pin_overlay);
+    if (pin_matrix == nullptr) {
+        Serial.println("UI_PIN: keypad allocation failed");
+        lv_obj_del(pin_overlay);
+        pin_overlay = nullptr;
+        pin_value_lbl = nullptr;
+        pin_status_lbl = nullptr;
+        return;
+    }
+    lv_obj_set_size(pin_matrix, 304, 156);
+    lv_obj_align(pin_matrix, LV_ALIGN_BOTTOM_MID, 0, -8);
+    lv_btnmatrix_set_map(pin_matrix, pin_map);
+    lv_btnmatrix_set_one_checked(pin_matrix, false);
+    lv_btnmatrix_set_btn_ctrl_all(pin_matrix, LV_BTNMATRIX_CTRL_NO_REPEAT);
+    lv_obj_add_event_cb(pin_matrix, pin_matrix_cb, LV_EVENT_VALUE_CHANGED, nullptr);
+
+    // A single button-matrix widget keeps PinGuard under the small contiguous
+    // blocks available after the main UI is built. Do not expand this back into
+    // individual LVGL buttons unless the whole UI memory model changes.
+    lv_obj_set_style_bg_color(pin_matrix, resolve_bg_color(lv_color_make(20, 26, 40)), LV_PART_MAIN);
+    lv_obj_set_style_border_color(pin_matrix, theme_card_border(), LV_PART_MAIN);
+    lv_obj_set_style_border_width(pin_matrix, 1, LV_PART_MAIN);
+    lv_obj_set_style_radius(pin_matrix, 6, LV_PART_MAIN);
+    lv_obj_set_style_pad_all(pin_matrix, 4, LV_PART_MAIN);
+    lv_obj_set_style_text_font(pin_matrix, &lv_font_montserrat_12, LV_PART_ITEMS);
+    lv_obj_set_style_text_color(pin_matrix, lv_color_white(), LV_PART_ITEMS);
+    lv_obj_set_style_bg_color(pin_matrix, lv_color_make(35, 41, 55), LV_PART_ITEMS);
+    const lv_style_selector_t pin_matrix_checked_selector =
+        static_cast<lv_style_selector_t>(static_cast<uint32_t>(LV_PART_ITEMS) | static_cast<uint32_t>(LV_STATE_CHECKED));
+    lv_obj_set_style_bg_color(pin_matrix, lv_color_make(16, 185, 129), pin_matrix_checked_selector);
+    lv_obj_set_style_border_width(pin_matrix, 1, LV_PART_ITEMS);
+    lv_obj_set_style_border_color(pin_matrix, lv_color_make(55, 65, 81), LV_PART_ITEMS);
+    lv_obj_set_style_radius(pin_matrix, 6, LV_PART_ITEMS);
+
+    // Create the object tree once; later we only toggle HIDDEN to avoid
+    // repeating a large LVGL allocation on a fragmented runtime heap.
+    lv_obj_add_flag(pin_overlay, LV_OBJ_FLAG_HIDDEN);
+    Serial.printf("UI_PIN: modal ready overlay=%p matrix=%p heap_free=%lu heap_largest=%lu\n",
+                  static_cast<void *>(pin_overlay),
+                  static_cast<void *>(pin_matrix),
+                  static_cast<unsigned long>(heap_caps_get_free_size(MALLOC_CAP_8BIT)),
+                  static_cast<unsigned long>(heap_caps_get_largest_free_block(MALLOC_CAP_8BIT)));
+}
+
+static void pin_matrix_cb(lv_event_t *e) {
+    lv_obj_t *matrix = lv_event_get_target(e);
+    if (matrix == nullptr || !lv_obj_is_valid(matrix)) {
+        return;
+    }
+
+    const uint16_t btn_id = lv_btnmatrix_get_selected_btn(matrix);
+    if (btn_id == LV_BTNMATRIX_BTN_NONE) {
+        return;
+    }
+
+    const char *key = lv_btnmatrix_get_btn_text(matrix, btn_id);
+    lv_btnmatrix_set_selected_btn(matrix, LV_BTNMATRIX_BTN_NONE);
+    if (key == nullptr || key[0] == '\0') {
+        return;
+    }
+
+    play_system_sound(SoundType::Click);
+
+    if (strcmp(key, PIN_KEY_BACK) == 0) {
         const size_t len = strlen(pin_entry);
         if (len > 0) {
             pin_entry[len - 1] = '\0';
+            pin_update_label();
+            pin_set_status("PIN: OK potwierdza, DEL cofa/anuluje.", theme_text_muted());
+        } else {
+            pending_pin_action = {PinAction::None, 0, false};
+            close_pin_overlay();
         }
-        pin_update_label();
         return;
     }
 
-    if (key == 11) {
+    if (strcmp(key, PIN_KEY_OK) == 0) {
         if (strcmp(pin_entry, Secrets::DEFAULT_PIN) == 0) {
             pin_authenticated = true;
             pin_auth_until_ms = millis() + PIN_AUTH_WINDOW_MS;
@@ -1619,75 +1878,60 @@ static void pin_key_cb(lv_event_t *e) {
         } else {
             pin_entry[0] = '\0';
             pin_update_label();
-            show_top_notification("Bledny PIN", false);
+            pin_set_status("Bledny PIN", lv_color_make(239, 68, 68));
+            Serial.println("UI_PIN: invalid PIN");
             play_system_sound(SoundType::Warning);
         }
         return;
     }
 
-    pending_pin_action = {PinAction::None, 0, false};
-    close_pin_overlay();
+    if (key[0] >= '0' && key[0] <= '9' && key[1] == '\0') {
+        const size_t len = strlen(pin_entry);
+        if (len < 4) {
+            pin_entry[len] = key[0];
+            pin_entry[len + 1] = '\0';
+        }
+        pin_update_label();
+        pin_set_status("PIN: OK potwierdza, DEL cofa/anuluje.", theme_text_muted());
+        return;
+    }
 }
 
-static void show_pin_guard_modal() {
-    if (pin_overlay != nullptr && lv_obj_is_valid(pin_overlay)) {
+static bool show_pin_guard_modal() {
+    Serial.printf("UI_PIN: show request overlay=%p valid=%d heap_free=%lu heap_largest=%lu\n",
+                  static_cast<void *>(pin_overlay),
+                  pin_guard_modal_is_ready() ? 1 : 0,
+                  static_cast<unsigned long>(heap_caps_get_free_size(MALLOC_CAP_8BIT)),
+                  static_cast<unsigned long>(heap_caps_get_largest_free_block(MALLOC_CAP_8BIT)));
+    if (pin_guard_modal_is_ready()) {
+        pin_entry[0] = '\0';
+        pin_update_label();
+        pin_set_status("PIN: OK potwierdza, DEL cofa/anuluje.", theme_text_muted());
+        lv_obj_clear_flag(pin_overlay, LV_OBJ_FLAG_HIDDEN);
         lv_obj_move_foreground(pin_overlay);
-        return;
+        Serial.printf("UI_PIN: shown overlay=%p hidden=%d\n",
+                      static_cast<void *>(pin_overlay),
+                      lv_obj_has_flag(pin_overlay, LV_OBJ_FLAG_HIDDEN) ? 1 : 0);
+        return true;
     }
-    if (!ensure_runtime_ui_heap("PinGuard", UI_RUNTIME_MODAL_MIN_FREE, UI_RUNTIME_BIGGEST_MIN)) {
-        pending_pin_action = {PinAction::None, 0, false};
-        return;
+    if (!ensure_runtime_ui_heap("PinGuard", UI_RUNTIME_PIN_MIN_FREE, UI_RUNTIME_PIN_MIN_LARGEST)) {
+        Serial.println("UI_PIN: show failed before allocation");
+        return false;
     }
-
+    build_pin_guard_modal();
+    if (!pin_guard_modal_is_ready()) {
+        Serial.println("UI_PIN: show failed after allocation");
+        return false;
+    }
     pin_entry[0] = '\0';
-
-    pin_overlay = lv_obj_create(lv_scr_act());
-    lv_obj_set_size(pin_overlay, 320, 240);
-    lv_obj_set_pos(pin_overlay, 0, 0);
-    lv_obj_set_style_bg_color(pin_overlay, theme_screen_bg(), 0);
-    lv_obj_set_style_border_width(pin_overlay, 0, 0);
-    lv_obj_set_style_radius(pin_overlay, 0, 0);
-    lv_obj_set_style_pad_all(pin_overlay, 0, 0);
-    lv_obj_clear_flag(pin_overlay, LV_OBJ_FLAG_SCROLLABLE);
-
-    lv_obj_t *header = lv_obj_create(pin_overlay);
-    lv_obj_set_size(header, 320, 34);
-    lv_obj_set_pos(header, 0, 0);
-    style_panel(header, theme_header_bg(), theme_card_border(), 0);
-    lv_obj_set_style_pad_all(header, 0, 0);
-
-    lv_obj_t *title = create_label(header, "PIN Guard", theme_text_main(), &lv_font_montserrat_14);
-    lv_obj_align(title, LV_ALIGN_CENTER, 0, 0);
-
-    lv_obj_t *cancel = create_button(header, LV_SYMBOL_CLOSE, 32, 22, lv_color_make(35, 41, 55),
-                                     pin_key_cb, reinterpret_cast<void *>(static_cast<intptr_t>(12)));
-    lv_obj_align(cancel, LV_ALIGN_LEFT_MID, 6, 0);
-    apply_3d_button_properties(cancel);
-
-    lv_obj_t *panel = create_card(pin_overlay, 220, 42, 50, 44);
-    lv_obj_set_style_pad_all(panel, 0, 0);
-    pin_value_lbl = create_label(panel, "----", lv_color_make(6, 182, 212), &lv_font_montserrat_24);
-    lv_obj_align(pin_value_lbl, LV_ALIGN_CENTER, 0, 0);
-
-    const char *labels[12] = {
-        "1", "2", "3",
-        "4", "5", "6",
-        "7", "8", "9",
-        LV_SYMBOL_BACKSPACE, "0", LV_SYMBOL_OK
-    };
-    const int keys[12] = {1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 0, 11};
-    for (uint8_t i = 0; i < 12; ++i) {
-        const uint8_t row = i / 3;
-        const uint8_t col = i % 3;
-        const lv_color_t bg = (keys[i] == 11) ? lv_color_make(16, 185, 129)
-                              : (keys[i] == 10) ? lv_color_make(71, 85, 105)
-                                                 : lv_color_make(35, 41, 55);
-        lv_obj_t *btn = create_button(pin_overlay, labels[i], 58, 30, bg, pin_key_cb,
-                                      reinterpret_cast<void *>(static_cast<intptr_t>(keys[i])));
-        lv_obj_set_pos(btn, static_cast<lv_coord_t>(62 + col * 68),
-                       static_cast<lv_coord_t>(98 + row * 34));
-        apply_3d_button_properties(btn);
-    }
+    pin_update_label();
+    pin_set_status("PIN: OK potwierdza, DEL cofa/anuluje.", theme_text_muted());
+    lv_obj_clear_flag(pin_overlay, LV_OBJ_FLAG_HIDDEN);
+    lv_obj_move_foreground(pin_overlay);
+    Serial.printf("UI_PIN: shown overlay=%p hidden=%d\n",
+                  static_cast<void *>(pin_overlay),
+                  lv_obj_has_flag(pin_overlay, LV_OBJ_FLAG_HIDDEN) ? 1 : 0);
+    return true;
 }
 
 static bool pin_guard_execute_or_prompt(PinAction action, intptr_t value, bool state) {
@@ -1696,7 +1940,11 @@ static bool pin_guard_execute_or_prompt(PinAction action, intptr_t value, bool s
         return true;
     }
     pending_pin_action = {action, value, state};
-    show_pin_guard_modal();
+    if (!show_pin_guard_modal()) {
+        pending_pin_action = {PinAction::None, 0, false};
+        play_system_sound(SoundType::Warning);
+        Serial.println("UI_PIN: protected action cancelled because PIN UI is unavailable");
+    }
     return false;
 }
 
@@ -1713,7 +1961,6 @@ static void style_switch_cyd(lv_obj_t *sw) {
 static void update_editor_fields();
 static void gui_sync_widgets_to_state();
 static void sync_nav_bar_visuals();
-
 static void show_feeder_modal(const char *line1, const char *line2) {
     if (modal_feeder == nullptr) {
         return;
@@ -2488,7 +2735,7 @@ static void open_system_subpage(lv_event_t *e) {
         break;
     case ActiveSubpage::Hardware:
         if (subpage_hardware == nullptr) {
-            if (!ensure_runtime_ui_heap("Hardware", UI_RUNTIME_SUBPAGE_MIN_FREE, UI_RUNTIME_BIGGEST_MIN)) {
+            if (!ensure_runtime_ui_heap("Hardware", UI_RUNTIME_HARDWARE_MIN_FREE, UI_RUNTIME_HARDWARE_MIN_LARGEST)) {
                 return;
             }
             build_hardware_subpage();
@@ -2497,7 +2744,7 @@ static void open_system_subpage(lv_event_t *e) {
         break;
     case ActiveSubpage::Co2:
         if (subpage_co2 == nullptr) {
-            if (!ensure_runtime_ui_heap("CO2", UI_RUNTIME_SUBPAGE_MIN_FREE, UI_RUNTIME_BIGGEST_MIN)) {
+            if (!ensure_runtime_ui_heap("CO2", UI_RUNTIME_HARDWARE_MIN_FREE, UI_RUNTIME_HARDWARE_MIN_LARGEST)) {
                 return;
             }
             build_co2_subpage();
@@ -2506,7 +2753,7 @@ static void open_system_subpage(lv_event_t *e) {
         break;
     case ActiveSubpage::Ec:
         if (subpage_ec == nullptr) {
-            if (!ensure_runtime_ui_heap("EC", UI_RUNTIME_SUBPAGE_MIN_FREE, UI_RUNTIME_BIGGEST_MIN)) {
+            if (!ensure_runtime_ui_heap("EC", UI_RUNTIME_HARDWARE_MIN_FREE, UI_RUNTIME_HARDWARE_MIN_LARGEST)) {
                 return;
             }
             build_ec_subpage();
@@ -2520,6 +2767,7 @@ static void open_system_subpage(lv_event_t *e) {
     if (target_subpage != nullptr) {
         current_subpage = target;
         lv_obj_clear_flag(target_subpage, LV_OBJ_FLAG_HIDDEN);
+        lv_obj_move_foreground(target_subpage);
     }
 }
 
@@ -3524,7 +3772,7 @@ static void open_hardware_subpage_cb(lv_event_t *e) {
     log_subpage_enter_request(ActiveSubpage::Hardware, "module_tile");
     play_system_sound(SoundType::Click);
     if (subpage_hardware == nullptr) {
-        if (!ensure_runtime_ui_heap("Hardware", UI_RUNTIME_SUBPAGE_MIN_FREE, UI_RUNTIME_BIGGEST_MIN)) {
+        if (!ensure_runtime_ui_heap("Hardware", UI_RUNTIME_HARDWARE_MIN_FREE, UI_RUNTIME_HARDWARE_MIN_LARGEST)) {
             return;
         }
         build_hardware_subpage();
@@ -3532,6 +3780,10 @@ static void open_hardware_subpage_cb(lv_event_t *e) {
     if (subpage_hardware != nullptr) {
         current_subpage = ActiveSubpage::Hardware;
         lv_obj_clear_flag(subpage_hardware, LV_OBJ_FLAG_HIDDEN);
+        lv_obj_move_foreground(subpage_hardware);
+        Serial.printf("UI_NAV: subpage visible target=Hardware obj=%p hidden=%d\n",
+                      static_cast<void *>(subpage_hardware),
+                      lv_obj_has_flag(subpage_hardware, LV_OBJ_FLAG_HIDDEN) ? 1 : 0);
     }
 }
 
@@ -3540,7 +3792,7 @@ static void open_co2_subpage_cb(lv_event_t *e) {
     log_subpage_enter_request(ActiveSubpage::Co2, "module_tile");
     play_system_sound(SoundType::Click);
     if (subpage_co2 == nullptr) {
-        if (!ensure_runtime_ui_heap("CO2", UI_RUNTIME_SUBPAGE_MIN_FREE, UI_RUNTIME_BIGGEST_MIN)) {
+        if (!ensure_runtime_ui_heap("CO2", UI_RUNTIME_HARDWARE_MIN_FREE, UI_RUNTIME_HARDWARE_MIN_LARGEST)) {
             return;
         }
         build_co2_subpage();
@@ -3556,7 +3808,7 @@ static void open_ec_subpage_cb(lv_event_t *e) {
     log_subpage_enter_request(ActiveSubpage::Ec, "module_tile");
     play_system_sound(SoundType::Click);
     if (subpage_ec == nullptr) {
-        if (!ensure_runtime_ui_heap("EC", UI_RUNTIME_SUBPAGE_MIN_FREE, UI_RUNTIME_BIGGEST_MIN)) {
+        if (!ensure_runtime_ui_heap("EC", UI_RUNTIME_HARDWARE_MIN_FREE, UI_RUNTIME_HARDWARE_MIN_LARGEST)) {
             return;
         }
         build_ec_subpage();
@@ -3572,7 +3824,7 @@ static void open_water_subpage_cb(lv_event_t *e) {
     log_subpage_enter_request(ActiveSubpage::WaterLevel, "module_tile");
     play_system_sound(SoundType::Click);
     if (subpage_water == nullptr) {
-        if (!ensure_runtime_ui_heap("WaterLevel", UI_RUNTIME_SUBPAGE_MIN_FREE, UI_RUNTIME_BIGGEST_MIN)) {
+        if (!ensure_runtime_ui_heap("WaterLevel", UI_RUNTIME_HARDWARE_MIN_FREE, UI_RUNTIME_HARDWARE_MIN_LARGEST)) {
             return;
         }
         build_water_subpage();
@@ -3588,7 +3840,7 @@ static void open_leak_subpage_cb(lv_event_t *e) {
     log_subpage_enter_request(ActiveSubpage::Leak, "module_tile");
     play_system_sound(SoundType::Click);
     if (subpage_leak == nullptr) {
-        if (!ensure_runtime_ui_heap("Leak", UI_RUNTIME_SUBPAGE_MIN_FREE, UI_RUNTIME_BIGGEST_MIN)) {
+        if (!ensure_runtime_ui_heap("Leak", UI_RUNTIME_HARDWARE_MIN_FREE, UI_RUNTIME_HARDWARE_MIN_LARGEST)) {
             return;
         }
         build_leak_subpage();
@@ -3604,7 +3856,7 @@ static void open_flow_subpage_cb(lv_event_t *e) {
     log_subpage_enter_request(ActiveSubpage::Flow, "module_tile");
     play_system_sound(SoundType::Click);
     if (subpage_flow == nullptr) {
-        if (!ensure_runtime_ui_heap("Flow", UI_RUNTIME_SUBPAGE_MIN_FREE, UI_RUNTIME_BIGGEST_MIN)) {
+        if (!ensure_runtime_ui_heap("Flow", UI_RUNTIME_HARDWARE_MIN_FREE, UI_RUNTIME_HARDWARE_MIN_LARGEST)) {
             return;
         }
         build_flow_subpage();
@@ -4394,22 +4646,24 @@ static lv_obj_t *create_system_hub_item(lv_obj_t *parent, lv_coord_t x, lv_coord
                                         ActiveSubpage target) {
     lv_obj_t *tile = create_card(parent, 150, 38, x, y);
     lv_obj_set_style_pad_all(tile, 4, 0);
-    lv_obj_add_flag(tile, LV_OBJ_FLAG_CLICKABLE);
-    lv_obj_add_event_cb(tile, open_system_subpage, LV_EVENT_CLICKED,
-                        reinterpret_cast<void *>(static_cast<intptr_t>(target)));
+    void *user_data = reinterpret_cast<void *>(static_cast<intptr_t>(target));
+    make_object_clickable(tile, open_system_subpage, user_data);
 
     lv_obj_t *icon_lbl = create_label(tile, icon, accent, &lv_font_montserrat_14);
     lv_obj_align(icon_lbl, LV_ALIGN_LEFT_MID, 5, -1);
+    make_object_clickable(icon_lbl, open_system_subpage, user_data);
 
     lv_obj_t *title_lbl = create_label(tile, title, theme_text_main(), &lv_font_montserrat_12);
     lv_obj_set_width(title_lbl, 108);
     lv_label_set_long_mode(title_lbl, LV_LABEL_LONG_DOT);
     lv_obj_align(title_lbl, LV_ALIGN_TOP_LEFT, 28, 0);
+    make_object_clickable(title_lbl, open_system_subpage, user_data);
 
     lv_obj_t *subtitle_lbl = create_label(tile, subtitle, theme_text_muted(), &lv_font_montserrat_12);
     lv_obj_set_width(subtitle_lbl, 108);
     lv_label_set_long_mode(subtitle_lbl, LV_LABEL_LONG_DOT);
     lv_obj_align(subtitle_lbl, LV_ALIGN_BOTTOM_LEFT, 28, 1);
+    make_object_clickable(subtitle_lbl, open_system_subpage, user_data);
     return tile;
 }
 
@@ -4910,14 +5164,19 @@ static void request_gui_rebuild_async() {
     }
 }
 
-static void hw_switch_handler(lv_event_t *e) {
-    play_system_sound(SoundType::Click);
-    lv_obj_t *sw = lv_event_get_target(e);
-    const bool state = lv_obj_has_state(sw, LV_STATE_CHECKED);
+static void make_object_clickable(lv_obj_t *obj, lv_event_cb_t cb, void *user_data) {
+    if (obj == nullptr || cb == nullptr) {
+        return;
+    }
+    lv_obj_add_flag(obj, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_add_event_cb(obj, cb, LV_EVENT_CLICKED, user_data);
+}
 
-    HardwareToggle toggle = HardwareToggle::Heater;
-    bool old_state = cfg.enableHeater;
-    bool recognized = true;
+static bool hardware_toggle_metadata_for_switch(lv_obj_t *sw, HardwareToggle &toggle, bool &old_state) {
+    if (sw == nullptr) {
+        return false;
+    }
+
     if (sw == hw_aerator_sw) {
         toggle = HardwareToggle::Aerator;
         old_state = cfg.enableAerator;
@@ -4940,16 +5199,172 @@ static void hw_switch_handler(lv_event_t *e) {
         toggle = HardwareToggle::Heater;
         old_state = cfg.enableHeater;
     } else {
-        recognized = false;
+        return false;
     }
 
-    if (!recognized) {
+    return true;
+}
+
+static lv_event_cb_t hardware_detail_cb_for_switch(lv_obj_t *sw) {
+    if (sw == hw_heater_sw) {
+        return open_heater_subpage_cb;
+    }
+    if (sw == hw_co2_sw) {
+        return open_co2_subpage_cb;
+    }
+    if (sw == hw_ec_sw) {
+        return open_ec_subpage_cb;
+    }
+    if (sw == hw_water_level_sw) {
+        return open_water_subpage_cb;
+    }
+    if (sw == hw_leak_sw) {
+        return open_leak_subpage_cb;
+    }
+    if (sw == hw_flow_sw) {
+        return open_flow_subpage_cb;
+    }
+    return nullptr;
+}
+
+static HardwareToggle hardware_toggle_for_row(uint8_t row) {
+    switch (row) {
+    case 0: return HardwareToggle::Heater;
+    case 1: return HardwareToggle::Aerator;
+    case 2: return HardwareToggle::Co2;
+    case 3: return HardwareToggle::Ec;
+    case 4: return HardwareToggle::WaterLevel;
+    case 5: return HardwareToggle::Leak;
+    default: return HardwareToggle::Flow;
+    }
+}
+
+static bool hardware_toggle_current_state(HardwareToggle toggle) {
+    switch (toggle) {
+    case HardwareToggle::Heater: return cfg.enableHeater;
+    case HardwareToggle::Aerator: return cfg.enableAerator;
+    case HardwareToggle::Co2: return cfg.enableCo2;
+    case HardwareToggle::Ec: return cfg.enableEc;
+    case HardwareToggle::WaterLevel: return cfg.enableWaterLevel;
+    case HardwareToggle::Leak: return cfg.enableLeak;
+    case HardwareToggle::Flow: return cfg.enableFlow;
+    }
+    return false;
+}
+
+static char hw_state_texts[7][4] = {};
+static const char *hw_matrix_map[] = {
+    "Grzalka", hw_state_texts[0], "\n",
+    "Aerator", hw_state_texts[1], "\n",
+    "CO2", hw_state_texts[2], "\n",
+    "EC", hw_state_texts[3], "\n",
+    "Poziom", hw_state_texts[4], "\n",
+    "Wyciek", hw_state_texts[5], "\n",
+    "Przeplyw", hw_state_texts[6],
+    ""
+};
+
+static void update_hardware_matrix_labels() {
+    uint8_t active = 0;
+    for (uint8_t row = 0; row < 7; ++row) {
+        const bool enabled = hardware_toggle_current_state(hardware_toggle_for_row(row));
+        if (enabled) {
+            ++active;
+        }
+        snprintf(hw_state_texts[row], sizeof(hw_state_texts[row]), "%s", enabled ? "ON" : "OFF");
+    }
+    if (hw_summary_lbl != nullptr && lv_obj_is_valid(hw_summary_lbl)) {
+        lv_label_set_text_fmt(hw_summary_lbl, "Aktywne: %u/7 | nazwa = szczegoly, ON/OFF = PIN", static_cast<unsigned>(active));
+    }
+    if (hw_matrix != nullptr && lv_obj_is_valid(hw_matrix)) {
+        lv_btnmatrix_set_map(hw_matrix, hw_matrix_map);
+    }
+}
+
+static void open_hardware_detail_for_row(uint8_t row, lv_event_t *e) {
+    switch (row) {
+    case 0:
+        open_heater_subpage_cb(e);
+        break;
+    case 2:
+        open_co2_subpage_cb(e);
+        break;
+    case 3:
+        open_ec_subpage_cb(e);
+        break;
+    case 4:
+        open_water_subpage_cb(e);
+        break;
+    case 5:
+        open_leak_subpage_cb(e);
+        break;
+    case 6:
+        open_flow_subpage_cb(e);
+        break;
+    default:
+        pin_guard_execute_or_prompt(PinAction::ToggleHardware, static_cast<intptr_t>(hardware_toggle_for_row(row)),
+                                    !hardware_toggle_current_state(hardware_toggle_for_row(row)));
+        break;
+    }
+}
+
+static void hardware_matrix_cb(lv_event_t *e) {
+    lv_obj_t *matrix = lv_event_get_target(e);
+    if (matrix == nullptr || !lv_obj_is_valid(matrix)) {
+        return;
+    }
+    const uint16_t btn_id = lv_btnmatrix_get_selected_btn(matrix);
+    lv_btnmatrix_set_selected_btn(matrix, LV_BTNMATRIX_BTN_NONE);
+    if (btn_id == LV_BTNMATRIX_BTN_NONE || btn_id >= 14) {
+        return;
+    }
+
+    play_system_sound(SoundType::Click);
+    const uint8_t row = static_cast<uint8_t>(btn_id / 2);
+    const bool state_column = (btn_id % 2) == 1;
+    if (!state_column) {
+        open_hardware_detail_for_row(row, e);
+        return;
+    }
+
+    const HardwareToggle toggle = hardware_toggle_for_row(row);
+    pin_guard_execute_or_prompt(PinAction::ToggleHardware, static_cast<intptr_t>(toggle),
+                                !hardware_toggle_current_state(toggle));
+}
+
+static void hardware_toggle_request(lv_obj_t *sw, bool state) {
+    HardwareToggle toggle = HardwareToggle::Heater;
+    bool old_state = false;
+    if (!hardware_toggle_metadata_for_switch(sw, toggle, old_state)) {
         return;
     }
 
     if (!pin_guard_execute_or_prompt(PinAction::ToggleHardware, static_cast<intptr_t>(toggle), state)) {
         set_checked(sw, old_state);
     }
+}
+
+static void hardware_card_click_handler(lv_event_t *e) {
+    lv_obj_t *sw = static_cast<lv_obj_t *>(lv_event_get_user_data(e));
+    if (sw == nullptr || !lv_obj_is_valid(sw)) {
+        return;
+    }
+
+    lv_event_cb_t detail_cb = hardware_detail_cb_for_switch(sw);
+    if (detail_cb != nullptr) {
+        detail_cb(e);
+        return;
+    }
+
+    play_system_sound(SoundType::Click);
+    hardware_toggle_request(sw, !lv_obj_has_state(sw, LV_STATE_CHECKED));
+}
+
+static void hw_switch_handler(lv_event_t *e) {
+    play_system_sound(SoundType::Click);
+    lv_obj_t *sw = lv_event_get_target(e);
+    const bool state = lv_obj_has_state(sw, LV_STATE_CHECKED);
+    hardware_toggle_request(sw, state);
 }
 
 static void apply_hardware_toggle_authorized(HardwareToggle toggle, bool enabled) {
@@ -4978,6 +5393,7 @@ static void apply_hardware_toggle_authorized(HardwareToggle toggle, bool enabled
     }
     
     gui_app_save_settings();
+    update_hardware_matrix_labels();
     current_subpage = ActiveSubpage::Hardware;
     request_gui_rebuild_async();
 }
@@ -5138,38 +5554,45 @@ static void open_calibration_wizard_authorized(int type) {
 }
 
 static void build_hardware_subpage() {
-    subpage_hardware = create_subpage("Hardware Modules", nullptr, nullptr);
+    subpage_hardware = create_subpage("Sprzet / Moduly", nullptr, nullptr);
 
-    lv_obj_t *hw_list = lv_obj_create(subpage_hardware);
-    lv_obj_set_size(hw_list, 312, 196);
-    lv_obj_set_pos(hw_list, 4, 34);
-    lv_obj_set_style_bg_opa(hw_list, LV_OPA_TRANSP, 0);
-    lv_obj_set_style_border_width(hw_list, 0, 0);
-    lv_obj_set_style_pad_all(hw_list, 0, 0);
-    lv_obj_set_flex_flow(hw_list, LV_FLEX_FLOW_COLUMN);
-    lv_obj_set_style_pad_row(hw_list, 6, 0);
-    lv_obj_set_scrollbar_mode(hw_list, LV_SCROLLBAR_MODE_AUTO);
+    hw_summary_lbl = create_label(subpage_hardware, "", theme_text_muted(), &lv_font_montserrat_12);
+    lv_obj_set_width(hw_summary_lbl, 300);
+    lv_label_set_long_mode(hw_summary_lbl, LV_LABEL_LONG_CLIP);
+    lv_obj_align(hw_summary_lbl, LV_ALIGN_TOP_MID, 0, 38);
 
-    auto add_hw_toggle = [&](const char* name, lv_obj_t **sw_ptr, bool init_val) {
-        lv_obj_t *row = create_card(hw_list, 300, 46, 0, 0);
-        lv_obj_set_style_pad_all(row, 0, 0);
-        lv_obj_t *lbl = create_label(row, name, lv_color_white(), &lv_font_montserrat_12);
-        lv_obj_align(lbl, LV_ALIGN_LEFT_MID, 10, 0);
-        *sw_ptr = lv_switch_create(row);
-        lv_obj_set_size(*sw_ptr, 42, 22);
-        lv_obj_align(*sw_ptr, LV_ALIGN_RIGHT_MID, -10, 0);
-        style_switch_cyd(*sw_ptr);
-        if (init_val) lv_obj_add_state(*sw_ptr, LV_STATE_CHECKED);
-        lv_obj_add_event_cb(*sw_ptr, hw_switch_handler, LV_EVENT_VALUE_CHANGED, nullptr);
-    };
-
-    add_hw_toggle("Grzalka (Heater)", &hw_heater_sw, cfg.enableHeater);
-    add_hw_toggle("Napowietrzacz (Aerator)", &hw_aerator_sw, cfg.enableAerator);
-    add_hw_toggle("System CO2", &hw_co2_sw, cfg.enableCo2);
-    add_hw_toggle("Czujnik EC", &hw_ec_sw, cfg.enableEc);
-    add_hw_toggle("Czujnik poziomu wody", &hw_water_level_sw, cfg.enableWaterLevel);
-    add_hw_toggle("Czujnik wycieku", &hw_leak_sw, cfg.enableLeak);
-    add_hw_toggle("Przeplywomierz", &hw_flow_sw, cfg.enableFlow);
+    // Runtime heap on CYD is heavily fragmented when this page is opened from
+    // Sys. A single btnmatrix replaces seven switch cards and avoids the
+    // lv_btn_create crash seen with ~3 KB largest free block.
+    hw_matrix = lv_btnmatrix_create(subpage_hardware);
+    if (hw_matrix == nullptr) {
+        Serial.println("UI_HW: matrix allocation failed");
+        return;
+    }
+    update_hardware_matrix_labels();
+    lv_obj_set_size(hw_matrix, 300, 160);
+    lv_obj_align(hw_matrix, LV_ALIGN_BOTTOM_MID, 0, -8);
+    lv_btnmatrix_set_one_checked(hw_matrix, false);
+    for (uint8_t row = 0; row < 7; ++row) {
+        lv_btnmatrix_set_btn_width(hw_matrix, static_cast<uint16_t>(row * 2), 3);
+        lv_btnmatrix_set_btn_width(hw_matrix, static_cast<uint16_t>(row * 2 + 1), 1);
+    }
+    lv_obj_add_event_cb(hw_matrix, hardware_matrix_cb, LV_EVENT_VALUE_CHANGED, nullptr);
+    lv_obj_set_style_bg_color(hw_matrix, resolve_bg_color(lv_color_make(20, 26, 40)), LV_PART_MAIN);
+    lv_obj_set_style_border_color(hw_matrix, theme_card_border(), LV_PART_MAIN);
+    lv_obj_set_style_border_width(hw_matrix, 1, LV_PART_MAIN);
+    lv_obj_set_style_radius(hw_matrix, 6, LV_PART_MAIN);
+    lv_obj_set_style_pad_all(hw_matrix, 4, LV_PART_MAIN);
+    lv_obj_set_style_text_font(hw_matrix, &lv_font_montserrat_12, LV_PART_ITEMS);
+    lv_obj_set_style_text_color(hw_matrix, lv_color_white(), LV_PART_ITEMS);
+    lv_obj_set_style_bg_color(hw_matrix, lv_color_make(35, 41, 55), LV_PART_ITEMS);
+    lv_obj_set_style_border_width(hw_matrix, 1, LV_PART_ITEMS);
+    lv_obj_set_style_border_color(hw_matrix, lv_color_make(55, 65, 81), LV_PART_ITEMS);
+    lv_obj_set_style_radius(hw_matrix, 5, LV_PART_ITEMS);
+    Serial.printf("UI_HW: hardware matrix ready obj=%p heap_free=%lu heap_largest=%lu\n",
+                  static_cast<void *>(hw_matrix),
+                  static_cast<unsigned long>(heap_caps_get_free_size(MALLOC_CAP_8BIT)),
+                  static_cast<unsigned long>(heap_caps_get_largest_free_block(MALLOC_CAP_8BIT)));
 }
 
 
@@ -5265,9 +5688,6 @@ static void build_flow_subpage() {
 static void build_subpages() {
     subpage_wifi = create_subpage("WiFi");
 
-    // ================================================================
-    // 1. MAIN PANEL (status WiFi + przyciski)
-    // ================================================================
     wifi_main_panel = lv_obj_create(subpage_wifi);
     lv_obj_set_size(wifi_main_panel, 320, 210);
     lv_obj_set_pos(wifi_main_panel, 0, 30);
@@ -5276,36 +5696,29 @@ static void build_subpages() {
     lv_obj_set_style_pad_all(wifi_main_panel, 0, 0);
     lv_obj_clear_flag(wifi_main_panel, LV_OBJ_FLAG_SCROLLABLE);
 
-    // --- Karta statusu WiFi (pelna szerokosc, wyraznie wyglad) ---
     wifi_info_card = create_card(wifi_main_panel, 304, 110, 8, 6);
     lv_obj_set_style_pad_all(wifi_info_card, 0, 0);
     lv_obj_clear_flag(wifi_info_card, LV_OBJ_FLAG_SCROLLABLE);
-    // Kolorowe tlo karty zaleznie od statusu (domyslnie wylaczony)
     lv_obj_set_style_bg_color(wifi_info_card, resolve_bg_color(lv_color_make(20, 26, 40)), 0);
     lv_obj_set_style_border_color(wifi_info_card, lv_color_make(239, 68, 68), 0);
     lv_obj_set_style_border_width(wifi_info_card, 2, 0);
 
-    // Ikona WiFi (duza)
     lv_obj_t *wifi_icon_big = create_label(wifi_info_card, LV_SYMBOL_WIFI, lv_color_make(239, 68, 68), &lv_font_montserrat_24);
     lv_obj_align(wifi_icon_big, LV_ALIGN_TOP_LEFT, 10, 8);
 
-    // Status (POLACZONY / ROZLACZONY)
     wifi_mode_lbl = create_label(wifi_info_card, "ROZLACZONY", lv_color_make(239, 68, 68), &lv_font_montserrat_14);
     lv_obj_align(wifi_mode_lbl, LV_ALIGN_TOP_LEFT, 46, 8);
 
-    // Wiadomosc statusu (np. "Brak sieci")
     wifi_status_message_lbl = create_label(wifi_info_card, "Brak polaczenia WiFi", theme_text_muted(), &lv_font_montserrat_12);
     lv_obj_set_width(wifi_status_message_lbl, 190);
     lv_label_set_long_mode(wifi_status_message_lbl, LV_LABEL_LONG_DOT);
     lv_obj_align(wifi_status_message_lbl, LV_ALIGN_TOP_LEFT, 46, 28);
 
-    // Przycisk rozlaczenia (maly, prawy)
     btn_disconnect = create_button(wifi_info_card, LV_SYMBOL_CLOSE " Rozlacz", 90, 26, lv_color_make(239, 68, 68), btn_wifi_disc_handler, nullptr);
     lv_obj_align(btn_disconnect, LV_ALIGN_TOP_RIGHT, -8, 6);
     lv_obj_add_flag(btn_disconnect, LV_OBJ_FLAG_HIDDEN);
     apply_3d_button_properties(btn_disconnect);
 
-    // Separator poziomy (nieinteraktywny)
     lv_obj_t *wifi_sep = lv_obj_create(wifi_info_card);
     lv_obj_set_size(wifi_sep, 280, 1);
     lv_obj_align(wifi_sep, LV_ALIGN_TOP_MID, 0, 48);
@@ -5314,46 +5727,51 @@ static void build_subpages() {
     lv_obj_clear_flag(wifi_sep, LV_OBJ_FLAG_SCROLLABLE);
     lv_obj_clear_flag(wifi_sep, LV_OBJ_FLAG_CLICKABLE);
 
-    // SSID
     wifi_ssid_lbl = create_label(wifi_info_card, LV_SYMBOL_WIFI "  SSID: --", theme_text_main(), &lv_font_montserrat_12);
     lv_obj_set_width(wifi_ssid_lbl, 180);
     lv_label_set_long_mode(wifi_ssid_lbl, LV_LABEL_LONG_DOT);
     lv_obj_align(wifi_ssid_lbl, LV_ALIGN_TOP_LEFT, 10, 56);
 
-    // RSSI (prawo)
     wifi_rssi_lbl = create_label(wifi_info_card, "RSSI: --", theme_text_muted(), &lv_font_montserrat_12);
     lv_obj_align(wifi_rssi_lbl, LV_ALIGN_TOP_RIGHT, -10, 56);
 
-    // IP
     wifi_ip_lbl = create_label(wifi_info_card, LV_SYMBOL_RIGHT "  IP: --", theme_text_muted(), &lv_font_montserrat_12);
     lv_obj_set_width(wifi_ip_lbl, 180);
     lv_label_set_long_mode(wifi_ip_lbl, LV_LABEL_LONG_DOT);
     lv_obj_align(wifi_ip_lbl, LV_ALIGN_TOP_LEFT, 10, 76);
 
-    // MAC
     wifi_mac_lbl = create_label(wifi_info_card, "MAC: --", lv_color_make(100, 116, 139), &lv_font_montserrat_12);
     lv_obj_set_width(wifi_mac_lbl, 280);
     lv_label_set_long_mode(wifi_mac_lbl, LV_LABEL_LONG_DOT);
     lv_obj_align(wifi_mac_lbl, LV_ALIGN_BOTTOM_LEFT, 10, -6);
 
-    // --- Dwa przyciski akcji (Skanuj + OTA) ---
-    btn_sta = create_button(wifi_main_panel, LV_SYMBOL_WIFI "  Polacz z secia", 144, 46, lv_color_make(14, 165, 233), btn_sta_handler, nullptr);
+    lv_obj_t *wifi_actions_card = create_card(wifi_main_panel, 304, 80, 8, 120);
+    lv_obj_set_style_pad_all(wifi_actions_card, 0, 0);
+    lv_obj_clear_flag(wifi_actions_card, LV_OBJ_FLAG_SCROLLABLE);
+    create_accent_bar(wifi_actions_card, lv_color_make(6, 182, 212), 68);
+
+    lv_obj_t *wifi_actions_title = create_label(wifi_actions_card, "Akcje", lv_color_make(6, 182, 212), &lv_font_montserrat_12);
+    lv_obj_align(wifi_actions_title, LV_ALIGN_TOP_LEFT, 10, 4);
+
+    lv_obj_t *wifi_actions_hint = create_label(wifi_actions_card, "Skanuj sieci lub uruchom OTA.", theme_text_muted(), &lv_font_montserrat_12);
+    lv_obj_set_width(wifi_actions_hint, 220);
+    lv_label_set_long_mode(wifi_actions_hint, LV_LABEL_LONG_CLIP);
+    lv_obj_align(wifi_actions_hint, LV_ALIGN_TOP_LEFT, 10, 22);
+
+    btn_sta = create_button(wifi_actions_card, LV_SYMBOL_WIFI "  Skanuj sieci", 140, 30, lv_color_make(14, 165, 233), btn_sta_handler, nullptr);
     lv_obj_align(btn_sta, LV_ALIGN_BOTTOM_LEFT, 8, -8);
     apply_3d_button_properties(btn_sta);
     lv_obj_t *sta_lbl = lv_obj_get_child(btn_sta, 0);
     lv_obj_set_style_text_font(sta_lbl, &lv_font_montserrat_12, 0);
     lv_obj_set_style_text_color(sta_lbl, lv_color_white(), 0);
 
-    btn_ota = create_button(wifi_main_panel, LV_SYMBOL_UPLOAD "  Aktualizacja OTA", 144, 46, lv_color_make(20, 184, 166), btn_ota_handler, nullptr);
+    btn_ota = create_button(wifi_actions_card, LV_SYMBOL_UPLOAD "  Tryb OTA", 140, 30, lv_color_make(20, 184, 166), btn_ota_handler, nullptr);
     lv_obj_align(btn_ota, LV_ALIGN_BOTTOM_RIGHT, -8, -8);
     apply_3d_button_properties(btn_ota);
     lv_obj_t *ota_lbl = lv_obj_get_child(btn_ota, 0);
     lv_obj_set_style_text_font(ota_lbl, &lv_font_montserrat_12, 0);
     lv_obj_set_style_text_color(ota_lbl, lv_color_white(), 0);
 
-    // ================================================================
-    // 2. STA SCAN LIST PANEL
-    // ================================================================
     wifi_sta_panel = lv_obj_create(subpage_wifi);
     lv_obj_set_size(wifi_sta_panel, 320, 210);
     lv_obj_set_pos(wifi_sta_panel, 0, 30);
@@ -5362,20 +5780,20 @@ static void build_subpages() {
     lv_obj_add_flag(wifi_sta_panel, LV_OBJ_FLAG_HIDDEN);
     lv_obj_clear_flag(wifi_sta_panel, LV_OBJ_FLAG_SCROLLABLE);
 
-    lv_obj_t *sta_header = create_card(wifi_sta_panel, 304, 30, 8, 4);
-    lv_obj_set_style_pad_all(sta_header, 0, 0);
-    lv_obj_t *sta_title = create_label(sta_header, LV_SYMBOL_WIFI "  Wybierz siec WiFi", theme_text_main(), &lv_font_montserrat_14);
-    lv_obj_align(sta_title, LV_ALIGN_CENTER, 0, 0);
+    lv_obj_t *sta_header = create_heading_card(wifi_sta_panel, 304, 42, 8, 4,
+                                               "Wybierz siec WiFi",
+                                               "Dotknij siec, aby wpisac haslo.",
+                                               lv_color_make(14, 165, 233));
+    LV_UNUSED(sta_header);
 
     sta_list_obj = lv_list_create(wifi_sta_panel);
-    lv_obj_set_size(sta_list_obj, 300, 122);
-    lv_obj_align(sta_list_obj, LV_ALIGN_TOP_MID, 0, 40);
+    lv_obj_set_size(sta_list_obj, 300, 114);
+    lv_obj_align(sta_list_obj, LV_ALIGN_TOP_MID, 0, 50);
     lv_obj_set_style_bg_color(sta_list_obj, resolve_bg_color(lv_color_make(20, 26, 40)), 0);
     lv_obj_set_style_border_color(sta_list_obj, theme_card_border(), 0);
     lv_obj_set_style_pad_all(sta_list_obj, 4, 0);
 
-    // Poczatkowy przycisk skanowania
-    lv_obj_t *list_btn = lv_list_add_btn(sta_list_obj, LV_SYMBOL_WIFI, "Kliknij Szukaj WiFi...");
+    lv_obj_t *list_btn = lv_list_add_btn(sta_list_obj, LV_SYMBOL_WIFI, "Skanuj sieci");
     lv_obj_add_event_cb(list_btn, btn_sta_handler, LV_EVENT_CLICKED, nullptr);
 
     lv_obj_t *back_sta_btn = create_button(wifi_sta_panel, LV_SYMBOL_LEFT "  Wstecz", 110, 30, lv_color_make(30, 41, 59), cancel_sta_cb, nullptr);
@@ -5386,9 +5804,6 @@ static void build_subpages() {
     lv_obj_align(rescan_btn, LV_ALIGN_BOTTOM_RIGHT, -10, -6);
     apply_3d_button_properties(rescan_btn);
 
-    // ================================================================
-    // 3. PASSWORD ENTRY PANEL
-    // ================================================================
     wifi_pwd_panel = lv_obj_create(subpage_wifi);
     lv_obj_set_size(wifi_pwd_panel, 320, 210);
     lv_obj_set_pos(wifi_pwd_panel, 0, 30);
@@ -5397,12 +5812,19 @@ static void build_subpages() {
     lv_obj_add_flag(wifi_pwd_panel, LV_OBJ_FLAG_HIDDEN);
     lv_obj_clear_flag(wifi_pwd_panel, LV_OBJ_FLAG_SCROLLABLE);
 
-    wifi_pwd_title_lbl = create_label(wifi_pwd_panel, "Haslo do sieci:", theme_text_main(), &lv_font_montserrat_12);
+    wifi_pwd_title_lbl = create_label(wifi_pwd_panel, "Haslo do: --", theme_text_main(), &lv_font_montserrat_12);
+    lv_obj_set_width(wifi_pwd_title_lbl, 240);
+    lv_label_set_long_mode(wifi_pwd_title_lbl, LV_LABEL_LONG_DOT);
     lv_obj_align(wifi_pwd_title_lbl, LV_ALIGN_TOP_LEFT, 10, 4);
 
+    lv_obj_t *pwd_hint_lbl = create_label(wifi_pwd_panel, "Wpisz haslo i potwierdz na klawiaturze.", theme_text_muted(), &lv_font_montserrat_12);
+    lv_obj_set_width(pwd_hint_lbl, 248);
+    lv_label_set_long_mode(pwd_hint_lbl, LV_LABEL_LONG_CLIP);
+    lv_obj_align(pwd_hint_lbl, LV_ALIGN_TOP_LEFT, 10, 20);
+
     wifi_pwd_ta = lv_textarea_create(wifi_pwd_panel);
-    lv_obj_set_size(wifi_pwd_ta, 200, 28);
-    lv_obj_align(wifi_pwd_ta, LV_ALIGN_TOP_LEFT, 10, 20);
+    lv_obj_set_size(wifi_pwd_ta, 230, 28);
+    lv_obj_align(wifi_pwd_ta, LV_ALIGN_TOP_LEFT, 10, 38);
     lv_textarea_set_one_line(wifi_pwd_ta, true);
     lv_textarea_set_password_mode(wifi_pwd_ta, true);
     lv_obj_set_style_bg_color(wifi_pwd_ta, resolve_bg_color(lv_color_make(20, 26, 40)), 0);
@@ -5427,9 +5849,6 @@ static void build_subpages() {
         }
     }, LV_EVENT_ALL, nullptr);
 
-    // ================================================================
-    // 4. OTA PANEL
-    // ================================================================
     wifi_ota_panel = lv_obj_create(subpage_wifi);
     lv_obj_set_size(wifi_ota_panel, 320, 210);
     lv_obj_set_pos(wifi_ota_panel, 0, 30);
@@ -5438,25 +5857,24 @@ static void build_subpages() {
     lv_obj_add_flag(wifi_ota_panel, LV_OBJ_FLAG_HIDDEN);
     lv_obj_clear_flag(wifi_ota_panel, LV_OBJ_FLAG_SCROLLABLE);
 
-    lv_obj_t *ota_banner = create_card(wifi_ota_panel, 304, 30, 8, 6);
-    lv_obj_set_style_bg_color(ota_banner, lv_color_make(20, 184, 166), 0);
-    lv_obj_set_style_border_width(ota_banner, 0, 0);
-    lv_obj_t *ota_title = create_label(ota_banner, LV_SYMBOL_UPLOAD "  TRYB OTA AKTYWNY", lv_color_white(), &lv_font_montserrat_14);
-    lv_obj_align(ota_title, LV_ALIGN_CENTER, 0, 0);
+    lv_obj_t *ota_banner = create_heading_card(wifi_ota_panel, 304, 42, 8, 6,
+                                               "Tryb OTA aktywny",
+                                               "Polacz sie z AP i wgraj firmware.",
+                                               lv_color_make(20, 184, 166));
+    LV_UNUSED(ota_banner);
 
-    lv_obj_t *ota_card = create_card(wifi_ota_panel, 298, 108, 11, 44);
+    lv_obj_t *ota_card = create_card(wifi_ota_panel, 298, 112, 11, 54);
     lv_obj_set_style_pad_all(ota_card, 10, 0);
     lv_obj_clear_flag(ota_card, LV_OBJ_FLAG_SCROLLABLE);
 
-    lv_obj_t *ota_instr = create_label(ota_card, "Polacz sie z siecia AP i wyslij firmware:", theme_text_muted(), &lv_font_montserrat_12);
+    lv_obj_t *ota_instr = create_label(ota_card, "Polacz sie z siecia AP i wyslij firmware.", theme_text_muted(), &lv_font_montserrat_12);
     lv_obj_set_width(ota_instr, 272);
     lv_label_set_long_mode(ota_instr, LV_LABEL_LONG_WRAP);
     lv_obj_align(ota_instr, LV_ALIGN_TOP_LEFT, 0, 0);
 
     lv_obj_t *ota_ssid_lbl = create_label(ota_card, LV_SYMBOL_WIFI "  SSID: cydAquarium-OTA", theme_text_main(), &lv_font_montserrat_12);
     lv_obj_align(ota_ssid_lbl, LV_ALIGN_TOP_LEFT, 0, 28);
-    lv_obj_t *ota_pass_lbl = create_label(ota_card, "Haslo: --", theme_text_main(), &lv_font_montserrat_12);
-    lv_label_set_text_fmt(ota_pass_lbl, LV_SYMBOL_EYE_CLOSE "  Haslo: %s", Secrets::OTA_PASSWORD);
+    lv_obj_t *ota_pass_lbl = create_label(ota_card, LV_SYMBOL_EYE_CLOSE "  Haslo: ukryte", theme_text_main(), &lv_font_montserrat_12);
     lv_obj_align(ota_pass_lbl, LV_ALIGN_TOP_LEFT, 0, 48);
     lv_obj_t *ota_ip_lbl = create_label(ota_card, LV_SYMBOL_RIGHT "  IP: 192.168.4.1", lv_color_make(20, 184, 166), &lv_font_montserrat_12);
     lv_obj_align(ota_ip_lbl, LV_ALIGN_TOP_LEFT, 0, 68);
@@ -5464,7 +5882,6 @@ static void build_subpages() {
     lv_obj_t *ota_stop_btn = create_button(wifi_ota_panel, LV_SYMBOL_CLOSE "  Zatrzymaj OTA", 160, 32, lv_color_make(239, 68, 68), stop_ota_cb, nullptr);
     lv_obj_align(ota_stop_btn, LV_ALIGN_BOTTOM_MID, 0, -10);
     apply_3d_button_properties(ota_stop_btn);
-
 
     subpage_screen = create_subpage("LCD Screen");
     
@@ -6518,6 +6935,14 @@ static void gui_sync_widgets_to_state() {
         lv_label_set_text(device_flow_detail_lbl, cfg.enableFlow ? "Puls wejscie" : "OFF");
     }
 
+    set_checked(hw_heater_sw, cfg.enableHeater);
+    set_checked(hw_aerator_sw, cfg.enableAerator);
+    set_checked(hw_co2_sw, cfg.enableCo2);
+    set_checked(hw_ec_sw, cfg.enableEc);
+    set_checked(hw_water_level_sw, cfg.enableWaterLevel);
+    set_checked(hw_leak_sw, cfg.enableLeak);
+    set_checked(hw_flow_sw, cfg.enableFlow);
+    update_hardware_matrix_labels();
 
     auto format_sched_lbl = [](lv_obj_t *lbl, uint8_t mode,
                                uint8_t startH, uint8_t startM, uint8_t endH, uint8_t endM) {
@@ -7039,6 +7464,8 @@ static void reset_gui_object_refs() {
     power_state_lbl = nullptr;
     pin_overlay = nullptr;
     pin_value_lbl = nullptr;
+    pin_status_lbl = nullptr;
+    pin_matrix = nullptr;
     pin_entry[0] = '\0';
     memset(&time_picker_state, 0, sizeof(time_picker_state));
     memset(&date_picker_state, 0, sizeof(date_picker_state));
@@ -7100,6 +7527,8 @@ static void reset_gui_object_refs() {
     hw_water_level_sw = nullptr;
     hw_leak_sw = nullptr;
     hw_flow_sw = nullptr;
+    hw_matrix = nullptr;
+    hw_summary_lbl = nullptr;
     subpage_service = nullptr;
     service_light_sw = nullptr;
     service_filter_sw = nullptr;
@@ -7152,7 +7581,7 @@ static void apply_lvgl_theme() {
 
 static void build_gui_tree() {
     apply_lvgl_theme();
-    
+
     // Splash screen removed — insufficient heap after GUI tree construction.
 
     build_status_bar();
@@ -7187,6 +7616,7 @@ static void rebuild_gui_tree_for_theme() {
     lv_obj_clean(lv_scr_act());
     reset_gui_object_refs();
     build_gui_tree();
+    prime_pin_guard_modal();
 
     // Przywrócenie aktywnej strony (zakładki)
     for (uint8_t i = 0; i < PAGE_COUNT; ++i) {
@@ -7221,7 +7651,7 @@ static void rebuild_gui_tree_for_theme() {
             case ActiveSubpage::Service: target_subpage = subpage_service; break;
             case ActiveSubpage::Hardware:
                 if (subpage_hardware == nullptr) {
-                    if (!ensure_runtime_ui_heap("Hardware", UI_RUNTIME_SUBPAGE_MIN_FREE, UI_RUNTIME_BIGGEST_MIN)) {
+                    if (!ensure_runtime_ui_heap("Hardware", UI_RUNTIME_HARDWARE_MIN_FREE, UI_RUNTIME_HARDWARE_MIN_LARGEST)) {
                         break;
                     }
                     build_hardware_subpage();
@@ -7230,7 +7660,7 @@ static void rebuild_gui_tree_for_theme() {
                 break;
             case ActiveSubpage::Co2:
                 if (subpage_co2 == nullptr) {
-                    if (!ensure_runtime_ui_heap("CO2", UI_RUNTIME_SUBPAGE_MIN_FREE, UI_RUNTIME_BIGGEST_MIN)) {
+                    if (!ensure_runtime_ui_heap("CO2", UI_RUNTIME_HARDWARE_MIN_FREE, UI_RUNTIME_HARDWARE_MIN_LARGEST)) {
                         break;
                     }
                     build_co2_subpage();
@@ -7239,7 +7669,7 @@ static void rebuild_gui_tree_for_theme() {
                 break;
             case ActiveSubpage::Ec:
                 if (subpage_ec == nullptr) {
-                    if (!ensure_runtime_ui_heap("EC", UI_RUNTIME_SUBPAGE_MIN_FREE, UI_RUNTIME_BIGGEST_MIN)) {
+                    if (!ensure_runtime_ui_heap("EC", UI_RUNTIME_HARDWARE_MIN_FREE, UI_RUNTIME_HARDWARE_MIN_LARGEST)) {
                         break;
                     }
                     build_ec_subpage();
@@ -7248,7 +7678,7 @@ static void rebuild_gui_tree_for_theme() {
                 break;
             case ActiveSubpage::WaterLevel:
                 if (subpage_water == nullptr) {
-                    if (!ensure_runtime_ui_heap("WaterLevel", UI_RUNTIME_SUBPAGE_MIN_FREE, UI_RUNTIME_BIGGEST_MIN)) {
+                    if (!ensure_runtime_ui_heap("WaterLevel", UI_RUNTIME_HARDWARE_MIN_FREE, UI_RUNTIME_HARDWARE_MIN_LARGEST)) {
                         break;
                     }
                     build_water_subpage();
@@ -7257,7 +7687,7 @@ static void rebuild_gui_tree_for_theme() {
                 break;
             case ActiveSubpage::Leak:
                 if (subpage_leak == nullptr) {
-                    if (!ensure_runtime_ui_heap("Leak", UI_RUNTIME_SUBPAGE_MIN_FREE, UI_RUNTIME_BIGGEST_MIN)) {
+                    if (!ensure_runtime_ui_heap("Leak", UI_RUNTIME_HARDWARE_MIN_FREE, UI_RUNTIME_HARDWARE_MIN_LARGEST)) {
                         break;
                     }
                     build_leak_subpage();
@@ -7266,7 +7696,7 @@ static void rebuild_gui_tree_for_theme() {
                 break;
             case ActiveSubpage::Flow:
                 if (subpage_flow == nullptr) {
-                    if (!ensure_runtime_ui_heap("Flow", UI_RUNTIME_SUBPAGE_MIN_FREE, UI_RUNTIME_BIGGEST_MIN)) {
+                    if (!ensure_runtime_ui_heap("Flow", UI_RUNTIME_HARDWARE_MIN_FREE, UI_RUNTIME_HARDWARE_MIN_LARGEST)) {
                         break;
                     }
                     build_flow_subpage();
@@ -7313,6 +7743,7 @@ void gui_app_init(void) {
     build_gui_tree();
     gui_sync_widgets_to_state();
     gui_app_update_wifi(wifi_connected ? 1 : 0, wifi_rssi);
+    prime_pin_guard_modal();
 
     lv_mem_monitor_t mem_mon;
     lv_mem_monitor(&mem_mon);
