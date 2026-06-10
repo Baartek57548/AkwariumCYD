@@ -1,0 +1,840 @@
+<!DOCTYPE html>
+<html lang="pl">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+    <title>Aquarium Controller ESP32</title>
+    <link rel="stylesheet" href="style.css?v=20260413e">
+    <link rel="stylesheet" href="charts.css?v=20260415a">
+</head>
+<body>
+    <canvas id="bubbles-canvas" class="bubbles-canvas"></canvas>
+
+    <div class="app-container">
+        <!-- Sidebar Navigation -->
+        <nav class="sidebar" id="app-sidebar">
+            <div class="brand">
+                <i class="fa-solid fa-water fa-bounce" style="--fa-animation-duration: 3s; color: var(--accent-cyan);"></i>
+                <div class="brand-text">
+                    <h1>AquaSync</h1>
+                    <span>ESP32-S3 System</span>
+                </div>
+            </div>
+            
+            <ul class="nav-menu">
+                <li class="nav-item active" data-target="dashboard">
+                    <a href="#"><i class="fa-solid fa-gauge-high"></i> Dashboard</a>
+                </li>
+                <li class="nav-item" data-target="harmonogramy">
+                    <a href="#"><i class="fa-solid fa-calendar-days"></i> Harmonogramy</a>
+                </li>
+                <li class="nav-item" data-target="logi">
+                    <a href="#"><i class="fa-solid fa-terminal"></i> Logi Systemu</a>
+                </li>
+                <li class="nav-item" data-target="wykresy">
+                    <a href="#"><i class="fa-solid fa-chart-line"></i> Wykresy i Analiza</a>
+                </li>
+            </ul>
+
+            <div class="sidebar-bottom">
+                <ul class="nav-menu">
+                    <li class="nav-item" data-target="ota">
+                        <a href="#"><i class="fa-solid fa-cloud-arrow-up"></i> OTA Aktualizacja</a>
+                    </li>
+                    <li class="nav-item">
+                        <a href="/settings.html"><i class="fa-solid fa-gear"></i> Ustawienia</a>
+                    </li>
+                </ul>
+                <div class="sys-version">
+                    <span id="sidebar-firmware-version">v--</span><br>
+                    <span>FreeRTOS Core</span>
+                </div>
+            </div>
+        </nav>
+
+        <div class="sidebar-backdrop" id="sidebar-backdrop" aria-hidden="true"></div>
+
+        <!-- Main Content -->
+        <main class="main-content">
+            <button class="mobile-nav-toggle glass" id="mobile-nav-toggle" type="button" aria-controls="app-sidebar" aria-expanded="false">
+                <i id="mobile-nav-toggle-icon" class="fa-solid fa-bars"></i>
+                <span id="mobile-nav-toggle-label">Menu</span>
+            </button>
+
+            <!-- Topbar -->
+            <header class="topbar">
+                <div class="topbar-activity">
+                    <span class="topbar-label">AKTYWNE MODUŁY</span>
+                    <div id="topbar-active-list" class="topbar-active-list">
+                        <div class="status-badge status-badge-muted">
+                            <span class="pulse-dot pulse-dot-muted"></span>
+                            Oczekiwanie na dane sterownika
+                        </div>
+                    </div>
+                </div>
+
+                <div class="topbar-widgets">
+                    <div class="info-pill battery-pill" title="Aktualne napięcie baterii">
+                        <i class="fa-solid fa-battery-three-quarters"></i>
+                        <span id="rtc-battery">--.--V</span>
+                    </div>
+                    <div class="time-widget">
+                        <span id="current-time">00:00:00</span>
+                        <span id="current-date">01 sty 2026</span>
+                    </div>
+                </div>
+            </header>
+
+            <!-- Dashboard View -->
+            <section id="dashboard" class="view-section active">
+                <div class="view-header">
+                    <h2>Przegląd Systemu</h2>
+                    <p>Bieżący status wszystkich urządzeń i sensorów.</p>
+                </div>
+
+                <div class="dashboard-grid">
+                    <div class="card glass dashboard-card metric-card">
+                        <span class="eyebrow">TEMPERATURA</span>
+                        <div class="metric-value">
+                            <span id="dashboard-temp-current">--.-</span>
+                            <span class="unit">&deg;C</span>
+                        </div>
+                        <div class="metric-subline">
+                            <span>Cel <strong id="dashboard-temp-target">25.0&deg;C</strong></span>
+                            <span>Histereza <strong id="dashboard-temp-hysteresis">0.5&deg;C</strong></span>
+                        </div>
+                    </div>
+
+                    <div class="card glass dashboard-card metric-card">
+                        <span class="eyebrow">BATERIA</span>
+                        <div class="metric-value">
+                            <span id="dashboard-battery-percent">0</span>
+                            <span class="unit">%</span>
+                        </div>
+                        <div class="metric-subline">
+                            <span>Napięcie <strong id="dashboard-battery-voltage">--.--V</strong></span>
+                            <span id="dashboard-battery-state">Brak pomiaru</span>
+                        </div>
+                        <div class="progress-bar battery-progress">
+                            <div id="dashboard-battery-fill" class="progress-fill battery-fill" style="width: 0%;"></div>
+                        </div>
+                    </div>
+
+                    <div id="network-card" class="card glass dashboard-card network-card network-offline">
+                        <span class="eyebrow">SIEĆ</span>
+                        <div id="network-status" class="metric-value network-status">OFFLINE</div>
+                        <div class="network-details">
+                            <div class="network-detail-row">
+                                <span>SSID STA</span>
+                                <strong id="network-ssid">-</strong>
+                            </div>
+                            <div class="network-detail-row">
+                                <span>Ostatnie połączenie</span>
+                                <strong id="network-last-seen">Brak historii</strong>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="card glass dashboard-card relay-panel">
+                        <div class="card-header compact-header">
+                            <span class="card-heading">Przekaźniki</span>
+                            <span id="relay-count" class="card-chip">0 / 4 aktywne</span>
+                        </div>
+                        <div class="relay-grid">
+                            <article id="relay-light" class="relay-status relay-standby">
+                                <div class="relay-status-top">
+                                    <span class="relay-icon-shell"><i class="fa-solid fa-lightbulb"></i></span>
+                                    <span id="relay-light-state" class="relay-state-badge">STANDBY</span>
+                                </div>
+                                <div class="relay-name">Światło</div>
+                                <div id="relay-light-meta" class="relay-meta">Harmonogram</div>
+                                <div class="relay-quick-actions">
+                                    <button id="relay-light-toggle" class="btn btn-secondary relay-quick-btn" type="button">Przelacz</button>
+                                </div>
+                            </article>
+
+                            <article id="relay-filter" class="relay-status relay-standby">
+                                <div class="relay-status-top">
+                                    <span class="relay-icon-shell"><i class="fa-solid fa-filter"></i></span>
+                                    <span id="relay-filter-state" class="relay-state-badge">STANDBY</span>
+                                </div>
+                                <div class="relay-name">Filtr</div>
+                                <div id="relay-filter-meta" class="relay-meta">Harmonogram</div>
+                                <div class="relay-quick-actions">
+                                    <button id="relay-filter-toggle" class="btn btn-secondary relay-quick-btn" type="button">Przelacz</button>
+                                </div>
+                            </article>
+
+                            <article id="relay-heater" class="relay-status relay-standby">
+                                <div class="relay-status-top">
+                                    <span class="relay-icon-shell"><i class="fa-solid fa-temperature-half"></i></span>
+                                    <span id="relay-heater-state" class="relay-state-badge">STANDBY</span>
+                                </div>
+                                <div class="relay-name">Grzałka</div>
+                                <div id="relay-heater-meta" class="relay-meta">Czeka na próg</div>
+                            </article>
+
+                            <article id="relay-aeration" class="relay-status relay-standby">
+                                <div class="relay-status-top">
+                                    <span class="relay-icon-shell"><i class="fa-solid fa-wind"></i></span>
+                                    <span id="relay-aeration-state" class="relay-state-badge">STANDBY</span>
+                                </div>
+                                <div class="relay-name">Napowietrzanie</div>
+                                <div id="relay-aeration-meta" class="relay-meta">Harmonogram</div>
+                            </article>
+                        </div>
+                    </div>
+
+                    <div class="card glass dashboard-card schedule-panel">
+                        <div class="card-header compact-header">
+                            <span class="card-heading">Harmonogram dzisiaj</span>
+                            <button id="dashboard-edit-schedule-btn" class="btn btn-secondary btn-pill" type="button">Edytuj</button>
+                        </div>
+                        <div id="today-schedule-list" class="schedule-summary-list">
+                            <div class="schedule-summary-item">
+                                <span>Ładowanie danych</span>
+                                <strong>...</strong>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="card glass dashboard-card feeder-card">
+                        <span class="card-heading">Karmnik</span>
+                        <div class="feeder-orb">
+                            <button id="feed-now-btn" class="feed-now-btn" type="button">Karm teraz</button>
+                        </div>
+                        <span id="feed-next-label" class="feeder-note">Codziennie 18:00</span>
+                        <span id="feed-last-label" class="feeder-subnote">Ostatnie karmienie: brak danych</span>
+                        <button id="feeder-manage-btn" class="btn btn-secondary feeder-manage-btn" type="button">Zarządzaj</button>
+                    </div>
+
+                    <div class="card glass dashboard-card chart-wide temp-history-card">
+                        <div class="temp-chart-header">
+                            <span class="card-heading">Zakres temperatury</span>
+                            <span id="temperature-chart-meta" class="card-chip card-chip-accent">20 ostatnich pomiarow co 10 min</span>
+                        </div>
+
+                        <div class="temp-chart-shell">
+                            <div class="temp-chart-legend">
+                                <span><span class="legend-line legend-line-live"></span>Temperatura</span>
+                                <span><span class="legend-line legend-line-target"></span>Docelowa</span>
+                                <span><span class="legend-line legend-line-hysteresis"></span>Pasmo</span>
+                            </div>
+                            <div id="temperature-chart-summary" class="temp-chart-summary"></div>
+                            <div id="temperature-chart-note" class="temp-chart-note" hidden></div>
+                            <div id="temperature-chart-empty" class="temp-chart-empty">Oczekiwanie na historię temperatur ze sterownika...</div>
+                            <svg id="temperature-chart-svg" class="temp-line-chart" viewBox="0 0 960 320" preserveAspectRatio="xMidYMid meet" aria-label="Wykres temperatury"></svg>
+                            <div id="temperature-chart-tooltip" class="temp-chart-tooltip" hidden></div>
+                            <div class="temp-chart-axis">
+                                <span id="temperature-chart-start">Najstarszy pomiar</span>
+                                <span id="temperature-chart-end">Teraz</span>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </section>
+
+            <!-- Harmonogramy View -->
+            <section id="harmonogramy" class="view-section">
+                <div class="view-header">
+                    <h2>Harmonogramy</h2>
+                    <p>Zarządzaj cyklem dobowym wszystkich urządzeń akwarium.</p>
+                </div>
+                
+                <div class="timeline-container glass p-4">
+                    <h3 class="mh-2 mb-4">Grafik Pracy (24h)</h3>
+                    
+                    <div class="schedule-item" data-schedule-kind="range">
+                        <div class="schedule-icon"><i class="fa-regular fa-lightbulb" style="color: var(--accent-yellow);"></i></div>
+                        <div class="schedule-details">
+                            <div class="schedule-item-header" style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
+                                <div class="schedule-title" style="margin-bottom: 0;">Oświetlenie Główne</div>
+                                <select id="schedule-light-mode" class="form-control schedule-mode-select" style="width: auto; padding: 4px 8px; font-size: 12px; height: auto;">
+                                    <option value="harmonogram" selected>Harmonogram</option>
+                                    <option value="zawsze_wlaczone">Zawsze włączony</option>
+                                    <option value="zawsze_wylaczone">Zawsze wyłączony</option>
+                                </select>
+                            </div>
+                            <div class="schedule-bar-container" style="margin-bottom: 30px;">
+                                <div class="schedule-bar" style="background: var(--accent-yellow);"></div>
+                                <input type="time" id="schedule-light-start" class="time-pill schedule-time-start" style="position: absolute; top: 16px; transform: translateX(-50%); width: 75px;" value="10:00">
+                                <input type="time" id="schedule-light-end" class="time-pill schedule-time-end" style="position: absolute; top: 16px; transform: translateX(-50%); width: 75px;" value="21:30">
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="schedule-item mt-4" data-schedule-kind="range">
+                        <div class="schedule-icon"><i class="fa-solid fa-wind" style="color: var(--accent-white);"></i></div>
+                        <div class="schedule-details">
+                            <div class="schedule-item-header" style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
+                                <div class="schedule-title" style="margin-bottom: 0;">Napowietrzanie</div>
+                                <select id="schedule-air-mode" class="form-control schedule-mode-select" style="width: auto; padding: 4px 8px; font-size: 12px; height: auto;">
+                                    <option value="harmonogram" selected>Harmonogram</option>
+                                    <option value="zawsze_wlaczone">Zawsze włączony</option>
+                                    <option value="zawsze_wylaczone">Zawsze wyłączony</option>
+                                </select>
+                            </div>
+                            <div class="schedule-bar-container" style="margin-bottom: 30px;">
+                                <div class="schedule-bar" style="background: var(--accent-white);"></div>
+                                <input type="time" id="schedule-air-start" class="time-pill schedule-time-start" style="position: absolute; top: 16px; transform: translateX(-50%); width: 75px;" value="10:00">
+                                <input type="time" id="schedule-air-end" class="time-pill schedule-time-end" style="position: absolute; top: 16px; transform: translateX(-50%); width: 75px;" value="19:00">
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="schedule-item mt-4" data-schedule-kind="range">
+                        <div class="schedule-icon"><i class="fa-solid fa-filter" style="color: var(--accent-blue);"></i></div>
+                        <div class="schedule-details">
+                            <div class="schedule-item-header" style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
+                                <div class="schedule-title" style="margin-bottom: 0;">Filtracja</div>
+                                <select id="schedule-filter-mode" class="form-control schedule-mode-select" style="width: auto; padding: 4px 8px; font-size: 12px; height: auto;">
+                                    <option value="harmonogram" selected>Harmonogram</option>
+                                    <option value="zawsze_wlaczone">Zawsze włączony</option>
+                                    <option value="zawsze_wylaczone">Zawsze wyłączony</option>
+                                </select>
+                            </div>
+                            <div class="schedule-bar-container" style="margin-bottom: 30px;">
+                                <div class="schedule-bar" style="background: var(--accent-blue);"></div>
+                                <input type="time" id="schedule-filter-start" class="time-pill schedule-time-start" style="position: absolute; top: 16px; transform: translateX(-50%); width: 75px;" value="10:30">
+                                <input type="time" id="schedule-filter-end" class="time-pill schedule-time-end" style="position: absolute; top: 16px; transform: translateX(-50%); width: 75px;" value="20:30">
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="schedule-item mt-4">
+                        <div class="schedule-icon"><i class="fa-solid fa-fish" style="color: var(--accent-cyan);"></i></div>
+                        <div class="schedule-details">
+                            <div class="schedule-item-header" style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
+                                <div class="schedule-title" style="margin-bottom: 0;">Karmienie (Automatyczne)</div>
+                                <select id="schedule-feed-mode" class="form-control schedule-mode-select" style="width: auto; padding: 4px 8px; font-size: 12px; height: auto;">
+                                    <option value="wylaczone">Wyłączone</option>
+                                    <option value="codziennie" selected>Codziennie</option>
+                                    <option value="co_2_dni">Co 2 dni</option>
+                                    <option value="co_3_dni">Co 3 dni</option>
+                                </select>
+                            </div>
+                            <div class="schedule-bar-container" style="margin-bottom: 30px;">
+                                <div class="schedule-point" style="left: 75%; background: var(--accent-cyan);"></div>
+                                <input type="time" id="schedule-feed-time" class="time-pill schedule-time-point" style="position: absolute; top: 16px; transform: translateX(-50%); width: 75px;" value="18:00">
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="schedule-save-row" style="display: flex; gap: 14px; align-items: center; justify-content: space-between; flex-wrap: wrap; margin-top: 26px;">
+                        <div id="schedule-save-status" class="text-muted" style="font-size: 12px;">Zmiany harmonogramow wymagaja zapisania.</div>
+                        <button id="save-schedule-btn" class="btn btn-primary" type="button" style="padding: 12px 18px; border-radius: 12px;">
+                            <i class="fa-solid fa-floppy-disk"></i> Zapisz harmonogramy
+                        </button>
+                    </div>
+                </div>
+            </section>
+
+            <!-- Logi View -->
+            <section id="logi" class="view-section">
+                <div class="logs-header" style="display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 30px;">
+                    <div class="view-header" style="margin-bottom: 0;">
+                        <h2>Logi systemowe</h2>
+                        <p>Biezace logi aplikacji, komendy i wpisy krytyczne.</p>
+                    </div>
+                    <div class="logs-actions" style="display: flex; gap: 15px;">
+                        <button id="clear-logs-btn" class="btn btn-secondary" style="border-radius: 12px; padding: 10px 24px; font-weight: 500; font-size: 13px; background: rgba(255,255,255,0.03); border: 1px solid rgba(255,255,255,0.1);">Wyczysc widok</button>
+                        <button id="delete-critical-btn" class="btn btn-primary hover-danger-btn" type="button" style="background: rgba(239, 68, 68, 0.15); color: #ef4444; border: 1px solid rgba(239, 68, 68, 0.3); border-radius: 12px; padding: 10px 24px; font-weight: 500; font-size: 13px; transition: 0.2s;">Usun krytyczne</button>
+                    </div>
+                </div>
+                
+                <div class="logs-stats-grid" style="display: grid; grid-template-columns: repeat(2, 1fr); gap: 20px; margin-bottom: 30px;">
+                    <div class="card glass logs-stat-card" style="padding: 20px; border-radius: 16px;">
+                        <div style="font-size: 11px; font-weight: 600; color: var(--text-muted); margin-bottom: 10px; letter-spacing: 1px;">INFO</div>
+                        <div id="info-count" style="font-size: 28px; font-weight: 600; color: var(--accent-cyan);">2</div>
+                    </div>
+                    <div class="card glass logs-stat-card" style="padding: 20px; border-radius: 16px;">
+                        <div style="font-size: 11px; font-weight: 600; color: var(--text-muted); margin-bottom: 10px; letter-spacing: 1px;">KRYTYCZNYCH</div>
+                        <div id="critical-count" style="font-size: 28px; font-weight: 600; color: #ef4444;">0</div>
+                    </div>
+                </div>
+            
+                <div class="card glass logs-panel" style="padding: 20px; border-radius: 16px; min-height: 500px;">
+                    <div class="logs-toolbar" style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px;">
+                        <div class="logs-toolbar-primary" style="display: flex; gap: 10px; align-items: center;">
+                            <button id="logs-current-btn" class="btn btn-secondary active logs-tab-btn" style="padding: 8px 16px; border-radius: 12px; border: 1px solid rgba(6, 182, 212, 0.4); color: var(--accent-cyan); font-size: 13px; font-weight: 600; background: rgba(6, 182, 212, 0.1);">Biezace</button>
+                            <button id="logs-critical-btn" class="btn btn-secondary logs-tab-btn logs-tab-btn-critical" type="button" style="padding: 8px 16px; border-radius: 12px; border: 1px solid transparent; color: var(--text-main); font-size: 13px; font-weight: 600; transition: 0.2s;">Krytyczne</button>
+                            <span id="logs-status" class="logs-status" style="font-size: 13px; color: var(--text-muted); margin-left: 10px;">Brak odpowiedzi sterownika.</span>
+                        </div>
+                        <div class="logs-toolbar-secondary" style="display: flex; gap: 10px; align-items: center;">
+                            <input id="logs-search" class="logs-search-input" type="text" placeholder="Szukaj..." style="background: rgba(0,0,0,0.3); border: 1px solid var(--glass-border); border-radius: 8px; padding: 10px 16px; color: var(--text-main); font-size: 13px; width: 250px; outline: none;">
+                            <button id="download-logs-btn" class="btn btn-secondary logs-download-btn" style="padding: 10px 14px; border-radius: 8px; border: 1px solid var(--glass-border); background: rgba(255,255,255,0.03);" title="Pobierz logi"><i class="fa-solid fa-download" style="color: var(--accent-cyan);"></i></button>
+                        </div>
+                    </div>
+
+                    <div class="logs-pagination-row">
+                        <span id="logs-page-info" class="logs-page-info">Strona 1 / 1</span>
+                        <div class="logs-pagination-actions">
+                            <button id="logs-prev-btn" class="btn btn-secondary logs-page-btn" type="button">Poprzednia</button>
+                            <button id="logs-next-btn" class="btn btn-secondary logs-page-btn" type="button">Nastepna</button>
+                        </div>
+                    </div>
+            
+                    <div id="logs-list" class="logs-list" style="display: flex; flex-direction: column; gap: 10px;">
+                        <div class="logs-list-row" style="background: rgba(255,255,255,0.02); border: 1px solid rgba(255,255,255,0.05); border-radius: 8px; padding: 14px 20px; display: flex; align-items: center; font-size: 13px;">
+                            <span class="logs-level logs-level-info" style="color: var(--accent-cyan); font-weight: 600; width: 80px;">INFO</span>
+                            <span class="logs-time" style="color: var(--text-muted); width: 100px;">17:54:08</span>
+                            <span class="logs-message" style="color: var(--text-main);">Po uruchomieniu panel pobiera logi firmware przez HTTP i odswieza je strumieniem zdarzen.</span>
+                        </div>
+                        <div class="logs-list-row" style="background: rgba(255,255,255,0.02); border: 1px solid rgba(255,255,255,0.05); border-radius: 8px; padding: 14px 20px; display: flex; align-items: center; font-size: 13px;">
+                            <span class="logs-level logs-level-info" style="color: var(--accent-cyan); font-weight: 600; width: 80px;">INFO</span>
+                            <span class="logs-time" style="color: var(--text-muted); width: 100px;">17:54:08</span>
+                            <span class="logs-message" style="color: var(--text-main);">Panel WWW gotowy. Po polaczeniu z urzadzeniem zobaczysz tu biezace logi runtime.</span>
+                        </div>
+                    </div>
+                </div>
+            </section>
+
+            <section id="wykresy" class="view-section">
+                <section class="temp-summary-strip" id="temp-summary">
+                    <div class="summary-card summary-current glass">
+                        <div class="summary-label">Aktualna</div>
+                        <div class="summary-value" id="summary-current">--.-&deg;C</div>
+                        <div class="summary-trend" id="summary-trend">
+                            <svg viewBox="0 0 16 16" width="14" height="14"><path d="M8 3v10M8 3l-3 3M8 3l3 3" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+                            <span>--</span>
+                        </div>
+                    </div>
+                    <div class="summary-card summary-target glass">
+                        <div class="summary-label">Cel</div>
+                        <div class="summary-value" id="summary-target">25.0&deg;C</div>
+                        <div class="summary-band" id="summary-band">&plusmn;0.5&deg;C</div>
+                    </div>
+                    <div class="summary-card summary-min glass">
+                        <div class="summary-label">Min (24h)</div>
+                        <div class="summary-value" id="summary-min">--.-&deg;C</div>
+                    </div>
+                    <div class="summary-card summary-max glass">
+                        <div class="summary-label">Max (24h)</div>
+                        <div class="summary-value" id="summary-max">--.-&deg;C</div>
+                    </div>
+                </section>
+
+                <section class="chart-section">
+                    <div class="chart-card glass">
+                        <div class="chart-header">
+                            <div class="chart-title-group">
+                                <h2 class="chart-title">Przebieg Temperatury</h2>
+                                <span class="chart-subtitle" id="chart-subtitle">Ostatnie 3 godziny</span>
+                            </div>
+                            <div class="chart-controls">
+                                <button class="fullscreen-btn" id="fullscreen-btn" type="button" title="Pelny ekran">
+                                    <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M8 3H5a2 2 0 0 0-2 2v3M21 8V5a2 2 0 0 0-2-2h-3M3 16v3a2 2 0 0 0 2 2h3M16 21h3a2 2 0 0 0 2-2v-3"/></svg>
+                                </button>
+                                <div class="range-selector" id="range-selector">
+                                    <button class="range-btn" data-range="1h" type="button">1H</button>
+                                    <button class="range-btn active" data-range="3h" type="button">3H</button>
+                                    <button class="range-btn" data-range="6h" type="button">6H</button>
+                                    <button class="range-btn" data-range="12h" type="button">12H</button>
+                                    <button class="range-btn" data-range="24h" type="button">24H</button>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="chart-legend">
+                            <span class="legend-item">
+                                <span class="legend-swatch legend-swatch-live"></span>
+                                Temperatura
+                            </span>
+                            <span class="legend-item">
+                                <span class="legend-swatch legend-swatch-target"></span>
+                                Cel
+                            </span>
+                            <span class="legend-item">
+                                <span class="legend-swatch legend-swatch-band"></span>
+                                Pasmo histerezy
+                            </span>
+                        </div>
+                        <div class="chart-container" id="main-chart-container">
+                            <canvas id="main-chart-canvas"></canvas>
+                            <div class="chart-tooltip" id="chart-tooltip" hidden>
+                                <div class="tooltip-time"></div>
+                                <div class="tooltip-value"></div>
+                            </div>
+                            <div class="swipe-hint" id="swipe-hint">
+                                <span>&larr; Przesun aby zmienic zakres &rarr;</span>
+                            </div>
+                        </div>
+                        <div class="chart-time-axis" id="chart-time-axis"></div>
+                    </div>
+                </section>
+
+                <section class="mini-charts-row">
+                    <div class="mini-chart-card glass" id="mini-variability">
+                        <div class="mini-chart-header">
+                            <span class="mini-chart-title">Zmiennosc</span>
+                            <span class="mini-chart-value" id="mini-var-value">--</span>
+                        </div>
+                        <canvas class="mini-chart-canvas" id="mini-var-canvas"></canvas>
+                    </div>
+                    <div class="mini-chart-card glass" id="mini-deviation">
+                        <div class="mini-chart-header">
+                            <span class="mini-chart-title">Odchylenie od celu</span>
+                            <span class="mini-chart-value" id="mini-dev-value">--</span>
+                        </div>
+                        <canvas class="mini-chart-canvas" id="mini-dev-canvas"></canvas>
+                    </div>
+                    <div class="mini-chart-card glass" id="mini-rate">
+                        <div class="mini-chart-header">
+                            <span class="mini-chart-title">Tempo zmian</span>
+                            <span class="mini-chart-value" id="mini-rate-value">--</span>
+                        </div>
+                        <canvas class="mini-chart-canvas" id="mini-rate-canvas"></canvas>
+                    </div>
+                </section>
+
+                <section class="heatmap-section">
+                    <div class="heatmap-card glass">
+                        <div class="heatmap-header">
+                            <h2 class="chart-title">Mapa Ciepla - 7 Dni x 24H</h2>
+                            <div class="heatmap-scale">
+                                <span class="heatmap-scale-label">Zimno</span>
+                                <div class="heatmap-gradient"></div>
+                                <span class="heatmap-scale-label">Cieplo</span>
+                            </div>
+                        </div>
+                        <div class="heatmap-legend-extra">
+                            <span class="hm-legend-item"><span class="hm-legend-border" style="border-color: #3b82f6; box-shadow: 0 0 4px #3b82f6;"></span>Min</span>
+                            <span class="hm-legend-item"><span class="hm-legend-border" style="border-color: #fbbf24; box-shadow: 0 0 4px #fbbf24;"></span>Max</span>
+                            <span class="hm-legend-item"><span class="hm-legend-now"></span>Teraz</span>
+                        </div>
+                        <div class="heatmap-container" id="heatmap-container">
+                            <canvas id="heatmap-canvas"></canvas>
+                            <div class="heatmap-tooltip" id="heatmap-tooltip" hidden>
+                                <div class="hm-tip-day"></div>
+                                <div class="hm-tip-val"></div>
+                            </div>
+                        </div>
+                    </div>
+                </section>
+
+                <section class="comparison-section">
+                    <div class="comparison-card glass">
+                        <div class="comparison-header">
+                            <h2 class="chart-title">Porownanie Dni</h2>
+                            <div class="comparison-legend" id="comparison-legend"></div>
+                        </div>
+                        <div class="comparison-container" id="comparison-container">
+                            <canvas id="comparison-canvas"></canvas>
+                        </div>
+                    </div>
+                </section>
+
+                <section class="history-section">
+                    <div class="history-card glass">
+                        <div class="history-header">
+                            <h2 class="chart-title">Historia Pomiarow</h2>
+                            <button class="btn-export" id="btn-export" type="button">
+                                <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 4v10"/><path d="m8 10 4 4 4-4"/><path d="M5 19h14"/></svg>
+                                Eksportuj CSV
+                            </button>
+                        </div>
+                        <div class="history-table-wrapper" id="history-table-wrapper">
+                            <table class="history-table" id="history-table">
+                                <thead>
+                                    <tr>
+                                        <th>Czas</th>
+                                        <th>Temperatura</th>
+                                        <th>Trend</th>
+                                        <th>Odchylenie</th>
+                                        <th>Status</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="history-tbody"></tbody>
+                            </table>
+                        </div>
+                    </div>
+                </section>
+            </section>
+
+
+            <!-- OTA View -->
+            <section id="ota" class="view-section">
+                <div class="view-header">
+                    <h2>OTA Aktualizacja</h2>
+                    <p>Wgraj nowy plik .bin firmware'u do mikrokontrolera ESP32-S3.</p>
+                </div>
+                
+                <div class="card glass ota-card" style="max-width: 640px; margin: 0 auto; padding: 50px 40px; border: 1px solid rgba(255,255,255,0.05); border-radius: 24px; box-shadow: 0 20px 40px rgba(0,0,0,0.3);">
+                    <div class="card-body" style="text-align: center;">
+                        <div class="ota-icon-shell" style="width: 80px; height: 80px; background: rgba(59, 130, 246, 0.1); border-radius: 50%; display: flex; align-items: center; justify-content: center; margin: 0 auto 24px auto;">
+                            <i class="fa-solid fa-cloud-arrow-up fa-2x" style="color: var(--accent-blue);"></i>
+                        </div>
+                        
+                        <h3 class="mb-2" style="font-size: 24px; font-weight: 600; color: #f8fafc;">Instalacja nowej wersji</h3>
+                        <p class="text-muted mb-4" style="font-size: 14px; max-width: 400px; margin-left: auto; margin-right: auto; line-height: 1.5;">Prześlij skompilowany plik <code style="background: rgba(255,255,255,0.05); padding: 2px 6px; border-radius: 4px; font-family: monospace; color: var(--accent-cyan);">.bin</code> aby zaktualizować oprogramowanie bazowe mikrokontrolera ESP32-S3 sterującego akwarium.</p>
+                        
+                        <div id="firmware-upload-wrapper" class="file-upload-wrapper file-upload-interactive mb-4" role="button" tabindex="0" style="border: 2px dashed rgba(255,255,255,0.15); border-radius: 16px; padding: 40px 20px; transition: border-color 0.3s, background 0.3s; cursor: pointer; background: rgba(0,0,0,0.2);">
+                            <input type="file" id="firmware-file" accept=".bin" style="display: none;">
+                            <i class="fa-solid fa-file-arrow-up mb-3" style="font-size: 32px; color: var(--text-muted);"></i>
+                            <div style="font-size: 16px; font-weight: 500; color: var(--text-main); margin-bottom: 8px;">Przeciągnij plik tutaj lub kliknij</div>
+                            <div style="font-size: 12px; color: var(--text-muted);">Maksymalny rozmiar pliku: 4 MB</div>
+                            <div id="firmware-file-name" style="margin-top: 10px; font-size: 12px; color: var(--accent-cyan); font-family: monospace;">Nie wybrano pliku .bin</div>
+                        </div>
+
+                        <div id="ota-progress" class="ota-progress-card" style="display: none; width: 100%; text-align: left; background: rgba(0,0,0,0.2); padding: 20px; border-radius: 16px; border: 1px solid rgba(255,255,255,0.05); margin-bottom: 24px;">
+                            <div class="progress-label mb-2 ota-progress-label" style="display: flex; justify-content: space-between; font-size: 14px; font-weight: 500;">
+                                <span style="color: var(--accent-cyan);">Wgrywanie aktualizacji... <i class="fa-solid fa-circle-notch fa-spin ml-2"></i></span>
+                                <span id="ota-percent" style="color: var(--text-main);">0%</span>
+                            </div>
+                            <div class="progress-bar mb-3" style="height: 8px; background: rgba(255,255,255,0.1); border-radius: 4px; overflow: hidden;">
+                                <div class="progress-fill" id="ota-fill" style="width: 0%; height: 100%; background: linear-gradient(90deg, var(--accent-blue), var(--accent-cyan)); border-radius: 4px; transition: width 0.3s ease;"></div>
+                            </div>
+                            <p class="text-muted" style="font-size: 12px; margin: 0;"><i class="fa-solid fa-triangle-exclamation" style="color: var(--accent-yellow); margin-right: 6px;"></i> Proszę nie wyłączać urządzenia ani nie odświeżać strony w trakcie aktualizacji.</p>
+                        </div>
+                        
+                        <button class="btn btn-primary w-100 ota-upload-btn" id="upload-btn" type="button" disabled style="padding: 14px; font-size: 15px; background: linear-gradient(135deg, var(--accent-blue), #2563eb); border: none; font-weight: 600; text-transform: uppercase; letter-spacing: 1px; border-radius: 12px; transition: 0.3s; opacity: 0.5;">
+                            <i class="fa-solid fa-microchip" style="margin-right: 8px;"></i> Rozpocznij Aktualizację
+                        </button>
+                    </div>
+                </div>
+            </section>
+
+            <!-- Ustawienia View -->
+            <section id="ustawienia" class="view-section">
+                <div class="view-header">
+                    <h2>Ustawienia Systemu</h2>
+                    <p>Konfiguracja urządzenia, sieci WiFi i preferencji sprzętowych.</p>
+                </div>
+                
+                <div class="dashboard-grid">
+                    <!-- WiFi config -->
+                    <div class="card glass">
+                        <div class="card-header">
+                            <div class="card-title">
+                                <i class="fa-solid fa-wifi" style="color: var(--success-color);"></i>
+                                <h2>Sieć WiFi</h2>
+                            </div>
+                        </div>
+                        <div class="card-body form-group">
+                            <label>Aktywne SSID (Station):</label>
+                            <input id="settings-active-sta-ssid" type="text" class="form-control mb-3" value="-" disabled>
+                            
+                            <label>Przydzielony Adres IP:</label>
+                            <input id="settings-network-ip" type="text" class="form-control mb-3" value="-" disabled>
+                            
+                            <label>Docelowe SSID STA:</label>
+                            <input id="settings-sta-ssid" type="text" class="form-control mb-3" maxlength="32" value="">
+
+                            <label>Nowe haslo STA:</label>
+                            <input id="settings-sta-password" type="password" class="form-control mb-3" maxlength="63" value="" placeholder="Pozostaw puste, aby nie zmieniac">
+
+                            <label>Nazwa AP awaryjnego:</label>
+                            <input id="settings-ap-ssid" type="text" class="form-control mb-3" maxlength="31" value="">
+
+                            <label>Nowe haslo AP:</label>
+                            <input id="settings-ap-password" type="password" class="form-control mb-3" maxlength="63" value="" placeholder="Pozostaw puste, aby nie zmieniac">
+
+                            <button id="save-network-btn" class="btn btn-secondary w-100" type="button"><i class="fa-solid fa-floppy-disk"></i> Zapisz Ustawienia WiFi</button>
+                            <div class="wifi-session-panel">
+                                <div class="wifi-session-copy">
+                                    <strong id="settings-network-session-label">Radio OFF</strong>
+                                    <span id="settings-network-session-status">Wlaczenie sesji probuje STA, a potem awaryjnie uruchamia AP.</span>
+                                </div>
+                                <div class="grid-2-col wifi-session-actions">
+                                    <button id="start-wifi-session-btn" class="btn btn-primary w-100" type="button">Wlacz WiFi</button>
+                                    <button id="stop-wifi-session-btn" class="btn btn-secondary w-100" type="button">Wylacz WiFi</button>
+                                </div>
+                            </div>
+                            <div id="settings-network-status" class="text-muted" style="margin-top: 10px; font-size: 12px;">Zmiany SSID i hasel sa stosowane przy kolejnej sesji WiFi.</div>
+                        </div>
+                    </div>
+                    
+                    <!-- Temp config -->
+                    <div class="card glass">
+                        <div class="card-header" style="justify-content: space-between; align-items: center;">
+                            <div class="card-title">
+                                <i class="fa-solid fa-temperature-half" style="color: var(--accent-orange);"></i>
+                                <h2>Automatyka Temp.</h2>
+                            </div>
+                            <label class="switch" title="Włącz/Wyłącz Regulację">
+                                <input id="settings-temp-enabled" type="checkbox" checked>
+                                <span class="slider round"></span>
+                            </label>
+                        </div>
+                        <div class="card-body form-group">
+                            <div class="grid-2-col mb-4">
+                                <div>
+                                    <label>Cel Temp. (°C):</label>
+                                    <input id="settings-temp-target" type="number" class="form-control" step="1" min="18" max="30" value="25">
+                                </div>
+                                <div>
+                                    <label>Histereza (°C):</label>
+                                    <input id="settings-temp-hyst" type="number" class="form-control" step="0.1" min="0.1" max="5" value="0.5">
+                                </div>
+                            </div>
+                            
+                            <button id="save-temperature-btn" class="btn btn-primary w-100" type="button"><i class="fa-solid fa-floppy-disk"></i> Zapisz Ustawienia Temp.</button>
+                            <div id="settings-temp-status" class="text-muted" style="margin-top: 10px; font-size: 12px;">Sterowanie grzalka jest synchronizowane ze sterownikiem.</div>
+                        </div>
+                    </div>
+
+                    <!-- System Info -->
+                    <div class="card glass">
+                        <div class="card-header">
+                            <div class="card-title">
+                                <i class="fa-solid fa-circle-info" style="color: var(--accent-blue);"></i>
+                                <h2>Diagnostyka</h2>
+                            </div>
+                        </div>
+                        <div class="card-body info-list-body" style="gap: 12px;">
+                            <div class="info-list-row" style="background: rgba(255,255,255,0.02); border: 1px solid rgba(255,255,255,0.05); border-radius: 8px; padding: 12px 16px; display: flex; justify-content: space-between; align-items: center;">
+                                <span class="text-muted" style="font-size: 13px;">Wersja Oprogramowania:</span>
+                                <span id="system-firmware-version" style="font-weight: 600; color: var(--text-main); font-size: 13px;">v--</span>
+                            </div>
+                            <div class="info-list-row" style="background: rgba(255,255,255,0.02); border: 1px solid rgba(255,255,255,0.05); border-radius: 8px; padding: 12px 16px; display: flex; justify-content: space-between; align-items: center;">
+                                <span class="text-muted" style="font-size: 13px;">Power mode:</span>
+                                <span id="system-power-mode" style="font-weight: 600; color: var(--text-main); font-size: 13px;">active</span>
+                            </div>
+                            <div class="info-list-row" style="background: rgba(255,255,255,0.02); border: 1px solid rgba(255,255,255,0.05); border-radius: 8px; padding: 12px 16px; display: flex; justify-content: space-between; align-items: center;">
+                                <span class="text-muted" style="font-size: 13px;">Czas pracy (Uptime):</span>
+                                <span id="system-uptime" style="font-weight: 600; color: var(--text-main); font-size: 13px;">--</span>
+                            </div>
+                            <div class="info-list-row" style="background: rgba(255,255,255,0.02); border: 1px solid rgba(255,255,255,0.05); border-radius: 8px; padding: 12px 16px; display: flex; justify-content: space-between; align-items: center;">
+                                <span class="text-muted" style="font-size: 13px;">Reset:</span>
+                                <span id="system-reset-reason" style="font-weight: 600; color: var(--text-main); font-size: 13px;">--</span>
+                            </div>
+                            <div class="info-list-row" style="background: rgba(255,255,255,0.02); border: 1px solid rgba(255,255,255,0.05); border-radius: 8px; padding: 12px 16px; display: flex; justify-content: space-between; align-items: center;">
+                                <span class="text-muted" style="font-size: 13px;">Liczba restartow:</span>
+                                <span id="system-reset-count" style="font-weight: 600; color: var(--text-main); font-size: 13px;">0</span>
+                            </div>
+                            <div class="info-list-row" style="background: rgba(255,255,255,0.02); border: 1px solid rgba(255,255,255,0.05); border-radius: 8px; padding: 12px 16px; display: flex; justify-content: space-between; align-items: center;">
+                                <span class="text-muted" style="font-size: 13px;">Sleep blockers:</span>
+                                <span id="system-sleep-blockers" style="font-weight: 600; color: var(--text-main); font-size: 13px;">--</span>
+                            </div>
+                            <div class="info-list-row" style="background: rgba(255,255,255,0.02); border: 1px solid rgba(255,255,255,0.05); border-radius: 8px; padding: 12px 16px; display: flex; justify-content: space-between; align-items: center;">
+                                <span class="text-muted" style="font-size: 13px;">Status NTP:</span>
+                                <span id="system-ntp-status" style="font-weight: 600; color: var(--text-main); font-size: 13px;">--</span>
+                            </div>
+                            <div class="info-list-row" style="background: rgba(255,255,255,0.02); border: 1px solid rgba(255,255,255,0.05); border-radius: 8px; padding: 12px 16px; display: flex; justify-content: space-between; align-items: center;">
+                                <span class="text-muted" style="font-size: 13px;">Siec / RSSI:</span>
+                                <span id="system-network-quality" style="font-weight: 600; color: var(--text-main); font-size: 13px;">--</span>
+                            </div>
+                            <div class="info-list-row" style="background: rgba(255,255,255,0.02); border: 1px solid rgba(255,255,255,0.05); border-radius: 8px; padding: 12px 16px; display: flex; justify-content: space-between; align-items: center;">
+                                <span class="text-muted" style="font-size: 13px;">AP auto-stop:</span>
+                                <span id="system-ap-idle" style="font-weight: 600; color: var(--text-main); font-size: 13px;">--</span>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Time Setup -->
+                    <div class="card glass">
+                        <div class="card-header">
+                            <div class="card-title">
+                                <i class="fa-solid fa-clock" style="color: var(--accent-magenta);"></i>
+                                <h2>Ustawienia Zegara RTC</h2>
+                            </div>
+                        </div>
+                        <div class="card-body form-group">
+                            <label>Aktualny czas urzadzenia (RTC/sterownik):</label>
+                            <input type="text" id="settings-device-datetime" class="form-control mb-2" value="Oczekiwanie na polaczenie ze sterownikiem..." disabled>
+                            <div id="settings-clock-status" class="text-muted" style="font-size: 12px; margin-bottom: 12px;">Czas urzadzenia jest pobierany automatycznie po polaczeniu.</div>
+                            
+                            <div class="grid-2-col">
+                                <button id="sync-ntp-btn" class="btn btn-secondary w-100" type="button" style="padding: 10px 14px; font-size: 13px;"><i class="fa-solid fa-arrows-rotate"></i> Synch. z NTP</button>
+                                <button id="sync-browser-time-btn" class="btn btn-secondary w-100" type="button" style="padding: 10px 14px; font-size: 13px;"><i class="fa-solid fa-laptop"></i> Pobierz Czas Przeglądarki</button>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- System actions -->
+                    <div class="card glass span-2">
+                        <div class="card-header">
+                            <div class="card-title">
+                                <i class="fa-solid fa-microchip" style="color: var(--danger-color);"></i>
+                                <h2>Zarządzanie Urządzeniem</h2>
+                            </div>
+                        </div>
+                        <div class="card-body device-actions-body" style="gap: 15px;">
+                            <div class="device-actions-copy" style="margin-bottom: 5px;">
+                                <p style="font-size: 13px; color: var(--text-muted); line-height: 1.5; max-width: 700px;">
+                                    <strong>Restart ESP32</strong> wymusza ponowne uruchomienie systemu z zachowaniem wszystkich ustawień i harmonogramów w uPamięci (NVS).<br>
+                                    <strong>Przywrócenie Ustawień Fabrycznych</strong> (hard reset) trwale kasuje wszystkie dane na urządzeniu (w tym dane logowania WiFi AP oraz ustawioną automatykę temp/karmnika).
+                                </p>
+                            </div>
+                            <div class="grid-2-col device-actions-grid">
+                                <button id="restart-device-btn" class="btn btn-secondary w-100" type="button" style="padding: 14px; font-size: 14px;"><i class="fa-solid fa-rotate-right"></i> Zrestartuj Sterownik</button>
+                                <button id="factory-reset-btn" class="btn btn-primary outline w-100" type="button" style="color: #ef4444; border-color: rgba(239, 68, 68, 0.4); padding: 14px; background: rgba(239, 68, 68, 0.05); font-size: 14px;"><i class="fa-solid fa-triangle-exclamation"></i> Przywróć Ustawienia Fabryczne</button>
+                            </div>
+                            <div id="device-actions-status" class="text-muted" style="font-size: 12px;">Akcje administracyjne wymagaja potwierdzenia.</div>
+                        </div>
+                    </div>
+                </div>
+            </section>
+        </main>
+    </div>
+
+    <!-- Feedback Modal -->
+    <div class="overlay" id="feed-modal">
+        <div class="modal glass">
+            <div class="modal-content">
+                <i class="fa-solid fa-spinner fa-spin fa-2xl" id="modal-icon" style="color: var(--accent-cyan); margin-bottom: 20px;"></i>
+                <h3 id="modal-text">Trwa karmienie...</h3>
+                <p id="modal-subtext">Sensor położenia w trakcie odczytu</p>
+            </div>
+        </div>
+    </div>
+
+    <div class="overlay" id="oled-save-overlay">
+        <div class="oled-save-modal glass">
+            <div class="oled-save-screen" aria-hidden="true">
+                <div class="oled-save-screen-inner">
+                    <div class="oled-save-scanline"></div>
+                    <div class="oled-save-grid"></div>
+                    <div class="oled-save-label">OLED SAVE</div>
+                    <div class="oled-save-bars">
+                        <span class="oled-save-bar"></span>
+                        <span class="oled-save-bar"></span>
+                        <span class="oled-save-bar"></span>
+                        <span class="oled-save-bar"></span>
+                    </div>
+                    <div class="oled-save-dots">
+                        <span></span>
+                        <span></span>
+                        <span></span>
+                    </div>
+                </div>
+            </div>
+            <h3 id="oled-save-title">Zapisywanie danych</h3>
+            <p id="oled-save-subtext">Sterownik synchronizuje konfiguracje i pokazuje zapis na OLED.</p>
+        </div>
+    </div>
+
+    <div class="fullscreen-overlay" id="fullscreen-overlay" hidden>
+        <div class="fullscreen-header">
+            <h2>Przebieg Temperatury</h2>
+            <button class="fullscreen-close-btn" id="fullscreen-close-btn" type="button">
+                <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><path d="M18 6L6 18M6 6l12 12"/></svg>
+            </button>
+        </div>
+        <div class="fullscreen-chart-container" id="fullscreen-chart-container">
+            <canvas id="fullscreen-chart-canvas"></canvas>
+            <div class="chart-tooltip" id="fullscreen-tooltip" hidden>
+                <div class="tooltip-time"></div>
+                <div class="tooltip-value"></div>
+            </div>
+        </div>
+        <div class="fullscreen-range-selector" id="fullscreen-range-selector">
+            <button class="range-btn" data-range="1h" type="button">1H</button>
+            <button class="range-btn active" data-range="3h" type="button">3H</button>
+            <button class="range-btn" data-range="6h" type="button">6H</button>
+            <button class="range-btn" data-range="12h" type="button">12H</button>
+            <button class="range-btn" data-range="24h" type="button">24H</button>
+        </div>
+        <div class="chart-time-axis fullscreen-time-axis" id="fullscreen-time-axis"></div>
+    </div>
+
+    <script src="chart-engine.js?v=20260415a"></script>
+    <script src="charts.js?v=20260415a"></script>
+    <script src="app-core.js?v=20260413e"></script>
+    <script src="logs.js?v=20260413e"></script>
+    <script src="settings.js?v=20260413e"></script>
+    <script src="schedules.js?v=20260413e"></script>
+    <script src="dashboard.js?v=20260413e"></script>
+    <script src="ota.js?v=20260413e"></script>
+    <script src="app-init.js?v=20260413e"></script>
+</body>
+</html>

@@ -1,0 +1,540 @@
+<!doctype html>
+<html lang="pl">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>AquaSync Settings</title>
+  <link rel="stylesheet" href="/vendor/tailwind.min.css">
+  <script defer src="/vendor/alpine.min.js"></script>
+  <style>
+    [x-cloak] { display: none !important; }
+    body {
+      background:
+        linear-gradient(180deg, rgba(6, 16, 31, 0.98), rgba(3, 7, 18, 1)),
+        repeating-linear-gradient(90deg, rgba(34, 211, 238, 0.04) 0 1px, transparent 1px 56px);
+    }
+    input[type="time"]::-webkit-calendar-picker-indicator { filter: invert(1); opacity: 0.8; }
+    input[type="range"] { accent-color: #22d3ee; }
+  </style>
+</head>
+<body class="min-h-screen text-slate-100 antialiased">
+  <main x-data="settingsApp()" x-init="init()" x-cloak class="mx-auto flex w-full max-w-7xl flex-col gap-5 px-4 py-5 sm:px-6 lg:px-8">
+    <header class="flex flex-col gap-4 border-b border-line pb-4 lg:flex-row lg:items-end lg:justify-between">
+      <div>
+        <a href="/" class="mb-3 inline-flex items-center gap-2 rounded-panel border border-line px-3 py-2 text-sm text-slate-300 hover:border-cyan hover:text-cyan">
+          <span aria-hidden="true">&larr;</span>
+          Dashboard
+        </a>
+        <h1 class="text-3xl font-semibold tracking-tight text-white">Ustawienia</h1>
+        <p class="mt-1 text-sm text-slate-400" x-text="clockLabel"></p>
+      </div>
+      <div class="flex flex-wrap items-center gap-2">
+        <span class="rounded-panel border px-3 py-2 text-sm" :class="online ? 'border-reef/50 text-reef' : 'border-amber/50 text-amber'" x-text="connectionLabel"></span>
+        <button type="button" @click="refresh()" class="rounded-panel border border-line px-4 py-2 text-sm font-medium text-slate-200 hover:border-cyan hover:text-cyan">Odswiez</button>
+        <button type="button" @click="save()" :disabled="saving" class="rounded-panel bg-cyan px-4 py-2 text-sm font-semibold text-slate-950 disabled:cursor-wait disabled:opacity-60">
+          <span x-text="saving ? 'Zapisywanie...' : 'Zapisz calosc'"></span>
+        </button>
+      </div>
+    </header>
+
+    <nav class="grid grid-cols-2 gap-2 sm:grid-cols-4 lg:grid-cols-7">
+      <template x-for="tab in tabs" :key="tab.id">
+        <button type="button" @click="activeTab = tab.id" class="rounded-panel border px-3 py-2 text-left text-sm transition"
+          :class="activeTab === tab.id ? 'border-cyan bg-cyan/10 text-cyan' : 'border-line bg-panel/70 text-slate-300 hover:border-slate-500'">
+          <span class="block text-xs uppercase tracking-wide text-slate-500" x-text="tab.kicker"></span>
+          <span class="font-medium" x-text="tab.label"></span>
+        </button>
+      </template>
+    </nav>
+
+    <section x-show="activeTab === 'schedules'" class="grid gap-4 lg:grid-cols-[minmax(0,1.45fr)_minmax(320px,0.8fr)]">
+      <div class="rounded-panel border border-line bg-panel/80 p-4">
+        <div class="mb-4 flex flex-wrap items-center justify-between gap-3">
+          <h2 class="text-lg font-semibold">Harmonogramy dobowe</h2>
+          <div class="flex gap-3 text-xs text-slate-400">
+            <span>00:00</span><span>06:00</span><span>12:00</span><span>18:00</span><span>24:00</span>
+          </div>
+        </div>
+        <div class="space-y-4">
+          <template x-for="row in scheduleRows" :key="row.key">
+            <article class="rounded-panel border border-line bg-ink/70 p-3">
+              <div class="mb-3 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                <div class="flex items-center gap-3">
+                  <span class="flex h-8 w-8 items-center justify-center rounded-panel border text-sm font-bold" :style="`border-color:${row.color};color:${row.color}`" x-text="row.short"></span>
+                  <div>
+                    <h3 class="font-semibold" x-text="row.label"></h3>
+                    <p class="text-xs text-slate-400" x-text="rowSummary(row)"></p>
+                  </div>
+                </div>
+                <div class="grid grid-cols-3 rounded-panel border border-line p-1 text-xs">
+                  <template x-for="mode in modeOptionsFor(row)" :key="mode.value">
+                    <button type="button" @click="setMode(row, mode.value)" class="rounded px-2 py-1 font-medium"
+                      :class="String(row.mode) === String(mode.value) ? 'bg-white text-slate-950' : 'text-slate-400 hover:text-white'"
+                      x-text="mode.label"></button>
+                  </template>
+                </div>
+              </div>
+
+              <div class="relative h-8 rounded-panel border border-line bg-slate-950/70">
+                <div class="absolute inset-x-0 top-1/2 h-px bg-slate-700"></div>
+                <template x-for="tick in [0,25,50,75,100]" :key="tick">
+                  <div class="absolute top-1 h-6 w-px bg-slate-700" :style="`left:${tick}%`"></div>
+                </template>
+                <template x-for="segment in timelineSegments(row)" :key="`${row.key}-${segment.left}-${segment.width}`">
+                  <div class="absolute top-2 h-4 rounded" :style="`left:${segment.left}%;width:${segment.width}%;background:${row.color}`"></div>
+                </template>
+                <template x-if="row.type === 'point' && Number(row.mode) !== 0">
+                  <div class="absolute top-1/2 h-5 w-5 -translate-x-1/2 -translate-y-1/2 rounded-full border-2 border-slate-950" :style="`left:${timePercent(row.time)}%;background:${row.color}`"></div>
+                </template>
+              </div>
+
+              <div class="mt-3 grid gap-3 sm:grid-cols-2" x-show="row.type === 'range' && Number(row.mode) === 0">
+                <label class="text-xs text-slate-400">Start
+                  <input type="time" x-model="row.start" step="300" class="mt-1 w-full rounded-panel border border-line bg-slate-950 px-3 py-2 text-sm text-white">
+                </label>
+                <label class="text-xs text-slate-400">Koniec
+                  <input type="time" x-model="row.end" step="300" class="mt-1 w-full rounded-panel border border-line bg-slate-950 px-3 py-2 text-sm text-white">
+                </label>
+              </div>
+              <div class="mt-3" x-show="row.type === 'point' && Number(row.mode) !== 0">
+                <label class="text-xs text-slate-400">Godzina
+                  <input type="time" x-model="row.time" step="300" class="mt-1 w-full rounded-panel border border-line bg-slate-950 px-3 py-2 text-sm text-white">
+                </label>
+              </div>
+            </article>
+          </template>
+        </div>
+      </div>
+
+      <aside class="rounded-panel border border-line bg-panel/80 p-4">
+        <h2 class="text-lg font-semibold">Podglad doby</h2>
+        <div class="mt-4 space-y-3">
+          <template x-for="row in scheduleRows" :key="`${row.key}-preview`">
+            <div>
+              <div class="mb-1 flex justify-between text-xs text-slate-400">
+                <span x-text="row.label"></span>
+                <span x-text="rowSummary(row)"></span>
+              </div>
+              <div class="relative h-2 rounded bg-slate-800">
+                <template x-for="segment in timelineSegments(row)" :key="`${row.key}-mini-${segment.left}`">
+                  <div class="absolute h-2 rounded" :style="`left:${segment.left}%;width:${segment.width}%;background:${row.color}`"></div>
+                </template>
+              </div>
+            </div>
+          </template>
+        </div>
+      </aside>
+    </section>
+
+    <section x-show="activeTab === 'temperature'" class="grid gap-4 lg:grid-cols-2">
+      <div class="rounded-panel border border-line bg-panel/80 p-4">
+        <h2 class="text-lg font-semibold">Temperatura i grzalka</h2>
+        <div class="mt-4 grid gap-4">
+          <label class="flex items-center justify-between rounded-panel border border-line bg-ink/70 p-3">
+            <span>
+              <span class="block font-medium">Grzalka</span>
+              <span class="text-xs text-slate-400" x-text="temperature.enabled ? 'Sterowanie progowe' : 'Wylaczona'"></span>
+            </span>
+            <input type="checkbox" x-model="temperature.enabled" class="h-5 w-5 accent-cyan">
+          </label>
+          <label class="text-sm text-slate-300">Cel: <strong x-text="`${temperature.target}C`"></strong>
+            <input type="range" min="18" max="30" step="1" x-model.number="temperature.target" class="mt-2 w-full">
+          </label>
+          <label class="text-sm text-slate-300">Histereza: <strong x-text="`${Number(temperature.hysteresis).toFixed(1)}C`"></strong>
+            <input type="range" min="0.1" max="5" step="0.1" x-model.number="temperature.hysteresis" class="mt-2 w-full">
+          </label>
+        </div>
+      </div>
+      <div class="rounded-panel border border-line bg-panel/80 p-4">
+        <h2 class="text-lg font-semibold">Live preview</h2>
+        <div class="mt-5 rounded-panel border border-line bg-ink p-4">
+          <div class="text-5xl font-semibold" x-text="temperature.enabled ? `${temperature.target}C` : 'OFF'"></div>
+          <div class="mt-3 h-3 rounded bg-slate-800">
+            <div class="h-3 rounded bg-coral" :style="`width:${tempPreviewPercent()}%`"></div>
+          </div>
+          <div class="mt-3 text-sm text-slate-400" x-text="temperature.enabled ? `Zalaczanie ok. ${(Number(temperature.target) - Number(temperature.hysteresis)).toFixed(1)}C` : 'Przekaznik grzalki pozostaje wylaczony'"></div>
+        </div>
+      </div>
+    </section>
+
+    <section x-show="activeTab === 'aeration'" class="grid gap-4 lg:grid-cols-2">
+      <div class="rounded-panel border border-line bg-panel/80 p-4">
+        <h2 class="text-lg font-semibold">Napowietrzanie / Serwo CO2</h2>
+        <div class="mt-4 grid gap-4">
+          <label class="text-sm text-slate-300">Pre-off CO2: <strong x-text="`${aeration.servoPreOffMins} min`"></strong>
+            <input type="range" min="0" max="255" step="5" x-model.number="aeration.servoPreOffMins" class="mt-2 w-full">
+          </label>
+          <label class="text-sm text-slate-300">Kat dzienny: <strong x-text="`${aeration.servoDayAngle} deg`"></strong>
+            <input type="range" min="0" max="90" step="1" x-model.number="aeration.servoDayAngle" class="mt-2 w-full">
+          </label>
+          <label class="text-sm text-slate-300">Kat nocny: <strong x-text="`${aeration.servoNightAngle} deg`"></strong>
+            <input type="range" min="0" max="90" step="1" x-model.number="aeration.servoNightAngle" class="mt-2 w-full">
+          </label>
+          <label class="text-sm text-slate-300">Kat alarmowy: <strong x-text="`${aeration.servoAlarmAngle} deg`"></strong>
+            <input type="range" min="0" max="90" step="1" x-model.number="aeration.servoAlarmAngle" class="mt-2 w-full">
+          </label>
+        </div>
+      </div>
+      <div class="rounded-panel border border-line bg-panel/80 p-4">
+        <h2 class="text-lg font-semibold">Podglad serwa</h2>
+        <div class="mt-5 grid grid-cols-3 gap-3">
+          <template x-for="servo in servoPreview()" :key="servo.label">
+            <div class="rounded-panel border border-line bg-ink p-3">
+              <div class="text-xs text-slate-400" x-text="servo.label"></div>
+              <div class="mt-2 text-2xl font-semibold" x-text="`${servo.angle} deg`"></div>
+              <div class="mt-3 h-1 rounded bg-slate-800">
+                <div class="h-1 rounded bg-reef" :style="`width:${servo.angle / 90 * 100}%`"></div>
+              </div>
+            </div>
+          </template>
+        </div>
+      </div>
+    </section>
+
+    <section x-show="activeTab === 'feeding'" class="grid gap-4 lg:grid-cols-2">
+      <div class="rounded-panel border border-line bg-panel/80 p-4">
+        <h2 class="text-lg font-semibold">Karmienie</h2>
+        <div class="mt-4 grid gap-4">
+          <label class="text-sm text-slate-300">Tryb
+            <select x-model.number="feeding.freq" class="mt-1 w-full rounded-panel border border-line bg-slate-950 px-3 py-2 text-sm text-white">
+              <option value="0">Wylaczone</option>
+              <option value="1">Codziennie</option>
+              <option value="2">Co 2 dni</option>
+              <option value="3">Co 3 dni</option>
+            </select>
+          </label>
+          <label class="text-sm text-slate-300">Godzina
+            <input type="time" x-model="feeding.time" step="300" class="mt-1 w-full rounded-panel border border-line bg-slate-950 px-3 py-2 text-sm text-white">
+          </label>
+        </div>
+      </div>
+      <div class="rounded-panel border border-line bg-panel/80 p-4">
+        <h2 class="text-lg font-semibold">Nastepny cykl</h2>
+        <div class="mt-5 rounded-panel border border-line bg-ink p-4">
+          <div class="text-4xl font-semibold" x-text="feeding.freq === 0 ? 'OFF' : feeding.time"></div>
+          <div class="mt-2 text-sm text-slate-400" x-text="feedLabel(feeding.freq)"></div>
+        </div>
+      </div>
+    </section>
+
+    <section x-show="activeTab === 'network'" class="grid gap-4 lg:grid-cols-2">
+      <div class="rounded-panel border border-line bg-panel/80 p-4">
+        <h2 class="text-lg font-semibold">Siec WiFi</h2>
+        <div class="mt-4 grid gap-3">
+          <label class="text-sm text-slate-300">STA SSID
+            <input type="text" maxlength="32" x-model="network.staSsid" class="mt-1 w-full rounded-panel border border-line bg-slate-950 px-3 py-2 text-sm text-white">
+          </label>
+          <label class="text-sm text-slate-300">STA haslo
+            <input type="password" maxlength="63" x-model="network.staPassword" placeholder="bez zmian" class="mt-1 w-full rounded-panel border border-line bg-slate-950 px-3 py-2 text-sm text-white">
+          </label>
+          <label class="text-sm text-slate-300">AP SSID
+            <input type="text" maxlength="31" x-model="network.apSsid" class="mt-1 w-full rounded-panel border border-line bg-slate-950 px-3 py-2 text-sm text-white">
+          </label>
+          <label class="text-sm text-slate-300">AP haslo
+            <input type="password" maxlength="63" x-model="network.apPassword" placeholder="bez zmian" class="mt-1 w-full rounded-panel border border-line bg-slate-950 px-3 py-2 text-sm text-white">
+          </label>
+        </div>
+      </div>
+      <div class="rounded-panel border border-line bg-panel/80 p-4">
+        <h2 class="text-lg font-semibold">Status</h2>
+        <dl class="mt-4 grid gap-3 text-sm">
+          <div class="flex justify-between gap-4 border-b border-line pb-2"><dt class="text-slate-400">IP</dt><dd x-text="network.ip || '-'"></dd></div>
+          <div class="flex justify-between gap-4 border-b border-line pb-2"><dt class="text-slate-400">STA</dt><dd x-text="network.staConnected ? 'online' : 'offline'"></dd></div>
+          <div class="flex justify-between gap-4 border-b border-line pb-2"><dt class="text-slate-400">RSSI</dt><dd x-text="network.rssi === null ? '-' : `${network.rssi} dBm`"></dd></div>
+          <div class="flex justify-between gap-4"><dt class="text-slate-400">Klienci AP</dt><dd x-text="network.clients"></dd></div>
+        </dl>
+      </div>
+    </section>
+
+    <section x-show="activeTab === 'display'" class="grid gap-4 lg:grid-cols-2">
+      <div class="rounded-panel border border-line bg-panel/80 p-4">
+        <h2 class="text-lg font-semibold">Wyswietlacz i energia</h2>
+        <label class="mt-4 flex items-center justify-between rounded-panel border border-line bg-ink/70 p-3">
+          <span>
+            <span class="block font-medium">OLED zawsze wlaczony</span>
+            <span class="text-xs text-slate-400" x-text="display.alwaysScreenOn ? 'Light sleep bez wygaszania OLED' : 'Automatyczne oszczedzanie energii'"></span>
+          </span>
+          <input type="checkbox" x-model="display.alwaysScreenOn" class="h-5 w-5 accent-cyan">
+        </label>
+      </div>
+      <div class="rounded-panel border border-line bg-panel/80 p-4">
+        <h2 class="text-lg font-semibold">Zasilanie</h2>
+        <div class="mt-5 text-5xl font-semibold" x-text="`${battery.percent}%`"></div>
+        <div class="mt-3 h-3 rounded bg-slate-800">
+          <div class="h-3 rounded bg-amber" :style="`width:${battery.percent}%`"></div>
+        </div>
+        <p class="mt-3 text-sm text-slate-400" x-text="`${battery.voltage} V`"></p>
+      </div>
+    </section>
+
+    <section x-show="activeTab === 'system'" class="grid gap-4 lg:grid-cols-2">
+      <div class="rounded-panel border border-line bg-panel/80 p-4">
+        <h2 class="text-lg font-semibold">System</h2>
+        <dl class="mt-4 grid gap-3 text-sm">
+          <div class="flex justify-between gap-4 border-b border-line pb-2"><dt class="text-slate-400">Firmware</dt><dd x-text="system.version"></dd></div>
+          <div class="flex justify-between gap-4 border-b border-line pb-2"><dt class="text-slate-400">Uptime</dt><dd x-text="system.uptime"></dd></div>
+          <div class="flex justify-between gap-4 border-b border-line pb-2"><dt class="text-slate-400">Reset</dt><dd x-text="system.resetReason"></dd></div>
+          <div class="flex justify-between gap-4"><dt class="text-slate-400">Tryb energii</dt><dd x-text="system.powerMode"></dd></div>
+        </dl>
+      </div>
+      <div class="rounded-panel border border-line bg-panel/80 p-4">
+        <h2 class="text-lg font-semibold">Akcje</h2>
+        <div class="mt-4 grid gap-3">
+          <a href="/#logi" class="rounded-panel border border-line px-4 py-3 text-sm text-slate-200 hover:border-cyan hover:text-cyan">Logi</a>
+          <button type="button" @click="systemAction('restart_device')" class="rounded-panel border border-amber/50 px-4 py-3 text-left text-sm text-amber hover:bg-amber/10">Restart</button>
+          <button type="button" @click="systemAction('factory_reset')" class="rounded-panel border border-coral/60 px-4 py-3 text-left text-sm text-coral hover:bg-coral/10">Factory reset</button>
+        </div>
+      </div>
+    </section>
+
+    <p class="min-h-6 text-sm" :class="statusToneClass" x-text="statusText"></p>
+  </main>
+
+  <script>
+    function settingsApp() {
+      const modeOptions = [
+        { value: 0, label: 'Schedule' },
+        { value: 1, label: 'ON' },
+        { value: 2, label: 'OFF' }
+      ];
+
+      return {
+        activeTab: 'schedules',
+        online: false,
+        saving: false,
+        connectionLabel: 'Laczenie...',
+        clockLabel: '',
+        statusText: '',
+        statusToneClass: 'text-slate-400',
+        tabs: [
+          { id: 'schedules', kicker: '01', label: 'Harmonogramy' },
+          { id: 'temperature', kicker: '02', label: 'Temperatura' },
+          { id: 'aeration', kicker: '03', label: 'CO2' },
+          { id: 'feeding', kicker: '04', label: 'Karmienie' },
+          { id: 'network', kicker: '05', label: 'WiFi' },
+          { id: 'display', kicker: '06', label: 'Energia' },
+          { id: 'system', kicker: '07', label: 'System' }
+        ],
+        scheduleRows: [
+          { key: 'light', short: 'L', label: 'Swiatlo', color: '#facc15', type: 'range', mode: 0, start: '10:00', end: '21:30' },
+          { key: 'aeration', short: 'A', label: 'Napowietrzanie', color: '#a7f3d0', type: 'range', mode: 0, start: '10:00', end: '19:00' },
+          { key: 'filter', short: 'F', label: 'Filtr', color: '#60a5fa', type: 'range', mode: 0, start: '10:30', end: '20:30' },
+          { key: 'feeding', short: 'K', label: 'Karmienie', color: '#fb7185', type: 'point', mode: 1, time: '18:00' }
+        ],
+        temperature: { enabled: true, target: 25, hysteresis: 0.5 },
+        aeration: { servoPreOffMins: 30, servoDayAngle: 0, servoNightAngle: 90, servoAlarmAngle: 45 },
+        feeding: { freq: 1, time: '18:00' },
+        network: { staSsid: '', staPassword: '', apSsid: '', apPassword: '', ip: '-', staConnected: false, rssi: null, clients: 0 },
+        display: { alwaysScreenOn: false },
+        battery: { percent: 0, voltage: '0.00' },
+        system: { version: 'v--', uptime: '--', resetReason: '--', powerMode: '--' },
+
+        async init() {
+          await this.refresh();
+          setInterval(() => this.refresh(false), 5000);
+        },
+
+        async refresh(showStatus = true) {
+          try {
+            const response = await fetch('/api/status?history=1', { cache: 'no-store' });
+            if (!response.ok) throw new Error('status');
+            this.applyStatus(await response.json());
+            this.online = true;
+            this.connectionLabel = 'Sterownik online';
+            if (showStatus) this.setStatus('Dane zsynchronizowane.', 'success');
+          } catch (error) {
+            this.online = false;
+            this.connectionLabel = 'Brak odpowiedzi';
+            if (showStatus) this.setStatus('Nie udalo sie pobrac statusu.', 'error');
+          }
+        },
+
+        applyStatus(data) {
+          const schedule = data.schedule || {};
+          const feeding = data.feeding || {};
+          const temperature = data.temperature || {};
+          const network = data.network || {};
+          const battery = data.battery || {};
+          const display = data.display || {};
+          const system = data.system || {};
+          const firmware = data.firmware || {};
+
+          this.row('light').mode = Number(schedule.lightMode ?? 0);
+          this.row('light').start = this.formatTime(schedule.dayStartHour, schedule.dayStartMin);
+          this.row('light').end = this.formatTime(schedule.dayEndHour, schedule.dayEndMin);
+          this.row('aeration').mode = Number(schedule.airMode ?? 0);
+          this.row('aeration').start = this.formatTime(schedule.airStartHour, schedule.airStartMin);
+          this.row('aeration').end = this.formatTime(schedule.airEndHour, schedule.airEndMin);
+          this.row('filter').mode = Number(schedule.filterMode ?? 0);
+          this.row('filter').start = this.formatTime(schedule.filterStartHour, schedule.filterStartMin);
+          this.row('filter').end = this.formatTime(schedule.filterEndHour, schedule.filterEndMin);
+          this.row('feeding').mode = Number(feeding.freq || 0) === 0 ? 2 : 1;
+          this.row('feeding').time = this.formatTime(feeding.hour, feeding.minute);
+
+          this.feeding.freq = Number(feeding.freq ?? 1);
+          this.feeding.time = this.formatTime(feeding.hour, feeding.minute);
+          this.temperature.enabled = Number(schedule.heaterMode ?? temperature.heaterMode ?? 0) !== 1;
+          this.temperature.target = Number(temperature.target ?? 25);
+          this.temperature.hysteresis = Number(temperature.hysteresis ?? 0.5);
+          this.aeration.servoPreOffMins = Number(schedule.servoPreOffMins ?? this.aeration.servoPreOffMins);
+          this.network.staSsid = network.configuredStaSsid || this.network.staSsid || '';
+          this.network.apSsid = network.configuredApSsid || this.network.apSsid || '';
+          this.network.ip = network.ip || '-';
+          this.network.staConnected = Boolean(network.staConnected);
+          this.network.rssi = Number.isFinite(Number(network.rssi)) ? Number(network.rssi) : null;
+          this.network.clients = Number(network.clients || 0);
+          this.battery.percent = Math.max(0, Math.min(100, Math.round(Number(battery.percent || 0))));
+          this.battery.voltage = Number(battery.voltage || 0).toFixed(2);
+          this.display.alwaysScreenOn = Boolean(display.alwaysScreenOn);
+          this.system.version = firmware.version ? `v${String(firmware.version).replace(/^v/i, '')}` : 'v--';
+          this.system.uptime = this.duration(system.uptimeSeconds);
+          this.system.resetReason = system.resetReason || '--';
+          this.system.powerMode = system.powerMode || '--';
+          this.clockLabel = this.clockText(data.clock);
+        },
+
+        buildPayload() {
+          const light = this.row('light');
+          const aeration = this.row('aeration');
+          const filter = this.row('filter');
+          const feedingRow = this.row('feeding');
+          const payload = {
+            schedule: {
+              light: { mode: Number(light.mode), start: light.start, end: light.end },
+              aeration: { mode: Number(aeration.mode), start: aeration.start, end: aeration.end },
+              filter: { mode: Number(filter.mode), start: filter.start, end: filter.end }
+            },
+            temperature: {
+              heaterMode: this.temperature.enabled ? 0 : 1,
+              target: Number(this.temperature.target),
+              hysteresis: Number(this.temperature.hysteresis)
+            },
+            aeration: {
+              servoPreOffMins: Number(this.aeration.servoPreOffMins),
+              servoDayAngle: Number(this.aeration.servoDayAngle),
+              servoNightAngle: Number(this.aeration.servoNightAngle),
+              servoAlarmAngle: Number(this.aeration.servoAlarmAngle)
+            },
+            feeding: {
+              freq: feedingRow.mode === 2 ? 0 : (feedingRow.mode === 1 ? 1 : Number(this.feeding.freq || 1)),
+              time: this.feeding.time
+            },
+            network: {
+              staSsid: this.network.staSsid,
+              apSsid: this.network.apSsid
+            },
+            display: {
+              alwaysScreenOn: Boolean(this.display.alwaysScreenOn)
+            }
+          };
+          if (this.network.staPassword) payload.network.staPassword = this.network.staPassword;
+          if (this.network.apPassword) payload.network.apPassword = this.network.apPassword;
+          return payload;
+        },
+
+        async save() {
+          this.saving = true;
+          this.setStatus('Zapisywanie konfiguracji...', 'muted');
+          try {
+            const response = await fetch('/api/config', {
+              method: 'PATCH',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify(this.buildPayload())
+            });
+            const payload = await response.json().catch(() => ({}));
+            if (!response.ok || payload.success === false) {
+              throw new Error(payload.code || 'save_failed');
+            }
+            this.network.staPassword = '';
+            this.network.apPassword = '';
+            this.setStatus(payload.code === 'settings_partial' ? 'Zapisano po korekcie walidacji.' : 'Konfiguracja zapisana.', payload.code === 'settings_partial' ? 'warning' : 'success');
+            await this.refresh(false);
+          } catch (error) {
+            this.setStatus(`Blad zapisu: ${error.message || 'request_failed'}`, 'error');
+          } finally {
+            this.saving = false;
+          }
+        },
+
+        async systemAction(action) {
+          const labels = { restart_device: 'restart', factory_reset: 'factory reset' };
+          if (!window.confirm(`Potwierdz ${labels[action] || action}?`)) return;
+          try {
+            await fetch('/api/action', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+              body: new URLSearchParams({ action }).toString()
+            });
+            this.setStatus('Polecenie systemowe wyslane.', 'warning');
+          } catch (error) {
+            this.setStatus('Nie udalo sie wyslac polecenia systemowego.', 'error');
+          }
+        },
+
+        row(key) { return this.scheduleRows.find((item) => item.key === key); },
+        modeOptionsFor(row) {
+          return row.type === 'point'
+            ? [{ value: 1, label: 'DAY' }, { value: 2, label: 'OFF' }, { value: 0, label: 'SCH' }]
+            : modeOptions;
+        },
+        setMode(row, mode) {
+          row.mode = Number(mode);
+          if (row.key === 'feeding') {
+            this.feeding.freq = row.mode === 2 ? 0 : (row.mode === 1 ? 1 : Math.max(1, Number(this.feeding.freq || 1)));
+          }
+        },
+        timelineSegments(row) {
+          if (row.type === 'point') return row.mode === 2 ? [] : [{ left: this.timePercent(row.time) - 0.6, width: 1.2 }];
+          if (Number(row.mode) === 1) return [{ left: 0, width: 100 }];
+          if (Number(row.mode) === 2) return [];
+          const start = this.timeMinutes(row.start);
+          const end = this.timeMinutes(row.end);
+          if (end >= start) return [{ left: start / 14.4, width: Math.max(0.4, (end - start) / 14.4) }];
+          return [{ left: start / 14.4, width: (1440 - start) / 14.4 }, { left: 0, width: end / 14.4 }];
+        },
+        rowSummary(row) {
+          if (row.type === 'point') return row.mode === 2 ? 'OFF' : `${this.feedLabel(this.feeding.freq)} ${this.feeding.time}`;
+          if (Number(row.mode) === 1) return 'Zawsze wlaczone';
+          if (Number(row.mode) === 2) return 'Zawsze wylaczone';
+          return `${row.start} - ${row.end}`;
+        },
+        feedLabel(freq) {
+          return ['Wylaczone', 'Codziennie', 'Co 2 dni', 'Co 3 dni'][Number(freq)] || 'Wylaczone';
+        },
+        timeMinutes(time) {
+          const [h, m] = String(time || '00:00').split(':').map(Number);
+          return Math.max(0, Math.min(1439, (Number(h) || 0) * 60 + (Number(m) || 0)));
+        },
+        timePercent(time) { return this.timeMinutes(time) / 14.4; },
+        formatTime(hour, minute) {
+          return `${String(Math.max(0, Number(hour || 0))).padStart(2, '0')}:${String(Math.max(0, Number(minute || 0))).padStart(2, '0')}`;
+        },
+        tempPreviewPercent() {
+          return Math.max(0, Math.min(100, ((Number(this.temperature.target) - 18) / 12) * 100));
+        },
+        servoPreview() {
+          return [
+            { label: 'Dzien', angle: Number(this.aeration.servoDayAngle) },
+            { label: 'Noc', angle: Number(this.aeration.servoNightAngle) },
+            { label: 'Alarm', angle: Number(this.aeration.servoAlarmAngle) }
+          ];
+        },
+        duration(totalSeconds) {
+          const seconds = Math.max(0, Number(totalSeconds || 0));
+          const h = Math.floor(seconds / 3600);
+          const m = Math.floor((seconds % 3600) / 60);
+          return `${h}h ${m}m`;
+        },
+        clockText(clock) {
+          if (!clock || !clock.year) return '';
+          return `${this.formatTime(clock.hour, clock.minute)} / ${String(clock.day).padStart(2, '0')}.${String(clock.month).padStart(2, '0')}.${clock.year}`;
+        },
+        setStatus(text, tone) {
+          this.statusText = text;
+          this.statusToneClass = tone === 'success' ? 'text-reef' : tone === 'error' ? 'text-coral' : tone === 'warning' ? 'text-amber' : 'text-slate-400';
+        }
+      };
+    }
+  </script>
+</body>
+</html>
