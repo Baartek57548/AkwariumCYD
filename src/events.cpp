@@ -14,7 +14,8 @@ constexpr TickType_t COMMAND_SEND_TIMEOUT_TICKS = pdMS_TO_TICKS(20);
 QueueHandle_t sample_queue = nullptr;
 QueueHandle_t command_queue = nullptr;
 SemaphoreHandle_t subscriber_mutex = nullptr;
-volatile uint32_t sample_overflows = 0;
+portMUX_TYPE sample_overflows_mux = portMUX_INITIALIZER_UNLOCKED;
+uint32_t sample_overflows = 0;
 
 SensorSampleCallback subscribers[static_cast<uint8_t>(SensorId::Count)][MAX_SUBSCRIBERS_PER_SENSOR] = {};
 
@@ -74,7 +75,9 @@ bool events_publish_sample(const SensorSample &sample)
 
     SensorSample discarded = {};
     if (xQueueReceive(sample_queue, &discarded, 0) == pdTRUE) {
+        portENTER_CRITICAL(&sample_overflows_mux);
         ++sample_overflows;
+        portEXIT_CRITICAL(&sample_overflows_mux);
     }
 
     return xQueueSend(sample_queue, &sample, 0) == pdTRUE;
@@ -142,5 +145,8 @@ bool events_subscribe(SensorId id, SensorSampleCallback callback)
 
 uint32_t events_sample_overflow_count(void)
 {
-    return sample_overflows;
+    portENTER_CRITICAL(&sample_overflows_mux);
+    const uint32_t overflows = sample_overflows;
+    portEXIT_CRITICAL(&sample_overflows_mux);
+    return overflows;
 }
