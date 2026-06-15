@@ -1,0 +1,6 @@
+format=aq-ota-version-v1
+schema_version=1
+firmware_version=0.0.0
+board=esp32dev
+image=firmware.bin
+sha256=disabled

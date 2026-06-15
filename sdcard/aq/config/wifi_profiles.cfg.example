@@ -1,0 +1,7 @@
+format=aq-wifi-profiles-v1
+schema_version=1
+wifi_enabled=0
+profile_count=0
+ota_ap_enabled=1
+ota_ap_ssid=cydAquarium-OTA
+ota_hostname=cydAquarium
