@@ -26,6 +26,10 @@ constexpr uint32_t SPI_FREQUENCY_HZ = 20000000UL;
 constexpr char WELCOME_ANIM_PATH[] = "/aq/assets/images/splash/welcome.anim";
 constexpr char WELCOME_FRAME_PATTERN[] = "/aq/assets/images/splash/frames/welcome_%03u.rgb565";
 constexpr char WELCOME_POSTER_PATH[] = "/aq/assets/images/splash/welcome-320x240.rgb565";
+constexpr uint16_t WELCOME_FRAME_COUNT = 40;
+constexpr uint16_t WELCOME_FRAME_RATE_FPS = 8;
+constexpr uint16_t WELCOME_WIDTH = 320;
+constexpr uint16_t WELCOME_HEIGHT = 240;
 }
 
 constexpr bool RELAY_ACTIVE_LOW = true;

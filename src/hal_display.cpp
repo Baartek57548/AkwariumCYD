@@ -231,7 +231,7 @@ bool hal_display_draw_rgb565_file(const char *path, uint16_t width, uint16_t hei
             break;
         }
         lcd.setAddrWindow(0, y, width, rows);
-        lcd.writePixels(line_buffer, static_cast<uint32_t>(width) * rows);
+        lcd.writePixels(line_buffer, static_cast<uint32_t>(width) * rows, true);
     }
     lcd.endWrite();
 

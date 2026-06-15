@@ -140,12 +140,14 @@ void setup() {
     if (hal_sd_init()) {
         const bool splash_ok = hal_display_play_rgb565_sequence(
             HwConfig::SdCard::WELCOME_FRAME_PATTERN,
-            16,
-            320,
-            240,
-            8);
+            HwConfig::SdCard::WELCOME_FRAME_COUNT,
+            HwConfig::SdCard::WELCOME_WIDTH,
+            HwConfig::SdCard::WELCOME_HEIGHT,
+            HwConfig::SdCard::WELCOME_FRAME_RATE_FPS);
         if (!splash_ok) {
-            hal_display_draw_rgb565_file(HwConfig::SdCard::WELCOME_POSTER_PATH, 320, 240);
+            hal_display_draw_rgb565_file(HwConfig::SdCard::WELCOME_POSTER_PATH,
+                                         HwConfig::SdCard::WELCOME_WIDTH,
+                                         HwConfig::SdCard::WELCOME_HEIGHT);
         }
     }
 
