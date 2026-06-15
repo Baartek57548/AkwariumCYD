@@ -258,13 +258,13 @@ bool hal_display_play_rgb565_sequence(const char *frame_pattern,
         const int written = snprintf(frame_path, sizeof(frame_path), frame_pattern, static_cast<unsigned>(i));
         if (written <= 0 || written >= static_cast<int>(sizeof(frame_path))) {
             Serial.println("HAL DISPLAY: RGB565 frame path is too long.");
-            return played_any;
+            return false;
         }
 
         const uint32_t frame_start = millis();
         if (!hal_display_draw_rgb565_file(frame_path, width, height)) {
             Serial.printf("HAL DISPLAY: animation stopped at frame %u.\n", static_cast<unsigned>(i));
-            return played_any;
+            return false;
         }
         played_any = true;
 
