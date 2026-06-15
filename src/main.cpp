@@ -3,6 +3,7 @@
 #include <lvgl.h>
 #include "config.h"
 #include "hal_display.h"
+#include "hal_sd.h"
 #include "hal_mcp23017.h"
 #include "hal_adc.h"
 #include "gui_app.h"
@@ -135,6 +136,18 @@ void setup() {
     // Step 2: Initialize LovyanGFX display and XPT2046 touch via HAL
     hal_display_init();
     Serial.println("System: Graphics layer initialization (HAL Display) completed.");
+
+    if (hal_sd_init()) {
+        const bool splash_ok = hal_display_play_rgb565_sequence(
+            HwConfig::SdCard::WELCOME_FRAME_PATTERN,
+            16,
+            320,
+            240,
+            8);
+        if (!splash_ok) {
+            hal_display_draw_rgb565_file(HwConfig::SdCard::WELCOME_POSTER_PATH, 320, 240);
+        }
+    }
 
     run_i2c_startup_diagnostics();
 

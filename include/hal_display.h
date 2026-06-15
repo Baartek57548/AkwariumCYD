@@ -3,24 +3,18 @@
 
 #include <Arduino.h>
 
-/**
- * @brief Inicjalizuje wyświetlacz LovyanGFX oraz panel dotykowy,
- * a także rejestruje je w systemie LVGL.
- */
 void hal_display_init(void);
 
-/**
- * @brief Sprawdza, czy ekran jest dotykany, i zwraca zmapowane współrzędne.
- * @param x Wskaźnik na zmienną, do której zostanie zapisana współrzędna X.
- * @param y Wskaźnik na zmienną, do której zostanie zapisana współrzędna Y.
- * @return true jeśli ekran jest dotykany, w przeciwnym razie false.
- */
+bool hal_display_draw_rgb565_file(const char *path, uint16_t width, uint16_t height);
+
+bool hal_display_play_rgb565_sequence(const char *frame_pattern,
+                                      uint16_t frame_count,
+                                      uint16_t width,
+                                      uint16_t height,
+                                      uint16_t fps);
+
 bool hal_display_get_touch(int16_t *x, int16_t *y);
 
-/**
- * @brief Taktuje asynchroniczny kontroler DMA i zgłasza gotowość LVGL po zakończeniu transferu.
- */
 void hal_display_loop_cb(void);
 
 #endif // HAL_DISPLAY_H
-

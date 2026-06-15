@@ -17,6 +17,17 @@ constexpr int LDR_PIN = 34;
 constexpr int DEV_TEMP_ADC_PIN = 35;
 constexpr int DEV_PH_ADC_PIN = 34;
 
+namespace SdCard {
+constexpr uint8_t CS_PIN = 5;
+constexpr uint8_t SCLK_PIN = 18;
+constexpr uint8_t MISO_PIN = 19;
+constexpr uint8_t MOSI_PIN = 23;
+constexpr uint32_t SPI_FREQUENCY_HZ = 20000000UL;
+constexpr char WELCOME_ANIM_PATH[] = "/aq/assets/images/splash/welcome.anim";
+constexpr char WELCOME_FRAME_PATTERN[] = "/aq/assets/images/splash/frames/welcome_%03u.rgb565";
+constexpr char WELCOME_POSTER_PATH[] = "/aq/assets/images/splash/welcome-320x240.rgb565";
+}
+
 constexpr bool RELAY_ACTIVE_LOW = true;
 constexpr bool RELAY_SAFE_STATE_ON = false;
 
