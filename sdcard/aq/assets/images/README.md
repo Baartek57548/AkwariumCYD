@@ -3,7 +3,7 @@
 Image assets are grouped by runtime purpose.
 
 - `backgrounds`: UI backgrounds loaded on demand.
-- `splash`: startup or loading images.
+- `splash`: startup or loading images, including the prepared welcome animation.
 - `warnings`: alarm and critical-state images.
 
 Prefer screen-ready files for the CYD display. For the current hardware target,
