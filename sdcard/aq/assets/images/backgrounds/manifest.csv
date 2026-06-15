@@ -1,0 +1,4 @@
+name,role,width,height,format,path,notes
+aquarium-rockscape,default-background,320,240,rgb565,/aq/assets/images/backgrounds/aquarium-rockscape-320x240.rgb565,little-endian RGB565 stream
+aquarium-rockscape,preview,320,240,jpg,/aq/assets/images/backgrounds/aquarium-rockscape-320x240.jpg,screen-ready preview
+aquarium-rockscape,source,320,280,jpg,/aq/assets/images/backgrounds/aquarium-rockscape-original.jpg,original user-provided image
