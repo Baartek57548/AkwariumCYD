@@ -1,0 +1,5 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 32 32" fill="none">
+  <g stroke="#e5eef7" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M16 5c5 6 8 10 8 15a8 8 0 0 1-16 0c0-5 3-9 8-15z"/><text x="10" y="22" font-size="8" font-family="Arial" fill="#e5eef7" stroke="none">pH</text>
+  </g>
+</svg>
