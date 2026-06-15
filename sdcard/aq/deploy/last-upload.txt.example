@@ -1,0 +1,13 @@
+format=aq-manual-upload-v1
+schema_version=1
+date=2026-06-15
+time=15:45
+branch=feature/sd-card-layout
+commit=97203ba
+platformio_env=esp32dev
+upload_port=manual
+monitor_baud=115200
+sd_card_drive=E:
+sd_layout=aq-sd-v1
+boot_result=not-tested
+serial_log_file=/aq/data/diagnostics/boot_last.txt

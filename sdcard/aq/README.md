@@ -6,6 +6,8 @@ This directory is the root used by the firmware on the SD card.
 
 ```text
 /aq/
+  VERSION.txt
+  firmware-notes.txt.example
   assets/
     icons/
       24/
@@ -22,12 +24,16 @@ This directory is the root used by the firmware on the SD card.
     calibration.cfg.example
     schedules.cfg.example
     wifi_profiles.cfg.example
+    device.cfg.example
+    safe_mode.flag.example
   data/
     history/
     logs/
     diagnostics/
   ota/
     version.txt.example
+  deploy/
+    README.md
   tmp/
 ```
 
@@ -52,6 +58,9 @@ The intended runtime model is:
 - Asset names should be lowercase and use hyphens instead of spaces.
 - The firmware should ignore unknown keys to allow forward-compatible config
   files.
+- `VERSION.txt` identifies the SD layout revision expected by firmware.
+- `firmware-notes.txt.example` is a manual upload log template for local
+  deployment tracking.
 
 ## Recommended History Record
 

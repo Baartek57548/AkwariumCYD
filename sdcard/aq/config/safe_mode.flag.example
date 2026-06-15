@@ -1,0 +1,15 @@
+format=aq-safe-mode-v1
+schema_version=1
+enabled=1
+reason=manual_recovery
+boot_ui=minimal
+load_sd_assets=0
+load_splash_animation=0
+load_background=0
+build_lazy_pages=1
+enable_wifi=0
+enable_ota=0
+enable_audio=0
+max_chart_points=8
+max_visible_log_rows=3
+note=Rename this file to safe_mode.flag to request a minimal recovery boot after firmware support is added.

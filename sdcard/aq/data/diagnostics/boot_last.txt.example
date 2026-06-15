@@ -1,0 +1,16 @@
+format=aq-boot-report-v1
+schema_version=1
+boot_index=1
+unix_time=1781544300
+reset_reason=power_on
+firmware_branch=feature/sd-card-layout
+firmware_commit=97203ba
+sd_layout=aq-sd-v1
+safe_mode_requested=0
+sd_mount_ok=1
+display_init_ok=1
+touch_init_ok=1
+i2c_init_ok=1
+mcp23017_present=0
+ads1115_present=0
+gui_mode=standard

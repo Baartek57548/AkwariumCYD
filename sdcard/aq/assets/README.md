@@ -9,6 +9,7 @@ Recommended formats:
 - Icons: RGB565 raw files with a fixed pixel size per folder.
 - Images: RGB565 raw files when RAM is tight.
 - Fonts: binary font files only when the firmware has a loader for them.
+- Themes: ASCII key-value color palettes under `themes`.
 
 Avoid loading many small files every frame. Load assets when a screen opens,
 cache only one or two if needed, and release them when the screen closes.
@@ -18,3 +19,6 @@ used by the firmware. See `icons/manifest.csv` before wiring runtime loading.
 
 The `images/backgrounds` directory contains the selected aquarium rockscape
 background as both a JPG preview and a display-ready RGB565 stream.
+
+The `themes` directory contains dark, light, and high-contrast palettes prepared
+for future runtime theme loading.

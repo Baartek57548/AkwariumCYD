@@ -1,0 +1,4 @@
+unix_ms,free_heap,internal_free,internal_largest,dma_free,dma_largest,psram_free,lvgl_used,lvgl_total,lvgl_biggest,lvgl_frag_pct
+0,180000,130000,48000,72000,24000,0,0,0,0,0
+1000,145000,98000,32000,52000,12800,0,64000,120000,28000,6
+2000,138000,92000,30000,50000,12800,0,71000,120000,24000,9

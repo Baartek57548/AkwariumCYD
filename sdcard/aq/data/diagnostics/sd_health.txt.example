@@ -1,0 +1,12 @@
+format=aq-sd-health-v1
+schema_version=1
+mount_ok=1
+card_type=sdhc
+card_size_mb=8192
+filesystem=fat32
+free_mb=7600
+asset_manifest_ok=1
+background_ok=1
+splash_anim_ok=1
+icon_manifest_ok=1
+last_error=none

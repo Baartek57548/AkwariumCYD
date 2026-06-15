@@ -1,0 +1,11 @@
+format=aq-firmware-notes-v1
+schema_version=1
+last_manual_upload_date=2026-06-15
+last_manual_upload_time=15:45
+branch=feature/sd-card-layout
+commit=97203ba
+platformio_env=esp32dev
+upload_method=manual_usb
+serial_monitor_baud=115200
+sd_layout=aq-sd-v1
+notes=SD asset layout prepared before LVGL lazy page optimization.
