@@ -1,4 +1,4 @@
-This directory is the prepared SD card image for cydAquarium.
+This directory is the prepared SD card image for cydAkwarium.
 
 Copy the contents of this directory to the root of a FAT32-formatted SD card.
 After copying, the card root should contain the `aq` directory.

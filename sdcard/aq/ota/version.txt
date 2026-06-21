@@ -1,0 +1,6 @@
+portal=cydAkwarium-panel
+schema=2
+ui=20260621roles
+entry=/aq/ota/index.html
+sta_url=http://akwarium.local/
+ap_url=http://192.168.4.1/

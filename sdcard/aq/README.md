@@ -1,4 +1,4 @@
-# cydAquarium SD Layout
+# cydAkwarium SD Layout
 
 This directory is the root used by the firmware on the SD card.
 
