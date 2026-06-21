@@ -8,6 +8,8 @@
  */
 void gui_app_init(void);
 
+void gui_app_handle_ota_portal(void);
+
 /**
  * @brief Aktualizuje stan połączenia Wi-Fi na pasku statusu przy użyciu tekstów (STA, AP, OFF).
  * @param state 0=OFF, 1=STA, 2=AP.
@@ -28,7 +30,7 @@ void gui_update_metrics(float temp, float ph, uint32_t free_heap, const char *ti
  * @brief Aktualizuje automatyke motywu na podstawie odczytu LDR.
  * @param ldr_value Surowy odczyt ADC z GPIO 34 w zakresie 0..4095.
  */
-void gui_app_update_ldr(int ldr_value);
+void gui_app_update_ldr(int ldr_value, bool valid = true);
 
 /**
  * @brief Aktualizuje czas działania urządzenia w sekcji systemowej.

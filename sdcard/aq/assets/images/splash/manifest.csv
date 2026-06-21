@@ -1,0 +1,5 @@
+name,role,width,height,format,path,notes
+welcome,animation,320,240,rgb565-sequence,/aq/assets/images/splash/welcome.anim,40 frames at 8 fps from the first 5 seconds
+welcome,poster,320,240,rgb565,/aq/assets/images/splash/welcome-320x240.rgb565,little-endian RGB565 poster
+welcome,preview,320,240,jpg,/aq/assets/images/splash/welcome-320x240.jpg,screen-ready preview
+welcome,source,1280,720,mp4,/aq/assets/images/splash/welcome-source.mp4,original user-provided video

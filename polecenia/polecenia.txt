@@ -1,3 +1,0 @@
-cydAkwarium - tutaj jest nasz projekt nad którym pracujemy
-cydAkwarium backup - tutaj jest ostatnia stabilna działająca wersja, przed rozbudową. Na której w razie błędów/potrzeby masz się wzorować
-260225-101701-seeed_xiao_esp32s3 - tutaj jest projekt starego niedziałającego projektu oparty na innej płytce (esp32s3 zero) i wyswietlaczu Oled 128x32px. Ten projekt jest tylko w razie w. Odnieś się do niego tylko jak poproszę.

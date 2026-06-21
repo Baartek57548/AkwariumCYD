@@ -1,0 +1,59 @@
+<!DOCTYPE html>
+<html lang="pl">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>cydAkwarium - ustawienia</title>
+    <meta http-equiv="refresh" content="0; url=index.html#ustawienia">
+    <style>
+        :root {
+            color-scheme: light dark;
+            font-family: Arial, sans-serif;
+        }
+
+        body {
+            min-height: 100vh;
+            margin: 0;
+            display: grid;
+            place-items: center;
+            color: #0f172a;
+            background: #eef3f8;
+        }
+
+        main {
+            width: min(92vw, 420px);
+            padding: 24px;
+            border: 1px solid rgba(15, 23, 42, 0.14);
+            border-radius: 8px;
+            background: #ffffff;
+        }
+
+        a {
+            color: #0e7490;
+            font-weight: 700;
+        }
+
+        @media (prefers-color-scheme: dark) {
+            body {
+                color: #f1f5f9;
+                background: #0d1114;
+            }
+
+            main {
+                border-color: rgba(226, 232, 240, 0.14);
+                background: #151b22;
+            }
+        }
+    </style>
+</head>
+<body>
+    <main>
+        <h1>Ustawienia</h1>
+        <p>Przekierowanie do podstrony ustawień panelu cydAkwarium.</p>
+        <p><a href="index.html#ustawienia">Otwórz ustawienia</a></p>
+    </main>
+    <script>
+        window.location.replace('index.html#ustawienia');
+    </script>
+</body>
+</html>

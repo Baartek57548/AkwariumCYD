@@ -1,0 +1,9 @@
+layout=aq-sd-v1
+created=2026-06-15
+target=esp32-cyd-320x240
+screen_width=320
+screen_height=240
+asset_format=rgb565-le
+config_format=key-value
+history_format=fixed-record-binary
+maintainer=local

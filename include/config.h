@@ -14,8 +14,21 @@ constexpr uint8_t MCP23017_ADDR = 0x20;
 constexpr uint8_t ADS1115_ADDR = 0x48;
 
 constexpr int LDR_PIN = 34;
-constexpr int DEV_TEMP_ADC_PIN = 35;
-constexpr int DEV_PH_ADC_PIN = 34;
+
+namespace SdCard {
+constexpr uint8_t CS_PIN = 5;
+constexpr uint8_t SCLK_PIN = 18;
+constexpr uint8_t MISO_PIN = 19;
+constexpr uint8_t MOSI_PIN = 23;
+constexpr uint32_t SPI_FREQUENCY_HZ = 20000000UL;
+constexpr char WELCOME_ANIM_PATH[] = "/aq/assets/images/splash/welcome.anim";
+constexpr char WELCOME_FRAME_PATTERN[] = "/aq/assets/images/splash/frames/welcome_%03u.rgb565";
+constexpr char WELCOME_POSTER_PATH[] = "/aq/assets/images/splash/welcome-320x240.rgb565";
+constexpr uint16_t WELCOME_FRAME_COUNT = 40;
+constexpr uint16_t WELCOME_FRAME_RATE_FPS = 8;
+constexpr uint16_t WELCOME_WIDTH = 320;
+constexpr uint16_t WELCOME_HEIGHT = 240;
+}
 
 constexpr bool RELAY_ACTIVE_LOW = true;
 constexpr bool RELAY_SAFE_STATE_ON = false;
@@ -63,9 +76,13 @@ constexpr uint32_t FEEDER_PULSE_MS = 500UL;
 namespace Secrets {
 
 constexpr char DEFAULT_PIN[] = "1234";
-constexpr char OTA_HOSTNAME[] = "cydAquarium";
-constexpr char OTA_PASSWORD[] = "password123";
+constexpr char OTA_HOSTNAME[] = "akwarium";
+constexpr char OTA_AP_SSID[] = "cydAkwarium-OTA";
+constexpr char OTA_PASSWORD[] = "admin1234";
 
 } // namespace Secrets
+
+static_assert(sizeof(Secrets::OTA_PASSWORD) >= 9,
+              "ESP32 SoftAP wymaga hasla WPA o dlugosci co najmniej 8 znakow.");
 
 #endif

@@ -1,0 +1,38 @@
+name,lvgl_symbol,category,used_for
+home,LV_SYMBOL_HOME,navigation,home dashboard tab
+schedules,LV_SYMBOL_LOOP,navigation,schedule tab
+modules,LV_SYMBOL_PLUS,navigation,optional modules tab
+history,LV_SYMBOL_IMAGE,navigation,charts and history tab
+settings,LV_SYMBOL_SETTINGS,navigation,system settings tab
+light,LV_SYMBOL_IMAGE,device,front aquarium light
+plant-light,LV_SYMBOL_IMAGE,device,rear or plant light
+filter,LV_SYMBOL_LOOP,device,water filter
+heater,LV_SYMBOL_CHARGE,device,heater
+air,LV_SYMBOL_REFRESH,device,aerator
+feeder,LV_SYMBOL_LIST,device,feeder
+ph,LV_SYMBOL_EDIT,sensor,ph sensor and calibration
+co2,LV_SYMBOL_SETTINGS,module,co2 valve module
+ec,LV_SYMBOL_EDIT,sensor,ec sensor and calibration
+water-level,LV_SYMBOL_UPLOAD,sensor,water level input
+leak,LV_SYMBOL_WARNING,sensor,leak input
+flow,LV_SYMBOL_LOOP,sensor,flow pulse input
+wifi,LV_SYMBOL_WIFI,system,wifi and ota page
+screen,LV_SYMBOL_IMAGE,system,display settings
+logs,LV_SYMBOL_LIST,system,event logs
+clock,LV_SYMBOL_KEYBOARD,system,clock and ntp
+diagnostics,LV_SYMBOL_SETTINGS,system,heap and hardware diagnostics
+power,LV_SYMBOL_POWER,system,power and sleep page
+audio,LV_SYMBOL_AUDIO,system,sounds page
+hardware,LV_SYMBOL_PLUS,system,hardware modules page
+back,LV_SYMBOL_LEFT,action,back navigation
+up,LV_SYMBOL_UP,action,increase value
+down,LV_SYMBOL_DOWN,action,decrease value
+ok,LV_SYMBOL_OK,action,confirm action
+close,LV_SYMBOL_CLOSE,action,close or stop action
+save,LV_SYMBOL_SAVE,action,save settings
+upload,LV_SYMBOL_UPLOAD,action,ota upload or water level
+refresh,LV_SYMBOL_REFRESH,action,rescan or refresh
+warning,LV_SYMBOL_WARNING,status,warning or important log
+list,LV_SYMBOL_LIST,status,list and normal log
+edit,LV_SYMBOL_EDIT,action,edit or calibration
+charge,LV_SYMBOL_CHARGE,status,power or heater status

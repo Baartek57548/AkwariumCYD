@@ -3,6 +3,7 @@
 #include <lvgl.h>
 #include "config.h"
 #include "hal_display.h"
+#include "hal_sd.h"
 #include "hal_mcp23017.h"
 #include "hal_adc.h"
 #include "gui_app.h"
@@ -19,7 +20,7 @@ const int LDR_PIN = HwConfig::LDR_PIN;
 static unsigned long last_lvgl_tick = 0;
 static unsigned long last_gui_update_time = 0;
 
-// Zmienne symulacyjne
+// Lokalny zegar programowy uzywany do czasu podlaczenia RTC/NTP.
 static uint32_t uptime_seconds = 0;
 int clock_hour = 20;
 int clock_minute = 30;
@@ -28,16 +29,38 @@ int clock_day = 31;
 int clock_month = 5;
 int clock_year = 2026;
 
-static float simulated_temp = 24.5f;
-static float simulated_ph = 7.21f;
-
 bool wifi_connected = false;
 int wifi_rssi = 0;
 bool wifi_ota_active = false;
 
+static void log_ram_checkpoint(const char *stage)
+{
+    Serial.printf("RAM: %s free=%lu min_free=%lu\n",
+                  stage != nullptr ? stage : "unknown",
+                  static_cast<unsigned long>(ESP.getFreeHeap()),
+                  static_cast<unsigned long>(ESP.getMinFreeHeap()));
+}
+
 static float ads_raw_to_voltage(int16_t raw)
 {
     return (static_cast<float>(raw) * 4.096f) / 32768.0f;
+}
+
+static void publish_sensor_sample(SensorId id, float value, bool valid)
+{
+    SensorSample sample = {};
+    sample.id = id;
+    sample.value = value;
+    sample.timestampMs = millis();
+    sample.valid = valid;
+    events_publish_sample(sample);
+}
+
+static void drain_event_samples()
+{
+    SensorSample sample = {};
+    while (events_poll_sample(sample)) {
+    }
 }
 
 static void run_i2c_startup_diagnostics()
@@ -73,9 +96,8 @@ static void run_i2c_startup_diagnostics()
     }
 }
 
-// Symulacja danych systemowych i czasu
-void update_simulations() {
-    // Zliczanie czasu pracy i zegara
+// Lokalny zegar programowy dziala bez RTC/NTP, ale nie generuje danych sensorow.
+static void update_local_clock() {
     clock_second++;
     uptime_seconds++;
     if (clock_second >= 60) {
@@ -107,14 +129,6 @@ void update_simulations() {
     }
 
 
-    // Symulacja wahań temperatury i pH
-    simulated_temp += ((rand() % 3) - 1) * 0.1f;
-    if (simulated_temp < 23.0f) simulated_temp = 23.0f;
-    if (simulated_temp > 28.0f) simulated_temp = 28.0f;
-
-    simulated_ph += ((rand() % 3) - 1) * 0.02f;
-    if (simulated_ph < 6.8f) simulated_ph = 6.8f;
-    if (simulated_ph > 7.6f) simulated_ph = 7.6f;
 }
 
 void setup() {
@@ -122,6 +136,10 @@ void setup() {
     Serial.begin(115200);
     delay(100);
     Serial.println("\n--- STARTING ESP32 CYD DASHBOARD (STABLE RUNTIME) ---");
+    if (!events_init()) {
+        Serial.println("EVENTS: initialization failed.");
+    }
+    log_ram_checkpoint("boot_start");
 
     // Set up LDR input using standard Arduino ADC APIs (ADC1 / GPIO 34)
     pinMode(LDR_PIN, INPUT);
@@ -131,16 +149,33 @@ void setup() {
     Serial.println("System: LDR pin 34 configured.");
     // Step 1: Initialize the LVGL graphics library
     lv_init();
+    log_ram_checkpoint("after_lvgl_init");
 
     // Step 2: Initialize LovyanGFX display and XPT2046 touch via HAL
     hal_display_init();
     Serial.println("System: Graphics layer initialization (HAL Display) completed.");
+    log_ram_checkpoint("after_display_init");
+
+    if (hal_sd_init()) {
+        const bool splash_ok = hal_display_play_rgb565_sequence(
+            HwConfig::SdCard::WELCOME_FRAME_PATTERN,
+            HwConfig::SdCard::WELCOME_FRAME_COUNT,
+            HwConfig::SdCard::WELCOME_WIDTH,
+            HwConfig::SdCard::WELCOME_HEIGHT,
+            HwConfig::SdCard::WELCOME_FRAME_RATE_FPS);
+        if (!splash_ok) {
+            hal_display_draw_rgb565_file(HwConfig::SdCard::WELCOME_POSTER_PATH,
+                                         HwConfig::SdCard::WELCOME_WIDTH,
+                                         HwConfig::SdCard::WELCOME_HEIGHT);
+        }
+    }
 
     run_i2c_startup_diagnostics();
 
     // Step 3: Initialize user interface (GUI)
     gui_app_init();
     Serial.println("System: Graphical User Interface (GUI) creation completed.");
+    log_ram_checkpoint("after_gui_init");
 
     // Initialize tick timer for LVGL reference
     last_lvgl_tick = millis();
@@ -167,13 +202,14 @@ void loop() {
     if (wifi_ota_active) {
         ArduinoOTA.handle();
     }
+    gui_app_handle_ota_portal();
 
     // --- WĄTEK AKTUALIZACJI METRYK (Nieblokujący - Co 1000ms) ---
     if (current_time - last_gui_update_time >= 1000) {
         last_gui_update_time = current_time;
 
-        // Aktualizacja wewnętrznych zmiennych i symulatorów
-        update_simulations();
+        // Aktualizacja lokalnego zegara programowego bez generowania probek sensorow
+        update_local_clock();
 
         // Przygotowanie ciągu tekstowego czasu w formacie HH:MM:SS
         char time_str[9];
@@ -182,11 +218,16 @@ void loop() {
         // Pobranie wolnej pamięci RAM systemu ESP32
         uint32_t free_heap = ESP.getFreeHeap();
 
-        // Reading LDR sensor on LDR_PIN (analogRead)
-        int ldr_value = analogRead(LDR_PIN);
-        gui_app_update_ldr(ldr_value);
+        const bool dev_mode = gui_app_is_dev_mode();
 
-        const bool adc_present = hal_adc_is_present();
+        int ldr_value = -1;
+        const bool ldr_valid = !dev_mode;
+        if (ldr_valid) {
+            ldr_value = analogRead(LDR_PIN);
+        }
+        gui_app_update_ldr(ldr_value, ldr_valid);
+
+        const bool adc_present = !dev_mode && hal_adc_is_present();
         int16_t ph_raw = 0;
         int16_t ec_raw = 0;
         bool ph_adc_ok = false;
@@ -208,20 +249,17 @@ void loop() {
         const bool mcp_present = hal_mcp_is_present();
         const bool mcp_ok = mcp_present && hal_mcp_read_all(&mcp_state);
 
-        float temp_to_send;
-        float ph_to_send;
-
-        if (gui_app_is_dev_mode()) {
-            int temp_adc = analogRead(HwConfig::DEV_TEMP_ADC_PIN);
-            temp_to_send = 15.0f + (temp_adc / 4095.0f) * 20.0f; // 15.0 to 35.0 °C
-            ph_to_send = ph_adc_ok ? (4.0f + (ph_voltage / 4.096f) * 6.0f) : NAN;
-        } else {
-            temp_to_send = simulated_temp;
-            ph_to_send = simulated_ph;
-        }
+        const float temp_to_send = NAN;
+        const float ph_to_send = ph_adc_ok ? (4.0f + (ph_voltage / 4.096f) * 6.0f) : NAN;
 
         // Aktualizacja interfejsu graficznego (Zegar, Temperatura, pH, RAM)
         gui_update_metrics(temp_to_send, ph_to_send, free_heap, time_str);
+        publish_sensor_sample(SensorId::Temp, temp_to_send, isfinite(temp_to_send));
+        publish_sensor_sample(SensorId::Ph, ph_to_send, isfinite(ph_to_send));
+        publish_sensor_sample(SensorId::Ec, ec_voltage, ec_adc_ok);
+        publish_sensor_sample(SensorId::Ldr, ldr_valid ? static_cast<float>(ldr_value) : NAN, ldr_valid);
+        publish_sensor_sample(SensorId::Heap, static_cast<float>(free_heap), true);
+        drain_event_samples();
 
         // Aktualizacja czasu pracy (uptime) w zakładce System
         gui_app_update_system_info(free_heap, uptime_seconds);
@@ -238,11 +276,8 @@ void loop() {
                                     mcp_state);
 
         // Update Wi-Fi status in the header (0=OFF, 1=STA, 2=AP)
-        gui_app_update_wifi(wifi_connected ? 1 : 0, wifi_rssi);
+        gui_app_update_wifi(wifi_ota_active ? 2 : (wifi_connected ? 1 : 0), wifi_rssi);
 
-        // Control log to Serial port
-        Serial.printf("LOG: Time: %s | Uptime: %d s | Temp: %.1f *C | pH: %.2f | Heap: %d B | LDR: %d\n", 
-                      time_str, uptime_seconds, temp_to_send, ph_to_send, free_heap, ldr_value);
     }
 
     // Short delay (5ms) to prevent watchdog starvation in FreeRTOS

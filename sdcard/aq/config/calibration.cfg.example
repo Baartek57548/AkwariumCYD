@@ -1,0 +1,14 @@
+format=aq-calibration-v1
+schema_version=1
+temperature_offset_x10=0
+ph_adc_channel=0
+ph_low_reference_x100=401
+ph_low_raw=0
+ph_high_reference_x100=686
+ph_high_raw=0
+ec_adc_channel=1
+ec_reference_us=1413
+ec_reference_raw=0
+ldr_min_raw=0
+ldr_max_raw=4095
+flow_pulses_per_liter=450

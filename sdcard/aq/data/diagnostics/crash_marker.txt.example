@@ -1,0 +1,10 @@
+format=aq-crash-marker-v1
+schema_version=1
+active=0
+last_boot_completed=1
+last_screen=home
+last_subpage=none
+last_operation=idle
+free_heap_before_reset=0
+reset_reason=none
+recovery_hint=If active is 1 after boot, enable safe_mode.flag before loading heavy UI screens.

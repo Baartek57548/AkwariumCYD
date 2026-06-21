@@ -1,0 +1,14 @@
+format=aq-splash-anim-v1
+name=welcome
+width=320
+height=240
+pixel_format=rgb565
+byte_order=little-endian
+fps=8
+frame_count=40
+duration_ms=5000
+loop=1
+frame_path=/aq/assets/images/splash/frames/welcome_%03u.rgb565
+poster_rgb565=/aq/assets/images/splash/welcome-320x240.rgb565
+poster_jpg=/aq/assets/images/splash/welcome-320x240.jpg
+source=/aq/assets/images/splash/welcome-source.mp4

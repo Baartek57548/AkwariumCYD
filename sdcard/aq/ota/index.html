@@ -1,0 +1,1548 @@
+﻿<!DOCTYPE html>
+<html lang="pl" data-theme="light">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; base-uri 'self'; form-action 'self'; object-src 'none'; frame-ancestors 'none'; img-src 'self' data:; connect-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline';">
+    <meta http-equiv="X-Content-Type-Options" content="nosniff">
+    <meta name="referrer" content="no-referrer">
+    <title>cydAkwarium - panel sterownika</title>
+    <meta name="color-scheme" content="light dark">
+    <script>
+        (function () {
+            document.documentElement.setAttribute('data-theme', 'light');
+            document.documentElement.style.colorScheme = 'light';
+        }());
+    </script>
+    <link rel="stylesheet" href="charts.css?v=20260621roles">
+    <link rel="stylesheet" href="style.css?v=20260621roles">
+</head>
+<body class="role-guest">
+    <canvas id="bubbles-canvas" class="bubbles-canvas"></canvas>
+
+    <div class="app-container">
+        <!-- Sidebar Navigation -->
+        <nav class="sidebar" id="app-sidebar">
+            <div class="brand">
+                <i class="fa-solid fa-water fa-bounce" style="--fa-animation-duration: 3s; color: var(--accent-cyan);"></i>
+                <div class="brand-text">
+                    <h1>cydAkwarium</h1>
+                    <span>Panel sterownika</span>
+                </div>
+            </div>
+
+            <ul class="nav-menu">
+                <li class="nav-item active" data-target="dashboard">
+                    <a href="#"><i class="fa-solid fa-gauge-high"></i> Pulpit</a>
+                </li>
+                <li class="nav-item" data-target="harmonogramy" data-admin-only="true">
+                    <a href="#"><i class="fa-solid fa-calendar-days"></i> Harmonogramy</a>
+                </li>
+                <li class="nav-item" data-target="wykresy">
+                    <a href="#"><i class="fa-solid fa-chart-line"></i> Pomiary</a>
+                </li>
+                <li class="nav-item" data-target="moduly" data-admin-only="true">
+                    <a href="#"><i class="fa-solid fa-puzzle-piece"></i> ModuĹ‚y</a>
+                </li>
+                <li class="nav-item" data-target="zasilanie" data-admin-only="true">
+                    <a href="#"><i class="fa-solid fa-plug"></i> Zasilanie</a>
+                </li>
+                <li class="nav-item" data-target="logi" data-admin-only="true">
+                    <a href="#"><i class="fa-solid fa-terminal"></i> Logi</a>
+                </li>
+                <li class="nav-item" data-target="diag" data-admin-only="true">
+                    <a href="#"><i class="fa-solid fa-circle-info"></i> Diagnostyka</a>
+                </li>
+            </ul>
+
+            <div class="sidebar-bottom">
+                <ul class="nav-menu">
+                    <li class="nav-item" data-target="ota" data-admin-only="true">
+                        <a href="#"><i class="fa-solid fa-cloud-arrow-up"></i> OTA</a>
+                    </li>
+                    <li class="nav-item" data-target="ustawienia" data-admin-only="true">
+                    <a href="#"><i class="fa-solid fa-gear"></i> Ustawienia</a>
+                    </li>
+                </ul>
+                <div class="sys-version">
+                    <span id="sidebar-firmware-version">v--</span><br>
+                    <span>akwarium.local</span>
+                </div>
+                <div class="role-switcher">
+                    <span id="auth-role-label">Tryb: goĹ›Ä‡</span>
+                    <button id="admin-login-btn" class="btn btn-secondary role-auth-btn" type="button" data-guest-only="true">Zaloguj admina</button>
+                    <button id="admin-logout-btn" class="btn btn-secondary role-auth-btn" type="button" data-admin-only="true">Wyloguj</button>
+                </div>
+            </div>
+        </nav>
+
+        <div class="sidebar-backdrop" id="sidebar-backdrop" aria-hidden="true"></div>
+
+        <!-- Main Content -->
+        <main class="main-content">
+            <button class="mobile-nav-toggle glass" id="mobile-nav-toggle" type="button" aria-controls="app-sidebar" aria-expanded="false">
+                <i id="mobile-nav-toggle-icon" class="fa-solid fa-bars"></i>
+                <span id="mobile-nav-toggle-label">Menu</span>
+            </button>
+
+            <!-- Topbar -->
+            <header class="topbar">
+                <div class="topbar-activity">
+                    <span class="topbar-label">Stan pracy</span>
+                    <div id="topbar-active-list" class="topbar-active-list">
+                        <div class="status-badge status-badge-muted">
+                            <span class="pulse-dot pulse-dot-muted"></span>
+                            Oczekiwanie na dane sterownika
+                        </div>
+                    </div>
+                </div>
+
+                <div class="topbar-widgets">
+                    <button id="theme-toggle" class="theme-toggle" type="button" aria-pressed="false" title="Motyw pobierany ze sterownika">
+                        <i id="theme-toggle-icon" class="fa-solid fa-sun"></i>
+                        <span id="theme-toggle-label">Jasny</span>
+                    </button>
+                    <div class="info-pill portal-pill" title="Adres lokalny panelu">
+                        <i class="fa-solid fa-wifi"></i>
+                        <span>akwarium.local</span>
+                    </div>
+                    <div class="info-pill battery-pill" title="Aktualne napiÄ™cie baterii">
+                        <i class="fa-solid fa-battery-three-quarters"></i>
+                        <span id="rtc-battery">--.--V</span>
+                    </div>
+                    <div class="time-widget">
+                        <span id="current-time">00:00:00</span>
+                        <span id="current-date">01 sty 2026</span>
+                    </div>
+                </div>
+            </header>
+
+            <!-- Dashboard View -->
+            <section id="dashboard" class="view-section active">
+                <div class="view-header">
+                    <h2>Pulpit operacyjny</h2>
+                    <p>Szybki stan zbiornika: telemetria, stany moduĹ‚Ăłw i cykle dobowe.</p>
+                </div>
+
+                <div class="dashboard-grid-consolidated">
+                    <!-- Card 1: Telemetry Panel -->
+                    <div class="card glass telemetry-card" id="telemetry-panel">
+                        <div class="card-header">
+                            <div class="card-title">
+                                <i class="fa-solid fa-gauge-high" style="color: var(--accent-cyan);"></i>
+                                <h2>Telemetria i Stan Zbiornika</h2>
+                            </div>
+                            <span id="dashboard-strip-state" class="card-chip card-chip-accent">Stabilny</span>
+                        </div>
+                        <div class="card-body telemetry-grid">
+                            <!-- Temperature readout -->
+                            <div class="telemetry-item main-temp-item">
+                                <span class="telemetry-label"><i class="fa-solid fa-temperature-half"></i> Temperatura</span>
+                                <div class="telemetry-value">
+                                    <span id="dashboard-temp-current">--.-</span><span class="unit">&deg;C</span>
+                                </div>
+                                <div class="telemetry-sub">
+                                    Cel: <strong id="dashboard-temp-target">--.-&deg;C</strong> | Hist: <strong id="dashboard-temp-hysteresis">-.-&deg;C</strong>
+                                </div>
+                            </div>
+
+                            <!-- Water chemistry -->
+                            <div class="telemetry-item main-chem-item">
+                                <span class="telemetry-label"><i class="fa-solid fa-vial"></i> Parametry wody</span>
+                                <div class="chem-row">
+                                    <div>pH: <strong id="dashboard-ph-current">--</strong></div>
+                                    <div>EC: <strong id="dashboard-ec-current">--</strong></div>
+                                    <div>LDR: <strong id="dashboard-ldr-current">--</strong></div>
+                                </div>
+                                <div class="telemetry-sub" id="dashboard-sensor-state">
+                                    Czujniki online.
+                                </div>
+                            </div>
+
+                            <!-- Power Source -->
+                            <div class="telemetry-item main-power-item">
+                                <span class="telemetry-label"><i class="fa-solid fa-battery-three-quarters"></i> Status Zasilania</span>
+                                <div id="dashboard-battery-card">
+                                    <div class="battery-metric">
+                                        <strong id="dashboard-battery-percent">0</strong>% <span class="v-sub" id="dashboard-battery-voltage">--.--V</span>
+                                    </div>
+                                    <div class="progress-bar battery-progress">
+                                        <div id="dashboard-battery-fill" class="progress-fill battery-fill" style="width: 0%;"></div>
+                                    </div>
+                                    <div class="telemetry-sub" id="dashboard-battery-state">Mierzenie...</div>
+                                </div>
+                                <div id="dashboard-power-card" style="display: none; flex-direction: column; gap: 4px;">
+                                    <div class="mains-uptime" id="dashboard-power-uptime">--:--:--</div>
+                                    <div class="telemetry-sub">Tryb: <strong id="dashboard-power-mode">ECO</strong> | WiFi: <strong id="dashboard-power-wifi-status">PoĹ‚Ä…czono</strong></div>
+                                </div>
+                            </div>
+
+                            <!-- Network status -->
+                            <div class="telemetry-item main-network-item" id="network-card">
+                                <span class="telemetry-label"><i class="fa-solid fa-wifi"></i> ĹÄ…cznoĹ›Ä‡ Sieciowa</span>
+                                <div class="network-metric" id="network-status">OFFLINE</div>
+                                <div class="telemetry-sub">
+                                    SSID: <strong id="network-ssid">-</strong> | <span id="network-last-seen">brak historii</span>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Card 2: Control Center (expanded â€” relays + schedule + feeder) -->
+                    <div class="card glass control-center-card" id="control-center-panel" data-admin-only="true">
+                        <div class="card-header">
+                            <div class="card-title">
+                                <i class="fa-solid fa-sliders" style="color: var(--accent-yellow);"></i>
+                                <h2>Centrum Sterowania</h2>
+                            </div>
+                            <span id="relay-count" class="card-chip">0 / 5 aktywne</span>
+                        </div>
+                        <div class="control-center-expanded">
+                            <!-- Top row: Relays + Feeder -->
+                            <div class="control-center-grid">
+                                <!-- Left: Relays -->
+                                <div class="relays-section">
+                                    <div class="relay-row-item" id="relay-light">
+                                        <div class="relay-row-info">
+                                            <span class="relay-row-icon"><i class="fa-solid fa-lightbulb"></i></span>
+                                            <div>
+                                                <div class="relay-row-name">ĹšwiatĹ‚o gĹ‚Ăłwne</div>
+                                                <div class="relay-row-meta" id="relay-light-meta">Harmonogram</div>
+                                            </div>
+                                        </div>
+                                        <button id="relay-light-toggle" class="btn btn-secondary relay-row-btn" type="button">PrzeĹ‚Ä…cz</button>
+                                    </div>
+                                    <div class="relay-row-item" id="relay-plant">
+                                        <div class="relay-row-info">
+                                            <span class="relay-row-icon"><i class="fa-solid fa-seedling"></i></span>
+                                            <div>
+                                                <div class="relay-row-name">ĹšwiatĹ‚o roĹ›linne</div>
+                                                <div class="relay-row-meta" id="relay-plant-meta">Harmonogram</div>
+                                            </div>
+                                        </div>
+                                        <button id="relay-plant-toggle" class="btn btn-secondary relay-row-btn" type="button">PrzeĹ‚Ä…cz</button>
+                                    </div>
+                                    <div class="relay-row-item" id="relay-filter">
+                                        <div class="relay-row-info">
+                                            <span class="relay-row-icon"><i class="fa-solid fa-filter"></i></span>
+                                            <div>
+                                                <div class="relay-row-name">Filtr</div>
+                                                <div class="relay-row-meta" id="relay-filter-meta">Harmonogram</div>
+                                            </div>
+                                        </div>
+                                        <button id="relay-filter-toggle" class="btn btn-secondary relay-row-btn" type="button">PrzeĹ‚Ä…cz</button>
+                                    </div>
+                                    <div class="relay-row-item" id="relay-heater">
+                                        <div class="relay-row-info">
+                                            <span class="relay-row-icon"><i class="fa-solid fa-temperature-half"></i></span>
+                                            <div>
+                                                <div class="relay-row-name">GrzaĹ‚ka</div>
+                                                <div class="relay-row-meta" id="relay-heater-meta">Harmonogram</div>
+                                            </div>
+                                        </div>
+                                        <button id="relay-heater-toggle" class="btn btn-secondary relay-row-btn" type="button">PrzeĹ‚Ä…cz</button>
+                                    </div>
+                                    <div class="relay-row-item" id="relay-aeration">
+                                        <div class="relay-row-info">
+                                            <span class="relay-row-icon"><i class="fa-solid fa-wind"></i></span>
+                                            <div>
+                                                <div class="relay-row-name">Napowietrzanie</div>
+                                                <div class="relay-row-meta" id="relay-aeration-meta">Harmonogram</div>
+                                            </div>
+                                        </div>
+                                        <button id="relay-aeration-toggle" class="btn btn-secondary relay-row-btn" type="button">PrzeĹ‚Ä…cz</button>
+                                    </div>
+                                </div>
+
+                                <!-- Right: Feeder -->
+                                <div class="feeder-section">
+                                    <span class="feeder-title">Automatyczny Karmnik</span>
+                                    <div class="feeder-orb-container">
+                                        <button id="feed-now-btn" class="feed-now-btn-new" type="button" data-admin-only="true">
+                                            <i class="fa-solid fa-fish"></i>
+                                            <span>Karm Teraz</span>
+                                        </button>
+                                    </div>
+                                    <div class="feeder-info-block">
+                                        <span id="feed-next-label" class="feeder-lbl">Codziennie 18:00</span>
+                                        <span id="feed-last-label" class="feeder-lbl-sub">Ostatnie karmienie: brak danych</span>
+                                    </div>
+                                    <button id="feeder-manage-btn" class="btn btn-secondary w-100" type="button" data-admin-only="true">Ustawienia karmnika</button>
+                                </div>
+                            </div>
+
+                            <!-- Bottom: Schedule overview -->
+                            <div class="control-schedule-strip">
+                                <div class="control-schedule-header">
+                                    <div>
+                                        <i class="fa-solid fa-calendar-days" style="color: var(--accent-magenta);"></i>
+                                        <span class="control-schedule-title">Harmonogramy</span>
+                                    </div>
+                                    <span id="dashboard-work-window" class="card-chip card-chip-accent">--:-- - --:--</span>
+                                </div>
+                                <div id="today-schedule-list" class="schedule-summary-list-new"></div>
+                                <button id="dashboard-edit-schedule-btn" class="btn btn-secondary w-100" type="button" style="margin-top: 10px; padding: 8px 14px; font-size: 12px;" data-admin-only="true">
+                                    <i class="fa-solid fa-sliders"></i> Edytuj harmonogramy
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Card 4: Chart (wide) -->
+                    <div class="card glass chart-wide-card temp-history-card">
+                        <div class="temp-chart-header">
+                            <span class="card-heading">Zakres temperatury</span>
+                            <span id="temperature-chart-meta" class="card-chip card-chip-accent">20 ostatnich pomiarow co 10 min</span>
+                        </div>
+
+                        <div class="temp-chart-shell">
+                            <div class="temp-chart-legend">
+                                <span><span class="legend-line legend-line-live"></span>Temperatura</span>
+                                <span><span class="legend-line legend-line-target"></span>Docelowa</span>
+                                <span><span class="legend-line legend-line-hysteresis"></span>Pasmo</span>
+                            </div>
+                            <div id="temperature-chart-summary" class="temp-chart-summary"></div>
+                            <div id="temperature-chart-note" class="temp-chart-note" hidden></div>
+                            <div id="temperature-chart-empty" class="temp-chart-empty">Oczekiwanie na historiÄ™ temperatur ze sterownika</div>
+                            <svg id="temperature-chart-svg" class="temp-line-chart" viewBox="0 0 960 320" preserveAspectRatio="xMidYMid meet" aria-label="Wykres temperatury"></svg>
+                            <div id="temperature-chart-tooltip" class="temp-chart-tooltip" hidden></div>
+                            <div class="temp-chart-axis">
+                                <span id="temperature-chart-start">Najstarszy pomiar</span>
+                                <span id="temperature-chart-end">Teraz</span>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </section>
+
+            <!-- Harmonogramy View -->
+            <section id="harmonogramy" class="view-section" data-admin-only="true">
+                <div class="view-header">
+                    <h2>Harmonogramy</h2>
+                    <p>Okno pracy akwarium, dwa kanaĹ‚y Ĺ›wiatĹ‚a, moduĹ‚y zaleĹĽne od dnia i odczyty dziaĹ‚ajÄ…ce 24/7.</p>
+                </div>
+
+                <div class="view-command-strip" aria-label="Priorytety harmonogramu">
+                    <article class="view-command-card" data-tone="neutral">
+                        <span>Okno akwarium</span>
+                        <strong id="schedule-strip-window">--:-- - --:--</strong>
+                        <small id="schedule-strip-window-detail">Swiatlo glowne i grzalka</small>
+                    </article>
+                    <article class="view-command-card" data-tone="neutral">
+                        <span>Wyjscia robocze</span>
+                        <strong id="schedule-strip-outputs">0 aktywne</strong>
+                        <small id="schedule-strip-outputs-detail">Sterowane cyklem dobowym</small>
+                    </article>
+                    <article class="view-command-card" data-tone="neutral">
+                        <span>Zapis</span>
+                        <strong id="schedule-strip-save">Oczekuje</strong>
+                        <small id="schedule-strip-save-detail">Brak zmian do wyslania</small>
+                    </article>
+                </div>
+
+                <div class="timeline-container glass p-4 schedule-workspace">
+                    <div class="schedule-page-head">
+                        <div>
+                            <span class="eyebrow">CYKL DOBOWY</span>
+                            <h3 class="mh-2 mb-4">Plan pracy akwarium</h3>
+                        </div>
+                        <div class="schedule-head-note">
+                            <strong>24h</strong>
+                            <span>cykl dobowy</span>
+                        </div>
+                    </div>
+
+                    <div class="schedule-group">
+                        <div class="schedule-group-header">
+                            <div>
+                                <span class="schedule-group-kicker">Baza</span>
+                                <h4>Okno pracy akwarium</h4>
+                            </div>
+                            <span class="schedule-group-chip">steruje trybem dziennym</span>
+                        </div>
+
+                        <div class="schedule-item schedule-item-primary" data-schedule-kind="range">
+                            <div class="schedule-icon"><i class="fa-solid fa-clock" style="color: var(--accent-cyan);"></i></div>
+                            <div class="schedule-details">
+                                <div class="schedule-item-header">
+                                    <div>
+                                        <div class="schedule-title">Godziny pracy akwarium</div>
+                                        <div class="schedule-description">WspĂłlne okno dla moduĹ‚Ăłw, ktĂłre nie muszÄ… pracowaÄ‡ caĹ‚Ä… dobÄ™.</div>
+                                    </div>
+                                    <select id="schedule-work-mode" class="form-control schedule-mode-select" disabled>
+                                        <option value="harmonogram" selected>Harmonogram</option>
+                                        <option value="zawsze_wlaczone">CaĹ‚a doba</option>
+                                        <option value="zawsze_wylaczone">Tryb serwisowy OFF</option>
+                                    </select>
+                                </div>
+                                <div class="schedule-bar-container">
+                                    <div class="schedule-bar" data-bar-color="var(--accent-cyan)" style="background: var(--accent-cyan);"></div>
+                                    <input type="time" id="schedule-work-start" class="time-pill schedule-time-start" value="10:00">
+                                    <input type="time" id="schedule-work-end" class="time-pill schedule-time-end" value="21:00">
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="schedule-group">
+                        <div class="schedule-group-header">
+                            <div>
+                                <span class="schedule-group-kicker">ĹšwiatĹ‚o</span>
+                                <h4>Dwa kanaĹ‚y LED</h4>
+                            </div>
+                            <span class="schedule-group-chip">MCP CH0 / CH1</span>
+                        </div>
+
+                        <div class="schedule-item" data-schedule-kind="range">
+                            <div class="schedule-icon"><i class="fa-regular fa-lightbulb" style="color: var(--accent-yellow);"></i></div>
+                            <div class="schedule-details">
+                                <div class="schedule-item-header">
+                                    <div>
+                                        <div class="schedule-title">ĹšwiatĹ‚o gĹ‚Ăłwne</div>
+                                        <div class="schedule-description">KanaĹ‚ dzienny: obserwacja zbiornika i bazowe oĹ›wietlenie.</div>
+                                    </div>
+                                    <select id="schedule-light-mode" class="form-control schedule-mode-select">
+                                        <option value="harmonogram" selected>Harmonogram</option>
+                                        <option value="zawsze_wlaczone">Zawsze wĹ‚Ä…czone</option>
+                                        <option value="zawsze_wylaczone">Zawsze wyĹ‚Ä…czone</option>
+                                    </select>
+                                </div>
+                                <div class="schedule-bar-container">
+                                    <div class="schedule-bar" data-bar-color="var(--accent-yellow)" style="background: var(--accent-yellow);"></div>
+                                    <input type="time" id="schedule-light-start" class="time-pill schedule-time-start" value="10:00">
+                                    <input type="time" id="schedule-light-end" class="time-pill schedule-time-end" value="21:00">
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="schedule-item mt-4" data-schedule-kind="range">
+                            <div class="schedule-icon"><i class="fa-solid fa-seedling" style="color: var(--success-color);"></i></div>
+                            <div class="schedule-details">
+                                <div class="schedule-item-header">
+                                    <div>
+                                        <div class="schedule-title">ĹšwiatĹ‚o roĹ›linne</div>
+                                        <div class="schedule-description">KanaĹ‚ wspierajÄ…cy roĹ›liny, zwykle krĂłtszy od Ĺ›wiatĹ‚a gĹ‚Ăłwnego.</div>
+                                    </div>
+                                    <select id="schedule-plant-light-mode" class="form-control schedule-mode-select">
+                                        <option value="harmonogram" selected>Harmonogram</option>
+                                        <option value="zawsze_wlaczone">Zawsze wĹ‚Ä…czone</option>
+                                        <option value="zawsze_wylaczone">Zawsze wyĹ‚Ä…czone</option>
+                                    </select>
+                                </div>
+                                <div class="schedule-bar-container">
+                                    <div class="schedule-bar" data-bar-color="var(--success-color)" style="background: var(--success-color);"></div>
+                                    <input type="time" id="schedule-plant-light-start" class="time-pill schedule-time-start" value="12:00">
+                                    <input type="time" id="schedule-plant-light-end" class="time-pill schedule-time-end" value="18:00">
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="schedule-group">
+                        <div class="schedule-group-header">
+                            <div>
+                                <span class="schedule-group-kicker">Okno pracy</span>
+                                <h4>ModuĹ‚y zaleĹĽne od trybu dziennego</h4>
+                            </div>
+                            <span class="schedule-group-chip">oszczÄ™dzanie energii</span>
+                        </div>
+
+                        <div class="schedule-item mt-4" data-schedule-kind="range">
+                            <div class="schedule-icon"><i class="fa-solid fa-filter" style="color: var(--accent-blue);"></i></div>
+                            <div class="schedule-details">
+                                <div class="schedule-item-header">
+                                    <div>
+                                        <div class="schedule-title">Filtracja</div>
+                                        <div class="schedule-description">Obieg wody w godzinach pracy lub tryb ciÄ…gĹ‚y, jeĹĽeli wymaga tego zbiornik.</div>
+                                    </div>
+                                    <select id="schedule-filter-mode" class="form-control schedule-mode-select">
+                                        <option value="harmonogram" selected>Harmonogram</option>
+                                        <option value="zawsze_wlaczone">Zawsze wĹ‚Ä…czona</option>
+                                        <option value="zawsze_wylaczone">Zawsze wyĹ‚Ä…czona</option>
+                                    </select>
+                                </div>
+                                <div class="schedule-bar-container">
+                                    <div class="schedule-bar" data-bar-color="var(--accent-blue)" style="background: var(--accent-blue);"></div>
+                                    <input type="time" id="schedule-filter-start" class="time-pill schedule-time-start" value="10:30">
+                                    <input type="time" id="schedule-filter-end" class="time-pill schedule-time-end" value="20:30">
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="schedule-item mt-4" data-schedule-kind="range">
+                            <div class="schedule-icon"><i class="fa-solid fa-wind" style="color: var(--accent-white);"></i></div>
+                            <div class="schedule-details">
+                                <div class="schedule-item-header">
+                                    <div>
+                                        <div class="schedule-title">Napowietrzanie</div>
+                                        <div class="schedule-description">DziaĹ‚a w oknie pracy lub awaryjnie jako tryb staĹ‚y.</div>
+                                    </div>
+                                    <select id="schedule-air-mode" class="form-control schedule-mode-select">
+                                        <option value="harmonogram" selected>Harmonogram</option>
+                                        <option value="zawsze_wlaczone">Zawsze wĹ‚Ä…czone</option>
+                                        <option value="zawsze_wylaczone">Zawsze wyĹ‚Ä…czone</option>
+                                    </select>
+                                </div>
+                                <div class="schedule-bar-container">
+                                    <div class="schedule-bar" data-bar-color="var(--accent-white)" style="background: var(--accent-white);"></div>
+                                    <input type="time" id="schedule-air-start" class="time-pill schedule-time-start" value="10:00">
+                                    <input type="time" id="schedule-air-end" class="time-pill schedule-time-end" value="19:00">
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="schedule-item mt-4" data-schedule-kind="range">
+                            <div class="schedule-icon"><i class="fa-solid fa-temperature-half" style="color: var(--accent-orange);"></i></div>
+                            <div class="schedule-details">
+                                <div class="schedule-item-header">
+                                    <div>
+                                        <div class="schedule-title">GrzaĹ‚ka</div>
+                                        <div class="schedule-description">Automatyka progowa z limitem okna pracy akwarium.</div>
+                                    </div>
+                                    <select id="schedule-heater-mode" class="form-control schedule-mode-select">
+                                        <option value="harmonogram" selected>Auto progowe</option>
+                                        <option value="zawsze_wylaczone">WyĹ‚Ä…czona</option>
+                                    </select>
+                                </div>
+                                <div class="schedule-bar-container">
+                                    <div class="schedule-bar" data-bar-color="var(--accent-orange)" style="background: var(--accent-orange);"></div>
+                                    <input type="time" id="schedule-heater-start" class="time-pill schedule-time-start" value="10:00">
+                                    <input type="time" id="schedule-heater-end" class="time-pill schedule-time-end" value="21:00">
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="schedule-group schedule-group-readonly">
+                        <div class="schedule-group-header">
+                            <div>
+                                <span class="schedule-group-kicker">CiÄ…gĹ‚y nadzĂłr</span>
+                                <h4>Czujniki i zabezpieczenia 24/7</h4>
+                            </div>
+                            <span class="schedule-group-chip">bez harmonogramu</span>
+                        </div>
+                        <div class="schedule-static-grid">
+                            <div class="schedule-static-item">
+                                <span><i class="fa-solid fa-vial"></i> pH</span>
+                                <strong>pomiar ciÄ…gĹ‚y</strong>
+                            </div>
+                            <div class="schedule-static-item">
+                                <span><i class="fa-solid fa-bolt"></i> EC</span>
+                                <strong>pomiar ciÄ…gĹ‚y</strong>
+                            </div>
+                            <div class="schedule-static-item">
+                                <span><i class="fa-solid fa-sun"></i> LDR</span>
+                                <strong>automatyka motywu</strong>
+                            </div>
+                            <div class="schedule-static-item">
+                                <span><i class="fa-solid fa-water"></i> Poziom / wyciek / przepĹ‚yw</span>
+                                <strong>zabezpieczenia 24/7</strong>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="schedule-group">
+                        <div class="schedule-group-header">
+                            <div>
+                                <span class="schedule-group-kicker">Karmnik</span>
+                                <h4>Dawka automatyczna</h4>
+                            </div>
+                            <span class="schedule-group-chip">MCP + sensor pozycji</span>
+                        </div>
+
+                        <div class="schedule-item mt-4">
+                            <div class="schedule-icon"><i class="fa-solid fa-fish" style="color: var(--accent-cyan);"></i></div>
+                            <div class="schedule-details">
+                                <div class="schedule-item-header">
+                                    <div>
+                                        <div class="schedule-title">Karmienie automatyczne</div>
+                                        <div class="schedule-description">Jedna dawka dziennie z potwierdzeniem pozycji mechanizmu.</div>
+                                    </div>
+                                    <select id="schedule-feed-mode" class="form-control schedule-mode-select">
+                                        <option value="wylaczone">WyĹ‚Ä…czone</option>
+                                        <option value="codziennie" selected>Codziennie</option>
+                                        <option value="co_2_dni">Co 2 dni</option>
+                                        <option value="co_3_dni">Co 3 dni</option>
+                                    </select>
+                                </div>
+                                <div class="schedule-bar-container">
+                                    <div class="schedule-point" style="left: 75%; background: var(--accent-cyan);"></div>
+                                    <input type="time" id="schedule-feed-time" class="time-pill schedule-time-point" value="18:00">
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="schedule-save-row">
+                        <div>
+                            <strong>Zmiany wymagajÄ… zapisu w sterowniku</strong>
+                            <div id="schedule-save-status" class="text-muted">Harmonogramy zostanÄ… wysĹ‚ane do ESP32 po klikniÄ™ciu przycisku.</div>
+                        </div>
+                        <button id="save-schedule-btn" class="btn btn-primary" type="button">
+                            <i class="fa-solid fa-floppy-disk"></i> Zapisz harmonogramy
+                        </button>
+                    </div>
+                </div>
+            </section>
+
+            <!-- Logi View -->
+            <section id="logi" class="view-section" data-admin-only="true">
+                <div class="logs-header" style="display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 30px;">
+                    <div class="view-header" style="margin-bottom: 0;">
+                        <h2>Logi systemowe</h2>
+                    <p>BieĹĽÄ…ce zdarzenia sterownika, komendy i wpisy krytyczne.</p>
+                    </div>
+                    <div class="logs-actions" style="display: flex; gap: 15px;">
+                        <button id="clear-logs-btn" class="btn btn-secondary" style="border-radius: 12px; padding: 10px 24px; font-weight: 500; font-size: 13px; background: rgba(255,255,255,0.03); border: 1px solid rgba(255,255,255,0.1);">Wyczysc widok</button>
+                        <button id="delete-critical-btn" class="btn btn-primary hover-danger-btn" type="button" style="background: rgba(239, 68, 68, 0.15); color: #ef4444; border: 1px solid rgba(239, 68, 68, 0.3); border-radius: 12px; padding: 10px 24px; font-weight: 500; font-size: 13px; transition: 0.2s;">Usun krytyczne</button>
+                    </div>
+                </div>
+
+                <div class="view-command-strip" aria-label="Priorytety logow">
+                    <article class="view-command-card" data-tone="neutral">
+                        <span>Biezace</span>
+                        <strong id="logs-strip-normal">0 wpisow</strong>
+                        <small id="logs-strip-normal-detail">Logi informacyjne i komendy</small>
+                    </article>
+                    <article class="view-command-card" data-tone="neutral">
+                        <span>Krytyczne</span>
+                        <strong id="logs-strip-critical">0 wpisow</strong>
+                        <small id="logs-strip-critical-detail">Brak alarmow runtime</small>
+                    </article>
+                    <article class="view-command-card" data-tone="neutral">
+                        <span>Widok</span>
+                        <strong id="logs-strip-source">Biezace</strong>
+                        <small id="logs-strip-source-detail">Filtr bez wyszukiwania</small>
+                    </article>
+                </div>
+
+                <div class="logs-stats-grid" style="display: grid; grid-template-columns: repeat(2, 1fr); gap: 20px; margin-bottom: 30px;">
+                    <div class="card glass logs-stat-card" style="padding: 20px; border-radius: 16px;">
+                        <div style="font-size: 11px; font-weight: 600; color: var(--text-muted); margin-bottom: 10px; letter-spacing: 1px;">INFO</div>
+                        <div id="info-count" style="font-size: 28px; font-weight: 600; color: var(--accent-cyan);">2</div>
+                    </div>
+                    <div class="card glass logs-stat-card" style="padding: 20px; border-radius: 16px;">
+                        <div style="font-size: 11px; font-weight: 600; color: var(--text-muted); margin-bottom: 10px; letter-spacing: 1px;">KRYTYCZNYCH</div>
+                        <div id="critical-count" style="font-size: 28px; font-weight: 600; color: #ef4444;">0</div>
+                    </div>
+                </div>
+
+                <div class="card glass logs-panel" style="padding: 20px; border-radius: 16px; min-height: 500px;">
+                    <div class="logs-toolbar" style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px;">
+                        <div class="logs-toolbar-primary" style="display: flex; gap: 10px; align-items: center;">
+                            <button id="logs-current-btn" class="btn btn-secondary active logs-tab-btn" style="padding: 8px 16px; border-radius: 12px; border: 1px solid rgba(6, 182, 212, 0.4); color: var(--accent-cyan); font-size: 13px; font-weight: 600; background: rgba(6, 182, 212, 0.1);">BieĹĽÄ…ce</button>
+                            <button id="logs-critical-btn" class="btn btn-secondary logs-tab-btn logs-tab-btn-critical" type="button" style="padding: 8px 16px; border-radius: 12px; border: 1px solid transparent; color: var(--text-main); font-size: 13px; font-weight: 600; transition: 0.2s;">Krytyczne</button>
+                            <span id="logs-status" class="logs-status" style="font-size: 13px; color: var(--text-muted); margin-left: 10px;">Brak odpowiedzi sterownika.</span>
+                        </div>
+                        <div class="logs-toolbar-secondary" style="display: flex; gap: 10px; align-items: center;">
+                            <input id="logs-search" class="logs-search-input" type="text" placeholder="Szukaj logĂłw" style="background: rgba(0,0,0,0.3); border: 1px solid var(--glass-border); border-radius: 8px; padding: 10px 16px; color: var(--text-main); font-size: 13px; width: 250px; outline: none;">
+                            <button id="download-logs-btn" class="btn btn-secondary logs-download-btn" style="padding: 10px 14px; border-radius: 8px; border: 1px solid var(--glass-border); background: rgba(255,255,255,0.03);" title="Pobierz logi"><i class="fa-solid fa-download" style="color: var(--accent-cyan);"></i></button>
+                        </div>
+                    </div>
+
+                    <div class="logs-pagination-row">
+                        <span id="logs-page-info" class="logs-page-info">Strona 1 / 1</span>
+                        <div class="logs-pagination-actions">
+                            <button id="logs-prev-btn" class="btn btn-secondary logs-page-btn" type="button">Poprzednia</button>
+                            <button id="logs-next-btn" class="btn btn-secondary logs-page-btn" type="button">NastÄ™pna</button>
+                        </div>
+                    </div>
+
+                    <div id="logs-list" class="logs-list" style="display: flex; flex-direction: column; gap: 10px;">
+                        <div class="logs-list-row" style="background: rgba(255,255,255,0.02); border: 1px solid rgba(255,255,255,0.05); border-radius: 8px; padding: 14px 20px; display: flex; align-items: center; font-size: 13px;">
+                            <span class="logs-level logs-level-info" style="color: var(--accent-cyan); font-weight: 600; width: 80px;">INFO</span>
+                            <span class="logs-time" style="color: var(--text-muted); width: 100px;">17:54:08</span>
+                            <span class="logs-message" style="color: var(--text-main);">Po uruchomieniu panel pobiera logi firmware przez HTTP i odĹ›wieĹĽa je strumieniem zdarzeĹ„.</span>
+                        </div>
+                        <div class="logs-list-row" style="background: rgba(255,255,255,0.02); border: 1px solid rgba(255,255,255,0.05); border-radius: 8px; padding: 14px 20px; display: flex; align-items: center; font-size: 13px;">
+                            <span class="logs-level logs-level-info" style="color: var(--accent-cyan); font-weight: 600; width: 80px;">INFO</span>
+                            <span class="logs-time" style="color: var(--text-muted); width: 100px;">17:54:08</span>
+                            <span class="logs-message" style="color: var(--text-main);">Panel WWW gotowy. Po polaczeniu z urzadzeniem zobaczysz tu biezace logi runtime.</span>
+                        </div>
+                    </div>
+                </div>
+
+            </section>
+
+            <section id="diag" class="view-section" data-admin-only="true">
+                <div class="view-header">
+                    <h2>Diagnostyka</h2>
+                    <p>Stan firmware, pamiÄ™ci, czasu, sieci i warunkĂłw brzegowych moduĹ‚Ăłw sterownika.</p>
+                </div>
+
+                <div class="view-command-strip" aria-label="Priorytety diagnostyki">
+                    <article class="view-command-card" data-tone="neutral">
+                        <span>Firmware</span>
+                        <strong id="diag-strip-firmware">v--</strong>
+                        <small id="diag-strip-firmware-detail">Brak metadanych builda</small>
+                    </article>
+                    <article class="view-command-card" data-tone="neutral">
+                        <span>PamiÄ™Ä‡</span>
+                        <strong id="diag-strip-heap">--</strong>
+                        <small id="diag-strip-heap-detail">Wolny heap / najwiÄ™kszy blok</small>
+                    </article>
+                    <article class="view-command-card" data-tone="neutral">
+                        <span>Komunikacja</span>
+                        <strong id="diag-strip-bus">Oczekuje</strong>
+                        <small id="diag-strip-bus-detail">RTC, NTP i WiFi</small>
+                    </article>
+                </div>
+
+                <!-- Diagnostyka i Peryferia ESP32 -->
+                <div class="card glass diagnostics-panel-new" id="diagnostics-panel">
+                    <div class="card-header">
+                        <div class="card-title">
+                            <i class="fa-solid fa-circle-info" style="color: var(--accent-cyan);"></i>
+                            <h2>Diagnostyka i Peryferia ESP32</h2>
+                        </div>
+                    </div>
+                    <div class="diagnostics-grid-new">
+                        <!-- Column 1: System Info -->
+                        <div class="diag-column">
+                            <span class="diag-col-title"><i class="fa-solid fa-microchip"></i> System i Firmware</span>
+                            <div class="info-list-body-new">
+                                <div class="diag-info-row">
+                                    <span class="lbl-muted">Firmware:</span>
+                                    <span id="system-firmware-version" style="font-weight: 600;">v--</span>
+                                </div>
+                                <div class="diag-info-row">
+                                    <span class="lbl-muted">Czas kompilacji:</span>
+                                    <span id="system-build-date" style="font-weight: 600;">-- --</span>
+                                </div>
+                                <div class="diag-info-row">
+                                    <span class="lbl-muted">Uptime urzÄ…dzenia:</span>
+                                    <span id="system-uptime" style="font-weight: 600;">--</span>
+                                </div>
+                                <div class="diag-info-row">
+                                    <span class="lbl-muted">PowĂłd restartu:</span>
+                                    <span id="system-reset-reason" style="font-weight: 600;">--</span>
+                                </div>
+                                <div class="diag-info-row">
+                                    <span class="lbl-muted">Liczba restartĂłw:</span>
+                                    <span id="system-reset-count" style="font-weight: 600;">--</span>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Column 2: Memory & Storage & WiFi -->
+                        <div class="diag-column">
+                            <span class="diag-col-title"><i class="fa-solid fa-database"></i> PamiÄ™Ä‡ i ĹÄ…cznoĹ›Ä‡</span>
+                            <div class="info-list-body-new">
+                                <div class="diag-info-row">
+                                    <span class="lbl-muted">Wolny Heap:</span>
+                                    <span id="system-free-heap" style="font-weight: 600;">-- KB</span>
+                                </div>
+                                <div class="diag-info-row">
+                                    <span class="lbl-muted">NajwiÄ™kszy blok RAM:</span>
+                                    <span id="system-largest-block" style="font-weight: 600;">-- KB</span>
+                                </div>
+                                <div class="diag-info-row">
+                                    <span class="lbl-muted">Karta SD:</span>
+                                    <span id="sd-status" style="font-weight: 600;">Nieznany</span>
+                                </div>
+                                <div class="diag-info-row">
+                                    <span class="lbl-muted">SD wolne / caĹ‚kowite:</span>
+                                    <span><span id="sd-free-space">--</span> / <span id="sd-total-space">--</span></span>
+                                </div>
+                                <div class="diag-info-row">
+                                    <span class="lbl-muted">Synchronizacja NTP:</span>
+                                    <span id="system-ntp-status" style="font-weight: 600;">--</span>
+                                </div>
+                                <div class="diag-info-row">
+                                    <span class="lbl-muted">Status WiFi (RSSI):</span>
+                                    <span id="system-network-quality" style="font-weight: 600;">--</span>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Column 3: Actuator edge health -->
+                        <div class="diag-column">
+                            <span class="diag-col-title"><i class="fa-solid fa-circle-check"></i> Kontrola ModuĹ‚Ăłw</span>
+                            <div class="module-health-list-new" id="module-edge-list">
+                                <!-- Dynamic check status badges -->
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </section>
+
+            <section id="wykresy" class="view-section">
+                <div class="view-header measurements-header">
+                    <h2>Pomiary</h2>
+                    <p>Wykres temperatury, zmiennoĹ›Ä‡ dobowa i historia ostatnich odczytĂłw.</p>
+                </div>
+
+                <div class="view-command-strip" aria-label="Priorytety pomiarow">
+                    <article class="view-command-card" data-tone="neutral">
+                        <span>Odczyt live</span>
+                        <strong id="measure-strip-live">--.-C</strong>
+                        <small id="measure-strip-live-detail">Brak aktualnego pomiaru</small>
+                    </article>
+                    <article class="view-command-card" data-tone="neutral">
+                        <span>Historia</span>
+                        <strong id="measure-strip-history">0 probek</strong>
+                        <small id="measure-strip-history-detail">Bufor z ograniczeniem RAM</small>
+                    </article>
+                    <article class="view-command-card" data-tone="neutral">
+                        <span>Eksport</span>
+                        <strong id="measure-strip-export">CSV</strong>
+                        <small id="measure-strip-export-detail">Dane widoczne w tabeli</small>
+                    </article>
+                </div>
+
+                <section class="temp-summary-strip" id="temp-summary">
+                    <div class="summary-card summary-current glass">
+                        <div class="summary-label">Aktualna</div>
+                        <div class="summary-value" id="summary-current">--.-&deg;C</div>
+                        <div class="summary-trend" id="summary-trend">
+                            <svg viewBox="0 0 16 16" width="14" height="14"><path d="M8 3v10M8 3l-3 3M8 3l3 3" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+                            <span>--</span>
+                        </div>
+                    </div>
+                    <div class="summary-card summary-target glass">
+                        <div class="summary-label">Cel</div>
+                        <div class="summary-value" id="summary-target">25.0&deg;C</div>
+                        <div class="summary-band" id="summary-band">&plusmn;0.5&deg;C</div>
+                    </div>
+                    <div class="summary-card summary-min glass">
+                        <div class="summary-label">Min (24h)</div>
+                        <div class="summary-value" id="summary-min">--.-&deg;C</div>
+                    </div>
+                    <div class="summary-card summary-max glass">
+                        <div class="summary-label">Max (24h)</div>
+                        <div class="summary-value" id="summary-max">--.-&deg;C</div>
+                    </div>
+                </section>
+
+                <section class="chart-section" id="main-chart-section">
+                    <div class="chart-card glass">
+                        <div class="chart-header">
+                            <div class="chart-title-group">
+                                <h2 class="chart-title">Przebieg Temperatury</h2>
+                                <span class="chart-subtitle" id="chart-subtitle">Ostatnie 3 godziny</span>
+                            </div>
+                            <div class="chart-controls">
+                                <button class="fullscreen-btn" id="fullscreen-btn" type="button" title="Pelny ekran">
+                                    <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M8 3H5a2 2 0 0 0-2 2v3M21 8V5a2 2 0 0 0-2-2h-3M3 16v3a2 2 0 0 0 2 2h3M16 21h3a2 2 0 0 0 2-2v-3"/></svg>
+                                </button>
+                                <div class="range-selector" id="range-selector">
+                                    <button class="range-btn" data-range="1h" type="button">1H</button>
+                                    <button class="range-btn active" data-range="3h" type="button">3H</button>
+                                    <button class="range-btn" data-range="6h" type="button">6H</button>
+                                    <button class="range-btn" data-range="12h" type="button">12H</button>
+                                    <button class="range-btn" data-range="24h" type="button">24H</button>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="chart-legend">
+                            <span class="legend-item">
+                                <span class="legend-swatch legend-swatch-live"></span>
+                                Temperatura
+                            </span>
+                            <span class="legend-item">
+                                <span class="legend-swatch legend-swatch-target"></span>
+                                Cel
+                            </span>
+                            <span class="legend-item">
+                                <span class="legend-swatch legend-swatch-band"></span>
+                                Pasmo histerezy
+                            </span>
+                        </div>
+                        <div class="chart-container" id="main-chart-container">
+                            <canvas id="main-chart-canvas"></canvas>
+                            <div class="chart-tooltip" id="chart-tooltip" hidden>
+                                <div class="tooltip-time"></div>
+                                <div class="tooltip-value"></div>
+                            </div>
+                            <div class="swipe-hint" id="swipe-hint">
+                                <span>&larr; Przesun aby zmienic zakres &rarr;</span>
+                            </div>
+                        </div>
+                        <div class="chart-time-axis" id="chart-time-axis"></div>
+                    </div>
+                </section>
+
+                <section class="mini-charts-row">
+                    <div class="mini-chart-card glass" id="mini-variability">
+                        <div class="mini-chart-header">
+                            <span class="mini-chart-title">ZmiennoĹ›Ä‡</span>
+                            <span class="mini-chart-value" id="mini-var-value">--</span>
+                        </div>
+                        <canvas class="mini-chart-canvas" id="mini-var-canvas"></canvas>
+                    </div>
+                    <div class="mini-chart-card glass" id="mini-deviation">
+                        <div class="mini-chart-header">
+                            <span class="mini-chart-title">Odchylenie od celu</span>
+                            <span class="mini-chart-value" id="mini-dev-value">--</span>
+                        </div>
+                        <canvas class="mini-chart-canvas" id="mini-dev-canvas"></canvas>
+                    </div>
+                    <div class="mini-chart-card glass" id="mini-rate">
+                        <div class="mini-chart-header">
+                            <span class="mini-chart-title">Tempo zmian</span>
+                            <span class="mini-chart-value" id="mini-rate-value">--</span>
+                        </div>
+                        <canvas class="mini-chart-canvas" id="mini-rate-canvas"></canvas>
+                    </div>
+                </section>
+
+                <section class="heatmap-section">
+                    <div class="heatmap-card glass">
+                        <div class="heatmap-header">
+                            <h2 class="chart-title">Mapa ciepĹ‚a - 7 dni x 24 h</h2>
+                            <div class="heatmap-scale">
+                                <span class="heatmap-scale-label">Zimno</span>
+                                <div class="heatmap-gradient"></div>
+                                <span class="heatmap-scale-label">Cieplo</span>
+                            </div>
+                        </div>
+                        <div class="heatmap-legend-extra">
+                            <span class="hm-legend-item"><span class="hm-legend-border" style="border-color: #3b82f6; box-shadow: 0 0 4px #3b82f6;"></span>Min</span>
+                            <span class="hm-legend-item"><span class="hm-legend-border" style="border-color: #fbbf24; box-shadow: 0 0 4px #fbbf24;"></span>Max</span>
+                            <span class="hm-legend-item"><span class="hm-legend-now"></span>Teraz</span>
+                        </div>
+                        <div class="heatmap-container" id="heatmap-container">
+                            <canvas id="heatmap-canvas"></canvas>
+                            <div class="heatmap-tooltip" id="heatmap-tooltip" hidden>
+                                <div class="hm-tip-day"></div>
+                                <div class="hm-tip-val"></div>
+                            </div>
+                        </div>
+                    </div>
+                </section>
+
+                <section class="comparison-section">
+                    <div class="comparison-card glass">
+                        <div class="comparison-header">
+                            <h2 class="chart-title">PorĂłwnanie dni</h2>
+                            <div class="comparison-legend" id="comparison-legend"></div>
+                        </div>
+                        <div class="comparison-container" id="comparison-container">
+                            <canvas id="comparison-canvas"></canvas>
+                        </div>
+                    </div>
+                </section>
+
+                <section class="history-section">
+                    <div class="history-card glass">
+                        <div class="history-header">
+                            <h2 class="chart-title">Historia pomiarĂłw</h2>
+                            <button class="btn-export" id="btn-export" type="button">
+                                <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 4v10"/><path d="m8 10 4 4 4-4"/><path d="M5 19h14"/></svg>
+                                Eksportuj CSV
+                            </button>
+                        </div>
+                        <div class="history-table-wrapper" id="history-table-wrapper">
+                            <table class="history-table" id="history-table">
+                                <thead>
+                                    <tr>
+                                        <th>Czas</th>
+                                        <th>Temperatura</th>
+                                        <th>Trend</th>
+                                        <th>Odchylenie</th>
+                                        <th>Status</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="history-tbody"></tbody>
+                            </table>
+                        </div>
+                    </div>
+                </section>
+
+                <section class="archive-section">
+                    <div class="archive-card glass">
+                        <div class="history-header">
+                            <div>
+                                <h2 class="chart-title">Archiwa miesieczne</h2>
+                                <p class="archive-status" id="archive-status">Pliki .aqbin sa zapisywane na karcie SD co 60 sekund.</p>
+                            </div>
+                            <button class="btn-export" id="archive-refresh-btn" type="button">
+                                <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 0 1-15.5 6.3"/><path d="M3 12A9 9 0 0 1 18.5 5.7"/><path d="M3 19v-5h5"/><path d="M21 5v5h-5"/></svg>
+                                Odswiez
+                            </button>
+                        </div>
+                        <div class="archive-list" id="archive-list">
+                            <div class="archive-empty">Brak listy archiwow. Polacz sie ze sterownikiem i odswiez.</div>
+                        </div>
+                    </div>
+                </section>
+            </section>
+
+
+
+            <!-- Moduly View -->
+            <section id="moduly" class="view-section" data-admin-only="true">
+                <div class="view-header">
+                    <h2>ModuĹ‚y i Automatyka Dodatkowa</h2>
+                    <p>ZarzÄ…dzanie peryferiami automatycznymi: grzaĹ‚ka, elektrozawĂłr CO2, dolewka oraz ochrona przed zalaniem.</p>
+                </div>
+
+                <div class="view-command-strip" aria-label="Statusy moduĹ‚Ăłw">
+                    <article class="view-command-card" data-tone="neutral">
+                        <span>GrzaĹ‚ka</span>
+                        <strong id="module-status-heater">CZUWANIE</strong>
+                        <small>Automatyka temperatury</small>
+                    </article>
+                    <article class="view-command-card" data-tone="neutral">
+                        <span>CO2</span>
+                        <strong id="module-status-co2">WYĹÄ„CZONY</strong>
+                        <small>ElektrozawĂłr pH</small>
+                    </article>
+                    <article class="view-command-card" data-tone="neutral">
+                        <span>Dolewka ATO</span>
+                        <strong id="module-status-water">WYĹÄ„CZONA</strong>
+                        <small>Poziom wody w sumpie</small>
+                    </article>
+                    <article class="view-command-card" data-tone="neutral">
+                        <span>Wyciek</span>
+                        <strong id="module-status-leak">NIEAKTYWNE</strong>
+                        <small>BezpieczeĹ„stwo szafki</small>
+                    </article>
+                </div>
+
+                <div class="dashboard-grid-consolidated" style="display: grid; grid-template-columns: repeat(2, 1fr); gap: 20px; margin-top: 20px;">
+                    <!-- ModuĹ‚ 1: GrzaĹ‚ka -->
+                    <div class="card glass">
+                        <div class="card-header">
+                            <div class="card-title">
+                                <i class="fa-solid fa-temperature-half" style="color: var(--accent-orange);"></i>
+                                <h2>Automatyka GrzaĹ‚ki</h2>
+                            </div>
+                        </div>
+                        <div class="card-body form-group" style="padding-top: 10px;">
+                            <div style="display: flex; justify-content: space-between; align-items: center; background: rgba(255,255,255,0.02); padding: 12px; border-radius: 8px; border: 1px solid rgba(255,255,255,0.05); margin-bottom: 15px;">
+                                <div style="display: flex; flex-direction: column; gap: 2px;">
+                                    <span style="font-size: 13px; font-weight: 600; color: var(--text-main);">WĹ‚Ä…cz grzaĹ‚kÄ™:</span>
+                                    <span style="font-size: 11px; color: var(--text-muted);">Kontrola temperatury wedĹ‚ug progĂłw</span>
+                                </div>
+                                <label class="switch">
+                                    <input id="settings-temp-enabled" type="checkbox" checked>
+                                    <span class="slider round"></span>
+                                </label>
+                            </div>
+                            <div class="grid-2-col mb-3">
+                                <div>
+                                    <label>Temperatura docelowa (&deg;C):</label>
+                                    <input id="settings-temp-target" type="number" step="0.1" min="18" max="30" class="form-control" value="25.0">
+                                </div>
+                                <div>
+                                    <label>Histereza (&deg;C):</label>
+                                    <input id="settings-temp-hyst" type="number" step="0.1" min="0.1" max="5.0" class="form-control" value="0.5">
+                                </div>
+                            </div>
+                            <button id="save-temperature-btn" class="btn btn-primary w-100" type="button" style="padding: 10px;"><i class="fa-solid fa-floppy-disk"></i> Zapisz ustawienia grzaĹ‚ki</button>
+                            <div id="settings-temp-status" class="text-muted" style="margin-top: 10px; font-size: 11px;">Sterowanie grzaĹ‚kÄ… jest synchronizowane ze sterownikiem.</div>
+                        </div>
+                    </div>
+
+                    <!-- ModuĹ‚ 2: CO2 -->
+                    <div class="card glass">
+                        <div class="card-header">
+                            <div class="card-title">
+                                <i class="fa-solid fa-cloud" style="color: var(--accent-cyan);"></i>
+                                <h2>Automatyka CO2</h2>
+                            </div>
+                        </div>
+                        <div class="card-body form-group" style="padding-top: 10px;">
+                            <div style="display: flex; justify-content: space-between; align-items: center; background: rgba(255,255,255,0.02); padding: 12px; border-radius: 8px; border: 1px solid rgba(255,255,255,0.05); margin-bottom: 15px;">
+                                <div style="display: flex; flex-direction: column; gap: 2px;">
+                                    <span style="font-size: 13px; font-weight: 600; color: var(--text-main);">WĹ‚Ä…cz dozowanie CO2:</span>
+                                    <span style="font-size: 11px; color: var(--text-muted);">Sterowanie elektrozaworem na podstawie pH</span>
+                                </div>
+                                <label class="switch">
+                                    <input id="settings-co2-enabled" type="checkbox">
+                                    <span class="slider round"></span>
+                                </label>
+                            </div>
+                            <div class="grid-2-col mb-3">
+                                <div>
+                                    <label>Docelowe pH wody:</label>
+                                    <input id="settings-co2-ph-target" type="number" step="0.05" min="5.0" max="8.5" class="form-control" value="6.80">
+                                </div>
+                                <div>
+                                    <label>Limit dozowania (min/doba):</label>
+                                    <input id="settings-co2-limit" type="number" min="1" max="1440" class="form-control" value="180">
+                                </div>
+                            </div>
+                            <button id="save-co2-btn" class="btn btn-primary w-100" type="button" style="padding: 10px;"><i class="fa-solid fa-floppy-disk"></i> Zapisz ustawienia CO2</button>
+                            <div id="settings-co2-status" class="text-muted" style="margin-top: 10px; font-size: 11px;">Dozowanie wyĹ‚Ä…czy siÄ™ po osiÄ…gniÄ™ciu celu pH lub limitu czasu.</div>
+                        </div>
+                    </div>
+
+                    <!-- ModuĹ‚ 3: Automatyczna Dolewka (ATO) -->
+                    <div class="card glass">
+                        <div class="card-header">
+                            <div class="card-title">
+                                <i class="fa-solid fa-droplet" style="color: var(--accent-blue);"></i>
+                                <h2>Automatyczna Dolewka (ATO)</h2>
+                            </div>
+                        </div>
+                        <div class="card-body form-group" style="padding-top: 10px;">
+                            <div style="display: flex; justify-content: space-between; align-items: center; background: rgba(255,255,255,0.02); padding: 12px; border-radius: 8px; border: 1px solid rgba(255,255,255,0.05); margin-bottom: 15px;">
+                                <div style="display: flex; flex-direction: column; gap: 2px;">
+                                    <span style="font-size: 13px; font-weight: 600; color: var(--text-main);">WĹ‚Ä…cz automatycznÄ… dolewkÄ™:</span>
+                                    <span style="font-size: 11px; color: var(--text-muted);">UzupeĹ‚nianie wody na podstawie czujnika</span>
+                                </div>
+                                <label class="switch">
+                                    <input id="settings-water-enabled" type="checkbox">
+                                    <span class="slider round"></span>
+                                </label>
+                            </div>
+                            <div class="grid-2-col mb-3">
+                                <div>
+                                    <label>Odczyt poziomu wody:</label>
+                                    <input id="settings-water-level-label" type="text" class="form-control" value="OK (WYSOKI)" style="font-weight: 600;" disabled>
+                                </div>
+                                <div>
+                                    <label>Limit pompy (sek):</label>
+                                    <input id="settings-water-timeout" type="number" min="5" max="300" class="form-control" value="30">
+                                </div>
+                            </div>
+                            <button id="save-water-btn" class="btn btn-primary w-100" type="button" style="padding: 10px;"><i class="fa-solid fa-floppy-disk"></i> Zapisz ustawienia dolewki</button>
+                            <div id="settings-water-status" class="text-muted" style="margin-top: 10px; font-size: 11px;">Limit czasu chroni przed zalaniem w przypadku zablokowania pĹ‚ywaka.</div>
+                        </div>
+                    </div>
+
+                    <!-- ModuĹ‚ 4: Zabezpieczenie przed Wyciekiem -->
+                    <div class="card glass">
+                        <div class="card-header">
+                            <div class="card-title">
+                                <i class="fa-solid fa-shield-halved" style="color: #ef4444;"></i>
+                                <h2>Zabezpieczenie przed Wyciekiem</h2>
+                            </div>
+                        </div>
+                        <div class="card-body form-group" style="padding-top: 10px;">
+                            <div style="display: flex; justify-content: space-between; align-items: center; background: rgba(255,255,255,0.02); padding: 12px; border-radius: 8px; border: 1px solid rgba(255,255,255,0.05); margin-bottom: 15px;">
+                                <div style="display: flex; flex-direction: column; gap: 2px;">
+                                    <span style="font-size: 13px; font-weight: 600; color: var(--text-main);">WĹ‚Ä…cz ochronÄ™ wyciekĂłw:</span>
+                                    <span style="font-size: 11px; color: var(--text-muted);">Monitorowanie czujnika wilgotnoĹ›ci w szafce</span>
+                                </div>
+                                <label class="switch">
+                                    <input id="settings-leak-enabled" type="checkbox">
+                                    <span class="slider round"></span>
+                                </label>
+                            </div>
+                            <div class="grid-2-col mb-3">
+                                <div>
+                                    <label>Stan czujnika zalania:</label>
+                                    <input id="settings-leak-sensor-label" type="text" class="form-control" value="SUCHY" style="font-weight: 600;" disabled>
+                                </div>
+                                <div>
+                                    <label>Akcja awaryjna:</label>
+                                    <select id="settings-leak-action" class="form-control">
+                                        <option value="alarm">Tylko Alarm dĹşwiÄ™kowy i logi</option>
+                                        <option value="disable_valves">OdĹ‚Ä…cz elektrozawory (CO2/ATO)</option>
+                                        <option value="disable_all" selected>WyĹ‚Ä…cz wszystko (zasilanie)</option>
+                                    </select>
+                                </div>
+                            </div>
+                            <button id="save-leak-btn" class="btn btn-primary w-100" type="button" style="padding: 10px;"><i class="fa-solid fa-floppy-disk"></i> Zapisz ustawienia ochrony</button>
+                            <div id="settings-leak-status" class="text-muted" style="margin-top: 10px; font-size: 11px;">BezpieczeĹ„stwo Twojego mieszkania i ryb.</div>
+                        </div>
+                    </div>
+                </div>
+            </section>
+
+            <!-- Zasilanie View -->
+            <section id="zasilanie" class="view-section" data-admin-only="true">
+                <div class="view-header">
+                    <h2>Zasilanie</h2>
+                    <p>PodglÄ…d baterii, trybu ECO i warunkĂłw przejĹ›cia w uĹ›pienie.</p>
+                </div>
+
+                <div class="view-command-strip" aria-label="Priorytety zasilania">
+                    <article class="view-command-card" data-tone="neutral">
+                        <span>Bateria</span>
+                        <strong id="power-strip-battery">--%</strong>
+                        <small id="power-strip-battery-detail">Brak pomiaru napiÄ™cia</small>
+                    </article>
+                    <article class="view-command-card" data-tone="neutral">
+                        <span>ECO / RTC</span>
+                        <strong id="power-strip-eco">Oczekuje</strong>
+                        <small id="power-strip-eco-detail">Deep sleep zaleĹĽy od RTC i blokad</small>
+                    </article>
+                    <article class="view-command-card" data-tone="neutral">
+                        <span>Blokady</span>
+                        <strong id="power-strip-blockers">--</strong>
+                        <small id="power-strip-blockers-detail">Czekam na status sleep</small>
+                    </article>
+                </div>
+
+                <div class="card glass power-panel-new">
+                    <div class="card-header">
+                        <div class="card-title">
+                            <i class="fa-solid fa-plug" style="color: var(--accent-cyan);"></i>
+                            <h2>Energia i tryby pracy</h2>
+                        </div>
+                    </div>
+                    <div class="power-grid-new">
+                        <div class="power-column" id="power-battery-card">
+                            <span class="power-col-title"><i class="fa-solid fa-battery-three-quarters"></i> Bateria</span>
+                            <div class="metric-value">
+                                <span id="power-battery-percent">0</span>
+                                <span class="unit">%</span>
+                            </div>
+                            <div class="metric-subline">
+                                <span>NapiÄ™cie <strong id="power-battery-voltage">--.--V</strong></span>
+                                <span id="power-battery-state">Brak pomiaru</span>
+                            </div>
+                            <div class="progress-bar battery-progress">
+                                <div id="power-battery-fill" class="progress-fill battery-fill" style="width: 0%;"></div>
+                            </div>
+                        </div>
+
+                        <div class="power-column" id="power-mains-card" style="display: none;">
+                            <span class="power-col-title"><i class="fa-solid fa-plug"></i> Zasilanie staĹ‚e</span>
+                            <div class="metric-value mains-uptime" id="power-mains-uptime">--:--:--</div>
+                            <div class="metric-subline">
+                                <span>Tryb <strong id="power-mains-mode">--</strong></span>
+                                <span>WiFi <strong id="power-mains-wifi-status">--</strong></span>
+                            </div>
+                        </div>
+
+                        <div class="power-column">
+                            <span class="power-col-title"><i class="fa-solid fa-moon"></i> ECO i uĹ›pienie</span>
+                            <div class="info-list-body-new">
+                                <div class="diag-info-row">
+                                    <span class="lbl-muted">Tryb zasilania:</span>
+                                    <span id="power-mode-state" style="font-weight: 600;">--</span>
+                                </div>
+                                <div class="diag-info-row">
+                                    <span class="lbl-muted">Blokady sleep:</span>
+                                    <span id="power-sleep-blockers" style="font-weight: 600;">--</span>
+                                </div>
+                                <div class="diag-info-row">
+                                    <span class="lbl-muted">Sesja WiFi:</span>
+                                    <span id="power-network-quality" style="font-weight: 600;">--</span>
+                                </div>
+                                <div class="diag-info-row">
+                                    <span class="lbl-muted">AP auto-stop:</span>
+                                    <span id="power-ap-idle" style="font-weight: 600;">--</span>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </section>
+
+            <!-- OTA View -->
+            <section id="ota" class="view-section" data-admin-only="true">
+                <div class="view-header">
+                    <h2>Aktualizacja OTA</h2>
+                    <p>Aktualizacja firmware jest dostÄ™pna tylko w aktywnej sesji administratora.</p>
+                </div>
+
+                <div class="view-command-strip" aria-label="Priorytety OTA">
+                    <article class="view-command-card" data-tone="warn">
+                        <span>Rola</span>
+                        <strong id="ota-strip-pin">Admin</strong>
+                        <small id="ota-strip-pin-detail">Sesja administratora aktywna</small>
+                    </article>
+                    <article class="view-command-card" data-tone="neutral">
+                        <span>Pakiet</span>
+                        <strong id="ota-strip-file">Brak pliku</strong>
+                        <small id="ota-strip-file-detail">Akceptowany firmware .bin do 4 MB</small>
+                    </article>
+                    <article class="view-command-card" data-tone="neutral">
+                        <span>PoĹ‚Ä…czenie</span>
+                        <strong id="ota-strip-link">Oczekuje</strong>
+                        <small id="ota-strip-link-detail">OTA dziaĹ‚a przez aktywne WiFi</small>
+                    </article>
+                </div>
+
+                <div class="card glass ota-card" style="max-width: 640px; margin: 0 auto; padding: 50px 40px; border: 1px solid rgba(255,255,255,0.05); border-radius: 24px; box-shadow: 0 20px 40px rgba(0,0,0,0.3);">
+                    <div class="card-body" style="text-align: center;">
+                        <div class="ota-icon-shell" style="width: 80px; height: 80px; background: rgba(59, 130, 246, 0.1); border-radius: 50%; display: flex; align-items: center; justify-content: center; margin: 0 auto 24px auto;">
+                            <i class="fa-solid fa-cloud-arrow-up fa-2x" style="color: var(--accent-blue);"></i>
+                        </div>
+
+                        <h3 class="mb-2" style="font-size: 24px; font-weight: 600; color: var(--text-main);">Instalacja nowej wersji</h3>
+                        <p class="text-muted mb-4" style="font-size: 14px; max-width: 400px; margin-left: auto; margin-right: auto; line-height: 1.5;">PrzeĹ›lij skompilowany plik <code style="background: rgba(255,255,255,0.05); padding: 2px 6px; border-radius: 4px; font-family: monospace; color: var(--accent-cyan);">.bin</code>, aby zaktualizowaÄ‡ firmware sterownika akwarium.</p>
+
+                        <div id="firmware-upload-wrapper" class="file-upload-wrapper file-upload-interactive mb-4" role="button" tabindex="0" style="border: 2px dashed rgba(255,255,255,0.15); border-radius: 16px; padding: 40px 20px; transition: border-color 0.3s, background 0.3s; cursor: pointer; background: rgba(0,0,0,0.2);">
+                            <input type="file" id="firmware-file" accept=".bin" style="display: none;">
+                            <i class="fa-solid fa-file-arrow-up mb-3" style="font-size: 32px; color: var(--text-muted);"></i>
+                            <div style="font-size: 16px; font-weight: 500; color: var(--text-main); margin-bottom: 8px;">PrzeciÄ…gnij plik tutaj lub kliknij</div>
+                            <div style="font-size: 12px; color: var(--text-muted);">Maksymalny rozmiar pliku: 4 MB</div>
+                            <div id="firmware-file-name" style="margin-top: 10px; font-size: 12px; color: var(--accent-cyan); font-family: monospace;">Nie wybrano pliku .bin</div>
+                        </div>
+
+                        <div id="ota-progress" class="ota-progress-card" style="display: none; width: 100%; text-align: left; background: rgba(0,0,0,0.2); padding: 20px; border-radius: 16px; border: 1px solid rgba(255,255,255,0.05); margin-bottom: 24px;">
+                            <div class="progress-label mb-2 ota-progress-label" style="display: flex; justify-content: space-between; font-size: 14px; font-weight: 500;">
+                                <span style="color: var(--accent-cyan);">Wgrywanie aktualizacji <i class="fa-solid fa-circle-notch fa-spin ml-2"></i></span>
+                                <span id="ota-percent" style="color: var(--text-main);">0%</span>
+                            </div>
+                            <div class="progress-bar mb-3" style="height: 8px; background: rgba(255,255,255,0.1); border-radius: 4px; overflow: hidden;">
+                                <div class="progress-fill" id="ota-fill" style="width: 0%; height: 100%; background: linear-gradient(90deg, var(--accent-blue), var(--accent-cyan)); border-radius: 4px; transition: width 0.3s ease;"></div>
+                            </div>
+                            <p class="text-muted" style="font-size: 12px; margin: 0;"><i class="fa-solid fa-triangle-exclamation" style="color: var(--accent-yellow); margin-right: 6px;"></i> Nie wyĹ‚Ä…czaj urzÄ…dzenia i nie odĹ›wieĹĽaj strony podczas aktualizacji.</p>
+                        </div>
+
+                        <button class="btn btn-primary w-100 ota-upload-btn" id="upload-btn" type="button" disabled style="padding: 14px; font-size: 15px; background: linear-gradient(135deg, var(--accent-blue), #2563eb); border: none; font-weight: 600; text-transform: uppercase; letter-spacing: 1px; border-radius: 12px; transition: 0.3s; opacity: 0.5;">
+                            <i class="fa-solid fa-microchip" style="margin-right: 8px;"></i> Rozpocznij aktualizacjÄ™
+                        </button>
+                    </div>
+                </div>
+            </section>
+
+            <!-- Ustawienia View -->
+            <section id="ustawienia" class="view-section" data-admin-only="true">
+                <div class="view-header">
+                    <h2>Ustawienia Systemowe</h2>
+                    <p>Konfiguracja poĹ‚Ä…czenia sieciowego sterownika oraz ustawieĹ„ ekranu dotykowego ESP32 CYD.</p>
+                </div>
+
+                <div class="view-command-strip" aria-label="Priorytety ustawieĹ„">
+                    <article class="view-command-card" data-tone="neutral">
+                        <span>SieÄ‡</span>
+                        <strong id="settings-strip-network">Radio OFF</strong>
+                        <small id="settings-strip-network-detail">STA/AP zsynchronizowane ze sterownikiem</small>
+                    </article>
+                    <article class="view-command-card" data-tone="neutral">
+                        <span>Temperatura</span>
+                        <strong id="settings-strip-temperature">Auto</strong>
+                        <small id="settings-strip-temperature-detail">Cel i histereza z ESP32</small>
+                    </article>
+                    <article class="view-command-card" data-tone="neutral">
+                        <span>Ekran</span>
+                        <strong id="settings-strip-display">Ekran</strong>
+                        <small id="settings-strip-display-detail">Profil i jasnoĹ›Ä‡ z ESP32</small>
+                    </article>
+                    <article class="view-command-card" data-tone="neutral">
+                        <span>Zegar</span>
+                        <strong id="settings-strip-clock">Oczekuje</strong>
+                        <small id="settings-strip-clock-detail">RTC/NTP bez poprawnego czasu</small>
+                    </article>
+                </div>
+
+                <div class="dashboard-grid settings-grid-consolidated" style="display: flex; flex-direction: column; gap: 20px;">
+                    <!-- Panel 1: WiFi & Connectivity -->
+                    <div class="card glass settings-network-card" id="settings-network-panel">
+                        <div class="card-header">
+                            <div class="card-title">
+                                <i class="fa-solid fa-wifi" style="color: var(--success-color);"></i>
+                                <h2>SieÄ‡ i ĹÄ…cznoĹ›Ä‡ WiFi</h2>
+                            </div>
+                            <span class="card-chip card-chip-accent" id="settings-network-session-label">Radio OFF</span>
+                        </div>
+                        <div class="card-body form-group" style="padding-top: 10px;">
+                            <div class="grid-2-col mb-3">
+                                <div>
+                                    <label>Aktywne SSID (Station):</label>
+                                    <input id="settings-active-sta-ssid" type="text" class="form-control" value="-" disabled>
+                                </div>
+                                <div>
+                                    <label>Przydzielony Adres IP:</label>
+                                    <input id="settings-network-ip" type="text" class="form-control" value="-" disabled>
+                                </div>
+                            </div>
+                            <div class="grid-2-col mb-3">
+                                <div>
+                                    <label>Docelowe SSID STA:</label>
+                                    <input id="settings-sta-ssid" type="text" class="form-control" maxlength="32" value="">
+                                </div>
+                                <div>
+                                    <label>Nowe hasĹ‚o STA:</label>
+                                    <input id="settings-sta-password" type="password" class="form-control" maxlength="63" value="" placeholder="Pozostaw puste, aby nie zmieniac">
+                                </div>
+                            </div>
+
+                            <div style="display: flex; gap: 15px; align-items: center; margin-top: 15px; border-top: 1px solid var(--glass-border); padding-top: 15px;">
+                                <button id="save-network-btn" class="btn btn-secondary" type="button" style="min-width: 180px; padding: 10px 18px;"><i class="fa-solid fa-floppy-disk"></i> Zapisz profil STA</button>
+                                <div style="flex: 1; display: flex; flex-direction: column; gap: 2px;">
+                                    <span id="settings-network-session-status" style="font-size: 11px; color: var(--text-muted); line-height: 1.4;">Wlaczanie sesji probuje STA, a potem awaryjnie uruchamia AP.</span>
+                                    <div id="settings-network-status" class="text-muted" style="font-size: 11px;">Zmiany SSID i hasel sa stosowane przy kolejnej sesji WiFi.</div>
+                                </div>
+                                <div style="display: flex; gap: 8px;">
+                                    <button id="start-wifi-session-btn" class="btn btn-primary btn-sm" type="button" style="padding: 8px 14px; font-size: 12px;">Wlacz WiFi</button>
+                                    <button id="stop-wifi-session-btn" class="btn btn-secondary btn-sm" type="button" style="padding: 8px 14px; font-size: 12px;">Wylacz WiFi</button>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Panel 2: Display & System Administration -->
+                    <div class="card glass settings-system-panel" id="settings-system-panel">
+                        <div class="card-header">
+                            <div class="card-title">
+                                <i class="fa-solid fa-sun" style="color: var(--accent-cyan);"></i>
+                                <h2>Ekran i Administracja Systemem</h2>
+                            </div>
+                            <span class="card-chip">Ekran & Zegar & System</span>
+                        </div>
+                        <div class="card-body settings-system-grid">
+                            <!-- Left: Display Config -->
+                            <div class="settings-display-column">
+                                <span class="settings-module-title" style="margin-bottom: 12px;" id="settings-display-brightness-label">Maksymalna jasnoĹ›Ä‡ (Auto):</span>
+
+                                <div class="grid-2-col mb-3">
+                                    <div>
+                                        <label>Profil Ĺ›wiecenia ekranu:</label>
+                                        <select id="settings-display-profile" class="form-control">
+                                            <option value="always_on">Zawsze wĹ‚Ä…czony (Always ON)</option>
+                                            <option value="timeout_60s">Timeout 60 sekund</option>
+                                            <option value="always_off">Ciemny (Always OFF)</option>
+                                        </select>
+                                    </div>
+                                    <div>
+                                        <label style="display: flex; justify-content: space-between; align-items: center;">
+                                            <span>Poziom podĹ›wietlenia:</span>
+                                            <span id="settings-display-brightness-val" style="font-weight: 700; color: var(--accent-cyan);">100%</span>
+                                        </label>
+                                        <div style="display: flex; align-items: center; gap: 10px; margin-top: 8px;">
+                                            <input id="settings-display-brightness" type="range" class="form-range" min="10" max="100" step="5" value="100" style="flex: 1; height: 6px; border-radius: 3px; background: rgba(255,255,255,0.1); outline: none;">
+                                        </div>
+                                    </div>
+                                </div>
+
+                                <div style="display: flex; justify-content: space-between; align-items: center; background: rgba(255,255,255,0.02); padding: 12px; border-radius: 8px; border: 1px solid rgba(255,255,255,0.05); margin-bottom: 15px;">
+                                    <div style="display: flex; flex-direction: column; gap: 2px;">
+                                        <span style="font-size: 13px; font-weight: 600; color: var(--text-main);">Automatyczna jasnoĹ›Ä‡ (LDR):</span>
+                                        <span style="font-size: 11px; color: var(--text-muted);" id="settings-display-status-note">JasnoĹ›Ä‡ automatyczna dostosuje podĹ›wietlenie pĹ‚ynnie do otoczenia.</span>
+                                    </div>
+                                    <label class="switch" title="WĹ‚Ä…cz automatycznÄ… jasnoĹ›Ä‡ ekranu">
+                                        <input id="settings-display-auto" type="checkbox" checked>
+                                        <span class="slider round"></span>
+                                    </label>
+                                </div>
+
+                                <button id="save-display-btn" class="btn btn-primary w-100" type="button" style="padding: 12px;"><i class="fa-solid fa-floppy-disk"></i> Zapisz ustawienia ekranu</button>
+                                <div id="settings-display-status" class="text-muted" style="margin-top: 10px; font-size: 11px;">PĹ‚ynne sterowanie podĹ›wietleniem.</div>
+                            </div>
+
+                            <!-- Right: Zegar RTC & Restart/Factory Reset -->
+                            <div class="settings-admin-column" style="border-left: 1px solid var(--glass-border); padding-left: 24px;">
+                                <span class="settings-module-title" style="margin-bottom: 12px;">Zegar RTC i System</span>
+                                <label>Aktualny czas urzÄ…dzenia:</label>
+                                <input type="text" id="settings-device-datetime" class="form-control mb-3" value="Oczekiwanie na poĹ‚Ä…czenie" disabled>
+
+                                <div class="device-actions-copy" style="margin-bottom: 15px;">
+                                    <p style="font-size: 12px; color: var(--text-muted); line-height: 1.5;">
+                                        <strong>Restart ESP32</strong> wymusza ponowne uruchomienie systemu z zachowaniem ustawieĹ„.<br>
+                                        <strong>PrzywrĂłcenie UstawieĹ„ Fabrycznych</strong> (hard reset) trwale kasuje wszystkie dane konfiguracji.
+                                    </p>
+                                </div>
+
+                                <div class="grid-2-col">
+                                    <button id="restart-device-btn" class="btn btn-secondary w-100" type="button" style="padding: 10px; font-size: 12px; border-color: rgba(255,255,255,0.1);"><i class="fa-solid fa-rotate-right"></i> Restart ESP32</button>
+                                    <button id="factory-reset-btn" class="btn btn-primary outline w-100" type="button" style="color: #ef4444; border-color: rgba(239, 68, 68, 0.4); padding: 10px; background: rgba(239, 68, 68, 0.05); font-size: 12px;"><i class="fa-solid fa-triangle-exclamation"></i> Reset fabryczny</button>
+                                </div>
+                                <div id="device-actions-status" class="text-muted" style="margin-top: 10px; font-size: 11px;">Akcje administracyjne wymagajÄ… potwierdzenia.</div>
+                            </div>
+                        </div>
+                    </div>
+                </div></section>
+        </main>
+    </div>
+
+    <!-- Feedback Modal -->
+    <div class="overlay" id="feed-modal">
+        <div class="modal glass">
+            <div class="modal-content">
+                <i class="fa-solid fa-spinner fa-spin fa-2xl" id="modal-icon" style="color: var(--accent-cyan); margin-bottom: 20px;"></i>
+                <h3 id="modal-text">Trwa karmienie</h3>
+                <p id="modal-subtext">Sensor poĹ‚oĹĽenia w trakcie odczytu</p>
+            </div>
+        </div>
+    </div>
+
+    <div class="overlay" id="oled-save-overlay">
+        <div class="oled-save-modal glass">
+            <div class="oled-save-screen" aria-hidden="true">
+                <div class="oled-save-screen-inner">
+                    <div class="oled-save-scanline"></div>
+                    <div class="oled-save-grid"></div>
+                    <div class="oled-save-label">ZAPIS</div>
+                    <div class="oled-save-bars">
+                        <span class="oled-save-bar"></span>
+                        <span class="oled-save-bar"></span>
+                        <span class="oled-save-bar"></span>
+                        <span class="oled-save-bar"></span>
+                    </div>
+                    <div class="oled-save-dots">
+                        <span></span>
+                        <span></span>
+                        <span></span>
+                    </div>
+                </div>
+            </div>
+            <h3 id="oled-save-title">Zapisywanie danych</h3>
+            <p id="oled-save-subtext">Sterownik synchronizuje konfiguracje i pokazuje zapis na OLED.</p>
+        </div>
+    </div>
+
+    <!-- PIN Entry Modal -->
+    <div class="overlay" id="pin-modal" style="display: none; justify-content: center; align-items: center; z-index: 10000;">
+        <div class="modal glass pin-modal-box" style="max-width: 320px; width: 90%; padding: 24px; border-radius: 20px; border: 1px solid var(--glass-border); box-shadow: 0 20px 40px rgba(0,0,0,0.5);">
+            <div class="modal-content" style="text-align: center; display: flex; flex-direction: column; align-items: center;">
+                <i class="fa-solid fa-lock fa-2xl" id="pin-modal-icon" style="color: #ef4444; margin-bottom: 16px;"></i>
+                <h3 id="pin-modal-title" style="font-size: 18px; font-weight: 600; margin-bottom: 8px; color: var(--text-main);">Logowanie admina</h3>
+                <p id="pin-modal-desc" style="font-size: 12px; color: var(--text-muted); margin-bottom: 20px; line-height: 1.4;">WprowadĹş PIN serwisowy, aby wĹ‚Ä…czyÄ‡ widoki i akcje administracyjne.</p>
+
+                <!-- PIN Display (Masked inputs or text) -->
+                <div class="pin-display-wrapper" style="margin-bottom: 20px; width: 100%;">
+                    <input type="password" id="pin-modal-input" class="form-control" placeholder="â€˘â€˘â€˘â€˘" maxlength="8" inputmode="numeric" pattern="[0-9]*" autocomplete="off" style="text-align: center; font-size: 24px; letter-spacing: 8px; font-weight: 700; background: rgba(0,0,0,0.3); border: 1px solid var(--glass-border); border-radius: 12px; padding: 10px; width: 100%; outline: none; color: var(--text-main);" autofocus readonly>
+                </div>
+
+                <!-- Touch keypad -->
+                <div class="pin-keypad" style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin-bottom: 20px; width: 100%;">
+                    <button type="button" class="btn btn-secondary pin-key" data-val="1">1</button>
+                    <button type="button" class="btn btn-secondary pin-key" data-val="2">2</button>
+                    <button type="button" class="btn btn-secondary pin-key" data-val="3">3</button>
+                    <button type="button" class="btn btn-secondary pin-key" data-val="4">4</button>
+                    <button type="button" class="btn btn-secondary pin-key" data-val="5">5</button>
+                    <button type="button" class="btn btn-secondary pin-key" data-val="6">6</button>
+                    <button type="button" class="btn btn-secondary pin-key" data-val="7">7</button>
+                    <button type="button" class="btn btn-secondary pin-key" data-val="8">8</button>
+                    <button type="button" class="btn btn-secondary pin-key" data-val="9">9</button>
+                    <button type="button" class="btn btn-secondary pin-key btn-danger" data-val="C" style="background: rgba(239, 68, 68, 0.15); color: #ef4444; border: 1px solid rgba(239, 68, 68, 0.3);">C</button>
+                    <button type="button" class="btn btn-secondary pin-key" data-val="0">0</button>
+                    <button type="button" class="btn btn-primary pin-key btn-success" data-val="OK" style="background: rgba(16, 185, 129, 0.2); color: #10b981; border: 1px solid rgba(16, 185, 129, 0.4);"><i class="fa-solid fa-check"></i></button>
+                </div>
+
+                <div id="pin-modal-error" style="color: #ef4444; font-size: 12px; margin-bottom: 15px; font-weight: 600; display: none;">BĹ‚Ä™dny PIN! SprĂłbuj ponownie.</div>
+
+                <div style="display: flex; gap: 10px; width: 100%;">
+                    <button id="pin-modal-cancel" class="btn btn-secondary w-100" type="button" style="border-radius: 12px; padding: 12px; font-size: 13px; font-weight: 600;">Anuluj</button>
+                    <button id="pin-modal-submit" class="btn btn-primary w-100" type="button" style="border-radius: 12px; padding: 12px; font-size: 13px; font-weight: 600;">OK</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="fullscreen-overlay" id="fullscreen-overlay" hidden>
+        <div class="fullscreen-header">
+            <h2>Przebieg Temperatury</h2>
+            <button class="fullscreen-close-btn" id="fullscreen-close-btn" type="button">
+                <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><path d="M18 6L6 18M6 6l12 12"/></svg>
+            </button>
+        </div>
+        <div class="fullscreen-chart-container" id="fullscreen-chart-container">
+            <canvas id="fullscreen-chart-canvas"></canvas>
+            <div class="chart-tooltip" id="fullscreen-tooltip" hidden>
+                <div class="tooltip-time"></div>
+                <div class="tooltip-value"></div>
+            </div>
+        </div>
+        <div class="fullscreen-range-selector" id="fullscreen-range-selector">
+            <button class="range-btn" data-range="1h" type="button">1H</button>
+            <button class="range-btn active" data-range="3h" type="button">3H</button>
+            <button class="range-btn" data-range="6h" type="button">6H</button>
+            <button class="range-btn" data-range="12h" type="button">12H</button>
+            <button class="range-btn" data-range="24h" type="button">24H</button>
+        </div>
+        <div class="chart-time-axis fullscreen-time-axis" id="fullscreen-time-axis"></div>
+    </div>
+
+    <script src="chart-engine.js?v=20260621roles"></script>
+    <script src="charts.js?v=20260621roles"></script>
+    <script src="app-core.js?v=20260621roles"></script>
+    <script src="theme.js?v=20260621roles"></script>
+    <script src="logs.js?v=20260621roles"></script>
+    <script src="settings.js?v=20260621roles"></script>
+    <script src="schedules.js?v=20260621roles"></script>
+    <script src="dashboard.js?v=20260621roles"></script>
+    <script src="ota.js?v=20260621roles"></script>
+    <script src="app-init.js?v=20260621roles"></script>
+</body>
+</html>
