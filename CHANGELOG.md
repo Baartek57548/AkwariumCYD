@@ -1,5 +1,25 @@
 # Changelog
 
+## v20260626release - 2026-06-26
+
+Release panelu web, OTA i firmware po reorganizacji sekcji oraz stabilizacji
+lokalnego srodowiska PlatformIO.
+
+### What is included
+
+- Reorganized web panel sections for relays, module automation and system settings.
+- Updated OTA SD package with cache-busted assets `20260626release`.
+- Factory schedule profile and Aquael DAY / DAYBREAK / NIGHT UI support.
+- Improved web status, settings layout and OTA upload flow.
+- PlatformIO pinned to the official `platformio/espressif32@7.0.1` platform.
+- VS Code terminal configured for UTF-8 Python output to avoid Windows `cp1250` crashes.
+
+### Verification
+
+- Firmware build passed with `pio run --environment esp32dev`.
+- JavaScript syntax checks passed for active web and OTA scripts.
+- VS Code IntelliSense include paths regenerated with no missing paths.
+
 ## v1.0.0 - 2026-06-10
 
 Stable UI/UX release for the CYD Aquarium firmware.

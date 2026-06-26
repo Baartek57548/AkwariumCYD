@@ -1,4 +1,4 @@
-﻿function bindScheduleShortcuts() {
+function bindScheduleShortcuts() {
     document.getElementById('dashboard-edit-schedule-btn')?.addEventListener('click', () => {
         switchTab('harmonogramy');
     });
@@ -86,7 +86,29 @@ function bindLogsControls() {
     });
 }
 
+function showSettingsPanel(targetId) {
+    const targetPanel = document.getElementById(targetId);
+    if (!targetPanel || !targetPanel.classList.contains('settings-panel')) {
+        return;
+    }
+
+    document.querySelectorAll('.settings-panel').forEach((panel) => {
+        panel.classList.toggle('active', panel.id === targetId);
+    });
+
+    document.querySelectorAll('.settings-nav-item').forEach((button) => {
+        const isActive = button.dataset.settingsTarget === targetId;
+        button.classList.toggle('active', isActive);
+        button.setAttribute('aria-selected', isActive ? 'true' : 'false');
+    });
+}
+
 function bindSettingsControls() {
+    document.querySelectorAll('.settings-nav-item[data-settings-target]').forEach((button) => {
+        button.setAttribute('aria-selected', button.classList.contains('active') ? 'true' : 'false');
+        button.addEventListener('click', () => showSettingsPanel(button.dataset.settingsTarget));
+    });
+
     document.getElementById('save-network-btn')?.addEventListener('click', saveNetworkSettings);
     document.getElementById('start-wifi-session-btn')?.addEventListener('click', () => runWifiSessionAction('start'));
     document.getElementById('stop-wifi-session-btn')?.addEventListener('click', () => runWifiSessionAction('stop'));
@@ -95,6 +117,8 @@ function bindSettingsControls() {
     document.getElementById('save-co2-btn')?.addEventListener('click', saveCo2Settings);
     document.getElementById('save-water-btn')?.addEventListener('click', saveWaterSettings);
     document.getElementById('save-leak-btn')?.addEventListener('click', saveLeakSettings);
+    document.getElementById('sync-browser-time-btn')?.addEventListener('click', syncBrowserTime);
+    document.getElementById('sync-ntp-btn')?.addEventListener('click', syncTimeWithNtp);
     document.getElementById('restart-device-btn')?.addEventListener('click', () => {
         runDeviceAction(
             'restart_device',
@@ -117,7 +141,7 @@ function bindAuthControls() {
             await loginAsAdmin();
         } catch (error) {
             if (error?.code !== 'admin_login_cancelled' && error?.code !== 'pin_replaced') {
-                alert(error?.message || 'Nie udaĹ‚o siÄ™ zalogowaÄ‡ admina.');
+                alert(error?.message || 'Nie udało się zalogować admina.');
             }
         }
     });
@@ -140,24 +164,11 @@ function bindPinModalEvents() {
     const modal = document.getElementById('pin-modal');
     if (!modal) return;
 
-    const keypad = modal.querySelector('.pin-keypad');
-    keypad?.addEventListener('click', (event) => {
-        const keyBtn = event.target.closest('.pin-key');
-        if (!keyBtn) return;
+    const form = document.getElementById('pin-modal-form');
+    const input = document.getElementById('pin-modal-input');
 
-        const val = keyBtn.getAttribute('data-val');
-        const input = document.getElementById('pin-modal-input');
-        if (!input) return;
-
-        if (val === 'C') {
-            input.value = '';
-        } else if (val === 'OK') {
-            window.handlePinSubmit();
-        } else if (val !== null && val !== undefined) {
-            if (input.value.length < 8) {
-                input.value = `${input.value}${val}`.replace(/\D/g, '').slice(0, 8);
-            }
-        }
+    input?.addEventListener('input', () => {
+        input.value = input.value.replace(/\D/g, '').slice(0, 8);
     });
 
     const cancelBtn = document.getElementById('pin-modal-cancel');
@@ -165,29 +176,15 @@ function bindPinModalEvents() {
         window.handlePinCancel();
     });
 
-    const submitBtn = document.getElementById('pin-modal-submit');
-    submitBtn?.addEventListener('click', () => {
+    form?.addEventListener('submit', (event) => {
+        event.preventDefault();
         window.handlePinSubmit();
     });
 
     document.addEventListener('keydown', (event) => {
         if (modal.style.display !== 'flex') return;
-        const input = document.getElementById('pin-modal-input');
-        if (!input) return;
-
-        if (event.key >= '0' && event.key <= '9') {
-            if (input.value.length < 8) {
-                input.value += event.key;
-            }
-            event.preventDefault();
-        } else if (event.key === 'Backspace') {
-            input.value = input.value.slice(0, -1);
-            event.preventDefault();
-        } else if (event.key === 'Escape') {
+        if (event.key === 'Escape') {
             window.handlePinCancel();
-            event.preventDefault();
-        } else if (event.key === 'Enter') {
-            window.handlePinSubmit();
             event.preventDefault();
         }
     });
@@ -229,7 +226,7 @@ function initDirtyTracking() {
         const eventName = el?.type === 'checkbox' ? 'change' : 'change';
         el?.addEventListener(eventName, () => {
             el.dataset.dirty = '1';
-            setLeakStatus('Masz niezapisane zmiany zabezpieczeĹ„.', 'muted');
+            setLeakStatus('Masz niezapisane zmiany zabezpieczeń.', 'muted');
         });
     });
 }
@@ -255,9 +252,9 @@ document.addEventListener('DOMContentLoaded', () => {
     applyAuthState();
     document.getElementById('upload-btn')?.addEventListener('click', uploadFirmwarePackage);
 
-    setSettingsNetworkStatus('Zmiany SSID i haseĹ‚ sÄ… stosowane przy kolejnej sesji WiFi.', 'muted');
-    setTemperatureStatus('Sterowanie grzaĹ‚kÄ… jest synchronizowane ze sterownikiem.', 'muted');
-    setDeviceActionStatus('Akcje administracyjne wymagajÄ… potwierdzenia.', 'muted');
+    setSettingsNetworkStatus('Zmiany SSID i haseł są stosowane przy kolejnej sesji WiFi.', 'muted');
+    setTemperatureStatus('Sterowanie grzałką jest synchronizowane ze sterownikiem.', 'muted');
+    setDeviceActionStatus('Akcje administracyjne wymagają potwierdzenia.', 'muted');
 
     startEventStream();
     startPollingFallback();

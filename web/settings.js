@@ -1,4 +1,4 @@
-﻿function renderSettingsClockPanel(clock) {
+function renderSettingsClockPanel(clock) {
     const input = document.getElementById('settings-device-datetime');
     const status = document.getElementById('settings-clock-status');
     if (!input || !status) return;
@@ -6,14 +6,12 @@
     const formatted = formatControllerClock(clock);
     if (formatted) {
         input.value = formatted;
-        status.textContent = 'Czas urzÄ…dzenia pobrany automatycznie ze sterownika.';
+        status.textContent = 'Czas urządzenia pobrany automatycznie ze sterownika.';
         status.style.color = 'var(--accent-cyan)';
-        setCommandStatus('settings-strip-clock', 'Czas OK', formatted, 'ok');
     } else {
-        input.value = 'Brak poprawnego czasu z urzÄ…dzenia.';
-        status.textContent = 'Sterownik nie udostÄ™pniĹ‚ jeszcze poprawnego czasu.';
+        input.value = 'Brak poprawnego czasu z urządzenia.';
+        status.textContent = 'Sterownik nie udostępnił jeszcze poprawnego czasu.';
         status.style.color = 'var(--text-muted)';
-        setCommandStatus('settings-strip-clock', 'Brak czasu', 'RTC/NTP bez poprawnej daty', 'warn');
     }
 }
 
@@ -57,19 +55,12 @@ function formatSleepBlockerLabel(code) {
 }
 
 function renderTemperatureSettingsPanel(data) {
-    const schedule = data.schedule || {};
     const temperature = data.temperature || {};
-    const enabled = Number(schedule.heaterMode) !== 1;
+    const enabled = getHeaterAutomationEnabled(data);
 
     setCheckboxIfClean('settings-temp-enabled', enabled);
     setNumericValueIfClean('settings-temp-target', temperature.target, 0);
     setNumericValueIfClean('settings-temp-hyst', temperature.hysteresis, 1);
-    setCommandStatus(
-        'settings-strip-temperature',
-        enabled ? 'Auto progowe' : 'OFF',
-        `Cel ${formatTemperature(temperature.target)} / histereza ${formatTemperature(temperature.hysteresis)}`,
-        enabled ? 'ok' : 'neutral'
-    );
 }
 
 function buildModuleHealthItem(name, state, tone, detail) {
@@ -84,6 +75,37 @@ function buildModuleHealthItem(name, state, tone, detail) {
         </div>`;
 }
 
+function normalizeDigitalSensorState(value) {
+    if (typeof value === 'boolean') {
+        return { valid: true, active: value };
+    }
+    if (value === 0 || value === 1) {
+        return { valid: true, active: value === 1 };
+    }
+    if (typeof value === 'string') {
+        const normalized = value.trim().toLowerCase();
+        if (['true', '1', 'high', 'on'].includes(normalized)) {
+            return { valid: true, active: true };
+        }
+        if (['false', '0', 'low', 'off'].includes(normalized)) {
+            return { valid: true, active: false };
+        }
+    }
+    return { valid: false, active: false };
+}
+
+function getHeaterAutomationEnabled(data) {
+    if (typeof isHeaterAutomationEnabled === 'function') {
+        return isHeaterAutomationEnabled(data);
+    }
+
+    const mode = Number(data?.schedule?.heaterMode ?? data?.temperature?.heaterMode);
+    if (Number.isFinite(mode)) {
+        return mode !== 1;
+    }
+    return data?.modules?.heater_enabled !== false;
+}
+
 function renderModuleEdgeCases(data) {
     const container = document.getElementById('module-edge-list');
     if (!container) return;
@@ -96,6 +118,8 @@ function renderModuleEdgeCases(data) {
     const temperature = data.temperature || {};
     const schedule = data.schedule || {};
     const relays = data.relays || {};
+    const modules = data.modules || {};
+    const sensors = data.sensors || {};
     const feeding = data.feeding || {};
     const network = data.network || {};
     const system = data.system || {};
@@ -107,76 +131,98 @@ function renderModuleEdgeCases(data) {
     const targetTemp = toFiniteNumber(temperature.target);
     const hysteresis = toFiniteNumber(temperature.hysteresis);
     if (!currentTempOk) {
-        items.push(buildModuleHealthItem('Temperatura', 'BĹÄ„D', 'danger', 'Brak poprawnego odczytu DS18B20'));
+        items.push(buildModuleHealthItem('Temperatura', 'BŁĄD', 'danger', 'Brak poprawnego odczytu DS18B20'));
     } else if (targetTemp === null || hysteresis === null || hysteresis <= 0) {
-        items.push(buildModuleHealthItem('Temperatura', 'UWAGA', 'warn', 'Odczyt jest, ale cel lub histereza sÄ… niepoprawne'));
+        items.push(buildModuleHealthItem('Temperatura', 'UWAGA', 'warn', 'Odczyt jest, ale cel lub histereza są niepoprawne'));
     } else {
-        items.push(buildModuleHealthItem('Temperatura', 'OK', 'ok', `${Number(temperature.current).toFixed(1)}Â°C, cel ${targetTemp.toFixed(1)}Â°C`));
+        items.push(buildModuleHealthItem('Temperatura', 'OK', 'ok', `${Number(temperature.current).toFixed(1)}°C, cel ${targetTemp.toFixed(1)}°C`));
     }
 
     const heaterMode = Number(schedule.heaterMode);
     if (!!relays.heater && !currentTempOk) {
-        items.push(buildModuleHealthItem('GrzaĹ‚ka', 'BĹÄ„D', 'danger', 'PrzekaĹşnik aktywny bez poprawnego pomiaru temperatury'));
+        items.push(buildModuleHealthItem('Grzałka', 'BŁĄD', 'danger', 'Przekaźnik aktywny bez poprawnego pomiaru temperatury'));
     } else if (heaterMode === 1) {
-        items.push(buildModuleHealthItem('GrzaĹ‚ka', 'OFF', 'idle', 'Automatyka temperatury wyĹ‚Ä…czona'));
+        items.push(buildModuleHealthItem('Grzałka', 'OFF', 'idle', 'Automatyka temperatury wyłączona'));
     } else {
-        items.push(buildModuleHealthItem('GrzaĹ‚ka', relays.heater ? 'AKTYWNA' : 'OK', relays.heater ? 'warn' : 'ok', relays.heater ? 'Dogrzewanie trwa' : 'Czeka na prĂłg temperatury'));
+        items.push(buildModuleHealthItem('Grzałka', relays.heater ? 'AKTYWNA' : 'OK', relays.heater ? 'warn' : 'ok', relays.heater ? 'Dogrzewanie trwa' : 'Czeka na próg temperatury'));
     }
 
     const lightMode = Number(schedule.lightMode);
     if (lightMode === 2) {
-        items.push(buildModuleHealthItem('ĹšwiatĹ‚o gĹ‚Ăłwne', 'OFF', 'idle', 'Tryb rÄ™cznie wyĹ‚Ä…czony'));
+        items.push(buildModuleHealthItem('Światło główne', 'OFF', 'idle', 'Tryb ręcznie wyłączony'));
     } else {
-        items.push(buildModuleHealthItem('ĹšwiatĹ‚o gĹ‚Ăłwne', relays.light ? 'AKTYWNE' : 'OK', relays.light ? 'ok' : 'idle', lightMode === 1 ? 'Tryb zawsze wĹ‚Ä…czony' : 'Sterowane oknem pracy akwarium'));
+        items.push(buildModuleHealthItem('Światło główne', relays.light ? 'AKTYWNE' : 'OK', relays.light ? 'ok' : 'idle', lightMode === 1 ? 'Tryb zawsze włączony' : 'Sterowane oknem pracy akwarium'));
     }
 
     const plantScheduleMode = data.schedules?.plant_light?.mode || 'schedule';
     if (plantScheduleMode === 'always_off') {
-        items.push(buildModuleHealthItem('ĹšwiatĹ‚o roĹ›linne', 'OFF', 'idle', 'Tryb rÄ™cznie wyĹ‚Ä…czony'));
+        items.push(buildModuleHealthItem('Światło roślinne', 'OFF', 'idle', 'Tryb ręcznie wyłączony'));
     } else {
-        items.push(buildModuleHealthItem('ĹšwiatĹ‚o roĹ›linne', relays.plantLight ? 'AKTYWNE' : 'OK', relays.plantLight ? 'ok' : 'idle', plantScheduleMode === 'always_on' ? 'Tryb zawsze wĹ‚Ä…czony' : 'Osobny harmonogram roĹ›linny'));
+        items.push(buildModuleHealthItem('Światło roślinne', relays.plantLight ? 'AKTYWNE' : 'OK', relays.plantLight ? 'ok' : 'idle', plantScheduleMode === 'always_on' ? 'Tryb zawsze włączony' : 'Osobny harmonogram roślinny'));
     }
 
     const pumpMode = Number(schedule.filterMode);
     if (pumpMode === 2) {
-        items.push(buildModuleHealthItem('Filtr', 'OFF', 'idle', 'Tryb rÄ™cznie wyĹ‚Ä…czony'));
+        items.push(buildModuleHealthItem('Filtr', 'OFF', 'idle', 'Tryb ręcznie wyłączony'));
     } else {
-        items.push(buildModuleHealthItem('Filtr', relays.pump ? 'AKTYWNY' : 'OK', 'ok', pumpMode === 1 ? 'Tryb zawsze wĹ‚Ä…czony' : 'Sterowany harmonogramem'));
+        items.push(buildModuleHealthItem('Filtr', relays.pump ? 'AKTYWNY' : 'OK', 'ok', pumpMode === 1 ? 'Tryb zawsze włączony' : 'Sterowany harmonogramem'));
     }
 
     const airMode = Number(schedule.airMode);
     const airPercent = clamp(Number(relays.aerationPercent || 0), 0, 100);
     if (airMode === 2) {
-        items.push(buildModuleHealthItem('Napowietrzanie', 'OFF', 'idle', 'Tryb rÄ™cznie wyĹ‚Ä…czony'));
+        items.push(buildModuleHealthItem('Napowietrzanie', 'OFF', 'idle', 'Tryb ręcznie wyłączony'));
     } else {
         items.push(buildModuleHealthItem('Napowietrzanie', airPercent > 0 ? 'AKTYWNE' : 'OK', airPercent > 0 ? 'ok' : 'idle', airPercent > 0 ? `Otwarcie ${airPercent}%` : 'Czeka na harmonogram'));
+    }
+
+    const waterState = normalizeDigitalSensorState(sensors.water_level_high);
+    if (!modules.water_level_enabled) {
+        items.push(buildModuleHealthItem('ATO', 'OFF', 'idle', 'Automatyczna dolewka wylaczona'));
+    } else if (!waterState.valid) {
+        items.push(buildModuleHealthItem('ATO', 'BRAK DANYCH', 'warn', 'Brak poprawnego odczytu MCP23017'));
+    } else if (waterState.active) {
+        items.push(buildModuleHealthItem('ATO', 'OK', 'ok', 'Poziom wody wysoki'));
+    } else {
+        items.push(buildModuleHealthItem('ATO', 'NISKI', 'warn', 'Czujnik zglasza niski poziom wody'));
+    }
+
+    const leakState = normalizeDigitalSensorState(sensors.leak_detected);
+    if (!modules.leak_enabled) {
+        items.push(buildModuleHealthItem('Wyciek', 'OFF', 'idle', 'Ochrona wycieku wylaczona'));
+    } else if (!leakState.valid) {
+        items.push(buildModuleHealthItem('Wyciek', 'BRAK DANYCH', 'warn', 'Brak poprawnego odczytu MCP23017'));
+    } else if (leakState.active) {
+        items.push(buildModuleHealthItem('Wyciek', 'ALARM', 'danger', 'Czujnik wejsciowy zglasza zalanie'));
+    } else {
+        items.push(buildModuleHealthItem('Wyciek', 'OK', 'ok', 'Czujnik suchy'));
     }
 
     const feedResult = normalizeFeedResultCode(feeding.lastResult);
     if (feeding.active) {
         items.push(buildModuleHealthItem('Karmnik', 'AKTYWNY', 'warn', 'Cykl karmienia trwa'));
     } else if (feedResult && feedResult !== 'ok') {
-        items.push(buildModuleHealthItem('Karmnik', 'BĹÄ„D', 'danger', describeFeedResult(feedResult).message));
+        items.push(buildModuleHealthItem('Karmnik', 'BŁĄD', 'danger', describeFeedResult(feedResult).message));
     } else if (Number(feeding.freq) <= 0) {
-        items.push(buildModuleHealthItem('Karmnik', 'OFF', 'idle', 'Automatyczne karmienie wyĹ‚Ä…czone'));
+        items.push(buildModuleHealthItem('Karmnik', 'OFF', 'idle', 'Automatyczne karmienie wyłączone'));
     } else {
         items.push(buildModuleHealthItem('Karmnik', 'OK', 'ok', describeFeedSchedule(feeding)));
     }
 
     if (network.serviceModePending || network.staConnecting || network.timeSyncInProgress) {
-        items.push(buildModuleHealthItem('SieÄ‡', 'OCZEKUJE', 'warn', 'Trwa start WiFi lub synchronizacja czasu'));
+        items.push(buildModuleHealthItem('Sieć', 'OCZEKUJE', 'warn', 'Trwa start WiFi lub synchronizacja czasu'));
     } else if (network.staConnected) {
         const rssi = toFiniteNumber(network.rssi);
-        items.push(buildModuleHealthItem('SieÄ‡', 'OK', 'ok', `STA ${rssi === null ? '--' : `${Math.round(rssi)} dBm`}`));
+        items.push(buildModuleHealthItem('Sieć', 'OK', 'ok', `STA ${rssi === null ? '--' : `${Math.round(rssi)} dBm`}`));
     } else if (network.apMode) {
-        items.push(buildModuleHealthItem('SieÄ‡', 'AP', 'warn', 'DziaĹ‚a tryb awaryjny AP'));
+        items.push(buildModuleHealthItem('Sieć', 'AP', 'warn', 'Działa tryb awaryjny AP'));
     } else {
-        items.push(buildModuleHealthItem('SieÄ‡', 'OFF', 'idle', 'Radio wyĹ‚Ä…czone lub poza sesjÄ… WiFi'));
+        items.push(buildModuleHealthItem('Sieć', 'OFF', 'idle', 'Radio wyłączone albo poza aktywnym WiFi'));
     }
 
     const clockOk = !!formatControllerClock(data.clock || {});
     if (clockOk) {
-        items.push(buildModuleHealthItem('RTC / czas', 'OK', 'ok', network.lastTimeSyncStatus || 'Czas dostÄ™pny'));
+        items.push(buildModuleHealthItem('RTC / czas', 'OK', 'ok', network.lastTimeSyncStatus || 'Czas dostępny'));
     } else if (network.timeSyncInProgress) {
         items.push(buildModuleHealthItem('RTC / czas', 'OCZEKUJE', 'warn', 'Synchronizacja czasu trwa'));
     } else {
@@ -187,7 +233,7 @@ function renderModuleEdgeCases(data) {
     if (batteryPercent === null) {
         items.push(buildModuleHealthItem('Zasilanie', 'OCZEKUJE', 'idle', 'Brak pomiaru baterii'));
     } else if (batteryPercent <= 15) {
-        items.push(buildModuleHealthItem('Zasilanie', 'BĹÄ„D', 'danger', `Bateria ${Math.round(batteryPercent)}%`));
+        items.push(buildModuleHealthItem('Zasilanie', 'BŁĄD', 'danger', `Bateria ${Math.round(batteryPercent)}%`));
     } else if (batteryPercent <= 35) {
         items.push(buildModuleHealthItem('Zasilanie', 'UWAGA', 'warn', `Bateria ${Math.round(batteryPercent)}%`));
     } else {
@@ -198,7 +244,7 @@ function renderModuleEdgeCases(data) {
     if (criticalLogs > 0) {
         items.push(buildModuleHealthItem('Logi', 'UWAGA', 'warn', `Krytyczne wpisy: ${criticalLogs}`));
     } else {
-        items.push(buildModuleHealthItem('Logi', 'OK', 'ok', 'Brak krytycznych wpisĂłw w panelu'));
+        items.push(buildModuleHealthItem('Logi', 'OK', 'ok', 'Brak krytycznych wpisów w panelu'));
     }
 
     items.push(buildModuleHealthItem('Portal SD', 'OK', 'ok', 'UI 20260618modules2, pliki statyczne z karty'));
@@ -216,7 +262,7 @@ function renderDiagnosticsPanel(data) {
     const sdTotalEl = document.getElementById('sd-total-space');
 
     if (sdStatusEl) {
-        sdStatusEl.textContent = sdMounted ? 'Zamontowana' : 'Nie podĹ‚Ä…czona';
+        sdStatusEl.textContent = sdMounted ? 'Zamontowana' : 'Nie podłączona';
         sdStatusEl.style.color = sdMounted ? 'var(--success-color)' : '#ef4444';
     }
     if (sdFreeEl) {
@@ -314,8 +360,6 @@ function renderFirmwareInfo(firmware) {
 
 function setSettingsNetworkStatus(message, tone = 'muted') {
     setInlineStatus('settings-network-status', message, tone);
-    const current = document.getElementById('settings-strip-network')?.textContent || 'Siec';
-    setCommandStatus('settings-strip-network', current, message, mapInlineToneToCommandTone(tone));
 }
 
 function setScheduleStatus(message, tone = 'muted') {
@@ -331,8 +375,6 @@ function setScheduleStatus(message, tone = 'muted') {
 
 function setTemperatureStatus(message, tone = 'muted') {
     setInlineStatus('settings-temp-status', message, tone);
-    const current = document.getElementById('settings-strip-temperature')?.textContent || 'Temperatura';
-    setCommandStatus('settings-strip-temperature', current, message, mapInlineToneToCommandTone(tone));
 }
 
 function setDeviceActionStatus(message, tone = 'muted') {
@@ -392,8 +434,8 @@ function describeWifiSession(network) {
     if (network?.serviceMode) {
         return {
             active: true,
-            label: 'Sesja WiFi',
-            message: 'Sesja WiFi jest aktywna. Sterownik oczekuje na stan STA albo AP.',
+            label: 'Połączenie WiFi',
+            message: 'Połączenie WiFi jest aktywne. Sterownik oczekuje na stan STA albo AP.',
             startLabel: 'Restart WiFi',
             stopLabel: 'Wylacz WiFi'
         };
@@ -420,12 +462,6 @@ function renderSettingsNetworkPanel(network) {
 
     setText('settings-network-session-label', state.label);
     setText('settings-network-session-status', state.message);
-    setCommandStatus(
-        'settings-strip-network',
-        state.label,
-        network?.ip ? `${network.ip} / ${network?.configuredStaSsid || network?.staSsid || 'STA'}` : state.message,
-        network?.staConnected ? 'ok' : (network?.apMode || network?.staConnecting || network?.serviceModePending ? 'warn' : 'neutral')
-    );
 
     if (startBtn && startBtn.dataset.busy !== '1') {
         startBtn.disabled = !!state.startDisabled;
@@ -455,7 +491,7 @@ function validateWifiPasswordField(value, label) {
         return '';
     }
     if (password.length < 8 || password.length > 63) {
-        return `${label}: hasĹ‚o WPA musi mieÄ‡ od 8 do 63 znakĂłw.`;
+        return `${label}: hasło WPA musi mieć od 8 do 63 znaków.`;
     }
     return '';
 }
@@ -588,7 +624,7 @@ async function runWifiSessionAction(mode) {
     setSettingsNetworkStatus(
         isStart
             ? 'Wysylam polecenie wlaczenia WiFi. Sterownik sprobuje STA, potem AP.'
-            : 'Wysylam polecenie wylaczenia aktywnej sesji WiFi.',
+            : 'Wysylam polecenie wylaczenia aktywnego WiFi.',
         'muted'
     );
 
@@ -645,7 +681,7 @@ async function saveNetworkSettings() {
             if (el) el.dataset.dirty = '0';
         });
         staPasswordInput.value = '';
-        setSettingsNetworkStatus('Zapisano profil STA na SD. Zostanie uzyty przy kolejnej sesji WiFi.', 'success');
+        setSettingsNetworkStatus('Zapisano profil STA na SD. Zostanie uzyty przy kolejnym uruchomieniu WiFi.', 'success');
         await fetchStatus(true);
     } catch (error) {
         setSettingsNetworkStatus(`Blad zapisu WiFi: ${error?.message || 'nieznany blad'}`, 'error');
@@ -672,12 +708,12 @@ async function saveTemperatureSettings() {
     const target = toFiniteNumber(payload.target);
     const hysteresis = toFiniteNumber(payload.hysteresis);
     if (target === null || target < 18 || target > 30) {
-        setTemperatureStatus('Temperatura docelowa musi byc w zakresie 18-30Â°C.', 'error');
+        setTemperatureStatus('Temperatura docelowa musi byc w zakresie 18-30°C.', 'error');
         targetInput.focus();
         return;
     }
     if (hysteresis === null || hysteresis < 0.1 || hysteresis > 5) {
-        setTemperatureStatus('Histereza musi byc w zakresie 0.1-5.0Â°C.', 'error');
+        setTemperatureStatus('Histereza musi byc w zakresie 0.1-5.0°C.', 'error');
         hystInput.focus();
         return;
     }
@@ -762,7 +798,7 @@ async function syncTimeWithNtp() {
         await fetchStatus(true);
         setInlineStatus(
             'settings-clock-status',
-            response?.message || 'Synchronizacja NTP zakoĹ„czona powodzeniem.',
+            response?.message || 'Synchronizacja NTP zakończona powodzeniem.',
             'success'
         );
     } catch (error) {
@@ -796,7 +832,7 @@ async function runDeviceAction(action, confirmationMessage, successMessage) {
         setBackendState(false);
         unlockButtons = false;
     } catch (error) {
-        setDeviceActionStatus(`BĹ‚Ä…d akcji urzÄ…dzenia: ${describeRequestError(error)}`, 'error');
+        setDeviceActionStatus(`Błąd akcji urządzenia: ${describeRequestError(error)}`, 'error');
     } finally {
         if (unlockButtons) {
             restartBtn && (restartBtn.disabled = false);
@@ -815,12 +851,12 @@ function updateDisplaySettingsUIState() {
 
     const isAuto = autoCheckbox.checked;
     if (brightnessLabel) {
-        brightnessLabel.textContent = isAuto ? 'Maksymalna jasnoĹ›Ä‡ (Auto):' : 'StaĹ‚a jasnoĹ›Ä‡ (Manual):';
+        brightnessLabel.textContent = isAuto ? 'Maksymalna jasność (Auto):' : 'Stała jasność (Manual):';
     }
     if (statusNote) {
         statusNote.textContent = isAuto
-            ? 'JasnoĹ›Ä‡ automatyczna dostosuje podĹ›wietlenie pĹ‚ynnie do otoczenia (od 15% do ustawionej wartoĹ›ci maksymalnej).'
-            : 'Ekran bÄ™dzie Ĺ›wieciĹ‚ ze staĹ‚Ä…, wybranÄ… jasnoĹ›ciÄ… podĹ›wietlenia.';
+            ? 'Jasność automatyczna dostosuje podświetlenie płynnie do otoczenia (od 15% do ustawionej wartości maksymalnej).'
+            : 'Ekran będzie świecił ze stałą, wybraną jasnością podświetlenia.';
     }
     if (slider) {
         slider.style.opacity = isAuto ? '0.6' : '1.0';
@@ -842,13 +878,6 @@ function renderDisplaySettingsPanel(data) {
     if (brightnessValEl) {
         brightnessValEl.textContent = `${brightness}%`;
     }
-
-    setCommandStatus(
-        'settings-strip-display',
-        DISPLAY_PROFILE_LABELS[profile],
-        `Jasnosc: ${brightness}% | Auto: ${auto ? 'Tak' : 'Nie'}`,
-        'info'
-    );
 
     updateDisplaySettingsUIState();
 }
@@ -887,7 +916,7 @@ async function saveDisplaySettings() {
         brightness: String(brightness)
     };
 
-    setDisplayStatus('Zapisywanie ustawieĹ„ ekranu...', 'warning');
+    setDisplayStatus('Zapisywanie ustawień ekranu...', 'warning');
     button.disabled = true;
 
     try {
@@ -896,7 +925,7 @@ async function saveDisplaySettings() {
         markFieldsClean(['settings-display-auto', 'settings-display-profile', 'settings-display-brightness']);
         await fetchStatus(true);
     } catch (error) {
-        setDisplayStatus(`BĹ‚Ä…d: ${describeRequestError(error)}`, 'error');
+        setDisplayStatus(`Błąd: ${describeRequestError(error)}`, 'error');
     } finally {
         button.disabled = false;
     }
@@ -904,8 +933,6 @@ async function saveDisplaySettings() {
 
 function setDisplayStatus(message, tone = 'muted') {
     setInlineStatus('settings-display-status', message, tone);
-    const current = document.getElementById('settings-strip-display')?.textContent || 'Ekran';
-    setCommandStatus('settings-strip-display', current, message, mapInlineToneToCommandTone(tone));
 }
 
 function initDisplaySettingsListeners() {
@@ -916,39 +943,39 @@ function initDisplaySettingsListeners() {
             valText.textContent = `${slider.value}%`;
         }
         slider.dataset.dirty = '1';
-        setDisplayStatus('Masz niezapisane zmiany ustawieĹ„ ekranu.', 'muted');
+        setDisplayStatus('Masz niezapisane zmiany ustawień ekranu.', 'muted');
     });
 
     const autoToggle = document.getElementById('settings-display-auto');
     autoToggle?.addEventListener('change', () => {
         autoToggle.dataset.dirty = '1';
-        setDisplayStatus('Masz niezapisane zmiany ustawieĹ„ ekranu.', 'muted');
+        setDisplayStatus('Masz niezapisane zmiany ustawień ekranu.', 'muted');
         updateDisplaySettingsUIState();
     });
 
     const profileSelect = document.getElementById('settings-display-profile');
     profileSelect?.addEventListener('change', () => {
         profileSelect.dataset.dirty = '1';
-        setDisplayStatus('Masz niezapisane zmiany ustawieĹ„ ekranu.', 'muted');
+        setDisplayStatus('Masz niezapisane zmiany ustawień ekranu.', 'muted');
     });
 }
 
-// ObsĹ‚uga nowej zakĹ‚adki ModuĹ‚Ăłw (GrzaĹ‚ka, CO2, Dolewka, Wyciek)
+// Obsługa nowej zakładki Modułów (Grzałka, CO2, Dolewka, Wyciek)
 function renderModulesTab(data) {
     const modules = data.modules || {};
     const config = data.config || {};
     const sensors = data.sensors || {};
 
-    // 1. GrzaĹ‚ka
+    // 1. Grzałka
     const heaterOn = modules.heater_on ?? false;
-    const heaterEnabled = modules.heater_enabled ?? true;
+    const heaterEnabled = getHeaterAutomationEnabled(data);
     const heaterStatusEl = document.getElementById('module-status-heater');
     if (heaterStatusEl) {
         if (!heaterEnabled) {
-            heaterStatusEl.textContent = 'WYĹÄ„CZONA';
+            heaterStatusEl.textContent = 'OFF';
             heaterStatusEl.style.color = 'var(--text-muted)';
         } else {
-            heaterStatusEl.textContent = heaterOn ? 'GRZANIE' : 'CZUWANIE';
+            heaterStatusEl.textContent = heaterOn ? 'GRZANIE' : 'AUTO';
             heaterStatusEl.style.color = heaterOn ? 'var(--accent-orange)' : 'var(--success-color)';
         }
     }
@@ -960,11 +987,11 @@ function renderModulesTab(data) {
     const co2StatusEl = document.getElementById('module-status-co2');
     if (co2StatusEl) {
         if (!co2Enabled) {
-            co2StatusEl.textContent = 'WYĹÄ„CZONY';
+            co2StatusEl.textContent = 'WYŁĄCZONY';
             co2StatusEl.style.color = 'var(--text-muted)';
         } else {
             const dosing = currentPh !== null && currentPh > targetPh;
-            co2StatusEl.textContent = dosing ? 'DOZOWANIE' : 'ZAMKNIÄTY';
+            co2StatusEl.textContent = dosing ? 'DOZOWANIE' : 'ZAMKNIĘTY';
             co2StatusEl.style.color = dosing ? 'var(--accent-cyan)' : 'var(--success-color)';
         }
     }
@@ -975,19 +1002,30 @@ function renderModulesTab(data) {
     // 3. ATO (Poziom wody)
     const waterEnabled = modules.water_level_enabled ?? false;
     const levelLabel = document.getElementById('settings-water-level-label');
-    const isWaterHigh = sensors.ph_valid ?? true; // mock sensor level high/low
+    const waterState = normalizeDigitalSensorState(sensors.water_level_high);
     if (levelLabel) {
-        levelLabel.value = isWaterHigh ? 'OK (WYSOKI)' : 'NISKI (DOLEWANIE)';
-        levelLabel.style.color = isWaterHigh ? 'var(--success-color)' : 'var(--warning-color)';
+        if (!waterEnabled) {
+            levelLabel.value = 'MODUL WYLACZONY';
+            levelLabel.style.color = 'var(--text-muted)';
+        } else if (!waterState.valid) {
+            levelLabel.value = 'BRAK ODCZYTU MCP';
+            levelLabel.style.color = 'var(--warning-color)';
+        } else {
+            levelLabel.value = waterState.active ? 'OK (WYSOKI)' : 'NISKI (DOLEWANIE)';
+            levelLabel.style.color = waterState.active ? 'var(--success-color)' : 'var(--warning-color)';
+        }
     }
     const waterStatusEl = document.getElementById('module-status-water');
     if (waterStatusEl) {
         if (!waterEnabled) {
-            waterStatusEl.textContent = 'WYĹÄ„CZONA';
+            waterStatusEl.textContent = 'WYŁĄCZONA';
             waterStatusEl.style.color = 'var(--text-muted)';
+        } else if (!waterState.valid) {
+            waterStatusEl.textContent = 'BRAK ODCZYTU';
+            waterStatusEl.style.color = 'var(--warning-color)';
         } else {
-            waterStatusEl.textContent = !isWaterHigh ? 'DOLEWANIE' : 'CZUWANIE';
-            waterStatusEl.style.color = !isWaterHigh ? 'var(--accent-blue)' : 'var(--success-color)';
+            waterStatusEl.textContent = !waterState.active ? 'DOLEWANIE' : 'CZUWANIE';
+            waterStatusEl.style.color = !waterState.active ? 'var(--accent-blue)' : 'var(--success-color)';
         }
     }
     setCheckboxIfClean('settings-water-enabled', waterEnabled);
@@ -996,19 +1034,30 @@ function renderModulesTab(data) {
     // 4. Wyciek (Leak)
     const leakEnabled = modules.leak_enabled ?? false;
     const leakSensorEl = document.getElementById('settings-leak-sensor-label');
-    const hasLeak = sensors.ldr_valid === false; // mock leak on invalid ldr
+    const leakState = normalizeDigitalSensorState(sensors.leak_detected);
     if (leakSensorEl) {
-        leakSensorEl.value = hasLeak ? 'ALARM WYCIEKU!' : 'SUCHY';
-        leakSensorEl.style.color = hasLeak ? '#ef4444' : 'var(--success-color)';
+        if (!leakEnabled) {
+            leakSensorEl.value = 'MODUL WYLACZONY';
+            leakSensorEl.style.color = 'var(--text-muted)';
+        } else if (!leakState.valid) {
+            leakSensorEl.value = 'BRAK ODCZYTU MCP';
+            leakSensorEl.style.color = 'var(--warning-color)';
+        } else {
+            leakSensorEl.value = leakState.active ? 'ALARM WYCIEKU!' : 'SUCHY';
+            leakSensorEl.style.color = leakState.active ? '#ef4444' : 'var(--success-color)';
+        }
     }
     const leakStatusEl = document.getElementById('module-status-leak');
     if (leakStatusEl) {
         if (!leakEnabled) {
             leakStatusEl.textContent = 'NIEAKTYWNE';
             leakStatusEl.style.color = 'var(--text-muted)';
+        } else if (!leakState.valid) {
+            leakStatusEl.textContent = 'BRAK ODCZYTU';
+            leakStatusEl.style.color = 'var(--warning-color)';
         } else {
-            leakStatusEl.textContent = hasLeak ? 'ALARM!' : 'BEZPIECZNY';
-            leakStatusEl.style.color = hasLeak ? '#ef4444' : 'var(--success-color)';
+            leakStatusEl.textContent = leakState.active ? 'ALARM!' : 'BEZPIECZNY';
+            leakStatusEl.style.color = leakState.active ? '#ef4444' : 'var(--success-color)';
         }
     }
     setCheckboxIfClean('settings-leak-enabled', leakEnabled);
@@ -1054,10 +1103,10 @@ async function saveCo2Settings() {
     try {
         await sendAction('save_co2', payload);
         markFieldsClean(['settings-co2-enabled', 'settings-co2-ph-target', 'settings-co2-limit']);
-        setCo2Status('Zapisano automatykÄ™ CO2.', 'success');
+        setCo2Status('Zapisano automatykę CO2.', 'success');
         await fetchStatus(true);
     } catch (error) {
-        setCo2Status(`BĹ‚Ä…d: ${describeRequestError(error)}`, 'error');
+        setCo2Status(`Błąd: ${describeRequestError(error)}`, 'error');
     } finally {
         button.disabled = false;
     }
@@ -1088,10 +1137,10 @@ async function saveWaterSettings() {
     try {
         await sendAction('save_water', payload);
         markFieldsClean(['settings-water-enabled', 'settings-water-timeout']);
-        setWaterStatus('Zapisano automatycznÄ… dolewkÄ™.', 'success');
+        setWaterStatus('Zapisano automatyczną dolewkę.', 'success');
         await fetchStatus(true);
     } catch (error) {
-        setWaterStatus(`BĹ‚Ä…d: ${describeRequestError(error)}`, 'error');
+        setWaterStatus(`Błąd: ${describeRequestError(error)}`, 'error');
     } finally {
         button.disabled = false;
     }
@@ -1116,15 +1165,15 @@ async function saveLeakSettings() {
     };
 
     button.disabled = true;
-    setLeakStatus('Zapisywanie ustawieĹ„ zabezpieczeĹ„...', 'warning');
+    setLeakStatus('Zapisywanie ustawień zabezpieczeń...', 'warning');
 
     try {
         await sendAction('save_leak', payload);
         markFieldsClean(['settings-leak-enabled', 'settings-leak-action']);
-        setLeakStatus('Zapisano ustawienia zabezpieczeĹ„.', 'success');
+        setLeakStatus('Zapisano ustawienia zabezpieczeń.', 'success');
         await fetchStatus(true);
     } catch (error) {
-        setLeakStatus(`BĹ‚Ä…d: ${describeRequestError(error)}`, 'error');
+        setLeakStatus(`Błąd: ${describeRequestError(error)}`, 'error');
     } finally {
         button.disabled = false;
     }

@@ -31,6 +31,28 @@ function scheduleModeToApi(value) {
     }
 }
 
+function aquaelProfileToUi(value) {
+    const normalized = String(value ?? '').trim().toLowerCase();
+    if (normalized === '1' || normalized === 'daybreak' || normalized === 'dawn' || normalized === 'sunrise') {
+        return 'daybreak';
+    }
+    if (normalized === '2' || normalized === 'night' || normalized === 'moon') {
+        return 'night';
+    }
+    return 'day';
+}
+
+function aquaelProfileToApi(value) {
+    switch (aquaelProfileToUi(value)) {
+        case 'daybreak':
+            return 'daybreak';
+        case 'night':
+            return 'night';
+        default:
+            return 'day';
+    }
+}
+
 function heaterModeToUi(value) {
     return Number(value) === 1 ? 'zawsze_wylaczone' : 'harmonogram';
 }
@@ -123,21 +145,36 @@ function readScheduleRange(data, key, legacy, fallback) {
     };
 }
 
+function readAquaelProfile(data, key, legacyProfileKey, fallback = 'day') {
+    const flat = data.schedule || {};
+    const nested = nestedSchedule(data, key);
+    return aquaelProfileToUi(nested?.profile ?? nested?.profileLabel ?? flat[legacyProfileKey] ?? fallback);
+}
+
 function syncWorkWindowDependents() {
     const start = normalizeScheduleTimeInput('schedule-work-start');
     const end = normalizeScheduleTimeInput('schedule-work-end');
 
     [
         ['schedule-light-start', start],
-        ['schedule-light-end', end],
-        ['schedule-heater-start', start],
-        ['schedule-heater-end', end]
+        ['schedule-light-end', end]
     ].forEach(([id, value]) => {
         const input = document.getElementById(id);
         if (!input) return;
         input.value = value;
         input.disabled = true;
         input.title = 'Godziny wynikają z okna pracy akwarium.';
+    });
+
+    [
+        ['schedule-heater-start', '00:00'],
+        ['schedule-heater-end', '23:59']
+    ].forEach(([id, value]) => {
+        const input = document.getElementById(id);
+        if (!input) return;
+        input.value = value;
+        input.disabled = true;
+        input.title = 'Termostat i grzalka dzialaja 24/7 w trybie progowym.';
     });
 
     ['schedule-light-mode', 'schedule-heater-mode'].forEach((id) => {
@@ -171,7 +208,7 @@ function renderScheduleEditor(data) {
             endHour: 'dayEndHour',
             endMin: 'dayEndMin'
         },
-        { startHour: 10, startMin: 0, endHour: 21, endMin: 0 }
+        { startHour: 10, startMin: 0, endHour: 22, endMin: 0 }
     );
     const plant = readScheduleRange(
         data,
@@ -183,7 +220,7 @@ function renderScheduleEditor(data) {
             endHour: 'plantEndHour',
             endMin: 'plantEndMin'
         },
-        { startHour: 12, startMin: 0, endHour: 18, endMin: 0 }
+        { startHour: 10, startMin: 30, endHour: 20, endMin: 0 }
     );
     const filter = readScheduleRange(
         data,
@@ -209,16 +246,20 @@ function renderScheduleEditor(data) {
         },
         { startHour: 10, startMin: 0, endHour: 19, endMin: 0 }
     );
+    const lightProfile = readAquaelProfile(data, 'light', 'lightProfile', 'day');
+    const plantLightProfile = readAquaelProfile(data, 'plant_light', 'plantLightProfile', 'day');
 
     setInputValueIfClean('schedule-work-mode', 'harmonogram');
     setInputValueIfClean('schedule-work-start', work.start);
     setInputValueIfClean('schedule-work-end', work.end);
 
     setInputValueIfClean('schedule-light-mode', work.mode);
+    setInputValueIfClean('schedule-light-profile', lightProfile);
     setInputValueIfClean('schedule-light-start', work.start);
     setInputValueIfClean('schedule-light-end', work.end);
 
     setInputValueIfClean('schedule-plant-light-mode', plant.mode);
+    setInputValueIfClean('schedule-plant-light-profile', plantLightProfile);
     setInputValueIfClean('schedule-plant-light-start', plant.start);
     setInputValueIfClean('schedule-plant-light-end', plant.end);
 
@@ -231,16 +272,22 @@ function renderScheduleEditor(data) {
     setInputValueIfClean('schedule-air-end', air.end);
 
     setInputValueIfClean('schedule-heater-mode', heaterModeToUi(schedule.heaterMode ?? data.temperature?.heaterMode));
-    setInputValueIfClean('schedule-heater-start', work.start);
-    setInputValueIfClean('schedule-heater-end', work.end);
+    setInputValueIfClean('schedule-heater-start', '00:00');
+    setInputValueIfClean('schedule-heater-end', '23:59');
 
-    setInputValueIfClean('schedule-feed-mode', feedFrequencyToUi(feeding.freq));
-    setInputValueIfClean('schedule-feed-time', formatTime(feeding.hour, feeding.minute));
+    const feedFreq = feeding.freq !== undefined ? feeding.freq : (feeding.enabled === false ? 0 : 1);
+    const feedClock = parseScheduleClock(
+        feeding.time || (toFiniteNumber(feeding.hour) !== null ? formatTime(feeding.hour, feeding.minute) : null),
+        14,
+        0
+    );
+    setInputValueIfClean('schedule-feed-mode', feedFrequencyToUi(feedFreq));
+    setInputValueIfClean('schedule-feed-time', feedClock.text);
 
     syncWorkWindowDependents();
 
     const heaterEnabled = heaterModeToUi(schedule.heaterMode ?? data.temperature?.heaterMode) !== 'zawsze_wylaczone';
-    const feedEnabled = Number(feeding.freq) > 0;
+    const feedEnabled = feedFrequencyToApi(feedFrequencyToUi(feedFreq)) > 0;
     const enabledOutputs = [
         work.mode !== 'zawsze_wylaczone',
         plant.mode !== 'zawsze_wylaczone',
@@ -253,13 +300,13 @@ function renderScheduleEditor(data) {
     setCommandStatus(
         'schedule-strip-window',
         work.mode === 'zawsze_wlaczone' ? 'Cala doba' : `${work.start} - ${work.end}`,
-        heaterEnabled ? 'Grzalka dziala tylko w oknie akwarium' : 'Grzalka wylaczona',
+        heaterEnabled ? 'Swiatlo wedlug cyklu, termostat 24/7' : 'Grzalka wylaczona',
         work.mode === 'zawsze_wylaczone' ? 'warn' : 'info'
     );
     setCommandStatus(
         'schedule-strip-outputs',
         commandCountLabel(enabledOutputs, 'modul aktywny', 'modulow aktywnych'),
-        `${plant.mode === 'harmonogram' ? 'roslinne wg planu' : 'roslinne recznie'} / karmnik ${feedEnabled ? 'ON' : 'OFF'}`,
+        `LED ${lightProfile.toUpperCase()} / roslinne ${plantLightProfile.toUpperCase()} / karmnik ${feedEnabled ? 'ON' : 'OFF'}`,
         enabledOutputs > 0 ? 'ok' : 'neutral'
     );
 
@@ -282,9 +329,11 @@ async function saveScheduleSettings() {
         dayEnd: workEnd,
         lightStart: workStart,
         lightEnd: workEnd,
+        lightProfile: aquaelProfileToApi(document.getElementById('schedule-light-profile')?.value),
         plantLightMode: scheduleModeToApi(document.getElementById('schedule-plant-light-mode')?.value),
         plantLightStart: normalizeScheduleTimeInput('schedule-plant-light-start'),
         plantLightEnd: normalizeScheduleTimeInput('schedule-plant-light-end'),
+        plantLightProfile: aquaelProfileToApi(document.getElementById('schedule-plant-light-profile')?.value),
         aerationMode: scheduleModeToApi(document.getElementById('schedule-air-mode')?.value),
         airOn: normalizeScheduleTimeInput('schedule-air-start'),
         airOff: normalizeScheduleTimeInput('schedule-air-end'),
@@ -292,8 +341,8 @@ async function saveScheduleSettings() {
         filterOn: normalizeScheduleTimeInput('schedule-filter-start'),
         filterOff: normalizeScheduleTimeInput('schedule-filter-end'),
         heaterMode: heaterModeToApi(document.getElementById('schedule-heater-mode')?.value),
-        heaterStart: workStart,
-        heaterEnd: workEnd,
+        heaterStart: '00:00',
+        heaterEnd: '23:59',
         feedFreq: feedFrequencyToApi(document.getElementById('schedule-feed-mode')?.value),
         feedTime: normalizeScheduleTimeInput('schedule-feed-time')
     };
@@ -412,10 +461,11 @@ function initScheduleTimeline() {
         const kind = item.getAttribute('data-schedule-kind') || 'point';
         if (kind === 'range') {
             const modeSelect = item.querySelector('.schedule-mode-select');
+            const profileSelects = Array.from(item.querySelectorAll('.schedule-profile-select'));
             const startInput = item.querySelector('.schedule-time-start');
             const endInput = item.querySelector('.schedule-time-end');
             const onRangeChange = () => {
-                [modeSelect, startInput, endInput].forEach((el) => {
+                [modeSelect, ...profileSelects, startInput, endInput].forEach((el) => {
                     if (el) el.dataset.dirty = '1';
                 });
                 if (startInput?.id === 'schedule-work-start' || endInput?.id === 'schedule-work-end') {
@@ -426,6 +476,7 @@ function initScheduleTimeline() {
                 markScheduleDirty();
             };
             modeSelect?.addEventListener('change', onRangeChange);
+            profileSelects.forEach((select) => select.addEventListener('change', onRangeChange));
             startInput?.addEventListener('input', onRangeChange);
             endInput?.addEventListener('input', onRangeChange);
             updateRangeScheduleItem(item);

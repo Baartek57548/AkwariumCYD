@@ -1,14 +1,14 @@
-﻿/* â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
-   AquaSync â€” Temperature Charts App v2
+/* ═══════════════════════════════════════════
+   AquaSync — Temperature Charts App v2
    + Draw-in, sparklines, bubbles, heatmap,
      day comparison, forecast, swipe, pull,
      fullscreen
-   â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â• */
+   ═══════════════════════════════════════════ */
 
 (() => {
     'use strict';
 
-    // â”€â”€ Configuration â”€â”€
+    // ── Configuration ──
     const CONFIG = {
         target: 25.0,
         hysteresis: 0.5,
@@ -19,7 +19,7 @@
         rangeKeys: ['1h', '3h', '6h', '12h', '24h']
     };
 
-    // â”€â”€ State â”€â”€
+    // ── State ──
     let allData = [];
     let activeRange = '3h';
     let hoverIndex = -1;
@@ -30,7 +30,7 @@
     let fullscreenHoverIndex = -1;
     let lastHistoryRef = null;
 
-    // â”€â”€ DOM Cache â”€â”€
+    // ── DOM Cache ──
     const dom = {};
     function cacheDom() {
         const fallbackNode = document.createElement('div');
@@ -81,9 +81,9 @@
 
 }
 
-    // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+    // ═══════════════════
     // Data Integration
-    // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+    // ═══════════════════
     function applyTemperatureConfig(temperatureData) {
         let changed = false;
 
@@ -191,9 +191,9 @@
         return allData.slice(-maxPoints);
     }
 
-    // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+    // ═══════════════════
     // Forecast (Linear Extrapolation + Mean Reversion)
-    // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+    // ═══════════════════
     function computeForecast(visibleData) {
         if (visibleData.length < 4) return [];
         const window = visibleData.slice(-6);
@@ -224,26 +224,26 @@
         return forecast;
     }
 
-    // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+    // ═══════════════════
     // Clock
-    // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+    // ═══════════════════
     function updateClock() {
         if (!dom.clockTime || !dom.clockDate) return;
         const now = new Date();
         dom.clockTime.textContent = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}:${String(now.getSeconds()).padStart(2, '0')}`;
-        const months = ['sty', 'lut', 'mar', 'kwi', 'maj', 'cze', 'lip', 'sie', 'wrz', 'paĹş', 'lis', 'gru'];
+        const months = ['sty', 'lut', 'mar', 'kwi', 'maj', 'cze', 'lip', 'sie', 'wrz', 'paź', 'lis', 'gru'];
         dom.clockDate.textContent = `${String(now.getDate()).padStart(2, '0')} ${months[now.getMonth()]} ${now.getFullYear()}`;
     }
 
-    // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+    // ═══════════════════
     // Summary
-    // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+    // ═══════════════════
     function updateSummary(visibleData) {
         if (!visibleData.length) return;
         const latest = visibleData[visibleData.length - 1];
         dom.summaryCurrent.textContent = ChartEngine.formatTemp(latest.value, 2);
         dom.summaryTarget.textContent = ChartEngine.formatTemp(CONFIG.target);
-        dom.summaryBand.textContent = `Â±${CONFIG.hysteresis.toFixed(1)}Â°C`;
+        dom.summaryBand.textContent = `±${CONFIG.hysteresis.toFixed(1)}°C`;
 
         let minV = Infinity, maxV = -Infinity;
         for (const p of visibleData) { if (p.value < minV) minV = p.value; if (p.value > maxV) maxV = p.value; }
@@ -262,19 +262,19 @@
             } else if (delta > 0) {
                 trendEl.classList.add('rising');
                 trendEl.querySelector('svg').innerHTML = '<path d="M8 13V3M8 3l-3 3M8 3l3 3" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>';
-                trendEl.querySelector('span').textContent = `+${delta.toFixed(2)}Â°C`;
+                trendEl.querySelector('span').textContent = `+${delta.toFixed(2)}°C`;
             } else {
                 trendEl.classList.add('falling');
                 trendEl.querySelector('svg').innerHTML = '<path d="M8 3v10M8 13l-3-3M8 13l3-3" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>';
-                trendEl.querySelector('span').textContent = `${delta.toFixed(2)}Â°C`;
+                trendEl.querySelector('span').textContent = `${delta.toFixed(2)}°C`;
             }
         }
-        dom.footerCount.textContent = `${allData.length} pomiarĂłw`;
+        dom.footerCount.textContent = `${allData.length} pomiarów`;
     }
 
-    // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+    // ═══════════════════
     // Time Axis
-    // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+    // ═══════════════════
     function updateTimeAxis(visibleData, axisEl) {
         const el = axisEl || dom.timeAxis;
         if (!visibleData.length) { el.innerHTML = ''; return; }
@@ -290,21 +290,21 @@
         el.innerHTML = labels;
     }
 
-    // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+    // ═══════════════════
     // Mini Charts
-    // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+    // ═══════════════════
     function updateMiniCharts(visibleData) {
         if (visibleData.length < 2) return;
         const varWindow = visibleData.slice(-Math.min(12, visibleData.length));
         const varValues = [];
         for (let i = 1; i < varWindow.length; i++) varValues.push(Math.abs(varWindow[i].value - varWindow[i - 1].value));
         const avgVar = varValues.reduce((a, b) => a + b, 0) / varValues.length;
-        dom.miniVarValue.textContent = `${avgVar.toFixed(3)}Â°C`;
+        dom.miniVarValue.textContent = `${avgVar.toFixed(3)}°C`;
         ChartEngine.renderMiniChart(dom.miniVarCanvas, varValues, { color: '#a78bfa', glowColor: 'rgba(167, 139, 250, 0.3)', areaColor: 'rgba(167, 139, 250, 0.08)' });
 
         const devValues = visibleData.slice(-24).map(p => p.value - CONFIG.target);
         const lastDev = devValues[devValues.length - 1];
-        dom.miniDevValue.textContent = `${lastDev >= 0 ? '+' : ''}${lastDev.toFixed(2)}Â°C`;
+        dom.miniDevValue.textContent = `${lastDev >= 0 ? '+' : ''}${lastDev.toFixed(2)}°C`;
         const devOk = Math.abs(lastDev) <= CONFIG.hysteresis;
         dom.miniDevValue.style.color = devOk ? '#34d399' : '#fbbf24';
         ChartEngine.renderMiniChart(dom.miniDevCanvas, devValues, {
@@ -321,13 +321,13 @@
             rateValues.push(dt > 0 ? dv / dt : 0);
         }
         const latestRate = rateValues[rateValues.length - 1] || 0;
-        dom.miniRateValue.textContent = `${latestRate >= 0 ? '+' : ''}${latestRate.toFixed(2)}Â°C/h`;
+        dom.miniRateValue.textContent = `${latestRate >= 0 ? '+' : ''}${latestRate.toFixed(2)}°C/h`;
         ChartEngine.renderMiniChart(dom.miniRateCanvas, rateValues.slice(-24), { color: '#22d3ee', glowColor: 'rgba(34, 211, 238, 0.3)', areaColor: 'rgba(34, 211, 238, 0.08)', baseline: 0 });
     }
 
-    // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+    // ═══════════════════
     // History Table with Sparklines
-    // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+    // ═══════════════════
     let sparklineCanvases = [];
 
     function updateHistoryTable(visibleData) {
@@ -341,13 +341,13 @@
             let statusClass, statusText;
             if (absDev <= CONFIG.hysteresis * 0.5) { statusClass = 'ok'; statusText = 'Norma'; }
             else if (absDev <= CONFIG.hysteresis) { statusClass = 'warn'; statusText = 'Pasmo'; }
-            else { statusClass = 'danger'; statusText = 'Poza normÄ…'; }
+            else { statusClass = 'danger'; statusText = 'Poza normą'; }
 
             html += `<tr>
                 <td>${ChartEngine.formatTimeFull(p.epoch)}</td>
                 <td style="color: var(--accent-cyan); font-weight: 600;">${ChartEngine.formatTemp(p.value, 2)}</td>
                 <td><canvas class="sparkline-cell" data-spark-idx="${ri}" width="80" height="24"></canvas></td>
-                <td>${dev >= 0 ? '+' : ''}${dev.toFixed(2)}Â°C</td>
+                <td>${dev >= 0 ? '+' : ''}${dev.toFixed(2)}°C</td>
                 <td><span class="status-pill ${statusClass}"><span class="status-pip ${statusClass}"></span>${statusText}</span></td>
             </tr>`;
         }
@@ -372,9 +372,9 @@
         });
     }
 
-    // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+    // ═══════════════════
     // Heatmap (Premium)
-    // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+    // ═══════════════════
     let heatmapResult = null;
     let heatmapHoverCell = null;
     let heatmapData = null;
@@ -388,7 +388,7 @@
         const days = 7;
         const heatData = [];
         const dayLabels = [];
-        const dayNames = ['Nd', 'Pn', 'Wt', 'Ĺšr', 'Cz', 'Pt', 'So'];
+        const dayNames = ['Nd', 'Pn', 'Wt', 'Śr', 'Cz', 'Pt', 'So'];
 
         for (let d = days - 1; d >= 0; d--) {
             const dayStart = now - d * msPerDay;
@@ -532,7 +532,7 @@
             tooltip.hidden = true;
         });
 
-        // Click â†’ scroll to main chart and highlight approximate time
+        // Click → scroll to main chart and highlight approximate time
         container.addEventListener('click', (e) => {
             const cell = findHeatmapCell(e.clientX, e.clientY);
             if (!cell || cell.val === null) return;
@@ -547,16 +547,16 @@
         });
     }
 
-    // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+    // ═══════════════════
     // Day Comparison
-    // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+    // ═══════════════════
     function updateDayComparison() {
         const now = Date.now();
         const msPerDay = 24 * 60 * 60 * 1000;
         const days = Math.min(5, Math.ceil(allData.length / 144));
         const dayDataSets = [];
         const dayLabels = [];
-        const dayNames = ['Nd', 'Pn', 'Wt', 'Ĺšr', 'Cz', 'Pt', 'So'];
+        const dayNames = ['Nd', 'Pn', 'Wt', 'Śr', 'Cz', 'Pt', 'So'];
 
         for (let d = days - 1; d >= 0; d--) {
             const dayStart = new Date(now - d * msPerDay);
@@ -585,9 +585,9 @@
         dom.comparisonLegend.innerHTML = legendHtml;
     }
 
-    // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+    // ═══════════════════
     // Draw-in Animation
-    // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+    // ═══════════════════
     let drawAnimId = null;
     const DRAW_DURATION = 1200; // ms
 
@@ -612,9 +612,9 @@
         drawAnimId = requestAnimationFrame(animStep);
     }
 
-    // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+    // ═══════════════════
     // Ambient Aquarium Background
-    // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+    // ═══════════════════
     let bubbles = [];
     let fishes = [];
     let bubblesAnimId = null;
@@ -725,9 +725,9 @@
         animateBubbles();
     }
 
-    // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+    // ═══════════════════
     // Swipe Gestures
-    // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+    // ═══════════════════
     let swipeStartX = 0;
     let swipeStartY = 0;
     let isSwiping = false;
@@ -754,10 +754,10 @@
                 const keys = CONFIG.rangeKeys;
                 const currentIdx = keys.indexOf(activeRange);
                 if (dx < 0 && currentIdx < keys.length - 1) {
-                    // Swipe left â†’ bigger range
+                    // Swipe left → bigger range
                     changeRange(keys[currentIdx + 1]);
                 } else if (dx > 0 && currentIdx > 0) {
-                    // Swipe right â†’ smaller range
+                    // Swipe right → smaller range
                     changeRange(keys[currentIdx - 1]);
                 }
             }
@@ -772,9 +772,9 @@
         }
     }
 
-    // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+    // ═══════════════════
     // Pull-to-Refresh
-    // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+    // ═══════════════════
     let pullStartY = 0;
     let isPulling = false;
     let pullTriggered = false;
@@ -826,9 +826,9 @@
         startDrawAnimation();
     }
 
-    // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+    // ═══════════════════
     // Fullscreen Chart
-    // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+    // ═══════════════════
     function openFullscreen() {
         isFullscreen = true;
         dom.fullscreenOverlay.hidden = false;
@@ -862,9 +862,9 @@
         updateTimeAxis(visibleData, dom.fullscreenTimeAxis);
     }
 
-    // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+    // ═══════════════════
     // Main Render
-    // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+    // ═══════════════════
     let lastChartResult = null;
 
     function render() {
@@ -889,9 +889,9 @@
         animFrameId = requestAnimationFrame(render);
     }
 
-    // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+    // ═══════════════════
     // Hover Handling
-    // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+    // ═══════════════════
     function findClosestPoint(clientX, canvas, chartResult) {
         if (!chartResult || !chartResult.coords.length) return -1;
         const rect = canvas.getBoundingClientRect();
@@ -949,12 +949,12 @@
         }
     }
 
-    // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
-    // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+    // ═══════════════════
+    // ═══════════════════
 
-    // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+    // ═══════════════════
     // CSV Export
-    // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+    // ═══════════════════
     async function exportCSV() {
         try {
             const response = await fetch('/api/history.csv', { cache: 'no-store' });
@@ -973,7 +973,7 @@
         }
 
         const visibleData = getVisibleData();
-        let csv = 'Czas,Temperatura (Â°C),Odchylenie od celu (Â°C)\n';
+        let csv = 'Czas,Temperatura (°C),Odchylenie od celu (°C)\n';
         for (const p of visibleData) {
             csv += `${ChartEngine.formatTimeFull(p.epoch)},${p.value.toFixed(2)},${(p.value - CONFIG.target).toFixed(2)}\n`;
         }
@@ -986,9 +986,9 @@
         URL.revokeObjectURL(url);
     }
 
-    // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+    // ═══════════════════
     // Range Change
-    // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+    // ═══════════════════
     function formatArchiveBytes(bytes) {
         const value = Number(bytes);
         if (!Number.isFinite(value) || value < 0) return '--';
@@ -1101,9 +1101,9 @@
         startDrawAnimation();
     }
 
-    // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+    // ═══════════════════
     // Init
-    // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+    // ═══════════════════
     function init() {
         cacheDom();
         allData = [];

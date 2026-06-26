@@ -109,9 +109,11 @@ function createSvgEl(tag, attrs = {}) {
     return el;
 }
 
-function buildActiveBadge(iconClass, label, tone) {
+function buildActiveBadge(iconClass, label, tone, tier = '') {
+    const tierClass = tier ? ` tier-${tier}` : '';
+    const tierAttr = tier ? ` data-tier="${escapeHtml(tier)}"` : '';
     return `
-        <div class="status-badge status-badge-${tone}">
+        <div class="status-badge status-badge-${tone}${tierClass}"${tierAttr}>
             ${getLocalIconMarkup(iconClass)}
             <span>${escapeHtml(label)}</span>
         </div>`;
@@ -121,15 +123,219 @@ function buildModuleBadge(iconClass, label, active, activeTone) {
     return buildActiveBadge(iconClass, label, active ? activeTone : 'muted');
 }
 
+function normalizeDigitalSensorState(value) {
+    if (typeof value === 'boolean') {
+        return { valid: true, active: value };
+    }
+
+    if (typeof value === 'number' && Number.isFinite(value)) {
+        return { valid: true, active: value !== 0 };
+    }
+
+    if (typeof value === 'string') {
+        const normalized = value.trim().toLowerCase();
+        if (['1', 'true', 'on', 'high', 'active', 'alarm', 'detected'].includes(normalized)) {
+            return { valid: true, active: true };
+        }
+        if (['0', 'false', 'off', 'low', 'inactive', 'ok', 'dry', 'none'].includes(normalized)) {
+            return { valid: true, active: false };
+        }
+    }
+
+    return { valid: false, active: false };
+}
+
+function buildLeakSafetyBadge(data) {
+    const modules = data.modules || {};
+    const sensors = data.sensors || {};
+    const leakEnabledState = normalizeDigitalSensorState(modules.leak_enabled);
+    const leakEnabled = leakEnabledState.valid ? leakEnabledState.active : !!modules.leak_enabled;
+
+    if (!leakEnabled) {
+        return buildActiveBadge('fa-shield-halved', 'Wyciek: OFF', 'danger', 'safety');
+    }
+
+    const leakState = normalizeDigitalSensorState(sensors.leak_detected);
+    if (!leakState.valid) {
+        return buildActiveBadge('fa-triangle-exclamation', 'Wyciek: brak MCP', 'danger', 'safety');
+    }
+
+    return buildActiveBadge(
+        leakState.active ? 'fa-triangle-exclamation' : 'fa-shield-halved',
+        leakState.active ? 'Wyciek: ALARM' : 'Wyciek: OK',
+        'danger',
+        'safety'
+    );
+}
+
+function getSystemSafetyAndMode(data) {
+    const sensors = data.sensors || {};
+    const temperature = data.temperature || {};
+    const schedule = data.schedule || {};
+    const eco = data.eco || {};
+    
+    const isConnected = window.backendConnected;
+    if (!isConnected) {
+        return {
+            safety: 'offline',
+            safetyLabel: 'BRAK POŁĄCZENIA',
+            safetyDesc: 'Nie można połączyć się ze sterownikiem ESP32.',
+            safetyIcon: 'fa-triangle-exclamation',
+            mode: 'OFFLINE',
+            modeLabel: 'OFFLINE'
+        };
+    }
+    
+    const criticalCount = Math.max(
+        cachedLogs?.critical?.length || 0,
+        Math.trunc(Number(cachedLogs?.counts?.critical) || 0)
+    );
+    const leakState = normalizeDigitalSensorState(sensors.leak_detected);
+    const isLeak = leakState.valid && leakState.active;
+    
+    const tempValue = toFiniteNumber(temperature.current ?? sensors.temp_c);
+    const tempValid = isSensorValid(data, 'temp', tempValue) && isValidTemperature(tempValue);
+    
+    const mcpOk = sensors.mcp_ok ?? data.system?.mcpConnected ?? data.system?.i2cConnected ?? true;
+    
+    let isAlarm = criticalCount > 0 || isLeak || !tempValid || mcpOk === false;
+    let alarmMsg = '';
+    if (isLeak) alarmMsg = 'WYKRYTO WYCIEK WODY! Zawory CO2 i dolewki zablokowane.';
+    else if (!tempValid) alarmMsg = 'Błąd czujnika temperatury DS18B20! Grzałka wyłączona.';
+    else if (mcpOk === false) alarmMsg = 'Błąd ekspandera I2C (MCP23017/PCF8574)!';
+    else if (criticalCount > 0) alarmMsg = 'Aktywne alarmy krytyczne w logach.';
+
+    if (isAlarm) {
+        return {
+            safety: 'alarm',
+            safetyLabel: 'ALARM KRYTYCZNY',
+            safetyDesc: alarmMsg,
+            safetyIcon: 'fa-circle-exclamation',
+            mode: 'EMERGENCY',
+            modeLabel: 'AWARIA'
+        };
+    }
+    
+    const isService = data.config?.dev_mode;
+    if (isService) {
+        return {
+            safety: 'service',
+            safetyLabel: 'TRYB SERWISOWY',
+            safetyDesc: 'Urządzenie jest w trybie serwisowym (DEV). Automatyka może być ograniczona.',
+            safetyIcon: 'fa-screwdriver-wrench',
+            mode: 'SERVICE',
+            modeLabel: 'SERWIS'
+        };
+    }
+    
+    const isFeeding = data.feeding?.active;
+    if (isFeeding) {
+        return {
+            safety: 'warn',
+            safetyLabel: 'KARMIENIE W TOKU',
+            safetyDesc: 'Trwa dozowanie pokarmu. Filtry i napowietrzanie wyciszone.',
+            safetyIcon: 'fa-fish',
+            mode: 'FEEDING',
+            modeLabel: 'KARMIENIE'
+        };
+    }
+    
+    const batteryPercent = toFiniteNumber(data.battery?.percent);
+    const isLowBattery = batteryPercent !== null && batteryPercent <= 15;
+    
+    const targetTemp = toFiniteNumber(temperature.target);
+    const hyst = toFiniteNumber(temperature.hysteresis);
+    let isTempWarn = false;
+    if (tempValid && targetTemp !== null && hyst !== null) {
+        if (Math.abs(tempValue - targetTemp) > 2.0) {
+            isTempWarn = true;
+        }
+    }
+    
+    const lightMode = modeValue(schedule.lightMode);
+    const filterMode = modeValue(schedule.filterMode);
+    const airMode = modeValue(schedule.airMode);
+    const heaterMode = modeValue(schedule.heaterMode);
+    const isManualMode = lightMode !== 0 || filterMode !== 0 || airMode !== 0 || heaterMode !== 0;
+
+    if (isLowBattery || isTempWarn) {
+        let warnMsg = isLowBattery ? 'Niski poziom baterii RTC.' : 'Temperatura wody poza bezpiecznym zakresem.';
+        return {
+            safety: 'warn',
+            safetyLabel: 'OSTRZEŻENIE',
+            safetyDesc: warnMsg,
+            safetyIcon: 'fa-triangle-exclamation',
+            mode: isManualMode ? 'MANUAL' : (eco.enabled ? 'ECO' : 'AUTO'),
+            modeLabel: isManualMode ? 'RĘCZNY' : (eco.enabled ? 'ECO' : 'AUTO')
+        };
+    }
+    
+    const isNight = schedule.lightMode === 0 && schedule.dayStartHour !== undefined && schedule.dayEndHour !== undefined && (() => {
+        const now = getCurrentClockDate();
+        const hr = now.getHours();
+        const min = now.getMinutes();
+        const start = schedule.dayStartHour * 60 + schedule.dayStartMin;
+        const end = schedule.dayEndHour * 60 + schedule.dayEndMin;
+        const current = hr * 60 + min;
+        if (start < end) {
+            return current < start || current > end;
+        } else {
+            return current < start && current > end;
+        }
+    })();
+    
+    const activeMode = isManualMode ? 'MANUAL' : (isNight ? 'NIGHT' : (eco.enabled ? 'ECO' : 'AUTO'));
+    const activeModeLabel = isManualMode ? 'RĘCZNY' : (isNight ? 'NOCNY' : (eco.enabled ? 'ECO' : 'AUTO'));
+    
+    return {
+        safety: 'ok',
+        safetyLabel: 'SYSTEM BEZPIECZNY',
+        safetyDesc: 'Wszystkie parametry w normie. Automatyka działa poprawnie.',
+        safetyIcon: 'fa-circle-check',
+        mode: activeMode,
+        modeLabel: activeModeLabel
+    };
+}
+
 function renderTopbarActiveModules(data) {
     const container = document.getElementById('topbar-active-list');
     if (!container) return;
 
     const network = data.network || {};
+    const safetyInfo = getSystemSafetyAndMode(data);
+
+    let safetyTone = 'success';
+    if (safetyInfo.safety === 'warn') safetyTone = 'warn';
+    else if (safetyInfo.safety === 'alarm') safetyTone = 'danger';
+    else if (safetyInfo.safety === 'service') safetyTone = 'info';
+    else if (safetyInfo.safety === 'offline') safetyTone = 'muted';
+
+    const safetyBadge = buildActiveBadge(safetyInfo.safetyIcon, safetyInfo.safetyLabel, safetyTone);
+    
+    let modeTone = 'info';
+    if (safetyInfo.mode === 'MANUAL') modeTone = 'warn';
+    else if (safetyInfo.mode === 'FEEDING') modeTone = 'success';
+    else if (safetyInfo.mode === 'EMERGENCY') modeTone = 'danger';
+    else if (safetyInfo.mode === 'NIGHT') modeTone = 'muted';
+    else if (safetyInfo.mode === 'ECO') modeTone = 'success';
+    
+    const modeIcon = safetyInfo.mode === 'AUTO' ? 'fa-robot' :
+                     safetyInfo.mode === 'MANUAL' ? 'fa-sliders' :
+                     safetyInfo.mode === 'SERVICE' ? 'fa-screwdriver-wrench' :
+                     safetyInfo.mode === 'FEEDING' ? 'fa-fish' :
+                     safetyInfo.mode === 'EMERGENCY' ? 'fa-triangle-exclamation' :
+                     safetyInfo.mode === 'NIGHT' ? 'fa-moon' : 'fa-leaf';
+
+    const modeBadge = buildActiveBadge(modeIcon, `Tryb: ${safetyInfo.modeLabel}`, modeTone);
+
+    const wifiBadge = network.staConnected
+        ? buildModuleBadge('fa-wifi', 'STA', true, 'success')
+        : (network.apMode ? buildModuleBadge('fa-satellite-dish', 'AP', true, 'success') : buildActiveBadge('fa-wifi', 'Offline', 'muted'));
 
     container.innerHTML = [
-        buildModuleBadge('fa-satellite-dish', 'AP', !!network.apMode, 'success'),
-        buildModuleBadge('fa-wifi', 'STA', !!network.staConnected, 'success')
+        safetyBadge,
+        modeBadge,
+        wifiBadge
     ].join('');
 }
 
@@ -272,43 +478,59 @@ function renderNetworkCard(network) {
         : (staConnected ? 'network-online' : (apMode ? 'network-aponly' : 'network-offline')));
 }
 
-async function toggleRelayQuickAction(kind) {
-    let actionName = '';
-    let payload = {};
-    let relayValue = false;
-    let buttonId = `relay-${kind}-toggle`;
-    let idleLabel = 'Włącz';
-
-    if (kind === 'light') {
-        relayValue = !!lastStatusData?.relays?.light;
-        actionName = 'set_light';
-        payload = { state: relayValue ? '0' : '1' };
-        idleLabel = relayValue ? 'Wyłącz' : 'Włącz';
-    } else if (kind === 'filter') {
-        relayValue = !!lastStatusData?.relays?.pump;
-        actionName = 'set_filter';
-        payload = { state: relayValue ? '0' : '1' };
-        idleLabel = relayValue ? 'Wyłącz' : 'Włącz';
-    } else if (kind === 'plant') {
-        relayValue = !!lastStatusData?.relays?.plantLight;
-        actionName = 'save_schedule';
-        payload = { plantLightMode: relayValue ? 2 : 1 };
-        idleLabel = relayValue ? 'Wyłącz' : 'Włącz';
-    } else if (kind === 'heater') {
-        relayValue = !!lastStatusData?.relays?.heater;
-        actionName = 'save_schedule';
-        payload = { heaterMode: relayValue ? 1 : 0 };
-        idleLabel = relayValue ? 'Wyłącz' : 'Włącz';
-    } else if (kind === 'aeration') {
-        relayValue = !!lastStatusData?.relays?.aeration;
-        actionName = 'save_schedule';
-        payload = { aerationMode: relayValue ? 2 : 1 };
-        idleLabel = relayValue ? 'Wyłącz' : 'Włącz';
-    } else {
-        return;
+function isHeaterAutomationEnabled(data) {
+    const mode = Number(data?.schedule?.heaterMode ?? data?.temperature?.heaterMode);
+    if (Number.isFinite(mode)) {
+        return mode !== 1;
     }
+    return data?.modules?.heater_enabled !== false;
+}
 
-    const button = document.getElementById(buttonId);
+function relayQuickButtonLabel(active) {
+    return active ? 'Wyłącz' : 'Włącz';
+}
+
+const RELAY_QUICK_ACTIONS = {
+    light: {
+        buttonId: 'relay-light-toggle',
+        actionName: 'set_light',
+        isActive: (data) => !!data?.relays?.light,
+        buildPayload: (active) => ({ state: active ? '0' : '1' })
+    },
+    filter: {
+        buttonId: 'relay-filter-toggle',
+        actionName: 'set_filter',
+        isActive: (data) => !!data?.relays?.pump,
+        buildPayload: (active) => ({ state: active ? '0' : '1' })
+    },
+    plant: {
+        buttonId: 'relay-plant-toggle',
+        actionName: 'save_schedule',
+        isActive: (data) => !!data?.relays?.plantLight,
+        buildPayload: (active) => ({ plantLightMode: active ? 2 : 1 })
+    },
+    heater: {
+        buttonId: 'relay-heater-toggle',
+        actionName: 'save_schedule',
+        isActive: isHeaterAutomationEnabled,
+        buildPayload: (active) => ({ heaterMode: active ? 1 : 0 })
+    },
+    aeration: {
+        buttonId: 'relay-aeration-toggle',
+        actionName: 'save_schedule',
+        isActive: (data) => !!data?.relays?.aeration,
+        buildPayload: (active) => ({ aerationMode: active ? 2 : 1 })
+    }
+};
+
+async function toggleRelayQuickAction(kind) {
+    const config = RELAY_QUICK_ACTIONS[kind];
+    if (!config) return;
+
+    const relayValue = config.isActive(lastStatusData || {});
+    const payload = config.buildPayload(relayValue);
+    const idleLabel = relayQuickButtonLabel(relayValue);
+    const button = document.getElementById(config.buttonId);
     if (!button || button.dataset.busy === '1') return;
 
     button.dataset.busy = '1';
@@ -316,7 +538,7 @@ async function toggleRelayQuickAction(kind) {
     button.textContent = 'Zapisywanie...';
 
     try {
-        await sendAction(actionName, payload);
+        await sendAction(config.actionName, payload);
         await fetchStatus(true);
         await fetchLogs(true);
     } catch (error) {
@@ -330,13 +552,7 @@ async function toggleRelayQuickAction(kind) {
         button.dataset.busy = '0';
         button.disabled = false;
         if (!button.title) {
-            let isNowActive = false;
-            if (kind === 'light') isNowActive = !!lastStatusData?.relays?.light;
-            else if (kind === 'filter') isNowActive = !!lastStatusData?.relays?.pump;
-            else if (kind === 'plant') isNowActive = !!lastStatusData?.relays?.plantLight;
-            else if (kind === 'heater') isNowActive = !!lastStatusData?.relays?.heater;
-            else if (kind === 'aeration') isNowActive = !!lastStatusData?.relays?.aeration;
-            button.textContent = isNowActive ? 'Wyłącz' : 'Włącz';
+            button.textContent = relayQuickButtonLabel(config.isActive(lastStatusData || {}));
         }
     }
 }
@@ -418,6 +634,28 @@ function getDashboardWorkRange(data) {
     );
 }
 
+function dashboardAquaelProfileCode(value) {
+    const normalized = String(value ?? '').trim().toLowerCase();
+    if (normalized === '1' || normalized === 'daybreak' || normalized === 'dawn' || normalized === 'sunrise') {
+        return 'daybreak';
+    }
+    if (normalized === '2' || normalized === 'night' || normalized === 'moon') {
+        return 'night';
+    }
+    return 'day';
+}
+
+function dashboardAquaelProfileLabel(data, key, legacyProfileKey) {
+    const flat = data.schedule || {};
+    const nested = data.schedules?.[key];
+    const code = dashboardAquaelProfileCode(
+        nested?.profile ?? nested?.profileLabel ?? flat[`${legacyProfileKey}Name`] ?? flat[legacyProfileKey]
+    );
+    if (code === 'daybreak') return 'DAYBREAK';
+    if (code === 'night') return 'NIGHT';
+    return 'DAY';
+}
+
 function renderWaterQualityCard(data) {
     const sensors = data.sensors || {};
     const modules = data.modules || {};
@@ -494,6 +732,26 @@ function describeSleepBlockers(data) {
 }
 
 function renderStatusCommandStrips(data) {
+    const safetyInfo = getSystemSafetyAndMode(data);
+    const safetyBar = document.getElementById('global-safety-bar');
+    const safetyIcon = document.getElementById('global-safety-icon');
+    const safetyTitle = document.getElementById('global-safety-title');
+    const safetyDesc = document.getElementById('global-safety-desc');
+    
+    if (safetyBar) {
+        safetyBar.className = `global-safety-bar status-${safetyInfo.safety}`;
+        if (safetyIcon) {
+            const iconMarkup = getLocalIconMarkup ? getLocalIconMarkup(safetyInfo.safetyIcon) : `<i class="fa-solid ${safetyInfo.safetyIcon}"></i>`;
+            safetyIcon.innerHTML = iconMarkup;
+        }
+        if (safetyTitle) {
+            safetyTitle.textContent = `Stan systemu: ${safetyInfo.safetyLabel}`;
+        }
+        if (safetyDesc) {
+            safetyDesc.textContent = safetyInfo.safetyDesc;
+        }
+    }
+
     const sensors = data.sensors || {};
     const temperature = data.temperature || {};
     const relays = data.relays || {};
@@ -618,15 +876,207 @@ function setRelayCard(relayId, state, meta) {
     const card = document.getElementById(`relay-${relayId}`);
     const stateEl = document.getElementById(`relay-${relayId}-state`);
     const metaEl = document.getElementById(`relay-${relayId}-meta`);
-    if (!card || !stateEl || !metaEl) return;
+    if (!card || !metaEl) return;
 
     card.classList.remove('relay-on', 'relay-off', 'relay-standby');
     card.classList.add(`relay-${state}`);
-    stateEl.textContent = state.toUpperCase();
+    if (stateEl) {
+        stateEl.textContent = state.toUpperCase();
+    }
     metaEl.textContent = meta;
 }
 
-function renderRelays(data) {
+const RELAY_FUNCTIONS_INFO = {
+    none: { label: "Brak / nieużywany", icon: "fa-xmark" },
+    filter: { label: "Filtr", icon: "fa-filter" },
+    heater: { label: "Grzałka", icon: "fa-temperature-half" },
+    main_light: { label: "Światło główne", icon: "fa-lightbulb" },
+    plant_light: { label: "Światło roślin", icon: "fa-seedling" },
+    aeration: { label: "Napowietrzanie", icon: "fa-wind" },
+    co2: { label: "CO2", icon: "fa-cloud" },
+    water_dosing: { label: "Dolewka wody (ATO)", icon: "fa-droplet" },
+    feeder: { label: "Karmnik", icon: "fa-fish" },
+    circulation_pump: { label: "Pompa obiegowa", icon: "fa-rotate-right" },
+    uv_lamp: { label: "Lampa UV", icon: "fa-sun" },
+    reserve: { label: "Rezerwa", icon: "fa-sliders" },
+    custom: { label: "Własna nazwa", icon: "fa-sliders" }
+};
+
+function getRelayState(relay, data) {
+    const relays = data?.relays || {};
+    const channel = relay.channel;
+    const func = relay.function;
+
+    // 1. Try channel-based state
+    if (relays[`ch${channel}`] !== undefined) {
+        return !!relays[`ch${channel}`];
+    }
+    if (relays[String(channel)] !== undefined) {
+        return !!relays[String(channel)];
+    }
+
+    // 2. Try function-based state
+    if (relays[func] !== undefined) {
+        return !!relays[func];
+    }
+
+    // 3. Try legacy mapping
+    const legacyMap = {
+        filter: 'pump',
+        heater: 'heater',
+        main_light: 'light',
+        plant_light: 'plantLight',
+        aeration: 'aeration'
+    };
+    const legacyKey = legacyMap[func];
+    if (legacyKey && relays[legacyKey] !== undefined) {
+        return !!relays[legacyKey];
+    }
+
+    return false;
+}
+
+async function toggleDynamicRelayAction(channel) {
+    const status = window.lastStatusData || {};
+    const config = status.relaysConfig;
+    if (!config || !Array.isArray(config.relays)) return;
+
+    const relay = config.relays.find(r => r.channel === channel);
+    if (!relay) return;
+
+    if (relay.manualAllowed === false) {
+        alert("Sterowanie ręczne dla tego przekaźnika jest zablokowane ze względów bezpieczeństwa.");
+        return;
+    }
+
+    const active = getRelayState(relay, status);
+    const nextState = active ? 0 : 1;
+
+    // Zabezpieczenie dwufazowe i potwierdzenie
+    let confirmMsg = "";
+    if (relay.function === 'filter' && active) {
+        confirmMsg = "Czy na pewno chcesz wyłączyć filtr? Spowoduje to zatrzymanie obiegu biologicznego w akwarium!";
+    } else if (relay.function === 'heater' && !active) {
+        confirmMsg = "Czy na pewno chcesz ręcznie włączyć grzałkę? Monitoruj temperaturę wody, aby nie przegrzać zbiornika.";
+    } else if (relay.function === 'co2' && !active) {
+        confirmMsg = "Czy na pewno chcesz ręcznie włączyć CO2? Zbyt wysokie stężenie może być niebezpieczne dla ryb.";
+    } else if (relay.function === 'water_dosing' && !active) {
+        confirmMsg = "Czy na pewno chcesz ręcznie włączyć dolewkę wody?";
+    }
+
+    if (confirmMsg && !confirm(confirmMsg)) {
+        return;
+    }
+
+    const btn = document.getElementById(`relay-${relay.channel}-toggle`);
+    if (btn) {
+        btn.disabled = true;
+        btn.textContent = "Zapis...";
+    }
+
+    try {
+        const legacyMap = {
+            filter: 'filter',
+            main_light: 'light',
+            plant_light: 'plant',
+            heater: 'heater',
+            aeration: 'aeration'
+        };
+
+        const legacyKind = legacyMap[relay.function];
+        if (legacyKind) {
+            await toggleRelayQuickAction(legacyKind);
+        } else {
+            await sendAction("test_relay", {
+                channel: String(channel),
+                state: String(nextState),
+                duration: "0"
+            }, { requirePin: relay.pinRequired });
+            await fetchStatus(true);
+            await fetchLogs(true);
+        }
+    } catch (error) {
+        console.warn("Błąd przełączania przekaźnika:", error);
+        alert("Nie udało się przełączyć przekaźnika: " + error.message);
+    } finally {
+        if (btn) {
+            btn.disabled = false;
+            // renderRelays will update text/state soon, but set correct text just in case
+            btn.textContent = active ? 'Włącz' : 'Wyłącz';
+        }
+    }
+}
+
+function buildRelayRowHtml(relay, data, isCore) {
+    const active = getRelayState(relay, data);
+    const stateClass = active ? 'relay-on' : 'relay-off';
+    const stateText = active ? 'ON' : 'OFF';
+    
+    const info = RELAY_FUNCTIONS_INFO[relay.function] || { label: relay.label, icon: 'fa-sliders' };
+    const label = relay.function === 'custom' ? (relay.label || 'Urządzenie własne') : info.label;
+    const icon = info.icon;
+
+    let metaText = 'Automatyka';
+    const schedule = data.schedule || {};
+    
+    if (relay.function === 'main_light') {
+        const lightMode = modeValue(schedule.lightMode);
+        const workRange = getDashboardWorkRange(data);
+        metaText = lightMode === 1 ? 'Zawsze włączone' : (lightMode === 2 ? 'Ręcznie wyłączone' : workRange.label);
+        metaText = `${metaText} / ${dashboardAquaelProfileLabel(data, 'light', 'lightProfile')}`;
+    } else if (relay.function === 'plant_light') {
+        const plantRange = dashboardScheduleRange(
+            data,
+            'plant_light',
+            {
+                mode: 'plantLightMode',
+                startHour: 'plantStartHour',
+                startMin: 'plantStartMin',
+                endHour: 'plantEndHour',
+                endMin: 'plantEndMin'
+            },
+            { startHour: 12, startMin: 0, endHour: 18, endMin: 0 }
+        );
+        metaText = describeDashboardRange(plantRange, { on: 'Zawsze włączone', off: 'Wyłączone' });
+        metaText = `${metaText} / ${dashboardAquaelProfileLabel(data, 'plant_light', 'plantLightProfile')}`;
+    } else if (relay.function === 'filter') {
+        const filterMode = modeValue(schedule.filterMode);
+        metaText = filterMode === 1 ? 'Zawsze włączony' : (filterMode === 2 ? 'Ręcznie wyłączony' : formatRange(schedule.filterStartHour, schedule.filterStartMin, schedule.filterEndHour, schedule.filterEndMin));
+    } else if (relay.function === 'heater') {
+        const heaterMode = modeValue(schedule.heaterMode);
+        metaText = active ? 'Dogrzewanie aktywne' : (heaterMode === 1 ? 'Wyłączona' : `Cel ${formatTemperature(data.temperature?.target)}`);
+    } else if (relay.function === 'aeration') {
+        const airMode = modeValue(schedule.airMode);
+        const relays = data.relays || {};
+        const aerationPercent = clamp(Number(relays.aerationPercent || 0), 0, 100);
+        metaText = active ? `Otwarcie ${aerationPercent}%` : (airMode === 1 ? 'Zawsze aktywne' : (airMode === 2 ? 'Ręcznie wyłączone' : formatRange(schedule.airStartHour, schedule.airStartMin, schedule.airEndHour, schedule.airEndMin)));
+    } else {
+        if (relay.defaultState === 'auto') {
+            metaText = 'Tryb automatyczny';
+        } else {
+            metaText = relay.defaultState === 'on' ? 'Domyślnie ON' : 'Domyślnie OFF';
+        }
+    }
+
+    const primaryClass = isCore ? ' relay-primary-item' : '';
+
+    return `
+    <div class="relay-row-item${primaryClass} ${stateClass}" id="relay-${relay.channel}">
+        <div class="relay-row-info">
+            <span class="relay-row-icon">${getLocalIconMarkup ? getLocalIconMarkup(icon) : `<i class="fa-solid ${icon}"></i>`}</span>
+            <div>
+                <div class="relay-row-name-line">
+                    <div class="relay-row-name">${escapeHtml(label)}</div>
+                    <span id="relay-${relay.channel}-state" class="relay-row-state">${stateText}</span>
+                </div>
+                <div class="relay-row-meta" id="relay-${relay.channel}-meta">${escapeHtml(metaText)}</div>
+            </div>
+        </div>
+        <button id="relay-${relay.channel}-toggle" class="btn btn-secondary relay-row-btn" type="button" data-admin-only="true">Przełącz</button>
+    </div>`;
+}
+
+function renderRelaysLegacy(data) {
     const schedule = data.schedule || {};
     const relays = data.relays || {};
     const aerationPercent = clamp(Number(relays.aerationPercent || 0), 0, 100);
@@ -690,15 +1140,79 @@ function renderRelays(data) {
         light: relays.light,
         filter: relays.pump,
         plant: relays.plantLight,
-        heater: relays.heater,
+        heater: isHeaterAutomationEnabled(data),
         aeration: relays.aeration
     };
 
     for (const [key, active] of Object.entries(toggles)) {
         const btn = document.getElementById(`relay-${key}-toggle`);
         if (btn && btn.dataset.busy !== '1') {
-            btn.textContent = active ? 'Wyłącz' : 'Włącz';
+            btn.textContent = relayQuickButtonLabel(!!active);
         }
+    }
+}
+
+function renderRelays(data) {
+    const config = data.relaysConfig || window.lastStatusData?.relaysConfig;
+    if (!config || !Array.isArray(config.relays)) {
+        renderRelaysLegacy(data);
+        return;
+    }
+
+    const container = document.querySelector('.relays-section');
+    if (!container) return;
+
+    const activeRelays = config.relays.filter(r => r.function !== 'none');
+    const coreFuncs = ['main_light', 'filter', 'plant_light'];
+    const coreRelays = activeRelays.filter(r => coreFuncs.includes(r.function));
+    const extendedRelays = activeRelays.filter(r => !coreFuncs.includes(r.function));
+
+    const onCount = activeRelays.filter(r => getRelayState(r, data)).length;
+    setText('relay-count', `${onCount} / ${activeRelays.length} aktywne`);
+
+    let html = '';
+
+    if (coreRelays.length > 0) {
+        html += `
+        <div class="relay-core-group tier-group" data-tier="core" aria-label="Sterowanie podstawowe">
+            <div class="relay-group-heading">
+                <span class="tier-badge" data-tier="core">Rdzeń</span>
+                <span class="relay-group-label">Podstawowe</span>
+            </div>
+            <div class="relay-core-grid">
+                ${coreRelays.map(r => buildRelayRowHtml(r, data, true)).join('')}
+            </div>
+        </div>`;
+    }
+
+    if (extendedRelays.length > 0) {
+        html += `
+        <details class="relay-automation-group tier-group" data-tier="extended" open>
+            <summary>
+                <span class="relay-automation-summary">
+                    <span class="tier-badge" data-tier="extended">Rozszerzone</span>
+                    <strong>Automatyka rozszerzona</strong>
+                    <small>Harmonogramy, progi i opcjonalne osprzetowanie</small>
+                </span>
+                <i class="fa-solid fa-chevron-down"></i>
+            </summary>
+            <div class="relay-automation-list">
+                ${extendedRelays.map(r => buildRelayRowHtml(r, data, false)).join('')}
+            </div>
+        </details>`;
+    }
+
+    container.innerHTML = html;
+
+    activeRelays.forEach(r => {
+        const btn = document.getElementById(`relay-${r.channel}-toggle`);
+        if (btn) {
+            btn.addEventListener('click', () => toggleDynamicRelayAction(r.channel));
+        }
+    });
+
+    if (typeof applyAuthState === 'function') {
+        applyAuthState();
     }
 }
 
@@ -888,315 +1402,6 @@ function buildSmoothChartPath(coords) {
         path += ` C ${cp1x.toFixed(2)} ${cp1y.toFixed(2)} ${cp2x.toFixed(2)} ${cp2y.toFixed(2)} ${p2.x.toFixed(2)} ${p2.y.toFixed(2)}`;
     }
     return path;
-}
-
-function renderTemperatureChartSummary(summary, points, target, hysteresis, guidesVisible) {
-    if (!summary) return;
-
-    const latest = points[points.length - 1];
-    const badges = [
-        `<span class="temp-chart-pill temp-chart-pill-live">Ostatni <strong>${escapeHtml(latest.valueLabel)}</strong></span>`
-    ];
-
-    if (target !== null) {
-        badges.push(`<span class="temp-chart-pill">Cel <strong>${escapeHtml(formatChartTemperature(target))}</strong></span>`);
-        if (hysteresis > 0) {
-            const lower = formatChartTemperature(target - hysteresis);
-            const upper = formatChartTemperature(target + hysteresis);
-            badges.push(
-                `<span class="temp-chart-pill ${guidesVisible ? '' : 'temp-chart-pill-warning'}">Pasmo <strong>${escapeHtml(`${lower} - ${upper}`)}</strong>${guidesVisible ? '' : ' poza wykresem'}</span>`
-            );
-        }
-    }
-
-    summary.innerHTML = badges.join('');
-}
-
-function renderTemperatureChart(temperature) {
-    const svg = document.getElementById('temperature-chart-svg');
-    const empty = document.getElementById('temperature-chart-empty');
-    const summary = document.getElementById('temperature-chart-summary');
-    if (!svg || !empty) return;
-
-    const rawHistory = Array.isArray(temperature?.history) ? temperature.history : [];
-    const historyCapacity = Math.max(1, Math.round(toFiniteNumber(temperature?.historyCapacity) ?? 20));
-    const historyIntervalMinutes = Math.max(1, Math.round(toFiniteNumber(temperature?.historyIntervalMinutes) ?? 10));
-    const points = rawHistory
-        .map((item, index) => ({
-            value: toFiniteNumber(item?.value),
-            epoch: toFiniteNumber(item?.epoch),
-            index
-        }))
-        .filter((item) => isValidTemperature(item.value))
-        .slice(-historyCapacity)
-        .map((item, index, arr) => ({
-            value: item.value,
-            epoch: item.epoch,
-            valueLabel: formatChartTemperature(item.value, 2),
-            timeLabel: formatEpoch(item.epoch, {
-                fallback: `Pomiar ${index + 1} z ${arr.length}`,
-                includeDate: false,
-                includeSeconds: false
-            })
-        }));
-
-    setText('temperature-chart-meta', `${points.length || 0} / ${historyCapacity} pomiarow co ${historyIntervalMinutes} min`);
-    setText('temperature-chart-start', points.length ? points[0].timeLabel : 'Najstarszy pomiar');
-    setText('temperature-chart-end', points.length ? points[points.length - 1].timeLabel : 'Teraz');
-    svg.innerHTML = '';
-    if (summary) summary.innerHTML = '';
-    hideChartTooltip();
-
-    if (points.length === 0) {
-        empty.hidden = false;
-        return;
-    }
-
-    empty.hidden = true;
-
-    const width = 960;
-    const height = 320;
-    const padding = { top: 18, right: 34, bottom: 34, left: 58 };
-    const plotWidth = width - padding.left - padding.right;
-    const plotHeight = height - padding.top - padding.bottom;
-    const target = toFiniteNumber(temperature?.target);
-    const hysteresis = Math.abs(toFiniteNumber(temperature?.hysteresis) ?? 0);
-
-    let minValue = Math.min(...points.map((point) => point.value));
-    let maxValue = Math.max(...points.map((point) => point.value));
-    if (!Number.isFinite(minValue) || !Number.isFinite(maxValue)) {
-        minValue = 20;
-        maxValue = 30;
-    }
-    if (Math.abs(maxValue - minValue) < 0.6) {
-        maxValue += 0.3;
-        minValue -= 0.3;
-    }
-
-    const dataSpan = Math.max(0.6, maxValue - minValue);
-    const basePad = Math.max(0.18, dataSpan * 0.18);
-    minValue -= basePad;
-    maxValue += basePad;
-
-    let guidesVisible = false;
-    if (target !== null) {
-        const guideMin = hysteresis > 0 ? target - hysteresis : target;
-        const guideMax = hysteresis > 0 ? target + hysteresis : target;
-        const guideGap = Math.max(0, minValue - guideMax, guideMin - maxValue);
-        guidesVisible = guideGap <= Math.max(0.65, dataSpan * 0.85);
-
-        if (guidesVisible) {
-            const guidePad = Math.max(0.12, dataSpan * 0.08);
-            minValue = Math.min(minValue, guideMin - guidePad);
-            maxValue = Math.max(maxValue, guideMax + guidePad);
-        }
-    }
-
-    renderTemperatureChartSummary(summary, points, target, hysteresis, guidesVisible);
-
-    const xFor = (index) => padding.left + (points.length === 1 ? plotWidth / 2 : (index / (points.length - 1)) * plotWidth);
-    const yFor = (value) => padding.top + ((maxValue - value) / (maxValue - minValue)) * plotHeight;
-
-    const defs = createSvgEl('defs');
-    const gradient = createSvgEl('linearGradient', {
-        id: 'chart-area-gradient',
-        x1: '0%',
-        y1: '0%',
-        x2: '0%',
-        y2: '100%'
-    });
-    const startStop = createSvgEl('stop', { offset: '0%', 'stop-color': '#22d3ee', 'stop-opacity': '0.2' });
-    const endStop = createSvgEl('stop', { offset: '100%', 'stop-color': '#22d3ee', 'stop-opacity': '0.015' });
-    gradient.appendChild(startStop);
-    gradient.appendChild(endStop);
-    defs.appendChild(gradient);
-    svg.appendChild(defs);
-
-    svg.appendChild(createSvgEl('rect', {
-        x: padding.left,
-        y: padding.top,
-        width: plotWidth,
-        height: plotHeight,
-        rx: 18,
-        class: 'chart-plot-frame'
-    }));
-
-    if (target !== null && guidesVisible && hysteresis > 0) {
-        const upperY = yFor(target + hysteresis);
-        const lowerY = yFor(target - hysteresis);
-        svg.appendChild(createSvgEl('rect', {
-            x: padding.left,
-            y: Math.min(upperY, lowerY),
-            width: plotWidth,
-            height: Math.max(2, Math.abs(lowerY - upperY)),
-            rx: 14,
-            class: 'chart-band'
-        }));
-    }
-
-    const gridSteps = 4;
-    for (let i = 0; i <= gridSteps; i += 1) {
-        const ratio = i / gridSteps;
-        const y = padding.top + ratio * plotHeight;
-        const value = maxValue - ratio * (maxValue - minValue);
-        svg.appendChild(createSvgEl('line', {
-            x1: padding.left,
-            y1: y,
-            x2: padding.left + plotWidth,
-            y2: y,
-            class: 'chart-grid-line'
-        }));
-        const label = createSvgEl('text', {
-            x: 6,
-            y: y + 4,
-            class: 'chart-grid-label'
-        });
-        label.textContent = formatChartTemperature(value);
-        svg.appendChild(label);
-    }
-
-    if (target !== null && guidesVisible) {
-        const targetY = yFor(target);
-        svg.appendChild(createSvgEl('line', {
-            x1: padding.left,
-            y1: targetY,
-            x2: padding.left + plotWidth,
-            y2: targetY,
-            class: 'chart-target-line'
-        }));
-        const targetLabel = createSvgEl('text', {
-            x: padding.left + plotWidth + 10,
-            y: targetY + 4,
-            class: 'chart-guide-label'
-        });
-        targetLabel.textContent = `Cel ${target.toFixed(1)}°C`;
-        svg.appendChild(targetLabel);
-
-        if (hysteresis > 0) {
-            const upper = target + hysteresis;
-            const lower = target - hysteresis;
-            [upper, lower].forEach((value, index) => {
-                const lineY = yFor(value);
-                svg.appendChild(createSvgEl('line', {
-                    x1: padding.left,
-                    y1: lineY,
-                    x2: padding.left + plotWidth,
-                    y2: lineY,
-                    class: 'chart-hysteresis-line'
-                }));
-                const guide = createSvgEl('text', {
-                    x: padding.left + plotWidth + 10,
-                    y: lineY + 4,
-                    class: 'chart-guide-label hysteresis'
-                });
-                guide.textContent = `${index === 0 ? 'H +' : 'H -'} ${value.toFixed(1)}°C`;
-                svg.appendChild(guide);
-            });
-        }
-    }
-
-    const coords = points.map((point, index) => ({
-        x: xFor(index),
-        y: yFor(point.value)
-    }));
-    const pathData = buildSmoothChartPath(coords);
-    const firstCoord = coords[0];
-    const lastCoord = coords[coords.length - 1];
-    const areaData = `${pathData} L ${lastCoord.x.toFixed(2)} ${(padding.top + plotHeight).toFixed(2)} L ${firstCoord.x.toFixed(2)} ${(padding.top + plotHeight).toFixed(2)} Z`;
-    svg.appendChild(createSvgEl('path', { d: areaData, class: 'chart-area' }));
-    svg.appendChild(createSvgEl('path', { d: pathData, class: 'chart-line' }));
-    svg.appendChild(createSvgEl('circle', {
-        cx: lastCoord.x,
-        cy: lastCoord.y,
-        r: 10,
-        class: 'chart-point-current'
-    }));
-
-    points.forEach((point, index) => {
-        const { x, y } = coords[index];
-
-        const circle = createSvgEl('circle', {
-            cx: x,
-            cy: y,
-            r: index === points.length - 1 ? 5 : 4,
-            class: 'chart-point'
-        });
-        const title = createSvgEl('title');
-        title.textContent = `${point.valueLabel} - ${point.timeLabel}`;
-        circle.appendChild(title);
-        svg.appendChild(circle);
-
-        const hit = createSvgEl('circle', {
-            cx: x,
-            cy: y,
-            r: 13,
-            tabindex: 0,
-            class: 'chart-point-hit'
-        });
-        hit.addEventListener('mouseenter', (event) => showChartTooltip(event.clientX, event.clientY, point));
-        hit.addEventListener('mousemove', (event) => showChartTooltip(event.clientX, event.clientY, point));
-        hit.addEventListener('mouseleave', hideChartTooltip);
-        hit.addEventListener('focus', () => {
-            const rect = svg.getBoundingClientRect();
-            showChartTooltip(rect.left + x, rect.top + y, point);
-        });
-        hit.addEventListener('blur', hideChartTooltip);
-        svg.appendChild(hit);
-    });
-}
-
-function formatChartTemperatureDelta(value, digits = 1) {
-    const numeric = Number(value);
-    return `${numeric > 0 ? '+' : ''}${numeric.toFixed(digits)}\u00B0C`;
-}
-
-function estimateChartChipWidth(text) {
-    return Math.max(88, Math.round(String(text || '').length * 7.1 + 24));
-}
-
-function appendChartChip(svg, options) {
-    const {
-        x,
-        y,
-        text,
-        tone = 'neutral',
-        anchor = 'start',
-        bounds = null
-    } = options || {};
-
-    if (!svg || !text) return null;
-
-    const height = 24;
-    const width = estimateChartChipWidth(text);
-    let left = anchor === 'end' ? x - width : x;
-    let top = y;
-
-    if (bounds) {
-        left = clamp(left, bounds.minX, bounds.maxX - width);
-        top = clamp(top, bounds.minY, bounds.maxY - height);
-    }
-
-    const group = createSvgEl('g', { class: `chart-chip chart-chip-${tone}` });
-    const background = createSvgEl('rect', {
-        x: left,
-        y: top,
-        width,
-        height,
-        rx: 12,
-        class: 'chart-chip-bg'
-    });
-    const label = createSvgEl('text', {
-        x: left + 12,
-        y: top + height / 2,
-        class: 'chart-chip-text'
-    });
-    label.setAttribute('dominant-baseline', 'middle');
-    label.textContent = text;
-
-    group.appendChild(background);
-    group.appendChild(label);
-    svg.appendChild(group);
-    return group;
 }
 
 function describeTemperatureTrend(points) {

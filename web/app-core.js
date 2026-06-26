@@ -17,7 +17,19 @@ let logsPage = { normal: 0, critical: 0 };
 let deviceClockBaseDate = null;
 let deviceClockSyncedAtMs = 0;
 let lastStatusData = null;
-const OLED_SAVE_ACTIONS = new Set(['save_schedule', 'save_network', 'set_light', 'set_filter', 'save_display', 'save_co2', 'save_water', 'save_leak']);
+const OLED_SAVE_ACTIONS = new Set([
+    'save_schedule',
+    'save_network',
+    'set_light',
+    'set_filter',
+    'set_plant',
+    'set_heater',
+    'set_aeration',
+    'save_display',
+    'save_co2',
+    'save_water',
+    'save_leak'
+]);
 const PIN_GUARDED_ACTIONS = new Set([
     'feed_now',
     'clear_critical_logs',
@@ -40,14 +52,17 @@ const PIN_GUARDED_ACTIONS = new Set([
     'save_leak'
 ]);
 const OLED_SAVE_TITLES = {
-    save_schedule: 'Zapisywanie harmonogramow',
-    save_network: 'Zapisywanie ustawien WiFi',
-    set_light: 'Zapisywanie stanu swiatla',
+    save_schedule: 'Zapisywanie harmonogramów',
+    save_network: 'Zapisywanie ustawień WiFi',
+    set_light: 'Zapisywanie stanu światła',
     set_filter: 'Zapisywanie stanu filtra',
-    save_display: 'Zapisywanie ustawieĹ„ ekranu',
+    set_plant: 'Zapisywanie światła roślin',
+    set_heater: 'Zapisywanie grzałki',
+    set_aeration: 'Zapisywanie napowietrzania',
+    save_display: 'Zapisywanie ustawień ekranu',
     save_co2: 'Zapisywanie automatyki CO2',
     save_water: 'Zapisywanie automatycznej dolewki',
-    save_leak: 'Zapisywanie zabezpieczeĹ„'
+    save_leak: 'Zapisywanie zabezpieczeń'
 };
 let oledSaveOverlayActiveCount = 0;
 let oledSaveOverlayShownAtMs = 0;
@@ -333,12 +348,207 @@ function formatRange(startHour, startMinute, endHour, endMinute) {
     return `${formatTime(startHour, startMinute)} - ${formatTime(endHour, endMinute)}`;
 }
 
-function formatTemperature(value, digits = 1, fallback = '--.-Â°C') {
+function formatTemperature(value, digits = 1, fallback = '--.-°C') {
     const numeric = toFiniteNumber(value);
     if (numeric === null) {
         return fallback;
     }
-    return `${numeric.toFixed(digits)}Â°C`;
+    return `${numeric.toFixed(digits)}°C`;
+}
+
+function formatEpoch(epoch, options = {}) {
+    const numeric = Math.trunc(Number(epoch) || 0);
+    if (numeric <= 0) {
+        return options.fallback || '--';
+    }
+
+    const date = new Date(numeric * 1000);
+    if (Number.isNaN(date.getTime())) {
+        return options.fallback || '--';
+    }
+
+    const timeOptions = {
+        hour: '2-digit',
+        minute: '2-digit'
+    };
+    if (options.includeSeconds) {
+        timeOptions.second = '2-digit';
+    }
+    const timeText = date.toLocaleTimeString('pl-PL', timeOptions);
+    if (!options.includeDate) {
+        return timeText;
+    }
+
+    const dateText = date.toLocaleDateString('pl-PL', {
+        day: '2-digit',
+        month: 'short',
+        year: 'numeric'
+    });
+    return `${dateText}, ${timeText}`;
+}
+
+function formatFeedFrequency(freq) {
+    switch (Number(freq)) {
+        case 1:
+            return 'Codziennie';
+        case 2:
+            return 'Co 2 dni';
+        case 3:
+            return 'Co 3 dni';
+        default:
+            return 'Wylaczone';
+    }
+}
+
+function syncClockFromController(clock) {
+    const year = Number(clock?.year);
+    const month = Number(clock?.month);
+    const day = Number(clock?.day);
+    const hour = Number(clock?.hour);
+    const minute = Number(clock?.minute);
+    const second = Number(clock?.second);
+
+    if (
+        !Number.isInteger(year) || !Number.isInteger(month) || !Number.isInteger(day) ||
+        !Number.isInteger(hour) || !Number.isInteger(minute) || !Number.isInteger(second) ||
+        year < 2024 || month < 1 || month > 12 || day < 1 || day > 31
+    ) {
+        return false;
+    }
+
+    const baseDate = new Date(year, month - 1, day, hour, minute, second, 0);
+    if (Number.isNaN(baseDate.getTime())) {
+        return false;
+    }
+
+    deviceClockBaseDate = baseDate;
+    deviceClockSyncedAtMs = Date.now();
+    return true;
+}
+
+function getCurrentClockDate() {
+    if (!deviceClockBaseDate || deviceClockSyncedAtMs <= 0) {
+        return new Date();
+    }
+    return new Date(deviceClockBaseDate.getTime() + Math.max(0, Date.now() - deviceClockSyncedAtMs));
+}
+
+function formatControllerClock(clock) {
+    const year = Number(clock?.year);
+    const month = Number(clock?.month);
+    const day = Number(clock?.day);
+    const hour = Number(clock?.hour);
+    const minute = Number(clock?.minute);
+    const second = Number(clock?.second);
+
+    if (
+        !Number.isInteger(year) || !Number.isInteger(month) || !Number.isInteger(day) ||
+        !Number.isInteger(hour) || !Number.isInteger(minute) || !Number.isInteger(second) ||
+        year < 2024 || month < 1 || month > 12 || day < 1 || day > 31
+    ) {
+        return '';
+    }
+
+    const date = new Date(year, month - 1, day, hour, minute, second, 0);
+    if (Number.isNaN(date.getTime())) {
+        return '';
+    }
+
+    return `${date.toLocaleDateString('pl-PL', { day: '2-digit', month: 'short', year: 'numeric' })}, ${date.toLocaleTimeString('pl-PL', { hour: '2-digit', minute: '2-digit', second: '2-digit' })}`;
+}
+
+function setInlineStatus(id, message, tone = 'muted') {
+    const el = document.getElementById(id);
+    if (!el) return;
+
+    el.textContent = message;
+    if (tone === 'success') {
+        el.style.color = 'var(--accent-cyan)';
+    } else if (tone === 'error') {
+        el.style.color = '#ef4444';
+    } else if (tone === 'warning') {
+        el.style.color = 'var(--warning-color)';
+    } else {
+        el.style.color = 'var(--text-muted)';
+    }
+}
+
+function setText(id, value) {
+    const el = document.getElementById(id);
+    if (el) {
+        el.textContent = value;
+    }
+}
+
+function setCommandStatus(valueId, value, detail = '', tone = 'neutral') {
+    const valueEl = document.getElementById(valueId);
+    if (!valueEl) {
+        return;
+    }
+
+    const safeTone = ['ok', 'warn', 'danger', 'info', 'neutral'].includes(tone) ? tone : 'neutral';
+    valueEl.textContent = value;
+
+    const detailEl = document.getElementById(`${valueId}-detail`);
+    if (detailEl) {
+        detailEl.textContent = detail;
+    }
+
+    const card = valueEl.closest('.view-command-card');
+    if (card) {
+        card.dataset.tone = safeTone;
+    }
+}
+
+function mapInlineToneToCommandTone(tone) {
+    if (tone === 'success') return 'ok';
+    if (tone === 'error') return 'danger';
+    if (tone === 'warning') return 'warn';
+    if (tone === 'info') return 'info';
+    return 'neutral';
+}
+
+function setValue(id, value) {
+    const el = document.getElementById(id);
+    if (el) {
+        el.value = value;
+    }
+}
+
+function setDisabled(id, disabled) {
+    const el = document.getElementById(id);
+    if (el) {
+        el.disabled = disabled;
+    }
+}
+
+function setCheckboxIfClean(id, checked) {
+    const el = document.getElementById(id);
+    if (!el) return;
+    if (document.activeElement === el || el.dataset.dirty === '1') return;
+    el.checked = Boolean(checked);
+}
+
+function setNumericValueIfClean(id, value, digits = null) {
+    const el = document.getElementById(id);
+    if (!el) return;
+    if (document.activeElement === el || el.dataset.dirty === '1') return;
+    const numeric = toFiniteNumber(value);
+    if (numeric === null) return;
+    el.value = digits === null ? String(numeric) : Number(numeric).toFixed(digits);
+}
+
+function setInputValueIfClean(id, value) {
+    const el = document.getElementById(id);
+    if (!el) return;
+    if (document.activeElement === el || el.dataset.dirty === '1') return;
+    el.value = value || '';
+}
+
+function formatDuration(totalSeconds) {
+    const seconds = Math.max(0, Math.trunc(Number(totalSeconds) || 0));
+    const days = Math.floor(seconds / 86400);
+    const hours = Math.floor((seconds % 86400) / 3600);
 }
 
 function formatEpoch(epoch, options = {}) {
@@ -571,6 +781,7 @@ function updateClock() {
 
 function setBackendState(isConnected) {
     backendConnected = isConnected;
+    window.backendConnected = isConnected;
     const statusEl = document.getElementById('logs-status');
     if (statusEl) {
         statusEl.textContent = isConnected ? 'Polaczono z backendem ESP32.' : 'Brak odpowiedzi sterownika.';
@@ -608,6 +819,9 @@ function applyStatusPayload(data) {
         ...data,
         temperature: mergeTemperaturePayload(lastStatusData?.temperature, data.temperature)
     };
+
+    lastStatusData = mergedData;
+    window.lastStatusData = mergedData;
 
     setBackendState(true);
     if (typeof window.applyPortalThemeFromStatus === 'function') {
@@ -751,7 +965,7 @@ function showOledSaveAnimation(action) {
 
     oledSaveOverlayActiveCount += 1;
     title.textContent = OLED_SAVE_TITLES[action] || 'Zapisywanie danych';
-    subtext.textContent = 'Sterownik synchronizuje konfiguracje i pokazuje zapis na OLED.';
+    subtext.textContent = 'Wysyłam zmianę do ESP32 i czekam na potwierdzenie sterownika.';
 
     if (oledSaveOverlayActiveCount === 1) {
         overlay.style.display = 'flex';
@@ -854,6 +1068,7 @@ function promptForPin(errorMessage = '') {
     setPinModalError(errorMessage);
     modal.style.display = 'flex';
     input.focus();
+    input.select();
 
     return new Promise((resolve, reject) => {
         pinPromiseResolve = resolve;
@@ -877,7 +1092,7 @@ function handlePinSubmit() {
     const val = normalizePinValue(input.value);
     input.value = val;
     if (!ADMIN_PIN_PATTERN.test(val)) {
-        setPinModalError('PIN admina musi mieÄ‡ od 4 do 8 cyfr.');
+        setPinModalError('PIN admina musi mieć od 4 do 8 cyfr.');
         return;
     }
     if (pinPromiseResolve) {
@@ -896,15 +1111,10 @@ function updateAuthStatusWidgets() {
     const isAdmin = isAdminAuthenticated();
     setCommandStatus(
         'ota-strip-pin',
-        isAdmin ? 'Admin' : 'GoĹ›Ä‡',
-        isAdmin ? 'Sesja administratora aktywna' : 'Zaloguj admina przed OTA',
+        isAdmin ? 'Admin' : 'Gość',
+        isAdmin ? 'Dostęp administracyjny aktywny' : 'Zaloguj admina przed OTA',
         isAdmin ? 'ok' : 'warn'
     );
-
-    const roleLabel = document.getElementById('auth-role-label');
-    if (roleLabel) {
-        roleLabel.textContent = isAdmin ? 'Tryb: admin' : 'Tryb: goĹ›Ä‡';
-    }
 }
 
 function applyAuthState() {
@@ -939,7 +1149,7 @@ async function verifyAdminPin(pin) {
         };
 
     if (!response.ok || responsePayload?.success === false) {
-        const error = new Error(responsePayload?.message || 'NieprawidĹ‚owy PIN admina.');
+        const error = new Error(responsePayload?.message || 'Nieprawidłowy PIN admina.');
         error.code = responsePayload?.code || 'invalid_pin';
         error.status = response.status;
         throw error;
@@ -969,8 +1179,8 @@ async function loginAsAdmin() {
         } catch (error) {
             clearAdminSession();
             message = attempt >= 1
-                ? 'BĹ‚Ä™dny PIN admina. PozostaĹ‚a ostatnia prĂłba.'
-                : 'BĹ‚Ä™dny PIN admina. SprĂłbuj ponownie.';
+                ? 'Błędny PIN admina. Pozostała ostatnia próba.'
+                : 'Błędny PIN admina. Spróbuj ponownie.';
             if (attempt === 2) {
                 throw error;
             }
@@ -1043,7 +1253,7 @@ async function sendAction(action, payload = {}, options = {}) {
 
         if (needsAdmin && isPinErr) {
             clearAdminSession();
-            const authError = new Error('Sesja admina wygasĹ‚a albo PIN zostaĹ‚ odrzucony. Zaloguj siÄ™ ponownie.');
+            const authError = new Error('Dostęp admina wygasł albo PIN został odrzucony. Zaloguj się ponownie.');
             authError.code = 'admin_required';
             throw authError;
         }
@@ -1178,6 +1388,7 @@ function switchTab(tabId, updateHash = true) {
 
     if (targetSection) {
         targetSection.classList.add('active');
+        document.body.dataset.activeView = tabId;
         if (updateHash) {
             updateLocationHash(tabId);
         }
@@ -1193,3 +1404,4 @@ function switchTab(tabId, updateHash = true) {
 
     setMobileNavOpen(false);
 }
+

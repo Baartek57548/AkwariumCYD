@@ -60,4 +60,9 @@ void gui_app_update_sensor_debug(int ldr_value,
  */
 bool gui_app_is_dev_mode(void);
 
+/**
+ * @brief Informuje, czy panel WWW jest aktywnie uzywany i lokalny ekran jest w trybie WiFi-focus.
+ */
+bool gui_app_is_web_focus_active(void);
+
 #endif // GUI_APP_H

@@ -41,9 +41,12 @@ static int get_weekday(int d, int m, int y) {
 namespace {
 
 constexpr uint32_t UI_CONFIG_MAGIC = 0x43594441UL;
-constexpr uint16_t UI_CONFIG_VERSION = 14;
+constexpr uint16_t UI_CONFIG_VERSION = 16;
+constexpr uint16_t UI_CONFIG_VERSION_FACTORY_SCHEDULE_BASE = 15;
+constexpr uint16_t UI_CONFIG_VERSION_AQUAEL_DN = 14;
 constexpr uint16_t UI_CONFIG_VERSION_DEV_NO_SENSORS = 13;
 constexpr uint16_t UI_CONFIG_VERSION_LDR_DEFAULT_OFF = 12;
+constexpr bool FORCE_DEVELOPER_MODE = true;
 constexpr uint8_t MINUTE_STEP = 5;
 constexpr uint8_t PAGE_COUNT = 5;
 constexpr uint8_t TEMP_HISTORY_POINTS = 32;
@@ -70,11 +73,39 @@ constexpr char OTA_PORTAL_INDEX_PATH[] = "/aq/ota/index.html";
 constexpr char OTA_PORTAL_HISTORY_DIR[] = "/aq/data/history";
 constexpr char OTA_PORTAL_LOG_DIR[] = "/aq/data/logs";
 constexpr char OTA_PORTAL_DIAG_DIR[] = "/aq/data/diagnostics";
+constexpr uint32_t WEB_UI_ACTIVITY_TIMEOUT_MS = 12000UL;
+constexpr uint32_t WEB_UI_CONTROL_REFRESH_MS = 1000UL;
+constexpr uint8_t WEB_UI_FOCUS_PAGE_INDEX = 4U;
+constexpr uint32_t AQUAEL_DN_MAX_TOGGLE_WINDOW_MS = 5000UL;
+constexpr uint32_t AQUAEL_DN_CYCLE_OFF_MS = 260UL;
+constexpr uint32_t AQUAEL_DN_CYCLE_ON_SETTLE_MS = 260UL;
+constexpr uint8_t FACTORY_DAY_START_HOUR = 10;
+constexpr uint8_t FACTORY_DAY_START_MINUTE = 0;
+constexpr uint8_t FACTORY_DAY_END_HOUR = 22;
+constexpr uint8_t FACTORY_DAY_END_MINUTE = 0;
+constexpr uint8_t FACTORY_DAYBREAK_MORNING_END_HOUR = 10;
+constexpr uint8_t FACTORY_DAYBREAK_MORNING_END_MINUTE = 30;
+constexpr uint8_t FACTORY_DAY_END_PROFILE_HOUR = 20;
+constexpr uint8_t FACTORY_DAY_END_PROFILE_MINUTE = 0;
+constexpr uint8_t FACTORY_DAYBREAK_EVENING_END_HOUR = 21;
+constexpr uint8_t FACTORY_DAYBREAK_EVENING_END_MINUTE = 0;
+constexpr uint8_t FACTORY_FILTER_START_HOUR = 10;
+constexpr uint8_t FACTORY_FILTER_START_MINUTE = 30;
+constexpr uint8_t FACTORY_FILTER_END_HOUR = 20;
+constexpr uint8_t FACTORY_FILTER_END_MINUTE = 30;
+constexpr uint8_t FACTORY_CO2_AIR_START_HOUR = 10;
+constexpr uint8_t FACTORY_CO2_AIR_START_MINUTE = 0;
+constexpr uint8_t FACTORY_CO2_AIR_END_HOUR = 19;
+constexpr uint8_t FACTORY_CO2_AIR_END_MINUTE = 0;
+constexpr uint8_t FACTORY_FEED_HOUR = 14;
+constexpr uint8_t FACTORY_FEED_MINUTE = 0;
+constexpr float FACTORY_CO2_TARGET_PH = 6.80f;
 constexpr uint32_t CLOCK_NVS_MAGIC = 0x4151434BUL;
 constexpr uint16_t CLOCK_NVS_VERSION = 1;
 constexpr uint8_t GUI_LOG_CAPACITY = 15;
 constexpr size_t GUI_LOG_MESSAGE_LEN = 96;
 constexpr uint32_t WIFI_PROFILE_CONNECT_TIMEOUT_MS = 30000UL;
+constexpr uint8_t WIFI_REASON_ASSOC_TOOMANY_CODE = 5U;
 constexpr char NTP_TZ_POLAND[] = "CET-1CEST,M3.5.0/2,M10.5.0/3";
 constexpr char NTP_SERVER_1[] = "pool.ntp.org";
 constexpr char NTP_SERVER_2[] = "time.nist.gov";
@@ -180,6 +211,7 @@ struct UiRuntimeState {
     bool filterOn;
     bool airOn;
     bool heaterOn;
+    bool co2On;
     float lastTemp;
     float previousTemp;
     float lastPh;
@@ -196,6 +228,7 @@ static UiRuntimeState runtime = {
     false, // filterOn
     false, // airOn
     false, // heaterOn
+    false, // co2On
     NAN,   // lastTemp
     NAN,   // previousTemp
     NAN,   // lastPh
@@ -267,6 +300,12 @@ struct McpOutputState {
     bool initialized;
     bool light;
     bool plantLight;
+    bool lightProfileKnown;
+    bool plantLightProfileKnown;
+    uint8_t lightProfile;
+    uint8_t plantLightProfile;
+    uint32_t lightOffSinceMs;
+    uint32_t plantLightOffSinceMs;
     bool filter;
     bool aerator;
     bool heater;
@@ -526,6 +565,13 @@ enum class ActiveSubpage : int {
 };
 static ActiveSubpage current_subpage = ActiveSubpage::None;
 static int current_page_index = 0;
+static uint32_t web_ui_last_request_ms = 0;
+static uint32_t web_ui_last_control_ms = 0;
+static uint32_t web_ui_last_screen_ms = 0;
+static bool web_ui_focus_active = false;
+static bool web_ui_restore_valid = false;
+static int web_ui_restore_page_index = 0;
+static ActiveSubpage web_ui_restore_subpage = ActiveSubpage::None;
 
 static const char *nav_page_name(int index) {
     switch (index) {
@@ -767,8 +813,12 @@ static bool ota_http_update_ok = false;
 static bool ota_http_update_failed = false;
 static bool ota_reboot_pending = false;
 static bool ota_shutdown_pending = false;
+static bool ota_http_upload_active = false;
 static uint32_t ota_reboot_at_ms = 0;
 static uint32_t ota_shutdown_at_ms = 0;
+static uint32_t ota_http_upload_bytes = 0;
+static uint32_t ota_http_upload_total = 0;
+static int ota_http_upload_percent = -1;
 static char ota_http_update_msg[96] = "";
 
 static lv_obj_t *tile_light = nullptr;
@@ -832,6 +882,16 @@ static lv_obj_t *btn_disconnect = nullptr;
 static lv_obj_t *wifi_pwd_ta = nullptr;
 static lv_obj_t *wifi_pwd_kb = nullptr;
 static lv_obj_t *wifi_pwd_title_lbl = nullptr;
+static lv_obj_t *web_client_screen = nullptr;
+static lv_obj_t *web_client_state_lbl = nullptr;
+static lv_obj_t *web_client_url_lbl = nullptr;
+static lv_obj_t *web_client_status_lbl = nullptr;
+static lv_obj_t *web_client_ssid_lbl = nullptr;
+static lv_obj_t *web_client_ip_lbl = nullptr;
+static lv_obj_t *web_client_rssi_lbl = nullptr;
+static lv_obj_t *web_client_uptime_lbl = nullptr;
+static lv_obj_t *web_client_progress_bar = nullptr;
+static lv_obj_t *web_client_progress_lbl = nullptr;
 
 static void add_gui_log(const char *msg, bool is_important);
 static void chart_draw_event_cb(lv_event_t *e);
@@ -839,6 +899,7 @@ static void redraw_charts();
 static void update_chart_stats();
 static void btn_sta_handler(lv_event_t *e);
 static void btn_ota_handler(lv_event_t *e);
+static void btn_wifi_disc_handler(lv_event_t *e);
 static void select_network_cb(lv_event_t *e);
 static void keyboard_ready_cb(lv_event_t *e);
 static void cancel_sta_cb(lv_event_t *e);
@@ -918,6 +979,18 @@ static void stop_ota_runtime(bool play_sound);
 static void prepare_wifi_sta_radio();
 static void register_wifi_event_handlers();
 static const char *wifi_disconnect_reason_name(uint8_t reason);
+static bool wifi_disconnect_reason_is_ap_capacity(uint8_t reason);
+static void ota_portal_mark_web_activity();
+static bool ota_portal_has_recent_web_activity(uint32_t now_ms);
+static bool gui_web_focus_blocks_local_ui();
+static void web_client_back_cb(lv_event_t *e);
+static void gui_web_client_screen_create();
+static void gui_web_client_screen_delete();
+static void gui_web_client_screen_update(bool force);
+static void gui_web_focus_apply_wifi_controls(bool force);
+static void gui_web_focus_enter();
+static void gui_web_focus_exit();
+static void gui_web_focus_update();
 static void ota_portal_handle_root();
 static void ota_portal_handle_status();
 static void ota_portal_handle_logs();
@@ -1276,6 +1349,14 @@ static bool is_schedule_mode(uint8_t mode) {
            mode == static_cast<uint8_t>(ScheduleMode::AlwaysOff);
 }
 
+static void apply_developer_demo_profile(AquariumUiConfig &value);
+static void apply_factory_schedule(AquariumUiConfig &value);
+static uint8_t normalize_aquael_profile(uint8_t profile);
+static uint8_t schedule_profile_to_aquael(uint8_t encoded_profile);
+static uint8_t aquael_profile_to_schedule(uint8_t profile);
+static uint8_t migrate_legacy_light_profile(uint8_t legacy_profile);
+static uint8_t migrate_legacy_schedule_light_profile(uint8_t legacy_encoded_profile);
+
 static void load_default_config(AquariumUiConfig &out) {
     memset(&out, 0, sizeof(out));
     out.magic = UI_CONFIG_MAGIC;
@@ -1290,38 +1371,38 @@ static void load_default_config(AquariumUiConfig &out) {
     out.lightMode = static_cast<uint8_t>(ScheduleMode::Schedule);
     out.lightColorMode = 0;
     out.plantLightMode = static_cast<uint8_t>(ScheduleMode::Schedule);
-    out.plantLightColorMode = 2;
+    out.plantLightColorMode = 0;
     out.filterMode = static_cast<uint8_t>(ScheduleMode::Schedule);
     out.airMode = static_cast<uint8_t>(ScheduleMode::AlwaysOff); // OFF by default
-    out.lightStartHour = 10;
-    out.lightStartMinute = 0;
-    out.lightEndHour = 21;
-    out.lightEndMinute = 0;
-    out.lightSchedColorMode = 1; // MIX
+    out.lightStartHour = FACTORY_DAY_START_HOUR;
+    out.lightStartMinute = FACTORY_DAY_START_MINUTE;
+    out.lightEndHour = FACTORY_DAY_END_HOUR;
+    out.lightEndMinute = FACTORY_DAY_END_MINUTE;
+    out.lightSchedColorMode = aquael_profile_to_schedule(0U); // DAY
     
-    out.plantStartHour = 12;
-    out.plantStartMinute = 0;
-    out.plantEndHour = 18;
-    out.plantEndMinute = 0;
-    out.plantSchedColorMode = 3; // PLANT
+    out.plantStartHour = FACTORY_DAYBREAK_MORNING_END_HOUR;
+    out.plantStartMinute = FACTORY_DAYBREAK_MORNING_END_MINUTE;
+    out.plantEndHour = FACTORY_DAY_END_PROFILE_HOUR;
+    out.plantEndMinute = FACTORY_DAY_END_PROFILE_MINUTE;
+    out.plantSchedColorMode = aquael_profile_to_schedule(0U); // DAY
     
-    out.filterStartHour = 10;
-    out.filterStartMinute = 30;
-    out.filterEndHour = 20;
-    out.filterEndMinute = 30;
+    out.filterStartHour = FACTORY_FILTER_START_HOUR;
+    out.filterStartMinute = FACTORY_FILTER_START_MINUTE;
+    out.filterEndHour = FACTORY_FILTER_END_HOUR;
+    out.filterEndMinute = FACTORY_FILTER_END_MINUTE;
     
-    out.airStartHour = 10;
-    out.airStartMinute = 0;
-    out.airEndHour = 19;
-    out.airEndMinute = 0;
+    out.airStartHour = FACTORY_CO2_AIR_START_HOUR;
+    out.airStartMinute = FACTORY_CO2_AIR_START_MINUTE;
+    out.airEndHour = FACTORY_CO2_AIR_END_HOUR;
+    out.airEndMinute = FACTORY_CO2_AIR_END_MINUTE;
     out.heaterMode = static_cast<uint8_t>(HeaterMode::Off); // OFF by default
     out.targetTemp = 25.0f;
     out.tempHysteresis = 0.5f;
-    out.feedEnabled = false; // OFF by default
+    out.feedEnabled = false; // Factory profile enables it below.
     out.feedDays = 0x7F; // Mon-Sun enabled
     out.feedCount = 1; // 1 time per day
-    out.feedHour1 = 18;
-    out.feedMinute1 = 0;
+    out.feedHour1 = FACTORY_FEED_HOUR;
+    out.feedMinute1 = FACTORY_FEED_MINUTE;
     out.feedHour2 = 8;
     out.feedMinute2 = 0;
     out.alwaysScreenOn = false;
@@ -1337,12 +1418,87 @@ static void load_default_config(AquariumUiConfig &out) {
     out.quietEndMinute = 0;
     out.devMode = true;
     out.modemSleep = false;
+    apply_factory_schedule(out);
+    apply_developer_demo_profile(out);
     out.crc32 = config_crc(out);
+}
+
+static void apply_factory_schedule(AquariumUiConfig &value) {
+    value.lightMode = static_cast<uint8_t>(ScheduleMode::Schedule);
+    value.lightStartHour = FACTORY_DAY_START_HOUR;
+    value.lightStartMinute = FACTORY_DAY_START_MINUTE;
+    value.lightEndHour = FACTORY_DAY_END_HOUR;
+    value.lightEndMinute = FACTORY_DAY_END_MINUTE;
+    value.lightSchedColorMode = aquael_profile_to_schedule(0U);
+
+    value.plantLightMode = static_cast<uint8_t>(ScheduleMode::Schedule);
+    value.plantStartHour = FACTORY_DAYBREAK_MORNING_END_HOUR;
+    value.plantStartMinute = FACTORY_DAYBREAK_MORNING_END_MINUTE;
+    value.plantEndHour = FACTORY_DAY_END_PROFILE_HOUR;
+    value.plantEndMinute = FACTORY_DAY_END_PROFILE_MINUTE;
+    value.plantSchedColorMode = aquael_profile_to_schedule(0U);
+
+    value.filterMode = static_cast<uint8_t>(ScheduleMode::Schedule);
+    value.filterStartHour = FACTORY_FILTER_START_HOUR;
+    value.filterStartMinute = FACTORY_FILTER_START_MINUTE;
+    value.filterEndHour = FACTORY_FILTER_END_HOUR;
+    value.filterEndMinute = FACTORY_FILTER_END_MINUTE;
+
+    value.airMode = static_cast<uint8_t>(ScheduleMode::Schedule);
+    value.airStartHour = FACTORY_CO2_AIR_START_HOUR;
+    value.airStartMinute = FACTORY_CO2_AIR_START_MINUTE;
+    value.airEndHour = FACTORY_CO2_AIR_END_HOUR;
+    value.airEndMinute = FACTORY_CO2_AIR_END_MINUTE;
+
+    value.enableHeater = true;
+    value.heaterMode = static_cast<uint8_t>(HeaterMode::Threshold);
+    value.showPhSensor = true;
+    value.enableCo2 = true;
+    value.enableAerator = true;
+    value.enableWaterLevel = true;
+    value.enableLeak = true;
+    value.feedEnabled = true;
+    value.feedDays = 0x7F;
+    value.feedCount = 1;
+    value.feedHour1 = FACTORY_FEED_HOUR;
+    value.feedMinute1 = FACTORY_FEED_MINUTE;
+}
+
+static void apply_developer_demo_profile(AquariumUiConfig &value) {
+    value.devMode = true;
+    value.ldrThemeEnabled = false;
+    value.showPhSensor = true;
+    value.enableHeater = true;
+    value.enableAerator = true;
+    value.enableEc = true;
+    value.enableCo2 = true;
+    value.enableWaterLevel = true;
+    value.enableLeak = true;
+    value.enableFlow = true;
+    value.heaterMode = static_cast<uint8_t>(HeaterMode::Threshold);
+    if (value.airMode == static_cast<uint8_t>(ScheduleMode::AlwaysOff)) {
+        value.airMode = static_cast<uint8_t>(ScheduleMode::Schedule);
+    }
+    if (value.targetTemp < 20.0f || value.targetTemp > 29.0f || !isfinite(value.targetTemp)) {
+        value.targetTemp = 26.0f;
+    }
+    if (value.tempHysteresis < 0.2f || value.tempHysteresis > 2.0f || !isfinite(value.tempHysteresis)) {
+        value.tempHysteresis = 0.8f;
+    }
+    if (value.feedDays == 0) {
+        value.feedDays = 0x7F;
+    }
+    if (value.feedCount != 1 && value.feedCount != 2) {
+        value.feedCount = 1;
+    }
 }
 
 static void sanitize_config(AquariumUiConfig &value) {
     value.magic = UI_CONFIG_MAGIC;
     value.version = UI_CONFIG_VERSION;
+    if (FORCE_DEVELOPER_MODE) {
+        value.devMode = true;
+    }
 
     if (!is_schedule_mode(value.lightMode)) {
         value.lightMode = static_cast<uint8_t>(ScheduleMode::Schedule);
@@ -1361,20 +1517,20 @@ static void sanitize_config(AquariumUiConfig &value) {
         value.heaterMode = static_cast<uint8_t>(HeaterMode::Off);
     }
 
-    value.lightColorMode = clamp_u8(value.lightColorMode, 0, 2);
-    value.plantLightColorMode = clamp_u8(value.plantLightColorMode, 0, 2);
+    value.lightColorMode = normalize_aquael_profile(value.lightColorMode);
+    value.plantLightColorMode = normalize_aquael_profile(value.plantLightColorMode);
 
     value.lightStartHour = clamp_u8(value.lightStartHour, 0, 23);
     value.lightStartMinute = snap_minute(value.lightStartMinute);
     value.lightEndHour = clamp_u8(value.lightEndHour, 0, 23);
     value.lightEndMinute = snap_minute(value.lightEndMinute);
-    value.lightSchedColorMode = clamp_u8(value.lightSchedColorMode, 1, 3);
+    value.lightSchedColorMode = aquael_profile_to_schedule(schedule_profile_to_aquael(clamp_u8(value.lightSchedColorMode, 1, 3)));
     
     value.plantStartHour = clamp_u8(value.plantStartHour, 0, 23);
     value.plantStartMinute = snap_minute(value.plantStartMinute);
     value.plantEndHour = clamp_u8(value.plantEndHour, 0, 23);
     value.plantEndMinute = snap_minute(value.plantEndMinute);
-    value.plantSchedColorMode = clamp_u8(value.plantSchedColorMode, 1, 3);
+    value.plantSchedColorMode = aquael_profile_to_schedule(schedule_profile_to_aquael(clamp_u8(value.plantSchedColorMode, 1, 3)));
     
     value.filterStartHour = clamp_u8(value.filterStartHour, 0, 23);
     value.filterStartMinute = snap_minute(value.filterStartMinute);
@@ -1412,17 +1568,7 @@ static void sanitize_config(AquariumUiConfig &value) {
     value.quietEndMinute = snap_minute(value.quietEndMinute);
 
     if (value.devMode) {
-        value.ldrThemeEnabled = false;
-        value.showPhSensor = false;
-        value.enableHeater = false;
-        value.enableAerator = false;
-        value.enableEc = false;
-        value.enableCo2 = false;
-        value.enableWaterLevel = false;
-        value.enableLeak = false;
-        value.enableFlow = false;
-        value.feedEnabled = false;
-        value.heaterMode = static_cast<uint8_t>(HeaterMode::Off);
+        apply_developer_demo_profile(value);
     }
     value.crc32 = config_crc(value);
 }
@@ -1557,6 +1703,24 @@ static void gui_app_load_settings() {
             if (stored.version == UI_CONFIG_VERSION) {
                 cfg = stored;
                 loaded = true;
+            } else if (stored.version == UI_CONFIG_VERSION_FACTORY_SCHEDULE_BASE) {
+                cfg = stored;
+                cfg.version = UI_CONFIG_VERSION;
+                apply_factory_schedule(cfg);
+                loaded = true;
+                save_after_load = true;
+                Serial.println("GUI: NVS migrated to factory 24h schedule.");
+            } else if (stored.version == UI_CONFIG_VERSION_AQUAEL_DN) {
+                cfg = stored;
+                cfg.version = UI_CONFIG_VERSION;
+                cfg.lightColorMode = migrate_legacy_light_profile(stored.lightColorMode);
+                cfg.plantLightColorMode = migrate_legacy_light_profile(stored.plantLightColorMode);
+                cfg.lightSchedColorMode = migrate_legacy_schedule_light_profile(stored.lightSchedColorMode);
+                cfg.plantSchedColorMode = migrate_legacy_schedule_light_profile(stored.plantSchedColorMode);
+                apply_factory_schedule(cfg);
+                loaded = true;
+                save_after_load = true;
+                Serial.println("GUI: NVS migrated to Aquael DAY/DAYBREAK/NIGHT profile.");
             } else if (stored.version == UI_CONFIG_VERSION_DEV_NO_SENSORS) {
                 cfg = stored;
                 cfg.devMode = true;
@@ -1592,7 +1756,17 @@ static void gui_app_load_settings() {
     }
     prefs.end();
 
+    const bool force_dev_save = loaded && FORCE_DEVELOPER_MODE && !cfg.devMode;
+    const uint32_t crc_before_sanitize = loaded ? config_crc(cfg) : 0UL;
     sanitize_config(cfg);
+    if (loaded && cfg.crc32 != crc_before_sanitize) {
+        save_after_load = true;
+        Serial.println("GUI: NVS sanitized to active firmware profile.");
+    }
+    if (force_dev_save) {
+        save_after_load = true;
+        Serial.println("GUI: Developer mode forced by firmware profile.");
+    }
     if (!loaded) {
         gui_app_save_settings();
         Serial.println("GUI: NVS defaults initialized.");
@@ -1632,19 +1806,119 @@ static const char *feed_mode_label(uint8_t mode) {
     }
 }
 
-static const char *light_color_mode_label(uint8_t mode) {
-    switch (mode) {
+static uint8_t normalize_aquael_profile(uint8_t profile) {
+    return profile > 2U ? 0U : profile;
+}
+
+static uint8_t schedule_profile_to_aquael(uint8_t encoded_profile) {
+    if (encoded_profile == 0U) {
+        return 0U;
+    }
+    return normalize_aquael_profile(static_cast<uint8_t>(encoded_profile - 1U));
+}
+
+static uint8_t aquael_profile_to_schedule(uint8_t profile) {
+    return static_cast<uint8_t>(normalize_aquael_profile(profile) + 1U);
+}
+
+static const char *aquael_profile_code(uint8_t profile) {
+    switch (normalize_aquael_profile(profile)) {
     case 1:
-        return "MIX";
+        return "daybreak";
     case 2:
-        return "ROSL";
+        return "night";
     default:
-        return "NORM";
+        return "day";
+    }
+}
+
+static const char *light_color_mode_label(uint8_t profile) {
+    switch (normalize_aquael_profile(profile)) {
+    case 1:
+        return "DAYBREAK";
+    case 2:
+        return "NIGHT";
+    default:
+        return "DAY";
+    }
+}
+
+static const char *aquael_profile_description(uint8_t profile) {
+    switch (normalize_aquael_profile(profile)) {
+    case 1:
+        return "50% dzienne + niebieskie";
+    case 2:
+        return "niebieska poswiata nocna";
+    default:
+        return "najmocniejsze swiatlo dzienne";
+    }
+}
+
+static uint8_t migrate_legacy_light_profile(uint8_t legacy_profile) {
+    switch (legacy_profile) {
+    case 1:
+        return 1U; // MIX was closest to the lower DAYBREAK visual profile.
+    case 2:
+        return 0U; // Old plant profile has no D&N equivalent; DAY is the plant-growth mode.
+    default:
+        return 0U;
+    }
+}
+
+static uint8_t migrate_legacy_schedule_light_profile(uint8_t legacy_encoded_profile) {
+    switch (legacy_encoded_profile) {
+    case 1:
+        return aquael_profile_to_schedule(1U);
+    case 2:
+    case 3:
+    default:
+        return aquael_profile_to_schedule(0U);
     }
 }
 
 static uint16_t to_minutes(uint8_t hour, uint8_t minute) {
     return static_cast<uint16_t>(hour) * 60U + static_cast<uint16_t>(minute);
+}
+
+static bool time_pair_matches(uint8_t hour, uint8_t minute, uint8_t expected_hour, uint8_t expected_minute) {
+    return hour == expected_hour && minute == expected_minute;
+}
+
+static bool config_uses_factory_light_window() {
+    return time_pair_matches(cfg.lightStartHour, cfg.lightStartMinute, FACTORY_DAY_START_HOUR, FACTORY_DAY_START_MINUTE) &&
+           time_pair_matches(cfg.lightEndHour, cfg.lightEndMinute, FACTORY_DAY_END_HOUR, FACTORY_DAY_END_MINUTE);
+}
+
+static bool factory_light_profile_at(uint16_t now, uint8_t *profile) {
+    if (profile == nullptr) {
+        return false;
+    }
+
+    const uint16_t day_start = to_minutes(FACTORY_DAY_START_HOUR, FACTORY_DAY_START_MINUTE);
+    const uint16_t morning_daybreak_end = to_minutes(FACTORY_DAYBREAK_MORNING_END_HOUR, FACTORY_DAYBREAK_MORNING_END_MINUTE);
+    const uint16_t day_end = to_minutes(FACTORY_DAY_END_PROFILE_HOUR, FACTORY_DAY_END_PROFILE_MINUTE);
+    const uint16_t evening_daybreak_end = to_minutes(FACTORY_DAYBREAK_EVENING_END_HOUR, FACTORY_DAYBREAK_EVENING_END_MINUTE);
+    const uint16_t night_end = to_minutes(FACTORY_DAY_END_HOUR, FACTORY_DAY_END_MINUTE);
+
+    if (now >= day_start && now < morning_daybreak_end) {
+        *profile = 1U; // DAYBREAK 10:00-10:30
+        return true;
+    }
+    if (now >= morning_daybreak_end && now < day_end) {
+        *profile = 0U; // DAY 10:30-20:00
+        return true;
+    }
+    if (now >= day_end && now < evening_daybreak_end) {
+        *profile = 1U; // DAYBREAK 20:00-21:00
+        return true;
+    }
+    if (now >= evening_daybreak_end && now < night_end) {
+        *profile = 2U; // NIGHT 21:00-22:00
+        return true;
+    }
+
+    *profile = 0U;
+    return false;
 }
 
 static bool is_within_window(uint16_t now, uint8_t startHour, uint8_t startMinute,
@@ -2830,8 +3104,76 @@ static bool write_mcp_output_if_needed(bool force,
     return ok;
 }
 
+static uint8_t aquael_profile_steps(uint8_t current_profile, uint8_t desired_profile) {
+    const uint8_t current = normalize_aquael_profile(current_profile);
+    const uint8_t desired = normalize_aquael_profile(desired_profile);
+    return static_cast<uint8_t>((desired + 3U - current) % 3U);
+}
+
+static bool write_aquael_light_output(bool force,
+                                      bool &shadow,
+                                      bool &profile_known,
+                                      uint8_t &active_profile,
+                                      uint32_t &off_since_ms,
+                                      HwConfig::McpChannel channel,
+                                      bool desired_on,
+                                      uint8_t desired_profile) {
+    desired_profile = normalize_aquael_profile(desired_profile);
+    const uint32_t now_ms = millis();
+
+    if (!desired_on) {
+        if (!write_mcp_output_if_needed(force, shadow, channel, false)) {
+            return false;
+        }
+        if (shadow == false && off_since_ms == 0U) {
+            off_since_ms = now_ms;
+        }
+        profile_known = false;
+        return true;
+    }
+
+    if (!shadow || force) {
+        if (!write_mcp_output_if_needed(true, shadow, channel, true)) {
+            return false;
+        }
+        if (!profile_known || off_since_ms == 0U ||
+            static_cast<uint32_t>(now_ms - off_since_ms) >= AQUAEL_DN_MAX_TOGGLE_WINDOW_MS) {
+            active_profile = 0U; // DAY is the deterministic baseline after a normal power-up.
+            profile_known = true;
+        }
+        off_since_ms = 0U;
+        delay(AQUAEL_DN_CYCLE_ON_SETTLE_MS);
+    }
+
+    if (!profile_known) {
+        active_profile = 0U;
+        profile_known = true;
+    }
+
+    uint8_t steps = aquael_profile_steps(active_profile, desired_profile);
+    while (steps > 0U) {
+        if (!hal_mcp_write_channel(channel, false)) {
+            return false;
+        }
+        shadow = false;
+        delay(AQUAEL_DN_CYCLE_OFF_MS);
+        if (!hal_mcp_write_channel(channel, true)) {
+            return false;
+        }
+        shadow = true;
+        delay(AQUAEL_DN_CYCLE_ON_SETTLE_MS);
+        active_profile = static_cast<uint8_t>((active_profile + 1U) % 3U);
+        --steps;
+    }
+
+    active_profile = desired_profile;
+    profile_known = true;
+    off_since_ms = 0U;
+    return true;
+}
+
 static void apply_mcp_outputs(void) {
-    if (!hal_mcp_is_present()) {
+    if (cfg.devMode || !hal_mcp_is_present()) {
         return;
     }
 
@@ -2840,12 +3182,26 @@ static void apply_mcp_outputs(void) {
     const bool desired_filter = runtime.filterOn;
     const bool desired_air = cfg.enableAerator && runtime.airOn;
     const bool desired_heater = cfg.enableHeater && runtime.heaterOn;
-    const bool desired_co2 = false;
+    const bool desired_co2 = cfg.enableCo2 && runtime.co2On;
     const bool force = !mcp_outputs.initialized;
 
     bool ok = true;
-    ok = write_mcp_output_if_needed(force, mcp_outputs.light, HwConfig::CH_LIGHT_A, desired_light) && ok;
-    ok = write_mcp_output_if_needed(force, mcp_outputs.plantLight, HwConfig::CH_LIGHT_B, desired_plant) && ok;
+    ok = write_aquael_light_output(force,
+                                   mcp_outputs.light,
+                                   mcp_outputs.lightProfileKnown,
+                                   mcp_outputs.lightProfile,
+                                   mcp_outputs.lightOffSinceMs,
+                                   HwConfig::CH_LIGHT_A,
+                                   desired_light,
+                                   runtime.lightActiveMode) && ok;
+    ok = write_aquael_light_output(force,
+                                   mcp_outputs.plantLight,
+                                   mcp_outputs.plantLightProfileKnown,
+                                   mcp_outputs.plantLightProfile,
+                                   mcp_outputs.plantLightOffSinceMs,
+                                   HwConfig::CH_LIGHT_B,
+                                   desired_plant,
+                                   runtime.plantLightActiveMode) && ok;
     ok = write_mcp_output_if_needed(force, mcp_outputs.filter, HwConfig::CH_FILTER, desired_filter) && ok;
     ok = write_mcp_output_if_needed(force, mcp_outputs.aerator, HwConfig::CH_AERATOR, desired_air) && ok;
     ok = write_mcp_output_if_needed(force, mcp_outputs.heater, HwConfig::CH_HEATER, desired_heater) && ok;
@@ -2865,12 +3221,13 @@ static void apply_mcp_outputs(void) {
 }
 
 static void feeder_pulse_end_cb(lv_timer_t *timer) {
-    const bool ok = hal_mcp_write_channel(HwConfig::CH_FEEDER_DRIVE, false);
+    const bool ok = cfg.devMode ? true : hal_mcp_write_channel(HwConfig::CH_FEEDER_DRIVE, false);
     mcp_outputs.feeder = false;
     feeder_pulse_active = false;
-    snprintf(last_feed_result, sizeof(last_feed_result), "%s", ok ? "ok" : "mcp_error");
+    snprintf(last_feed_result, sizeof(last_feed_result), "%s", cfg.devMode ? "dev_ok" : (ok ? "ok" : "mcp_error"));
     if (modal_feeder_msg_lbl != nullptr) {
-        lv_label_set_text(modal_feeder_msg_lbl, ok ? "Dawka zakonczona" : "Blad MCP przy stopie");
+        lv_label_set_text(modal_feeder_msg_lbl,
+                          cfg.devMode ? "Dawka DEV zakonczona" : (ok ? "Dawka zakonczona" : "Blad MCP przy stopie"));
     }
     if (!ok) {
         add_gui_log("Karmnik: blad wylaczenia napedu", true);
@@ -2893,6 +3250,19 @@ static bool run_feeder_pulse(const char *title, const char *message, bool critic
     }
     show_feeder_modal(title != nullptr ? title : "Karmienie",
                       message != nullptr ? message : "Naped aktywny");
+    if (cfg.devMode) {
+        feeder_pulse_active = true;
+        mcp_outputs.feeder = true;
+        runtime.lastAutoFeedMs = millis();
+        last_feed_epoch = controller_clock_reliable ? controller_unix_time() : (millis() / 1000UL);
+        snprintf(last_feed_result, sizeof(last_feed_result), "dev_simulated");
+        lv_timer_t *pulse_timer = lv_timer_create(feeder_pulse_end_cb, HwConfig::Debounce::FEEDER_PULSE_MS, nullptr);
+        if (pulse_timer != nullptr) {
+            lv_timer_set_repeat_count(pulse_timer, 1);
+        }
+        add_gui_log("Karmnik DEV: symulacja dawki", false);
+        return true;
+    }
     if (!hal_mcp_write_channel(HwConfig::CH_FEEDER_DRIVE, true)) {
         if (modal_feeder_msg_lbl != nullptr) {
             lv_label_set_text(modal_feeder_msg_lbl, "Blad startu MCP");
@@ -2961,7 +3331,7 @@ static void cycle_schedule_mode(uint8_t &mode) {
 }
 
 static void cycle_light_color_mode(uint8_t &mode) {
-    mode = static_cast<uint8_t>((mode + 1U) % 3U);
+    mode = static_cast<uint8_t>((normalize_aquael_profile(mode) + 1U) % 3U);
 }
 
 static void cycle_heater_mode(lv_event_t *e) {
@@ -3094,9 +3464,9 @@ static const char* hourly_mode_label(uint8_t val) {
     if (current_editor_device == ScheduleDevice::Light || current_editor_device == ScheduleDevice::PlantLight) {
         switch(val) {
             case 0: return "OFF";
-            case 1: return "MIX";
-            case 2: return "WHITE";
-            case 3: return "PLANT";
+            case 1: return "DAY";
+            case 2: return "DAYBR";
+            case 3: return "NIGHT";
             default: return "OFF";
         }
     } else {
@@ -3110,9 +3480,9 @@ static lv_color_t hourly_mode_color(uint8_t val) {
         return lv_color_make(139, 92, 246); // Indigo / Purple for Quiet Hours
     }
     if (current_editor_device == ScheduleDevice::Light || current_editor_device == ScheduleDevice::PlantLight) {
-        if (val == 1) return lv_color_make(16, 185, 129); // MIX - Green
-        if (val == 2) return lv_color_white();
-        if (val == 3) return lv_color_make(239, 68, 68); // PLANT - Red
+        if (val == 1) return lv_color_make(245, 158, 11); // DAY - warm white/daylight
+        if (val == 2) return lv_color_make(14, 165, 233); // DAYBREAK - lower daylight with blue
+        if (val == 3) return lv_color_make(59, 130, 246); // NIGHT - blue night glow
     }
     return lv_color_make(16, 185, 129); // ON - Green
 }
@@ -3631,7 +4001,7 @@ static void adjust_schedule_time_cb(lv_event_t *e) {
 
 static void editor_mode_btn_cb(lv_event_t *e) {
     play_system_sound(SoundType::Click);
-    int mode = static_cast<int>(reinterpret_cast<intptr_t>(lv_event_get_user_data(e))) + 1; // 1 = MIX, 2 = WHITE, 3 = PLANT
+    int mode = static_cast<int>(reinterpret_cast<intptr_t>(lv_event_get_user_data(e))) + 1; // 1 = DAY, 2 = DAYBREAK, 3 = NIGHT
     switch (current_editor_device) {
     case ScheduleDevice::Light:
         cfg.lightSchedColorMode = mode;
@@ -3973,6 +4343,405 @@ static bool open_or_build_subpage(ActiveSubpage target) {
     return true;
 }
 
+static void ota_portal_mark_web_activity() {
+    web_ui_last_request_ms = millis();
+}
+
+static bool ota_portal_has_recent_web_activity(uint32_t now_ms) {
+    if (!ota_portal_running || web_ui_last_request_ms == 0) {
+        return false;
+    }
+    return static_cast<uint32_t>(now_ms - web_ui_last_request_ms) <= WEB_UI_ACTIVITY_TIMEOUT_MS;
+}
+
+static bool gui_web_focus_blocks_local_ui() {
+    return web_ui_focus_active;
+}
+
+static void web_client_back_cb(lv_event_t *e) {
+    LV_UNUSED(e);
+    play_system_sound(SoundType::Click);
+
+    const uint32_t now_ms = millis();
+    if (ota_portal_has_recent_web_activity(now_ms)) {
+        gui_web_client_screen_update(true);
+        if (web_client_status_lbl != nullptr) {
+            lv_label_set_text(web_client_status_lbl, "WWW aktywne. Zamknij strone.");
+            lv_obj_set_style_text_color(web_client_status_lbl, lv_color_make(245, 158, 11), 0);
+        }
+        return;
+    }
+
+    gui_web_focus_exit();
+}
+
+static void gui_web_client_screen_delete() {
+    if (web_client_screen != nullptr && lv_obj_is_valid(web_client_screen)) {
+        lv_obj_add_flag(web_client_screen, LV_OBJ_FLAG_HIDDEN);
+        lv_obj_del_async(web_client_screen);
+    }
+    web_client_screen = nullptr;
+    web_client_state_lbl = nullptr;
+    web_client_url_lbl = nullptr;
+    web_client_status_lbl = nullptr;
+    web_client_ssid_lbl = nullptr;
+    web_client_ip_lbl = nullptr;
+    web_client_rssi_lbl = nullptr;
+    web_client_uptime_lbl = nullptr;
+    web_client_progress_bar = nullptr;
+    web_client_progress_lbl = nullptr;
+    web_ui_last_screen_ms = 0;
+}
+
+static void gui_web_client_screen_create() {
+    if (web_client_screen != nullptr && lv_obj_is_valid(web_client_screen)) {
+        lv_obj_move_foreground(web_client_screen);
+        return;
+    }
+
+    web_client_screen = lv_obj_create(lv_scr_act());
+    lv_obj_set_size(web_client_screen, 320, 240);
+    lv_obj_set_pos(web_client_screen, 0, 0);
+    lv_obj_set_style_pad_all(web_client_screen, 0, 0);
+    style_panel(web_client_screen, lv_color_make(3, 7, 18), lv_color_make(3, 7, 18), 0);
+
+    lv_obj_t *header = lv_obj_create(web_client_screen);
+    lv_obj_set_size(header, 320, 36);
+    lv_obj_set_pos(header, 0, 0);
+    lv_obj_set_style_pad_all(header, 0, 0);
+    style_panel(header, lv_color_make(8, 13, 24), lv_color_make(6, 182, 212), 0);
+
+    lv_obj_t *back_btn = create_button(header, LV_SYMBOL_LEFT " Wstecz", 76, 26,
+                                       lv_color_make(30, 41, 59), web_client_back_cb, nullptr);
+    lv_obj_set_pos(back_btn, 6, 5);
+
+    lv_obj_t *title_lbl = create_label(header, "Panel WWW aktywny", lv_color_white(), &lv_font_montserrat_14);
+    lv_obj_align(title_lbl, LV_ALIGN_CENTER, 20, 0);
+
+    lv_obj_t *state_card = create_card(web_client_screen, 304, 116, 8, 44);
+    lv_obj_set_style_border_color(state_card, lv_color_make(6, 182, 212), 0);
+    web_client_state_lbl = create_fixed_label(state_card, "Klient strony aktywny",
+                                              lv_color_make(125, 211, 252), &lv_font_montserrat_16,
+                                              280, 8, 8, LV_LABEL_LONG_DOT);
+    web_client_url_lbl = create_fixed_label(state_card, "URL: --",
+                                            theme_text_main(), &lv_font_montserrat_12,
+                                            280, 8, 36, LV_LABEL_LONG_DOT);
+    web_client_status_lbl = create_fixed_label(state_card, "Ekran CYD ograniczony do obslugi strony.",
+                                               lv_color_make(148, 163, 184), &lv_font_montserrat_12,
+                                               280, 8, 62, LV_LABEL_LONG_DOT);
+
+    web_client_progress_bar = lv_bar_create(state_card);
+    lv_obj_set_size(web_client_progress_bar, 214, 8);
+    lv_obj_set_pos(web_client_progress_bar, 8, 90);
+    lv_bar_set_range(web_client_progress_bar, 0, 100);
+    lv_bar_set_value(web_client_progress_bar, 0, LV_ANIM_OFF);
+    lv_obj_set_style_bg_color(web_client_progress_bar, resolve_bg_color(lv_color_make(30, 41, 59)), LV_PART_MAIN);
+    lv_obj_set_style_bg_color(web_client_progress_bar, lv_color_make(6, 182, 212), LV_PART_INDICATOR);
+    lv_obj_add_flag(web_client_progress_bar, LV_OBJ_FLAG_HIDDEN);
+
+    web_client_progress_lbl = create_fixed_label(state_card, "OTA: --",
+                                                 lv_color_make(125, 211, 252), &lv_font_montserrat_12,
+                                                 64, 230, 84, LV_LABEL_LONG_DOT);
+    lv_obj_add_flag(web_client_progress_lbl, LV_OBJ_FLAG_HIDDEN);
+
+    lv_obj_t *info_card = create_card(web_client_screen, 304, 38, 8, 164);
+    web_client_ssid_lbl = create_fixed_label(info_card, LV_SYMBOL_WIFI "  SSID: --",
+                                             theme_text_main(), &lv_font_montserrat_12,
+                                             138, 8, 0, LV_LABEL_LONG_DOT);
+    web_client_ip_lbl = create_fixed_label(info_card, "IP: --",
+                                           theme_text_main(), &lv_font_montserrat_12,
+                                           138, 158, 0, LV_LABEL_LONG_DOT);
+    web_client_rssi_lbl = create_fixed_label(info_card, "RSSI: --",
+                                             theme_text_main(), &lv_font_montserrat_12,
+                                             138, 8, 18, LV_LABEL_LONG_DOT);
+    web_client_uptime_lbl = create_fixed_label(info_card, "WWW: --",
+                                               theme_text_main(), &lv_font_montserrat_12,
+                                               138, 158, 18, LV_LABEL_LONG_DOT);
+
+    lv_obj_t *disconnect_btn = create_button(web_client_screen, LV_SYMBOL_CLOSE " Rozlacz WiFi",
+                                             148, 28, lv_color_make(239, 68, 68),
+                                             btn_wifi_disc_handler, nullptr);
+    lv_obj_set_pos(disconnect_btn, 8, 206);
+
+    lv_obj_t *return_btn = create_button(web_client_screen, LV_SYMBOL_LEFT " Wstecz",
+                                         148, 28, lv_color_make(30, 41, 59),
+                                         web_client_back_cb, nullptr);
+    lv_obj_set_pos(return_btn, 164, 206);
+
+    lv_obj_move_foreground(web_client_screen);
+}
+
+static void gui_web_client_screen_update(bool force) {
+    if (!web_ui_focus_active) {
+        return;
+    }
+
+    gui_web_client_screen_create();
+    if (web_client_screen == nullptr || !lv_obj_is_valid(web_client_screen)) {
+        return;
+    }
+
+    const uint32_t now_ms = millis();
+    if (!force && static_cast<uint32_t>(now_ms - web_ui_last_screen_ms) < WEB_UI_CONTROL_REFRESH_MS) {
+        return;
+    }
+    web_ui_last_screen_ms = now_ms;
+
+    const bool sta_online = WiFi.status() == WL_CONNECTED;
+    const bool ap_online = wifi_ota_active;
+    const bool any_wifi = sta_online || ap_online || is_connecting || WiFi.getMode() != WIFI_OFF;
+    const IPAddress ip = sta_online ? WiFi.localIP() : WiFi.softAPIP();
+    const String ssid = sta_online ? WiFi.SSID() : WiFi.softAPSSID();
+    const uint32_t idle_s = web_ui_last_request_ms == 0 ? 0U : static_cast<uint32_t>((now_ms - web_ui_last_request_ms) / 1000U);
+    const bool ota_screen = ota_http_upload_active || ota_reboot_pending || ota_http_update_failed;
+
+    char url_buf[96];
+    if (sta_online || ap_online) {
+        snprintf(url_buf, sizeof(url_buf), "URL: http://%u.%u.%u.%u/  %s.local",
+                 ip[0], ip[1], ip[2], ip[3], Secrets::OTA_HOSTNAME);
+    } else {
+        snprintf(url_buf, sizeof(url_buf), "URL: oczekiwanie na WiFi");
+    }
+
+    char ssid_buf[96];
+    snprintf(ssid_buf, sizeof(ssid_buf), LV_SYMBOL_WIFI "  SSID: %s",
+             ssid.length() > 0 ? ssid.c_str() : (sta_online ? selected_ssid : Secrets::OTA_AP_SSID));
+
+    char ip_buf[64];
+    snprintf(ip_buf, sizeof(ip_buf), "IP: %u.%u.%u.%u", ip[0], ip[1], ip[2], ip[3]);
+
+    if (web_client_state_lbl != nullptr) {
+        if (ota_http_update_failed) {
+            lv_label_set_text(web_client_state_lbl, "Blad OTA");
+            lv_obj_set_style_text_color(web_client_state_lbl, lv_color_make(239, 68, 68), 0);
+        } else if (ota_http_upload_active) {
+            lv_label_set_text(web_client_state_lbl, "Aktualizacja OTA");
+            lv_obj_set_style_text_color(web_client_state_lbl, lv_color_make(245, 158, 11), 0);
+        } else if (ota_reboot_pending) {
+            lv_label_set_text(web_client_state_lbl, "OTA zapisane");
+            lv_obj_set_style_text_color(web_client_state_lbl, lv_color_make(16, 185, 129), 0);
+        } else if (is_connecting) {
+            lv_label_set_text(web_client_state_lbl, "Laczenie z WiFi STA");
+            lv_obj_set_style_text_color(web_client_state_lbl, lv_color_make(245, 158, 11), 0);
+        } else if (sta_online && ota_portal_running) {
+            lv_label_set_text(web_client_state_lbl, "Klient WWW na STA");
+            lv_obj_set_style_text_color(web_client_state_lbl, lv_color_make(16, 185, 129), 0);
+        } else if (ap_online) {
+            lv_label_set_text(web_client_state_lbl, "Klient WWW na AP");
+            lv_obj_set_style_text_color(web_client_state_lbl, lv_color_make(6, 182, 212), 0);
+        } else if (any_wifi) {
+            lv_label_set_text(web_client_state_lbl, "WiFi aktywne");
+            lv_obj_set_style_text_color(web_client_state_lbl, lv_color_make(125, 211, 252), 0);
+        } else {
+            lv_label_set_text(web_client_state_lbl, "WiFi wylaczone");
+            lv_obj_set_style_text_color(web_client_state_lbl, lv_color_make(248, 113, 113), 0);
+        }
+    }
+
+    set_label_text(web_client_url_lbl, url_buf);
+    set_label_text(web_client_ssid_lbl, ssid_buf);
+    set_label_text(web_client_ip_lbl, ip_buf);
+
+    if (web_client_rssi_lbl != nullptr) {
+        if (sta_online) {
+            lv_label_set_text_fmt(web_client_rssi_lbl, "RSSI: %d dBm", wifi_rssi);
+        } else if (ap_online) {
+            lv_label_set_text_fmt(web_client_rssi_lbl, "AP clients: %u",
+                                  static_cast<unsigned>(WiFi.softAPgetStationNum()));
+        } else {
+            lv_label_set_text(web_client_rssi_lbl, "RSSI: --");
+        }
+    }
+
+    if (web_client_uptime_lbl != nullptr) {
+        lv_label_set_text_fmt(web_client_uptime_lbl, "WWW: %lus temu", static_cast<unsigned long>(idle_s));
+    }
+
+    if (web_client_progress_bar != nullptr && web_client_progress_lbl != nullptr) {
+        if (ota_screen) {
+            lv_obj_clear_flag(web_client_progress_bar, LV_OBJ_FLAG_HIDDEN);
+            lv_obj_clear_flag(web_client_progress_lbl, LV_OBJ_FLAG_HIDDEN);
+            const int progress = ota_http_update_failed ? 0 : (ota_reboot_pending ? 100 : constrain(ota_http_upload_percent, 0, 100));
+            lv_bar_set_value(web_client_progress_bar, progress, LV_ANIM_ON);
+            if (ota_http_update_failed) {
+                lv_label_set_text(web_client_progress_lbl, "ERR");
+            } else if (ota_http_upload_percent >= 0 || ota_reboot_pending) {
+                lv_label_set_text_fmt(web_client_progress_lbl, "%d%%", progress);
+            } else {
+                lv_label_set_text_fmt(web_client_progress_lbl, "%lu KB",
+                                      static_cast<unsigned long>((ota_http_upload_bytes + 512UL) / 1024UL));
+            }
+        } else {
+            lv_obj_add_flag(web_client_progress_bar, LV_OBJ_FLAG_HIDDEN);
+            lv_obj_add_flag(web_client_progress_lbl, LV_OBJ_FLAG_HIDDEN);
+            lv_bar_set_value(web_client_progress_bar, 0, LV_ANIM_OFF);
+        }
+    }
+
+    if (web_client_status_lbl != nullptr) {
+        if (ota_http_update_failed) {
+            lv_label_set_text(web_client_status_lbl,
+                              ota_http_update_msg[0] != '\0' ? ota_http_update_msg : "Blad aktualizacji");
+            lv_obj_set_style_text_color(web_client_status_lbl, lv_color_make(239, 68, 68), 0);
+        } else if (ota_http_upload_active) {
+            if (ota_http_upload_total > 0U) {
+                lv_label_set_text_fmt(web_client_status_lbl, "Odbieram firmware: %lu/%lu KB",
+                                      static_cast<unsigned long>((ota_http_upload_bytes + 512UL) / 1024UL),
+                                      static_cast<unsigned long>((ota_http_upload_total + 512UL) / 1024UL));
+            } else {
+                lv_label_set_text_fmt(web_client_status_lbl, "Odbieram firmware: %lu KB",
+                                      static_cast<unsigned long>((ota_http_upload_bytes + 512UL) / 1024UL));
+            }
+            lv_obj_set_style_text_color(web_client_status_lbl, lv_color_make(245, 158, 11), 0);
+        } else if (ota_reboot_pending) {
+            lv_label_set_text(web_client_status_lbl, "Zapis OK. Restart urzadzenia...");
+            lv_obj_set_style_text_color(web_client_status_lbl, lv_color_make(16, 185, 129), 0);
+        } else if (ota_portal_has_recent_web_activity(now_ms)) {
+            lv_label_set_text(web_client_status_lbl, "UI wstrzymany. Zamknij strone.");
+            lv_obj_set_style_text_color(web_client_status_lbl, lv_color_make(148, 163, 184), 0);
+        } else {
+            lv_label_set_text(web_client_status_lbl, "WWW wygaslo. Wstecz przywraca panel.");
+            lv_obj_set_style_text_color(web_client_status_lbl, lv_color_make(16, 185, 129), 0);
+        }
+    }
+}
+
+static void gui_web_focus_apply_wifi_controls(bool force) {
+    if (!web_ui_focus_active) {
+        return;
+    }
+
+    const uint32_t now_ms = millis();
+    if (!force && static_cast<uint32_t>(now_ms - web_ui_last_control_ms) < WEB_UI_CONTROL_REFRESH_MS) {
+        return;
+    }
+    web_ui_last_control_ms = now_ms;
+
+    if (btn_sta != nullptr) {
+        lv_obj_add_flag(btn_sta, LV_OBJ_FLAG_HIDDEN);
+    }
+    if (btn_ota != nullptr) {
+        lv_obj_add_flag(btn_ota, LV_OBJ_FLAG_HIDDEN);
+    }
+
+    const bool can_stop_wifi = is_connecting || wifi_connected || ota_portal_running || WiFi.getMode() != WIFI_OFF;
+    if (btn_disconnect != nullptr) {
+        if (can_stop_wifi) {
+            lv_obj_clear_flag(btn_disconnect, LV_OBJ_FLAG_HIDDEN);
+        } else {
+            lv_obj_add_flag(btn_disconnect, LV_OBJ_FLAG_HIDDEN);
+        }
+    }
+
+    if (wifi_status_message_lbl != nullptr) {
+        if (is_connecting) {
+            lv_label_set_text(wifi_status_message_lbl, "WWW aktywne: laczenie STA");
+            lv_obj_set_style_text_color(wifi_status_message_lbl, lv_color_make(245, 158, 11), 0);
+        } else if (wifi_connected && ota_portal_running) {
+            lv_label_set_text(wifi_status_message_lbl, "Panel WWW aktywny - ekran WiFi");
+            lv_obj_set_style_text_color(wifi_status_message_lbl, lv_color_make(16, 185, 129), 0);
+        } else if (wifi_ota_active) {
+            lv_label_set_text(wifi_status_message_lbl, "Panel WWW aktywny - tryb AP");
+            lv_obj_set_style_text_color(wifi_status_message_lbl, lv_color_make(6, 182, 212), 0);
+        }
+    }
+
+    gui_web_client_screen_update(force);
+}
+
+static void gui_web_focus_show_wifi_main_panel() {
+    if (wifi_sta_panel != nullptr) {
+        lv_obj_add_flag(wifi_sta_panel, LV_OBJ_FLAG_HIDDEN);
+    }
+    if (wifi_pwd_panel != nullptr) {
+        lv_obj_add_flag(wifi_pwd_panel, LV_OBJ_FLAG_HIDDEN);
+    }
+    if (wifi_ota_panel != nullptr) {
+        lv_obj_add_flag(wifi_ota_panel, LV_OBJ_FLAG_HIDDEN);
+    }
+    if (wifi_main_panel != nullptr) {
+        lv_obj_clear_flag(wifi_main_panel, LV_OBJ_FLAG_HIDDEN);
+    }
+    gui_web_client_screen_update(true);
+}
+
+static void gui_web_focus_enter() {
+    if (!web_ui_focus_active) {
+        web_ui_restore_page_index = current_page_index;
+        web_ui_restore_subpage = current_subpage;
+        web_ui_restore_valid = true;
+        web_ui_focus_active = true;
+        web_ui_last_control_ms = 0;
+        web_ui_last_screen_ms = 0;
+        Serial.printf("WEB_FOCUS: enter restore_page=%d restore_subpage=%s\n",
+                      web_ui_restore_page_index,
+                      nav_subpage_name(web_ui_restore_subpage));
+        add_gui_log("Panel WWW aktywny - ekran CYD ograniczony", false);
+    }
+
+    if (current_page_index != WEB_UI_FOCUS_PAGE_INDEX) {
+        switch_to_page(WEB_UI_FOCUS_PAGE_INDEX);
+    }
+
+    gui_web_client_screen_create();
+    gui_app_update_wifi(wifi_ota_active ? 2 : (wifi_connected ? 1 : 0), wifi_rssi);
+    gui_web_client_screen_update(true);
+    gui_web_focus_apply_wifi_controls(true);
+}
+
+static void gui_web_focus_exit() {
+    if (!web_ui_focus_active) {
+        return;
+    }
+
+    web_ui_focus_active = false;
+    web_ui_last_control_ms = 0;
+    web_ui_last_screen_ms = 0;
+    web_ui_last_request_ms = 0;
+    gui_web_client_screen_delete();
+    Serial.println("WEB_FOCUS: exit");
+    add_gui_log("Panel WWW nieaktywny - ekran CYD odblokowany", false);
+
+    if (web_ui_restore_valid) {
+        const int restore_page = (web_ui_restore_page_index >= 0 &&
+                                  web_ui_restore_page_index < PAGE_COUNT) ? web_ui_restore_page_index : 0;
+        const ActiveSubpage restore_subpage = web_ui_restore_subpage;
+        web_ui_restore_valid = false;
+
+        if (current_page_index != restore_page) {
+            switch_to_page(static_cast<uint8_t>(restore_page));
+        } else if (restore_subpage == ActiveSubpage::None && current_subpage != ActiveSubpage::None) {
+            delete_runtime_subpages(true);
+        }
+
+        if (restore_subpage != ActiveSubpage::None && current_subpage != restore_subpage) {
+            open_or_build_subpage(restore_subpage);
+        }
+    }
+
+    gui_app_update_wifi(wifi_ota_active ? 2 : (wifi_connected ? 1 : 0), wifi_rssi);
+}
+
+static void gui_web_focus_update() {
+    const uint32_t now_ms = millis();
+    if (ota_portal_has_recent_web_activity(now_ms)) {
+        const bool needs_web_screen =
+            current_page_index != WEB_UI_FOCUS_PAGE_INDEX ||
+            web_client_screen == nullptr ||
+            !lv_obj_is_valid(web_client_screen);
+
+        if (!web_ui_focus_active || needs_web_screen) {
+            gui_web_focus_enter();
+        } else {
+            gui_web_client_screen_update(false);
+            gui_web_focus_apply_wifi_controls(false);
+        }
+        return;
+    }
+
+    gui_web_focus_exit();
+}
+
 static void hide_runtime_subpages() {
     delete_runtime_subpages(true);
 }
@@ -3982,6 +4751,10 @@ static void open_system_subpage(lv_event_t *e) {
         reinterpret_cast<intptr_t>(lv_event_get_user_data(e)));
     log_subpage_enter_request(target, "system_hub");
     play_system_sound(SoundType::Click);
+    if (gui_web_focus_blocks_local_ui() && target != ActiveSubpage::Wifi) {
+        gui_web_focus_apply_wifi_controls(true);
+        return;
+    }
 
     if (target == ActiveSubpage::Clock) {
         capture_clock_snapshot();
@@ -3997,6 +4770,10 @@ static void nav_btn_event_handler(lv_event_t *e) {
     const int index = static_cast<int>(reinterpret_cast<intptr_t>(lv_event_get_user_data(e)));
     log_tab_enter_request(index);
     play_system_sound(SoundType::Click);
+    if (gui_web_focus_blocks_local_ui()) {
+        gui_web_focus_enter();
+        return;
+    }
     if (index >= 0 && index < PAGE_COUNT) {
         switch_to_page(static_cast<uint8_t>(index));
     }
@@ -4465,12 +5242,12 @@ static const char *ota_portal_content_type(const char *path) {
     if (ext == nullptr) {
         return "application/octet-stream";
     }
-    if (strcmp(ext, ".html") == 0 || strcmp(ext, ".htm") == 0) return "text/html";
-    if (strcmp(ext, ".css") == 0) return "text/css";
-    if (strcmp(ext, ".js") == 0) return "application/javascript";
-    if (strcmp(ext, ".json") == 0) return "application/json";
-    if (strcmp(ext, ".csv") == 0) return "text/csv";
-    if (strcmp(ext, ".txt") == 0 || strcmp(ext, ".log") == 0 || strcmp(ext, ".cfg") == 0) return "text/plain";
+    if (strcmp(ext, ".html") == 0 || strcmp(ext, ".htm") == 0) return "text/html; charset=utf-8";
+    if (strcmp(ext, ".css") == 0) return "text/css; charset=utf-8";
+    if (strcmp(ext, ".js") == 0) return "application/javascript; charset=utf-8";
+    if (strcmp(ext, ".json") == 0) return "application/json; charset=utf-8";
+    if (strcmp(ext, ".csv") == 0) return "text/csv; charset=utf-8";
+    if (strcmp(ext, ".txt") == 0 || strcmp(ext, ".log") == 0 || strcmp(ext, ".cfg") == 0) return "text/plain; charset=utf-8";
     if (strcmp(ext, ".bin") == 0 || strcmp(ext, ".aqbin") == 0) return "application/octet-stream";
     if (strcmp(ext, ".gz") == 0) return "application/gzip";
     return "application/octet-stream";
@@ -4933,7 +5710,8 @@ static void ota_portal_send_schedule_json(const char *key,
                                           uint8_t start_hour,
                                           uint8_t start_minute,
                                           uint8_t end_hour,
-                                          uint8_t end_minute) {
+                                          uint8_t end_minute,
+                                          int8_t aquael_profile = -1) {
     ota_http_server.sendContent("\"");
     ota_http_server.sendContent(key);
     ota_http_server.sendContent("\":{\"mode\":\"");
@@ -4942,15 +5720,25 @@ static void ota_portal_send_schedule_json(const char *key,
     ota_portal_send_time_json(start_hour, start_minute);
     ota_http_server.sendContent(",\"end\":");
     ota_portal_send_time_json(end_hour, end_minute);
+    if (aquael_profile >= 0) {
+        const uint8_t profile = normalize_aquael_profile(static_cast<uint8_t>(aquael_profile));
+        ota_http_server.sendContent(",\"profile\":\"");
+        ota_http_server.sendContent(aquael_profile_code(profile));
+        ota_http_server.sendContent("\",\"profileLabel\":\"");
+        ota_http_server.sendContent(light_color_mode_label(profile));
+        ota_http_server.sendContent("\",\"profileDescription\":");
+        ota_portal_send_json_escaped(aquael_profile_description(profile));
+    }
     ota_http_server.sendContent("}");
 }
 
 static void ota_portal_handle_root() {
+    ota_portal_mark_web_activity();
     ota_portal_no_cache();
     if (ota_portal_sd_ready()) {
         File file = SD.open(OTA_PORTAL_INDEX_PATH, FILE_READ);
         if (file && !file.isDirectory()) {
-            ota_http_server.streamFile(file, "text/html");
+            ota_http_server.streamFile(file, "text/html; charset=utf-8");
             file.close();
             return;
         }
@@ -4958,10 +5746,11 @@ static void ota_portal_handle_root() {
             file.close();
         }
     }
-    ota_http_server.send_P(200, "text/html", OTA_PORTAL_FALLBACK_INDEX);
+    ota_http_server.send_P(200, "text/html; charset=utf-8", OTA_PORTAL_FALLBACK_INDEX);
 }
 
 static void ota_portal_handle_status() {
+    ota_portal_mark_web_activity();
     char ip_buf[24];
     const IPAddress ip = wifi_ota_active ? WiFi.softAPIP() : WiFi.localIP();
     snprintf(ip_buf, sizeof(ip_buf), "%u.%u.%u.%u", ip[0], ip[1], ip[2], ip[3]);
@@ -4972,14 +5761,39 @@ static void ota_portal_handle_status() {
 
     char temp_json[16];
     char ph_json[16];
+    char ec_json[16];
     char ldr_json[16];
+    const float dev_status_phase = static_cast<float>((millis() / 1000UL) % 3600UL) / 60.0f;
+    const bool api_temp_valid = isfinite(runtime.lastTemp);
+    const bool api_ph_valid = isfinite(runtime.lastPh);
+    const bool api_ec_valid = sensor_debug.ecValid || cfg.devMode;
+    const bool api_ldr_valid = last_ldr_valid || cfg.devMode;
+    const float api_ec_mv = sensor_debug.ecValid
+                                ? sensor_debug.ecVoltage * 1000.0f
+                                : (420.0f + 18.0f * sinf(dev_status_phase * 0.13f));
+    const int api_ldr_value = last_ldr_valid
+                                  ? last_ldr_value
+                                  : clamp_ldr_value(620 + static_cast<int>(lroundf(95.0f * sinf(dev_status_phase * 0.09f))));
     snprintf(temp_json, sizeof(temp_json), isfinite(runtime.lastTemp) ? "%.2f" : "null", runtime.lastTemp);
     snprintf(ph_json, sizeof(ph_json), isfinite(runtime.lastPh) ? "%.3f" : "null", runtime.lastPh);
-    if (last_ldr_valid) {
-        snprintf(ldr_json, sizeof(ldr_json), "%d", last_ldr_value);
+    if (api_ec_valid) {
+        snprintf(ec_json, sizeof(ec_json), "%.1f", api_ec_mv);
+    } else {
+        snprintf(ec_json, sizeof(ec_json), "null");
+    }
+    if (api_ldr_valid) {
+        snprintf(ldr_json, sizeof(ldr_json), "%d", api_ldr_value);
     } else {
         snprintf(ldr_json, sizeof(ldr_json), "null");
     }
+    const bool api_mcp_present = sensor_debug.mcpPresent || cfg.devMode;
+    const bool mcp_status_valid = (sensor_debug.mcpPresent && sensor_debug.mcpValid) || cfg.devMode;
+    const uint16_t water_level_mask = static_cast<uint16_t>(1U << static_cast<uint8_t>(HwConfig::CH_WATER_LEVEL));
+    const uint16_t leak_mask = static_cast<uint16_t>(1U << static_cast<uint8_t>(HwConfig::CH_LEAK));
+    const bool water_level_high = cfg.devMode ? true : (mcp_status_valid && ((sensor_debug.mcpState & water_level_mask) != 0));
+    const bool leak_detected = cfg.devMode ? false : (mcp_status_valid && ((sensor_debug.mcpState & leak_mask) != 0));
+    const char *water_level_json = mcp_status_valid ? (water_level_high ? "true" : "false") : "null";
+    const char *leak_json = mcp_status_valid ? (leak_detected ? "true" : "false") : "null";
     const EcoRuntimeStatus eco = eco_collect_status();
     const bool sd_ready_for_status = ota_portal_sd_ready();
     const uint64_t sd_total_bytes = sd_ready_for_status ? SD.totalBytes() : 0ULL;
@@ -5021,17 +5835,30 @@ static void ota_portal_handle_status() {
     ota_http_server.sendContent(line);
 
     snprintf(line, sizeof(line),
-             "\"sensors\":{\"temp_c\":%s,\"temp_valid\":%s,\"ph\":%s,\"ph_valid\":%s,\"ldr\":%s,\"ldr_valid\":%s},"
-             "\"config\":{\"target_temp\":%.2f,\"temp_hysteresis\":%.2f,\"dev_mode\":%s,"
+             "\"sensors\":{\"temp_c\":%s,\"temp_valid\":%s,\"ph\":%s,\"ph_valid\":%s,\"ec\":%s,\"ec_valid\":%s,"
+             "\"ldr\":%s,\"ldr_valid\":%s,"
+             "\"mcp_present\":%s,\"mcp_valid\":%s,\"water_level_high\":%s,\"water_level_valid\":%s,"
+             "\"leak_detected\":%s,\"leak_valid\":%s},"
+             "\"config\":{\"target_temp\":%.2f,\"temp_hysteresis\":%.2f,\"co2TargetPh\":%.2f,\"co2MaxTimeMin\":%u,\"dev_mode\":%s,"
              "\"modem_sleep\":%s,\"always_screen_on\":%s,\"sound_enabled\":%s,\"quiet_hours_enabled\":%s,",
              temp_json,
-             isfinite(runtime.lastTemp) ? "true" : "false",
+             api_temp_valid ? "true" : "false",
              ph_json,
-             isfinite(runtime.lastPh) ? "true" : "false",
+             api_ph_valid ? "true" : "false",
+             ec_json,
+             api_ec_valid ? "true" : "false",
              ldr_json,
-             last_ldr_valid ? "true" : "false",
+             api_ldr_valid ? "true" : "false",
+             api_mcp_present ? "true" : "false",
+             mcp_status_valid ? "true" : "false",
+             water_level_json,
+             mcp_status_valid ? "true" : "false",
+             leak_json,
+             mcp_status_valid ? "true" : "false",
              cfg.targetTemp,
              cfg.tempHysteresis,
+             static_cast<double>(FACTORY_CO2_TARGET_PH),
+             static_cast<unsigned>(540U),
              cfg.devMode ? "true" : "false",
              cfg.modemSleep ? "true" : "false",
              cfg.alwaysScreenOn ? "true" : "false",
@@ -5044,30 +5871,41 @@ static void ota_portal_handle_status() {
     ota_portal_send_time_json(cfg.quietEndHour, cfg.quietEndMinute);
     ota_http_server.sendContent("},");
 
+    const bool api_ph_sensor_enabled = cfg.devMode || cfg.showPhSensor;
+    const bool api_ec_enabled = cfg.devMode || cfg.enableEc;
+    const bool api_water_level_enabled = cfg.devMode || cfg.enableWaterLevel;
+    const bool api_leak_enabled = cfg.devMode || cfg.enableLeak;
+    const bool api_flow_enabled = cfg.devMode || cfg.enableFlow;
+
     snprintf(line, sizeof(line),
              "\"modules\":{\"light_on\":%s,\"plant_light_on\":%s,\"filter_on\":%s,\"air_on\":%s,"
-             "\"heater_on\":%s,\"heater_enabled\":%s,\"ph_sensor_enabled\":%s,\"co2_enabled\":%s,"
+             "\"co2_on\":%s,\"heater_on\":%s,\"heater_enabled\":%s,\"ph_sensor_enabled\":%s,\"co2_enabled\":%s,"
              "\"ec_enabled\":%s,\"water_level_enabled\":%s,\"leak_enabled\":%s,\"flow_enabled\":%s,"
              "\"feeder_enabled\":%s},",
              runtime.lightOn ? "true" : "false",
              runtime.plantLightOn ? "true" : "false",
              runtime.filterOn ? "true" : "false",
              runtime.airOn ? "true" : "false",
+             runtime.co2On ? "true" : "false",
              runtime.heaterOn ? "true" : "false",
              cfg.enableHeater ? "true" : "false",
-             cfg.showPhSensor ? "true" : "false",
+             api_ph_sensor_enabled ? "true" : "false",
              cfg.enableCo2 ? "true" : "false",
-             cfg.enableEc ? "true" : "false",
-             cfg.enableWaterLevel ? "true" : "false",
-             cfg.enableLeak ? "true" : "false",
-             cfg.enableFlow ? "true" : "false",
+             api_ec_enabled ? "true" : "false",
+             api_water_level_enabled ? "true" : "false",
+             api_leak_enabled ? "true" : "false",
+             api_flow_enabled ? "true" : "false",
              cfg.feedEnabled ? "true" : "false");
     ota_http_server.sendContent(line);
 
     ota_http_server.sendContent("\"schedules\":{");
-    ota_portal_send_schedule_json("light", cfg.lightMode, cfg.lightStartHour, cfg.lightStartMinute, cfg.lightEndHour, cfg.lightEndMinute);
+    ota_portal_send_schedule_json("light", cfg.lightMode, cfg.lightStartHour, cfg.lightStartMinute,
+                                  cfg.lightEndHour, cfg.lightEndMinute,
+                                  static_cast<int8_t>(runtime.lightActiveMode));
     ota_http_server.sendContent(",");
-    ota_portal_send_schedule_json("plant_light", cfg.plantLightMode, cfg.plantStartHour, cfg.plantStartMinute, cfg.plantEndHour, cfg.plantEndMinute);
+    ota_portal_send_schedule_json("plant_light", cfg.plantLightMode, cfg.plantStartHour, cfg.plantStartMinute,
+                                  cfg.plantEndHour, cfg.plantEndMinute,
+                                  static_cast<int8_t>(runtime.plantLightActiveMode));
     ota_http_server.sendContent(",");
     ota_portal_send_schedule_json("filter", cfg.filterMode, cfg.filterStartHour, cfg.filterStartMinute, cfg.filterEndHour, cfg.filterEndMinute);
     ota_http_server.sendContent(",");
@@ -5176,7 +6014,7 @@ static void ota_portal_handle_status() {
              "\"system\":{\"uptime\":%lu,\"powerMode\":\"%s\",\"resetReason\":\"%u\","
              "\"freeHeap\":%lu,\"largestHeap\":%lu},"
              "\"relays\":{\"light\":%s,\"plantLight\":%s,\"pump\":%s,\"heater\":%s,"
-             "\"aeration\":%s,\"aerationPercent\":%u},",
+             "\"co2\":%s,\"aeration\":%s,\"aerationPercent\":%u},",
              static_cast<unsigned long>(millis() / 1000UL),
              cfg.modemSleep ? "modem_sleep" : "normal",
              static_cast<unsigned>(esp_reset_reason()),
@@ -5186,6 +6024,7 @@ static void ota_portal_handle_status() {
              runtime.plantLightOn ? "true" : "false",
              runtime.filterOn ? "true" : "false",
              runtime.heaterOn ? "true" : "false",
+             runtime.co2On ? "true" : "false",
              runtime.airOn ? "true" : "false",
              runtime.airOn ? 100U : 0U);
     ota_http_server.sendContent(line);
@@ -5195,7 +6034,7 @@ static void ota_portal_handle_status() {
              "\"dayEndHour\":%u,\"dayEndMin\":%u,\"airMode\":%u,\"airStartHour\":%u,"
              "\"airStartMin\":%u,\"airEndHour\":%u,\"airEndMin\":%u,\"filterMode\":%u,"
              "\"filterStartHour\":%u,\"filterStartMin\":%u,\"filterEndHour\":%u,"
-             "\"filterEndMin\":%u,\"heaterMode\":%u},",
+             "\"filterEndMin\":%u,\"heaterMode\":%u",
              static_cast<unsigned>(cfg.lightMode),
              static_cast<unsigned>(cfg.lightStartHour),
              static_cast<unsigned>(cfg.lightStartMinute),
@@ -5212,6 +6051,20 @@ static void ota_portal_handle_status() {
              static_cast<unsigned>(cfg.filterEndHour),
              static_cast<unsigned>(cfg.filterEndMinute),
              static_cast<unsigned>(cfg.heaterMode));
+    ota_http_server.sendContent(line);
+    snprintf(line, sizeof(line),
+             ",\"lightProfile\":%u,\"lightProfileName\":\"%s\",\"plantLightMode\":%u,"
+             "\"plantStartHour\":%u,\"plantStartMin\":%u,\"plantEndHour\":%u,\"plantEndMin\":%u,"
+             "\"plantLightProfile\":%u,\"plantLightProfileName\":\"%s\"},",
+             static_cast<unsigned>(runtime.lightActiveMode),
+             light_color_mode_label(runtime.lightActiveMode),
+             static_cast<unsigned>(cfg.plantLightMode),
+             static_cast<unsigned>(cfg.plantStartHour),
+             static_cast<unsigned>(cfg.plantStartMinute),
+             static_cast<unsigned>(cfg.plantEndHour),
+             static_cast<unsigned>(cfg.plantEndMinute),
+             static_cast<unsigned>(runtime.plantLightActiveMode),
+             light_color_mode_label(runtime.plantLightActiveMode));
     ota_http_server.sendContent(line);
 
     snprintf(line, sizeof(line),
@@ -5249,6 +6102,7 @@ static void ota_portal_send_log_array(const GuiLogEntry *entries, uint8_t count,
 }
 
 static void ota_portal_handle_logs() {
+    ota_portal_mark_web_activity();
     if (!ota_portal_require_pin()) {
         return;
     }
@@ -5319,6 +6173,28 @@ static uint8_t parse_mode_arg(const char *name, uint8_t fallback) {
                : fallback;
 }
 
+static bool parse_light_profile_arg(const char *name, uint8_t *out_profile) {
+    if (name == nullptr || out_profile == nullptr || !ota_http_server.hasArg(name)) {
+        return false;
+    }
+    String value = ota_http_server.arg(name);
+    value.trim();
+    value.toLowerCase();
+    if (value == "day" || value == "0") {
+        *out_profile = 0U;
+        return true;
+    }
+    if (value == "daybreak" || value == "dawn" || value == "sunrise" || value == "1") {
+        *out_profile = 1U;
+        return true;
+    }
+    if (value == "night" || value == "moon" || value == "2") {
+        *out_profile = 2U;
+        return true;
+    }
+    return false;
+}
+
 static bool parse_bool_arg(const char *name, bool fallback) {
     if (name == nullptr || !ota_http_server.hasArg(name)) {
         return fallback;
@@ -5345,6 +6221,7 @@ static void ota_portal_send_action_result(bool success, const char *code, const 
 }
 
 static void ota_portal_handle_action() {
+    ota_portal_mark_web_activity();
     if (!ota_http_server.hasArg("action")) {
         ota_portal_send_action_result(false, "missing_action", "Brak parametru action.");
         return;
@@ -5416,9 +6293,18 @@ static void ota_portal_handle_action() {
 
     if (action == "save_schedule") {
         cfg.lightMode = parse_mode_arg("lightMode", cfg.lightMode);
+        uint8_t parsed_profile = 0U;
+        if (parse_light_profile_arg("lightProfile", &parsed_profile)) {
+            cfg.lightColorMode = parsed_profile;
+            cfg.lightSchedColorMode = aquael_profile_to_schedule(parsed_profile);
+        }
         parse_time_arg("dayStart", &cfg.lightStartHour, &cfg.lightStartMinute);
         parse_time_arg("dayEnd", &cfg.lightEndHour, &cfg.lightEndMinute);
         cfg.plantLightMode = parse_mode_arg("plantLightMode", cfg.plantLightMode);
+        if (parse_light_profile_arg("plantLightProfile", &parsed_profile)) {
+            cfg.plantLightColorMode = parsed_profile;
+            cfg.plantSchedColorMode = aquael_profile_to_schedule(parsed_profile);
+        }
         parse_time_arg("plantLightStart", &cfg.plantStartHour, &cfg.plantStartMinute);
         parse_time_arg("plantLightEnd", &cfg.plantEndHour, &cfg.plantEndMinute);
         cfg.airMode = parse_mode_arg("aerationMode", cfg.airMode);
@@ -5546,10 +6432,35 @@ static void ota_portal_handle_action() {
         return;
     }
 
+    if (action == "save_co2") {
+        cfg.enableCo2 = parse_bool_arg("co2Enabled", cfg.enableCo2);
+        gui_app_save_settings();
+        gui_sync_widgets_to_state();
+        ota_portal_send_action_result(true, "ok", "Ustawienia CO2 zapisane.");
+        return;
+    }
+
+    if (action == "save_water") {
+        cfg.enableWaterLevel = parse_bool_arg("waterEnabled", cfg.enableWaterLevel);
+        gui_app_save_settings();
+        gui_sync_widgets_to_state();
+        ota_portal_send_action_result(true, "ok", "Ustawienia ATO zapisane.");
+        return;
+    }
+
+    if (action == "save_leak") {
+        cfg.enableLeak = parse_bool_arg("leakEnabled", cfg.enableLeak);
+        gui_app_save_settings();
+        gui_sync_widgets_to_state();
+        ota_portal_send_action_result(true, "ok", "Ustawienia wycieku zapisane.");
+        return;
+    }
+
     ota_portal_send_action_result(false, "unknown_action", "Nieznana akcja.");
 }
 
 static void ota_portal_handle_settime() {
+    ota_portal_mark_web_activity();
     if (!ota_portal_require_pin()) {
         return;
     }
@@ -5588,12 +6499,14 @@ static void ota_portal_handle_settime() {
 }
 
 static void ota_portal_handle_events() {
+    ota_portal_mark_web_activity();
     ota_portal_no_cache();
     ota_http_server.sendHeader("Connection", "close");
     ota_http_server.send(200, "text/event-stream", "event: ready\ndata: {}\n\n");
 }
 
 static void ota_portal_handle_current_history_csv() {
+    ota_portal_mark_web_activity();
     ota_http_server.sendHeader("Content-Disposition", "attachment; filename=\"cydAkwarium-current-history.csv\"");
     ota_portal_no_cache();
     ota_http_server.setContentLength(CONTENT_LENGTH_UNKNOWN);
@@ -5641,6 +6554,7 @@ static void ota_portal_handle_current_history_csv() {
 }
 
 static void ota_portal_handle_files() {
+    ota_portal_mark_web_activity();
     char dir[96];
     snprintf(dir, sizeof(dir), "%s", OTA_PORTAL_HISTORY_DIR);
     if (ota_http_server.hasArg("dir")) {
@@ -5699,6 +6613,7 @@ static void ota_portal_handle_files() {
 }
 
 static void ota_portal_handle_download() {
+    ota_portal_mark_web_activity();
     if (!ota_http_server.hasArg("path")) {
         ota_http_server.send(400, "text/plain", "Missing path");
         return;
@@ -5747,6 +6662,7 @@ static bool ota_portal_require_pin() {
 }
 
 static void ota_portal_handle_stop_ota() {
+    ota_portal_mark_web_activity();
     if (!ota_portal_require_pin()) {
         return;
     }
@@ -5759,6 +6675,7 @@ static void ota_portal_handle_stop_ota() {
 }
 
 static void ota_portal_handle_update_finish() {
+    ota_portal_mark_web_activity();
     if (!ota_portal_request_has_pin()) {
         ota_http_update_ok = false;
         ota_http_update_failed = true;
@@ -5785,23 +6702,45 @@ static void ota_portal_handle_update_finish() {
 }
 
 static void ota_portal_set_update_error(const char *message) {
+    ota_http_upload_active = false;
+    ota_http_upload_bytes = 0;
+    ota_http_upload_total = 0;
+    ota_http_upload_percent = -1;
     ota_http_update_failed = true;
     ota_http_update_ok = false;
     snprintf(ota_http_update_msg, sizeof(ota_http_update_msg), "%s", message != nullptr ? message : "Blad aktualizacji");
 }
 
+static void ota_portal_refresh_upload_screen(bool force) {
+    if (!web_ui_focus_active) {
+        gui_web_focus_enter();
+    } else {
+        gui_web_client_screen_update(force);
+    }
+    if (force) {
+        lv_timer_handler();
+    }
+}
+
 static void ota_portal_handle_update_upload() {
+    ota_portal_mark_web_activity();
     HTTPUpload &upload = ota_http_server.upload();
     if (upload.status == UPLOAD_FILE_START) {
         ota_http_update_ok = false;
         ota_http_update_failed = false;
+        ota_http_upload_active = false;
+        ota_http_upload_bytes = 0;
+        ota_http_upload_total = 0;
+        ota_http_upload_percent = -1;
         ota_http_update_msg[0] = '\0';
         if (!ota_portal_request_has_pin()) {
             ota_portal_set_update_error("Wymagany poprawny PIN");
+            ota_portal_refresh_upload_screen(true);
             return;
         }
         if (!upload.filename.endsWith(".bin")) {
             ota_portal_set_update_error("Wybierz plik .bin");
+            ota_portal_refresh_upload_screen(true);
             return;
         }
         Serial.printf("HTTP_OTA: upload start %s\n", upload.filename.c_str());
@@ -5809,9 +6748,13 @@ static void ota_portal_handle_update_upload() {
             snprintf(ota_http_update_msg, sizeof(ota_http_update_msg),
                      "Update.begin failed: %u", static_cast<unsigned>(Update.getError()));
             ota_http_update_failed = true;
+            ota_portal_refresh_upload_screen(true);
             return;
         }
+        ota_http_upload_active = true;
+        ota_http_upload_total = static_cast<uint32_t>(strtoul(ota_http_server.header("Content-Length").c_str(), nullptr, 10));
         ota_portal_set_status("HTTP OTA: odbieranie pliku...", lv_color_make(245, 158, 11));
+        ota_portal_refresh_upload_screen(true);
         return;
     }
 
@@ -5819,23 +6762,38 @@ static void ota_portal_handle_update_upload() {
         if (ota_http_update_failed) {
             return;
         }
+        ota_http_upload_bytes = static_cast<uint32_t>(upload.totalSize);
+        if (ota_http_upload_total > 0U) {
+            const uint32_t percent = static_cast<uint32_t>(
+                (static_cast<uint64_t>(ota_http_upload_bytes) * 100ULL) / ota_http_upload_total);
+            ota_http_upload_percent = static_cast<int>(percent > 99U ? 99U : percent);
+        } else {
+            ota_http_upload_percent = -1;
+        }
         const size_t written = Update.write(upload.buf, upload.currentSize);
         if (written != upload.currentSize) {
             Update.abort();
             snprintf(ota_http_update_msg, sizeof(ota_http_update_msg),
                      "Update.write failed: %u", static_cast<unsigned>(Update.getError()));
             ota_http_update_failed = true;
+            ota_http_upload_active = false;
         }
+        ota_portal_refresh_upload_screen(false);
         return;
     }
 
     if (upload.status == UPLOAD_FILE_END) {
+        ota_http_upload_bytes = static_cast<uint32_t>(upload.totalSize);
         if (ota_http_update_failed) {
             Update.abort();
+            ota_http_upload_active = false;
+            ota_portal_refresh_upload_screen(true);
             return;
         }
         if (Update.end(true)) {
             ota_http_update_ok = true;
+            ota_http_upload_active = false;
+            ota_http_upload_percent = 100;
             snprintf(ota_http_update_msg, sizeof(ota_http_update_msg),
                      "OK: %lu bytes", static_cast<unsigned long>(upload.totalSize));
             Serial.printf("HTTP_OTA: upload done %lu bytes\n", static_cast<unsigned long>(upload.totalSize));
@@ -5843,13 +6801,17 @@ static void ota_portal_handle_update_upload() {
             snprintf(ota_http_update_msg, sizeof(ota_http_update_msg),
                      "Update.end failed: %u", static_cast<unsigned>(Update.getError()));
             ota_http_update_failed = true;
+            ota_http_upload_active = false;
         }
+        ota_portal_refresh_upload_screen(true);
         return;
     }
 
     if (upload.status == UPLOAD_FILE_ABORTED) {
         Update.abort();
+        ota_http_upload_active = false;
         ota_portal_set_update_error("Upload przerwany");
+        ota_portal_refresh_upload_screen(true);
     }
 }
 
@@ -5867,6 +6829,7 @@ static void ota_portal_handle_not_found() {
             if (ota_portal_sd_ready() && SD.exists(path)) {
                 File file = SD.open(path, FILE_READ);
                 if (file && !file.isDirectory()) {
+                    ota_portal_mark_web_activity();
                     ota_http_server.streamFile(file, ota_portal_content_type(path));
                     file.close();
                     return;
@@ -5888,6 +6851,8 @@ static void register_ota_portal_routes() {
     if (routes_registered) {
         return;
     }
+    static const char *collect_headers[] = {"Content-Length"};
+    ota_http_server.collectHeaders(collect_headers, 1);
     ota_http_server.on("/", HTTP_GET, ota_portal_handle_root);
     ota_http_server.on("/index.html", HTTP_GET, ota_portal_handle_root);
     ota_http_server.on("/api/status", HTTP_GET, ota_portal_handle_status);
@@ -6156,50 +7121,62 @@ static void wifi_check_timer_cb(lv_timer_t *timer) {
             if (btn_ota != nullptr) {
                 lv_obj_add_flag(btn_ota, LV_OBJ_FLAG_HIDDEN);
             }
-        } else if (status == WL_CONNECT_FAILED || status == WL_NO_SSID_AVAIL ||
-                   (millis() - conn_start_ms > WIFI_PROFILE_CONNECT_TIMEOUT_MS)) {
+        } else {
             const uint8_t disconnect_reason = wifi_last_disconnect_reason;
-            const char *reason_name = wifi_disconnect_reason_name(disconnect_reason);
-            Serial.printf("WIFI_STA: connect failed status=%d reason=%u:%s elapsed=%lu ms\n",
-                          static_cast<int>(status),
-                          static_cast<unsigned>(disconnect_reason),
-                          reason_name,
-                          static_cast<unsigned long>(millis() - conn_start_ms));
-            is_connecting = false;
-            wifi_connected = false;
-            wifi_rssi = 0;
-            WiFi.disconnect(false, false);
-            clear_pending_wifi_password();
+            const bool ap_capacity_rejected = wifi_disconnect_reason_is_ap_capacity(disconnect_reason);
+            if (status == WL_CONNECT_FAILED || status == WL_NO_SSID_AVAIL || ap_capacity_rejected ||
+                (millis() - conn_start_ms > WIFI_PROFILE_CONNECT_TIMEOUT_MS)) {
+                const char *reason_name = wifi_disconnect_reason_name(disconnect_reason);
+                Serial.printf("WIFI_STA: connect failed status=%d reason=%u:%s elapsed=%lu ms\n",
+                              static_cast<int>(status),
+                              static_cast<unsigned>(disconnect_reason),
+                              reason_name,
+                              static_cast<unsigned long>(millis() - conn_start_ms));
+                is_connecting = false;
+                wifi_connected = false;
+                wifi_rssi = 0;
+                WiFi.setAutoReconnect(false);
+                WiFi.disconnect(false, false);
+                clear_pending_wifi_password();
 
-            gui_app_update_wifi(0, 0);
+                gui_app_update_wifi(0, 0);
 
-            if (wifi_status_message_lbl != nullptr) {
-                if (status == WL_CONNECT_FAILED ||
-                    disconnect_reason == WIFI_REASON_AUTH_FAIL ||
-                    disconnect_reason == WIFI_REASON_4WAY_HANDSHAKE_TIMEOUT ||
-                    disconnect_reason == WIFI_REASON_HANDSHAKE_TIMEOUT) {
-                    lv_label_set_text_fmt(wifi_status_message_lbl, "Status: Blad WPA (%u %s)",
-                                          static_cast<unsigned>(disconnect_reason),
-                                          reason_name);
-                } else if (status == WL_NO_SSID_AVAIL || disconnect_reason == WIFI_REASON_NO_AP_FOUND) {
-                    lv_label_set_text_fmt(wifi_status_message_lbl, "Status: Siec niedostepna (%u %s)",
-                                          static_cast<unsigned>(disconnect_reason),
-                                          reason_name);
-                } else {
-                    lv_label_set_text_fmt(wifi_status_message_lbl, "Status: Timeout (%u %s)",
-                                          static_cast<unsigned>(disconnect_reason),
-                                          reason_name);
+                if (ap_capacity_rejected) {
+                    add_gui_log("WiFi: router odrzuca STA - zbyt wielu klientow", true);
                 }
-                lv_obj_set_style_text_color(wifi_status_message_lbl, lv_color_make(239, 68, 68), 0);
-            }
-            if (btn_disconnect != nullptr) {
-                lv_obj_add_flag(btn_disconnect, LV_OBJ_FLAG_HIDDEN);
-            }
-            if (btn_sta != nullptr) {
-                lv_obj_clear_flag(btn_sta, LV_OBJ_FLAG_HIDDEN);
-            }
-            if (btn_ota != nullptr) {
-                lv_obj_clear_flag(btn_ota, LV_OBJ_FLAG_HIDDEN);
+
+                if (wifi_status_message_lbl != nullptr) {
+                    if (ap_capacity_rejected) {
+                        lv_label_set_text_fmt(wifi_status_message_lbl, "Status: Router pelny (%u %s)",
+                                              static_cast<unsigned>(disconnect_reason),
+                                              reason_name);
+                    } else if (status == WL_CONNECT_FAILED ||
+                        disconnect_reason == WIFI_REASON_AUTH_FAIL ||
+                        disconnect_reason == WIFI_REASON_4WAY_HANDSHAKE_TIMEOUT ||
+                        disconnect_reason == WIFI_REASON_HANDSHAKE_TIMEOUT) {
+                        lv_label_set_text_fmt(wifi_status_message_lbl, "Status: Blad WPA (%u %s)",
+                                              static_cast<unsigned>(disconnect_reason),
+                                              reason_name);
+                    } else if (status == WL_NO_SSID_AVAIL || disconnect_reason == WIFI_REASON_NO_AP_FOUND) {
+                        lv_label_set_text_fmt(wifi_status_message_lbl, "Status: Siec niedostepna (%u %s)",
+                                              static_cast<unsigned>(disconnect_reason),
+                                              reason_name);
+                    } else {
+                        lv_label_set_text_fmt(wifi_status_message_lbl, "Status: Timeout (%u %s)",
+                                              static_cast<unsigned>(disconnect_reason),
+                                              reason_name);
+                    }
+                    lv_obj_set_style_text_color(wifi_status_message_lbl, lv_color_make(239, 68, 68), 0);
+                }
+                if (btn_disconnect != nullptr) {
+                    lv_obj_add_flag(btn_disconnect, LV_OBJ_FLAG_HIDDEN);
+                }
+                if (btn_sta != nullptr) {
+                    lv_obj_clear_flag(btn_sta, LV_OBJ_FLAG_HIDDEN);
+                }
+                if (btn_ota != nullptr) {
+                    lv_obj_clear_flag(btn_ota, LV_OBJ_FLAG_HIDDEN);
+                }
             }
         }
     } else if (wifi_connected && !wifi_ota_active) {
@@ -6316,9 +7293,18 @@ static const char *wifi_disconnect_reason_name(uint8_t reason) {
     return (name != nullptr && name[0] != '\0') ? name : "UNKNOWN";
 }
 
+static bool wifi_disconnect_reason_is_ap_capacity(uint8_t reason) {
+    return reason == WIFI_REASON_ASSOC_TOOMANY_CODE;
+}
+
 static void btn_sta_handler(lv_event_t *e) {
     LV_UNUSED(e);
     play_system_sound(SoundType::Click);
+    if (gui_web_focus_blocks_local_ui()) {
+        gui_web_focus_show_wifi_main_panel();
+        gui_web_focus_apply_wifi_controls(true);
+        return;
+    }
 
     is_connecting = false;
     wifi_connected = false;
@@ -6351,6 +7337,11 @@ static void btn_sta_handler(lv_event_t *e) {
 
 static void btn_ota_handler(lv_event_t *e) {
     LV_UNUSED(e);
+    if (gui_web_focus_blocks_local_ui()) {
+        gui_web_focus_show_wifi_main_panel();
+        gui_web_focus_apply_wifi_controls(true);
+        return;
+    }
     pin_guard_execute_or_prompt(PinAction::StartOta, 0, false);
 }
 
@@ -6726,9 +7717,11 @@ static void diag_dev_mode_handler(lv_event_t *e) {
 }
 
 static void apply_dev_mode_authorized(bool enabled) {
-    cfg.devMode = enabled;
+    cfg.devMode = FORCE_DEVELOPER_MODE ? true : enabled;
     gui_app_save_settings();
-    if (cfg.devMode) {
+    if (FORCE_DEVELOPER_MODE && !enabled) {
+        add_gui_log("Tryb deweloperski wymuszony przez firmware", true);
+    } else if (cfg.devMode) {
         add_gui_log("Tryb deweloperski wlaczony", false);
     } else {
         add_gui_log("Tryb deweloperski wylaczony", true);
@@ -7147,6 +8140,11 @@ static lv_obj_t *create_subpage(const char *title, lv_event_cb_t back_cb = nullp
         lv_obj_add_event_cb(back, [](lv_event_t *e) {
             LV_UNUSED(e);
             play_system_sound(SoundType::Click);
+            if (gui_web_focus_blocks_local_ui()) {
+                gui_web_focus_show_wifi_main_panel();
+                gui_web_focus_apply_wifi_controls(true);
+                return;
+            }
             delete_runtime_subpages(true);
         }, LV_EVENT_CLICKED, sub);
     }
@@ -9817,9 +10815,9 @@ static void build_subpages(ActiveSubpage target) {
     lv_obj_set_style_border_width(btn_container, 0, 0);
     lv_obj_clear_flag(btn_container, LV_OBJ_FLAG_SCROLLABLE);
 
-    const char* light_modes[] = {"MIX", "WHITE", "PLANT"};
+    const char* light_modes[] = {"DAY", "DAYBR", "NIGHT"};
     for (int i = 0; i < 3; i++) {
-        editor_mode_btns[i] = create_button(btn_container, light_modes[i], 58, 22, lv_color_make(35, 41, 55), editor_mode_btn_cb, reinterpret_cast<void*>(static_cast<intptr_t>(i)));
+        editor_mode_btns[i] = create_button(btn_container, light_modes[i], 64, 22, lv_color_make(35, 41, 55), editor_mode_btn_cb, reinterpret_cast<void*>(static_cast<intptr_t>(i)));
         lv_obj_set_style_radius(editor_mode_btns[i], 4, 0);
         lv_obj_set_style_pad_all(editor_mode_btns[i], 0, 0);
     }
@@ -10130,9 +11128,9 @@ static void gui_sync_widgets_to_state() {
     }
     if (home_light_mode_lbl != nullptr) {
         if (cfg.lightMode == static_cast<uint8_t>(ScheduleMode::Schedule)) {
-            lv_label_set_text_fmt(home_light_mode_lbl, "%s %s", mode_label(cfg.lightMode), light_color_mode_label(cfg.lightColorMode));
+            lv_label_set_text_fmt(home_light_mode_lbl, "%s %s", mode_label(cfg.lightMode), light_color_mode_label(runtime.lightActiveMode));
         } else {
-            lv_label_set_text(home_light_mode_lbl, mode_label(cfg.lightMode));
+            lv_label_set_text_fmt(home_light_mode_lbl, "%s %s", mode_label(cfg.lightMode), light_color_mode_label(runtime.lightActiveMode));
         }
     }
 
@@ -10141,9 +11139,9 @@ static void gui_sync_widgets_to_state() {
     }
     if (home_plant_mode_lbl != nullptr) {
         if (cfg.plantLightMode == static_cast<uint8_t>(ScheduleMode::Schedule)) {
-            lv_label_set_text_fmt(home_plant_mode_lbl, "%s %s", mode_label(cfg.plantLightMode), light_color_mode_label(cfg.plantLightColorMode));
+            lv_label_set_text_fmt(home_plant_mode_lbl, "%s %s", mode_label(cfg.plantLightMode), light_color_mode_label(runtime.plantLightActiveMode));
         } else {
-            lv_label_set_text(home_plant_mode_lbl, mode_label(cfg.plantLightMode));
+            lv_label_set_text_fmt(home_plant_mode_lbl, "%s %s", mode_label(cfg.plantLightMode), light_color_mode_label(runtime.plantLightActiveMode));
         }
     }
 
@@ -10203,14 +11201,14 @@ static void gui_sync_widgets_to_state() {
         lv_label_set_text_fmt(device_light_detail_lbl, "%02u:%02u-%02u:%02u | %s | %s",
                               cfg.lightStartHour, cfg.lightStartMinute,
                               cfg.lightEndHour, cfg.lightEndMinute,
-                              light_color_mode_label(cfg.lightColorMode),
+                              light_color_mode_label(runtime.lightActiveMode),
                               runtime.lightOn ? "ON" : "OFF");
     }
     if (device_plant_detail_lbl != nullptr) {
         lv_label_set_text_fmt(device_plant_detail_lbl, "%02u:%02u-%02u:%02u | %s | %s",
                               cfg.plantStartHour, cfg.plantStartMinute,
                               cfg.plantEndHour, cfg.plantEndMinute,
-                              light_color_mode_label(cfg.plantLightColorMode),
+                              light_color_mode_label(runtime.plantLightActiveMode),
                               runtime.plantLightOn ? "ON" : "OFF");
     }
     if (device_filter_detail_lbl != nullptr) {
@@ -10498,9 +11496,8 @@ static void update_chart_stats() {
 }
 
 
-static void add_history_point(float temp, bool heater_on, float ph, int ldr) {
+static void append_history_point_at(float temp, bool heater_on, float ph, int ldr, uint32_t epoch) {
     uint32_t current_heap = ESP.getFreeHeap();
-    const uint32_t epoch = controller_unix_time();
     if (history_count < TEMP_HISTORY_POINTS) {
         temp_history[history_count] = temp;
         heater_history[history_count] = heater_on;
@@ -10524,6 +11521,33 @@ static void add_history_point(float temp, bool heater_on, float ph, int ldr) {
         ldr_history[TEMP_HISTORY_POINTS - 1] = ldr;
         heap_history[TEMP_HISTORY_POINTS - 1] = current_heap;
         history_epoch[TEMP_HISTORY_POINTS - 1] = epoch;
+    }
+}
+
+static void add_history_point(float temp, bool heater_on, float ph, int ldr) {
+    append_history_point_at(temp, heater_on, ph, ldr, controller_unix_time());
+}
+
+static void seed_dev_history(float temp, float ph, int ldr) {
+    if (!cfg.devMode || history_count != 0 || !isfinite(temp)) {
+        return;
+    }
+
+    const uint32_t now_epoch = controller_unix_time();
+    const uint8_t seed_count = TEMP_HISTORY_POINTS > 0 ? static_cast<uint8_t>(TEMP_HISTORY_POINTS - 1U) : 0U;
+    for (uint8_t i = 0; i < seed_count; ++i) {
+        const uint8_t age = static_cast<uint8_t>(seed_count - i);
+        const float phase = static_cast<float>(age);
+        const float seeded_temp = temp + 0.30f * sinf(phase * 0.43f) - 0.10f * cosf(phase * 0.19f);
+        const float seeded_ph = isfinite(ph) ? ph + 0.055f * sinf(phase * 0.37f) : NAN;
+        int seeded_ldr = -1;
+        if (ldr >= 0) {
+            seeded_ldr = clamp_ldr_value(ldr + static_cast<int>(lroundf(80.0f * sinf(phase * 0.31f))));
+        }
+        const bool seeded_heater = seeded_temp < (cfg.targetTemp - cfg.tempHysteresis);
+        const uint32_t age_seconds = static_cast<uint32_t>(age) * 60UL;
+        const uint32_t sample_epoch = now_epoch > age_seconds ? now_epoch - age_seconds : 0UL;
+        append_history_point_at(seeded_temp, seeded_heater, seeded_ph, seeded_ldr, sample_epoch);
     }
 }
 
@@ -10721,15 +11745,19 @@ static void select_chart_cb(lv_event_t *e) {
 
 
 static void update_charts_data(float temp, float ph) {
-    history_archive_append_sample(temp,
-                                  runtime.heaterOn,
-                                  ph,
-                                  last_ldr_valid ? last_ldr_value : -1,
-                                  ESP.getFreeHeap());
+    const int ldr_sample = last_ldr_valid ? last_ldr_value : -1;
+    if (!cfg.devMode) {
+        history_archive_append_sample(temp,
+                                      runtime.heaterOn,
+                                      ph,
+                                      ldr_sample,
+                                      ESP.getFreeHeap());
+    }
     if (!isfinite(temp)) {
         return;
     }
-    add_history_point(temp, runtime.heaterOn, ph, last_ldr_valid ? last_ldr_value : -1);
+    seed_dev_history(temp, ph, ldr_sample);
+    add_history_point(temp, runtime.heaterOn, ph, ldr_sample);
     redraw_charts();
     update_chart_stats();
 }
@@ -10945,6 +11973,17 @@ static void reset_gui_object_refs() {
     wifi_pwd_ta = nullptr;
     wifi_pwd_kb = nullptr;
     wifi_pwd_title_lbl = nullptr;
+    web_client_screen = nullptr;
+    web_client_state_lbl = nullptr;
+    web_client_url_lbl = nullptr;
+    web_client_status_lbl = nullptr;
+    web_client_ssid_lbl = nullptr;
+    web_client_ip_lbl = nullptr;
+    web_client_rssi_lbl = nullptr;
+    web_client_uptime_lbl = nullptr;
+    web_client_progress_bar = nullptr;
+    web_client_progress_lbl = nullptr;
+    web_ui_last_screen_ms = 0;
 }
 
 
@@ -11082,6 +12121,7 @@ void gui_app_init(void) {
 
 void gui_app_handle_ota_portal(void) {
     if (!ota_portal_running) {
+        gui_web_focus_update();
         return;
     }
 
@@ -11089,6 +12129,7 @@ void gui_app_handle_ota_portal(void) {
         ota_dns_server.processNextRequest();
     }
     ota_http_server.handleClient();
+    gui_web_focus_update();
 
     if (ota_reboot_pending && static_cast<int32_t>(millis() - ota_reboot_at_ms) >= 0) {
         Serial.println("HTTP_OTA: restarting after successful update.");
@@ -11258,10 +12299,22 @@ void gui_app_update_wifi(int state, int rssi) {
             }
         }
     }
+
+    gui_web_focus_apply_wifi_controls(true);
 }
 
 
 void gui_update_metrics(float temp, float ph, uint32_t free_heap, const char *time_str) {
+    if (cfg.devMode) {
+        const float phase = static_cast<float>((millis() / 1000UL) % 3600UL) / 60.0f;
+        if (!isfinite(temp)) {
+            temp = 25.8f + 0.45f * sinf(phase * 0.17f) + 0.10f * cosf(phase * 0.07f);
+        }
+        if (!isfinite(ph)) {
+            ph = 6.92f + 0.12f * sinf(phase * 0.11f);
+        }
+    }
+
     const bool temp_valid = isfinite(temp);
     const bool ph_valid = isfinite(ph);
     if (temp_valid) {
@@ -11280,24 +12333,45 @@ void gui_update_metrics(float temp, float ph, uint32_t free_heap, const char *ti
     const uint16_t nowMins = static_cast<uint16_t>(constrain(hr, 0, 23)) * 60U +
                              static_cast<uint16_t>(constrain(mn, 0, 59));
     const bool output_hardware_available = !cfg.devMode && hal_mcp_is_present();
+    const bool output_runtime_available = cfg.devMode || output_hardware_available;
 
-    runtime.lightOn = output_hardware_available &&
-                      schedule_active(cfg.lightMode, nowMins, cfg.lightStartHour, cfg.lightStartMinute, cfg.lightEndHour, cfg.lightEndMinute);
-    runtime.lightActiveMode = cfg.lightMode == static_cast<uint8_t>(ScheduleMode::Schedule) ? cfg.lightSchedColorMode : cfg.lightColorMode;
-    runtime.plantLightOn = output_hardware_available &&
+    uint8_t factory_light_profile = 0U;
+    const bool factory_light_active = factory_light_profile_at(nowMins, &factory_light_profile);
+    runtime.lightOn = output_runtime_available &&
+                      (cfg.lightMode == static_cast<uint8_t>(ScheduleMode::Schedule) && config_uses_factory_light_window()
+                           ? factory_light_active
+                           : schedule_active(cfg.lightMode, nowMins, cfg.lightStartHour, cfg.lightStartMinute, cfg.lightEndHour, cfg.lightEndMinute));
+    runtime.lightActiveMode = cfg.lightMode == static_cast<uint8_t>(ScheduleMode::Schedule)
+                                  ? (config_uses_factory_light_window()
+                                         ? factory_light_profile
+                                         : schedule_profile_to_aquael(cfg.lightSchedColorMode))
+                                  : normalize_aquael_profile(cfg.lightColorMode);
+    runtime.plantLightOn = output_runtime_available &&
                            schedule_active(cfg.plantLightMode, nowMins, cfg.plantStartHour, cfg.plantStartMinute, cfg.plantEndHour, cfg.plantEndMinute);
-    runtime.plantLightActiveMode = cfg.plantLightMode == static_cast<uint8_t>(ScheduleMode::Schedule) ? cfg.plantSchedColorMode : cfg.plantLightColorMode;
-    runtime.filterOn = output_hardware_available &&
+    runtime.plantLightActiveMode = cfg.plantLightMode == static_cast<uint8_t>(ScheduleMode::Schedule)
+                                       ? schedule_profile_to_aquael(cfg.plantSchedColorMode)
+                                       : normalize_aquael_profile(cfg.plantLightColorMode);
+    runtime.filterOn = output_runtime_available &&
                        schedule_active(cfg.filterMode, nowMins, cfg.filterStartHour, cfg.filterStartMinute, cfg.filterEndHour, cfg.filterEndMinute);
-    runtime.airOn = output_hardware_available && cfg.enableAerator &&
+    runtime.airOn = output_runtime_available && cfg.enableAerator &&
                     schedule_active(cfg.airMode, nowMins, cfg.airStartHour, cfg.airStartMinute, cfg.airEndHour, cfg.airEndMinute);
 
+    const uint16_t leak_mask = static_cast<uint16_t>(1U << static_cast<uint8_t>(HwConfig::CH_LEAK));
+    const bool leak_detected = sensor_debug.mcpValid && ((sensor_debug.mcpState & leak_mask) != 0U);
+    const bool co2_window_active = is_within_window(nowMins,
+                                                    FACTORY_CO2_AIR_START_HOUR,
+                                                    FACTORY_CO2_AIR_START_MINUTE,
+                                                    FACTORY_CO2_AIR_END_HOUR,
+                                                    FACTORY_CO2_AIR_END_MINUTE);
+    runtime.co2On = output_runtime_available && cfg.enableCo2 && co2_window_active &&
+                    ph_valid && ph > FACTORY_CO2_TARGET_PH && !leak_detected;
+    if (runtime.co2On) {
+        runtime.airOn = false; // Factory profile uses CO2 or aeration in this window, never both at once.
+    }
+
     bool old_heater_on = runtime.heaterOn;
-    const bool heater_work_window_active =
-        is_within_window(nowMins, cfg.lightStartHour, cfg.lightStartMinute, cfg.lightEndHour, cfg.lightEndMinute);
-    // Heater reuses the main light work window, so the NVS config layout stays unchanged.
-    if (!output_hardware_available || !cfg.enableHeater || cfg.heaterMode == static_cast<uint8_t>(HeaterMode::Off) ||
-        !isfinite(temp) || !heater_work_window_active) {
+    if (!output_runtime_available || !cfg.enableHeater || cfg.heaterMode == static_cast<uint8_t>(HeaterMode::Off) ||
+        !isfinite(temp)) {
         runtime.heaterOn = false;
     } else if (temp < cfg.targetTemp - cfg.tempHysteresis) {
         runtime.heaterOn = true;
@@ -11382,6 +12456,17 @@ void gui_update_metrics(float temp, float ph, uint32_t free_heap, const char *ti
             lv_label_set_text_fmt(label_power_mode, "T %.1f*C", temp);
         } else {
             lv_label_set_text(label_power_mode, "T --.-*C");
+        }
+    }
+    if (label_rtc_bat != nullptr) {
+        if (cfg.devMode) {
+            lv_label_set_text(label_rtc_bat, "DEV");
+            lv_obj_set_style_text_color(label_rtc_bat, lv_color_make(245, 158, 11), 0);
+            lv_obj_set_style_bg_color(label_rtc_bat, resolve_bg_color(lv_color_make(69, 26, 3)), 0);
+        } else {
+            lv_label_set_text(label_rtc_bat, "USB");
+            lv_obj_set_style_text_color(label_rtc_bat, lv_color_make(16, 185, 129), 0);
+            lv_obj_set_style_bg_color(label_rtc_bat, resolve_bg_color(lv_color_make(6, 78, 59)), 0);
         }
     }
     if (label_clock_time != nullptr && time_str != nullptr) {
@@ -11624,8 +12709,8 @@ void gui_app_update_sensor_debug(int ldr_value,
     }
 
     if (co2_state_lbl != nullptr) {
-        const bool co2_on = mcp_bit(HwConfig::CH_CO2);
-        lv_label_set_text(co2_state_lbl, mcp_valid ? (co2_on ? "Stan: ON" : "Stan: OFF") : "Stan: --");
+        const bool co2_on = cfg.devMode ? runtime.co2On : mcp_bit(HwConfig::CH_CO2);
+        lv_label_set_text(co2_state_lbl, (mcp_valid || cfg.devMode) ? (co2_on ? "Stan: ON" : "Stan: OFF") : "Stan: --");
         lv_obj_set_style_text_color(co2_state_lbl,
                                     co2_on ? lv_color_make(16, 185, 129) : theme_text_main(), 0);
     }
@@ -11686,7 +12771,9 @@ void gui_app_update_sensor_debug(int ldr_value,
         }
     }
     if (device_co2_detail_lbl != nullptr && cfg.enableCo2) {
-        lv_label_set_text(device_co2_detail_lbl, mcp_valid ? (mcp_bit(HwConfig::CH_CO2) ? "Zawor ON" : "Zawor OFF") : "MCP --");
+        const bool co2_on = cfg.devMode ? runtime.co2On : mcp_bit(HwConfig::CH_CO2);
+        lv_label_set_text(device_co2_detail_lbl,
+                          (mcp_valid || cfg.devMode) ? (co2_on ? "Zawor ON" : "Zawor OFF") : "MCP --");
     }
 }
 
@@ -11731,4 +12818,8 @@ void gui_app_update_ldr(int ldr_value, bool valid) {
 
 bool gui_app_is_dev_mode(void) {
     return cfg.devMode;
+}
+
+bool gui_app_is_web_focus_active(void) {
+    return web_ui_focus_active;
 }

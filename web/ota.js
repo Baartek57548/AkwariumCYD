@@ -32,7 +32,7 @@ function updateOtaPinStatus() {
     setCommandStatus(
         'ota-strip-pin',
         isAdmin ? 'Admin' : 'Gość',
-        isAdmin ? 'Sesja administratora aktywna' : 'Zaloguj admina przed uploadem',
+        isAdmin ? 'Dostęp administracyjny aktywny' : 'Zaloguj admina przed uploadem',
         isAdmin ? 'ok' : 'warn'
     );
 }
@@ -126,7 +126,7 @@ async function uploadFirmwarePackage() {
 
     const servicePin = typeof getAdminPinForRequest === 'function' ? getAdminPinForRequest() : '';
     if (!servicePin) {
-        alert('Sesja admina jest nieaktywna. Zaloguj admina ponownie.');
+        alert('Dostęp admina jest nieaktywny. Zaloguj admina ponownie.');
         return;
     }
 
