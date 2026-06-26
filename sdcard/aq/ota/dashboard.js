@@ -453,29 +453,39 @@ function renderNetworkCard(network) {
     const staConnecting = !!network?.staConnecting;
     const serviceMode = !!network?.serviceMode;
     const serviceModePending = !!network?.serviceModePending;
+    const retryCooldownMs = toFiniteNumber(network?.staRetryCooldownMs);
     const statusText = serviceModePending
         ? 'START WIFI...'
+        : (retryCooldownMs !== null && retryCooldownMs > 0
+        ? 'ROUTER PELNY'
         : (staConnecting
         ? 'LACZENIE...'
         : (staConnected && apMode
             ? 'AP + STA'
             : (staConnected
                 ? 'STA ONLINE'
-                : (apMode ? 'TRYB AP' : (serviceMode ? 'SESJA WIFI' : 'RADIO OFF')))));
+                : (apMode ? 'TRYB AP' : (serviceMode ? 'SESJA WIFI' : 'RADIO OFF'))))));
     const ssidText = staConnected || staConnecting
         ? (network?.staSsid || network?.configuredStaSsid || '-')
         : (apMode ? (network?.configuredApSsid || network?.ssid || '-') : '-');
 
     setText('network-status', statusText);
     setText('network-ssid', ssidText);
-    setText('network-last-seen', formatEpoch(network?.staLastConnectedEpoch, { fallback: 'Brak historii' }));
+    setText(
+        'network-last-seen',
+        retryCooldownMs !== null && retryCooldownMs > 0
+            ? `Ponowienie za ${formatCountdown(retryCooldownMs)}`
+            : formatEpoch(network?.staLastConnectedEpoch, { fallback: 'Brak historii' })
+    );
 
     card.classList.remove('network-online', 'network-aponly', 'network-offline', 'network-connecting');
     const transitional = serviceModePending || staConnecting ||
         (serviceMode && !staConnected && !apMode);
-    card.classList.add(transitional
+    card.classList.add(retryCooldownMs !== null && retryCooldownMs > 0
+        ? 'network-offline'
+        : (transitional
         ? 'network-connecting'
-        : (staConnected ? 'network-online' : (apMode ? 'network-aponly' : 'network-offline')));
+        : (staConnected ? 'network-online' : (apMode ? 'network-aponly' : 'network-offline'))));
 }
 
 function isHeaterAutomationEnabled(data) {

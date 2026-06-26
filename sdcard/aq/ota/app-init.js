@@ -256,6 +256,7 @@ document.addEventListener('DOMContentLoaded', () => {
     setTemperatureStatus('Sterowanie grzałką jest synchronizowane ze sterownikiem.', 'muted');
     setDeviceActionStatus('Akcje administracyjne wymagają potwierdzenia.', 'muted');
 
+    startWebSessionHeartbeat();
     startEventStream();
     startPollingFallback();
     fetchStatus(true);

@@ -74,8 +74,11 @@ constexpr char OTA_PORTAL_HISTORY_DIR[] = "/aq/data/history";
 constexpr char OTA_PORTAL_LOG_DIR[] = "/aq/data/logs";
 constexpr char OTA_PORTAL_DIAG_DIR[] = "/aq/data/diagnostics";
 constexpr uint32_t WEB_UI_ACTIVITY_TIMEOUT_MS = 12000UL;
+constexpr uint32_t WEB_UI_CLIENT_TIMEOUT_MS = 15000UL;
 constexpr uint32_t WEB_UI_CONTROL_REFRESH_MS = 1000UL;
 constexpr uint8_t WEB_UI_FOCUS_PAGE_INDEX = 4U;
+constexpr uint8_t WEB_UI_CLIENT_SLOT_COUNT = 4U;
+constexpr size_t WEB_UI_SESSION_ID_MAX_LEN = 24U;
 constexpr uint32_t AQUAEL_DN_MAX_TOGGLE_WINDOW_MS = 5000UL;
 constexpr uint32_t AQUAEL_DN_CYCLE_OFF_MS = 260UL;
 constexpr uint32_t AQUAEL_DN_CYCLE_ON_SETTLE_MS = 260UL;
@@ -106,6 +109,7 @@ constexpr uint8_t GUI_LOG_CAPACITY = 15;
 constexpr size_t GUI_LOG_MESSAGE_LEN = 96;
 constexpr uint32_t WIFI_PROFILE_CONNECT_TIMEOUT_MS = 30000UL;
 constexpr uint8_t WIFI_REASON_ASSOC_TOOMANY_CODE = 5U;
+constexpr uint32_t WIFI_ASSOC_TOOMANY_COOLDOWN_MS = 300000UL;
 constexpr char NTP_TZ_POLAND[] = "CET-1CEST,M3.5.0/2,M10.5.0/3";
 constexpr char NTP_SERVER_1[] = "pool.ntp.org";
 constexpr char NTP_SERVER_2[] = "time.nist.gov";
@@ -565,6 +569,12 @@ enum class ActiveSubpage : int {
 };
 static ActiveSubpage current_subpage = ActiveSubpage::None;
 static int current_page_index = 0;
+struct WebUiClientSlot {
+    char id[WEB_UI_SESSION_ID_MAX_LEN + 1U];
+    uint32_t lastSeenMs;
+    bool active;
+};
+static WebUiClientSlot web_ui_clients[WEB_UI_CLIENT_SLOT_COUNT] = {};
 static uint32_t web_ui_last_request_ms = 0;
 static uint32_t web_ui_last_control_ms = 0;
 static uint32_t web_ui_last_screen_ms = 0;
@@ -800,6 +810,7 @@ static unsigned long scan_start_ms = 0;
 static bool wifi_events_registered = false;
 static volatile uint8_t wifi_last_disconnect_reason = 0;
 static volatile uint32_t wifi_last_disconnect_ms = 0;
+static uint32_t wifi_assoc_toomany_retry_after_ms = 0;
 static IPAddress ota_portal_ip(192, 168, 4, 1);
 static IPAddress ota_portal_gateway(192, 168, 4, 1);
 static IPAddress ota_portal_subnet(255, 255, 255, 0);
@@ -980,6 +991,12 @@ static void prepare_wifi_sta_radio();
 static void register_wifi_event_handlers();
 static const char *wifi_disconnect_reason_name(uint8_t reason);
 static bool wifi_disconnect_reason_is_ap_capacity(uint8_t reason);
+static bool web_ui_session_id_valid(const char *session_id);
+static uint8_t web_ui_prune_clients(uint32_t now_ms);
+static uint8_t web_ui_active_client_count(uint32_t now_ms);
+static void web_ui_track_client(const char *session_id, uint32_t now_ms);
+static void web_ui_release_client(const char *session_id);
+static void web_ui_clear_clients();
 static void ota_portal_mark_web_activity();
 static bool ota_portal_has_recent_web_activity(uint32_t now_ms);
 static bool gui_web_focus_blocks_local_ui();
@@ -995,6 +1012,7 @@ static void ota_portal_handle_root();
 static void ota_portal_handle_status();
 static void ota_portal_handle_logs();
 static void ota_portal_handle_action();
+static void ota_portal_handle_web_session();
 static void ota_portal_handle_events();
 static void ota_portal_handle_settime();
 static void ota_portal_handle_current_history_csv();
@@ -4343,12 +4361,121 @@ static bool open_or_build_subpage(ActiveSubpage target) {
     return true;
 }
 
+static bool web_ui_session_id_valid(const char *session_id) {
+    if (session_id == nullptr || session_id[0] == '\0') {
+        return false;
+    }
+
+    size_t len = 0;
+    while (session_id[len] != '\0') {
+        const char c = session_id[len];
+        const bool allowed =
+            (c >= '0' && c <= '9') ||
+            (c >= 'A' && c <= 'Z') ||
+            (c >= 'a' && c <= 'z') ||
+            c == '-' ||
+            c == '_';
+        if (!allowed) {
+            return false;
+        }
+        ++len;
+        if (len > WEB_UI_SESSION_ID_MAX_LEN) {
+            return false;
+        }
+    }
+
+    return len >= 6U;
+}
+
+static uint8_t web_ui_prune_clients(uint32_t now_ms) {
+    uint8_t active_count = 0;
+    for (uint8_t i = 0; i < WEB_UI_CLIENT_SLOT_COUNT; ++i) {
+        WebUiClientSlot &slot = web_ui_clients[i];
+        if (!slot.active) {
+            continue;
+        }
+        if (static_cast<uint32_t>(now_ms - slot.lastSeenMs) > WEB_UI_CLIENT_TIMEOUT_MS) {
+            slot.active = false;
+            slot.lastSeenMs = 0;
+            slot.id[0] = '\0';
+            continue;
+        }
+        ++active_count;
+    }
+    return active_count;
+}
+
+static uint8_t web_ui_active_client_count(uint32_t now_ms) {
+    return web_ui_prune_clients(now_ms);
+}
+
+static void web_ui_track_client(const char *session_id, uint32_t now_ms) {
+    if (!web_ui_session_id_valid(session_id)) {
+        return;
+    }
+
+    web_ui_prune_clients(now_ms);
+    int free_slot = -1;
+    int oldest_slot = 0;
+    uint32_t oldest_seen = UINT32_MAX;
+
+    for (uint8_t i = 0; i < WEB_UI_CLIENT_SLOT_COUNT; ++i) {
+        WebUiClientSlot &slot = web_ui_clients[i];
+        if (slot.active && strncmp(slot.id, session_id, WEB_UI_SESSION_ID_MAX_LEN) == 0) {
+            slot.lastSeenMs = now_ms;
+            return;
+        }
+        if (!slot.active && free_slot < 0) {
+            free_slot = i;
+        }
+        if (slot.lastSeenMs < oldest_seen) {
+            oldest_seen = slot.lastSeenMs;
+            oldest_slot = i;
+        }
+    }
+
+    WebUiClientSlot &target = web_ui_clients[free_slot >= 0 ? free_slot : oldest_slot];
+    snprintf(target.id, sizeof(target.id), "%s", session_id);
+    target.lastSeenMs = now_ms;
+    target.active = true;
+}
+
+static void web_ui_release_client(const char *session_id) {
+    if (!web_ui_session_id_valid(session_id)) {
+        return;
+    }
+
+    for (uint8_t i = 0; i < WEB_UI_CLIENT_SLOT_COUNT; ++i) {
+        WebUiClientSlot &slot = web_ui_clients[i];
+        if (slot.active && strncmp(slot.id, session_id, WEB_UI_SESSION_ID_MAX_LEN) == 0) {
+            slot.active = false;
+            slot.lastSeenMs = 0;
+            slot.id[0] = '\0';
+            return;
+        }
+    }
+}
+
+static void web_ui_clear_clients() {
+    for (uint8_t i = 0; i < WEB_UI_CLIENT_SLOT_COUNT; ++i) {
+        web_ui_clients[i].active = false;
+        web_ui_clients[i].lastSeenMs = 0;
+        web_ui_clients[i].id[0] = '\0';
+    }
+}
+
 static void ota_portal_mark_web_activity() {
     web_ui_last_request_ms = millis();
 }
 
 static bool ota_portal_has_recent_web_activity(uint32_t now_ms) {
-    if (!ota_portal_running || web_ui_last_request_ms == 0) {
+    if (!ota_portal_running) {
+        return false;
+    }
+    if (web_ui_active_client_count(now_ms) > 0U) {
+        return true;
+    }
+    if (web_ui_last_request_ms == 0) {
         return false;
     }
     return static_cast<uint32_t>(now_ms - web_ui_last_request_ms) <= WEB_UI_ACTIVITY_TIMEOUT_MS;
@@ -4494,6 +4621,7 @@ static void gui_web_client_screen_update(bool force) {
     const String ssid = sta_online ? WiFi.SSID() : WiFi.softAPSSID();
     const uint32_t idle_s = web_ui_last_request_ms == 0 ? 0U : static_cast<uint32_t>((now_ms - web_ui_last_request_ms) / 1000U);
     const bool ota_screen = ota_http_upload_active || ota_reboot_pending || ota_http_update_failed;
+    const uint8_t active_web_clients = web_ui_active_client_count(now_ms);
 
     char url_buf[96];
     if (sta_online || ap_online) {
@@ -4524,10 +4652,10 @@ static void gui_web_client_screen_update(bool force) {
             lv_label_set_text(web_client_state_lbl, "Laczenie z WiFi STA");
             lv_obj_set_style_text_color(web_client_state_lbl, lv_color_make(245, 158, 11), 0);
         } else if (sta_online && ota_portal_running) {
-            lv_label_set_text(web_client_state_lbl, "Klient WWW na STA");
+            lv_label_set_text_fmt(web_client_state_lbl, "Panel WWW na STA: %u", static_cast<unsigned>(active_web_clients));
             lv_obj_set_style_text_color(web_client_state_lbl, lv_color_make(16, 185, 129), 0);
         } else if (ap_online) {
-            lv_label_set_text(web_client_state_lbl, "Klient WWW na AP");
+            lv_label_set_text_fmt(web_client_state_lbl, "Panel WWW na AP: %u", static_cast<unsigned>(active_web_clients));
             lv_obj_set_style_text_color(web_client_state_lbl, lv_color_make(6, 182, 212), 0);
         } else if (any_wifi) {
             lv_label_set_text(web_client_state_lbl, "WiFi aktywne");
@@ -4554,7 +4682,9 @@ static void gui_web_client_screen_update(bool force) {
     }
 
     if (web_client_uptime_lbl != nullptr) {
-        lv_label_set_text_fmt(web_client_uptime_lbl, "WWW: %lus temu", static_cast<unsigned long>(idle_s));
+        lv_label_set_text_fmt(web_client_uptime_lbl, "WWW: %u / %lus",
+                              static_cast<unsigned>(active_web_clients),
+                              static_cast<unsigned long>(idle_s));
     }
 
     if (web_client_progress_bar != nullptr && web_client_progress_lbl != nullptr) {
@@ -4597,7 +4727,7 @@ static void gui_web_client_screen_update(bool force) {
             lv_label_set_text(web_client_status_lbl, "Zapis OK. Restart urzadzenia...");
             lv_obj_set_style_text_color(web_client_status_lbl, lv_color_make(16, 185, 129), 0);
         } else if (ota_portal_has_recent_web_activity(now_ms)) {
-            lv_label_set_text(web_client_status_lbl, "UI wstrzymany. Zamknij strone.");
+            lv_label_set_text(web_client_status_lbl, "Lokalny UI wstrzymany. Dostepne: WiFi i Wstecz.");
             lv_obj_set_style_text_color(web_client_status_lbl, lv_color_make(148, 163, 184), 0);
         } else {
             lv_label_set_text(web_client_status_lbl, "WWW wygaslo. Wstecz przywraca panel.");
@@ -4878,10 +5008,6 @@ static void btn_deep_sleep_handler(lv_event_t *e) {
 static void deep_sleep_authorized() {
     play_system_sound(SoundType::Warning);
     const EcoRuntimeStatus eco = eco_collect_status();
-    const bool sd_ready_for_status = ota_portal_sd_ready();
-    const uint64_t sd_total_bytes = sd_ready_for_status ? SD.totalBytes() : 0ULL;
-    const uint64_t sd_used_bytes = sd_ready_for_status ? SD.usedBytes() : 0ULL;
-    const uint64_t sd_free_bytes = (sd_total_bytes > sd_used_bytes) ? (sd_total_bytes - sd_used_bytes) : 0ULL;
     const uint32_t sleep_seconds = planned_deep_sleep_seconds(eco);
     Serial.printf("System: Deep sleep requested for %lu s, blockers=0x%04x.\n",
                   static_cast<unsigned long>(sleep_seconds),
@@ -5164,6 +5290,13 @@ static bool load_wifi_profile_file(const char *path,
 
 static void try_autoconnect_wifi_profile(void) {
     if (cfg.modemSleep || wifi_connected || is_connecting || wifi_ota_active) {
+        return;
+    }
+    const uint32_t now_ms = millis();
+    if (wifi_assoc_toomany_retry_after_ms != 0U &&
+        static_cast<int32_t>(now_ms - wifi_assoc_toomany_retry_after_ms) < 0) {
+        Serial.printf("WIFI_SD: autoconnect delayed after ASSOC_TOOMANY for %lu ms\n",
+                      static_cast<unsigned long>(wifi_assoc_toomany_retry_after_ms - now_ms));
         return;
     }
     if (!ota_portal_sd_ready()) {
@@ -5763,6 +5896,8 @@ static void ota_portal_handle_status() {
     char ph_json[16];
     char ec_json[16];
     char ldr_json[16];
+    char battery_voltage_json[16];
+    char battery_percent_json[8];
     const float dev_status_phase = static_cast<float>((millis() / 1000UL) % 3600UL) / 60.0f;
     const bool api_temp_valid = isfinite(runtime.lastTemp);
     const bool api_ph_valid = isfinite(runtime.lastPh);
@@ -5786,6 +5921,15 @@ static void ota_portal_handle_status() {
     } else {
         snprintf(ldr_json, sizeof(ldr_json), "null");
     }
+    if (cfg.devMode) {
+        const float battery_voltage = 3.24f + 0.035f * sinf(dev_status_phase * 0.05f);
+        const int battery_percent = constrain(76 + static_cast<int>(lroundf(9.0f * sinf(dev_status_phase * 0.04f))), 0, 100);
+        snprintf(battery_voltage_json, sizeof(battery_voltage_json), "%.2f", battery_voltage);
+        snprintf(battery_percent_json, sizeof(battery_percent_json), "%d", battery_percent);
+    } else {
+        snprintf(battery_voltage_json, sizeof(battery_voltage_json), "null");
+        snprintf(battery_percent_json, sizeof(battery_percent_json), "null");
+    }
     const bool api_mcp_present = sensor_debug.mcpPresent || cfg.devMode;
     const bool mcp_status_valid = (sensor_debug.mcpPresent && sensor_debug.mcpValid) || cfg.devMode;
     const uint16_t water_level_mask = static_cast<uint16_t>(1U << static_cast<uint8_t>(HwConfig::CH_WATER_LEVEL));
@@ -5799,6 +5943,16 @@ static void ota_portal_handle_status() {
     const uint64_t sd_total_bytes = sd_ready_for_status ? SD.totalBytes() : 0ULL;
     const uint64_t sd_used_bytes = sd_ready_for_status ? SD.usedBytes() : 0ULL;
     const uint64_t sd_free_bytes = (sd_total_bytes > sd_used_bytes) ? (sd_total_bytes - sd_used_bytes) : 0ULL;
+    const uint32_t status_now_ms = millis();
+    const uint8_t active_web_clients = web_ui_active_client_count(status_now_ms);
+    const uint32_t web_idle_ms = web_ui_last_request_ms == 0U
+                                     ? 0U
+                                     : static_cast<uint32_t>(status_now_ms - web_ui_last_request_ms);
+    const uint32_t wifi_retry_cooldown_ms =
+        (wifi_assoc_toomany_retry_after_ms != 0U &&
+         static_cast<int32_t>(status_now_ms - wifi_assoc_toomany_retry_after_ms) < 0)
+            ? static_cast<uint32_t>(wifi_assoc_toomany_retry_after_ms - status_now_ms)
+            : 0U;
 
     char line[512];
     ota_portal_no_cache();
@@ -5946,7 +6100,9 @@ static void ota_portal_handle_status() {
              controller_clock_reliable ? "true" : "false");
     ota_http_server.sendContent(line);
     ota_portal_send_json_escaped(controller_clock_source);
-    ota_http_server.sendContent("},");
+    snprintf(line, sizeof(line), ",\"staRetryCooldownMs\":%lu},",
+             static_cast<unsigned long>(wifi_retry_cooldown_ms));
+    ota_http_server.sendContent(line);
 
     snprintf(line, sizeof(line),
              "\"temperature\":{\"current\":%s,\"target\":%.2f,\"hysteresis\":%.2f,"
@@ -5975,10 +6131,12 @@ static void ota_portal_handle_status() {
     ota_http_server.sendContent("},");
 
     snprintf(line, sizeof(line),
-             "\"battery\":{\"voltage\":null,\"percent\":null},"
+             "\"battery\":{\"voltage\":%s,\"percent\":%s},"
              "\"firmware\":{\"version\":\"dev\",\"buildDate\":\"%s\",\"buildTime\":\"%s\"},"
              "\"network\":{\"staConnected\":%s,\"staConnecting\":%s,\"apMode\":%s,"
              "\"serviceMode\":%s,\"serviceModePending\":false,\"staSsid\":",
+             battery_voltage_json,
+             battery_percent_json,
              __DATE__,
              __TIME__,
              wifi_connected ? "true" : "false",
@@ -6009,6 +6167,14 @@ static void ota_portal_handle_status() {
     ota_http_server.sendContent(line);
     ota_portal_send_json_escaped(controller_clock_source);
     ota_http_server.sendContent("},");
+
+    snprintf(line, sizeof(line),
+             "\"web\":{\"focus\":%s,\"activeClients\":%u,\"lastSeenMs\":%lu,\"timeoutMs\":%lu},",
+             gui_web_focus_blocks_local_ui() ? "true" : "false",
+             static_cast<unsigned>(active_web_clients),
+             static_cast<unsigned long>(web_idle_ms),
+             static_cast<unsigned long>(WEB_UI_CLIENT_TIMEOUT_MS));
+    ota_http_server.sendContent(line);
 
     snprintf(line, sizeof(line),
              "\"system\":{\"uptime\":%lu,\"powerMode\":\"%s\",\"resetReason\":\"%u\","
@@ -6459,6 +6625,44 @@ static void ota_portal_handle_action() {
     ota_portal_send_action_result(false, "unknown_action", "Nieznana akcja.");
 }
 
+static void ota_portal_handle_web_session() {
+    ota_portal_mark_web_activity();
+    const uint32_t now_ms = millis();
+
+    char session_id[WEB_UI_SESSION_ID_MAX_LEN + 1U] = "";
+    if (ota_http_server.hasArg("sid")) {
+        ota_http_server.arg("sid").toCharArray(session_id, sizeof(session_id));
+    }
+
+    bool closing = false;
+    if (ota_http_server.hasArg("state")) {
+        String state = ota_http_server.arg("state");
+        state.trim();
+        state.toLowerCase();
+        closing = state == "close" || state == "closed" || state == "release" || state == "inactive";
+    }
+
+    if (closing) {
+        web_ui_release_client(session_id);
+    } else {
+        web_ui_track_client(session_id, now_ms);
+    }
+
+    const uint8_t active_clients = web_ui_active_client_count(now_ms);
+    if (active_clients == 0U && closing) {
+        web_ui_last_request_ms = 0;
+    }
+
+    ota_portal_no_cache();
+    char body[128];
+    snprintf(body, sizeof(body),
+             "{\"ok\":true,\"activeClients\":%u,\"focus\":%s,\"timeoutMs\":%lu}",
+             static_cast<unsigned>(active_clients),
+             ota_portal_has_recent_web_activity(now_ms) ? "true" : "false",
+             static_cast<unsigned long>(WEB_UI_CLIENT_TIMEOUT_MS));
+    ota_http_server.send(200, "application/json", body);
+}
+
 static void ota_portal_handle_settime() {
     ota_portal_mark_web_activity();
     if (!ota_portal_require_pin()) {
@@ -6858,6 +7062,8 @@ static void register_ota_portal_routes() {
     ota_http_server.on("/api/status", HTTP_GET, ota_portal_handle_status);
     ota_http_server.on("/api/logs", HTTP_GET, ota_portal_handle_logs);
     ota_http_server.on("/api/action", HTTP_POST, ota_portal_handle_action);
+    ota_http_server.on("/api/web-session", HTTP_GET, ota_portal_handle_web_session);
+    ota_http_server.on("/api/web-session", HTTP_POST, ota_portal_handle_web_session);
     ota_http_server.on("/api/events", HTTP_GET, ota_portal_handle_events);
     ota_http_server.on("/settime", HTTP_POST, ota_portal_handle_settime);
     ota_http_server.on("/api/history.csv", HTTP_GET, ota_portal_handle_current_history_csv);
@@ -6941,6 +7147,8 @@ static void start_sta_service_portal() {
 }
 
 static void stop_ota_portal() {
+    web_ui_clear_clients();
+    web_ui_last_request_ms = 0;
     if (!ota_portal_running) {
         if (ota_portal_dns_running) {
             ota_dns_server.stop();
@@ -7082,6 +7290,7 @@ static void wifi_check_timer_cb(lv_timer_t *timer) {
             is_connecting = false;
             wifi_connected = true;
             wifi_rssi = WiFi.RSSI();
+            wifi_assoc_toomany_retry_after_ms = 0;
             String ip_str = WiFi.localIP().toString();
             start_sta_service_portal();
 
@@ -7142,6 +7351,7 @@ static void wifi_check_timer_cb(lv_timer_t *timer) {
                 gui_app_update_wifi(0, 0);
 
                 if (ap_capacity_rejected) {
+                    wifi_assoc_toomany_retry_after_ms = millis() + WIFI_ASSOC_TOOMANY_COOLDOWN_MS;
                     add_gui_log("WiFi: router odrzuca STA - zbyt wielu klientow", true);
                 }
 

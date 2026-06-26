@@ -2,9 +2,11 @@
 const API_ACTION = '/api/action';
 const API_LOGS = '/api/logs';
 const API_EVENTS = '/api/events';
+const API_WEB_SESSION = '/api/web-session';
 const API_OTA = '/update';
 const API_SETTIME = '/settime';
 const LOGS_PAGE_SIZE = 10;
+const WEB_SESSION_HEARTBEAT_MS = 3000;
 
 let backendConnected = false;
 let activeLogType = 'normal';
@@ -71,6 +73,10 @@ let eventStream = null;
 let eventStreamConnected = false;
 let statusPollingTimer = null;
 let logsPollingTimer = null;
+let webSessionId = '';
+let webSessionTimer = null;
+let webSessionClosing = false;
+let webSessionListenersBound = false;
 let feedActionState = {
     awaitingResponse: false,
     awaitingCompletion: false,
@@ -832,6 +838,97 @@ function applyStatusPayload(data) {
 
     if (window.ChartsApp && typeof window.ChartsApp.updateData === 'function' && mergedData.temperature) {
         window.ChartsApp.updateData(mergedData.temperature);
+    }
+}
+
+function createWebSessionId() {
+    const bytes = new Uint8Array(8);
+    if (window.crypto && typeof window.crypto.getRandomValues === 'function') {
+        window.crypto.getRandomValues(bytes);
+        return `w${Array.from(bytes, (byte) => byte.toString(16).padStart(2, '0')).join('')}`;
+    }
+    const fallback = `${Date.now().toString(36)}${Math.floor(Math.random() * 0xFFFFFF).toString(36)}`;
+    return `w${fallback}`.slice(0, 17);
+}
+
+function getWebSessionId() {
+    if (/^[A-Za-z0-9_-]{6,24}$/.test(webSessionId)) {
+        return webSessionId;
+    }
+
+    try {
+        const stored = window.sessionStorage?.getItem('aqWebSessionId') || '';
+        if (/^[A-Za-z0-9_-]{6,24}$/.test(stored)) {
+            webSessionId = stored;
+            return webSessionId;
+        }
+    } catch (_) {}
+
+    webSessionId = createWebSessionId();
+    try {
+        window.sessionStorage?.setItem('aqWebSessionId', webSessionId);
+    } catch (_) {}
+    return webSessionId;
+}
+
+function sendWebSessionHeartbeat(state = 'active', useBeacon = false) {
+    const params = new URLSearchParams({
+        sid: getWebSessionId(),
+        state
+    });
+
+    if (useBeacon && navigator.sendBeacon) {
+        try {
+            navigator.sendBeacon(API_WEB_SESSION, params);
+            return;
+        } catch (_) {}
+    }
+
+    fetch(`${API_WEB_SESSION}?${params.toString()}`, {
+        method: 'GET',
+        cache: 'no-store',
+        keepalive: state !== 'active'
+    }).catch(() => {});
+}
+
+function closeWebSession() {
+    if (webSessionClosing) {
+        return;
+    }
+    webSessionClosing = true;
+    if (webSessionTimer) {
+        clearInterval(webSessionTimer);
+        webSessionTimer = null;
+    }
+    sendWebSessionHeartbeat('close', true);
+}
+
+function startWebSessionHeartbeat() {
+    webSessionClosing = false;
+    sendWebSessionHeartbeat('active');
+    if (!webSessionTimer) {
+        webSessionTimer = setInterval(() => {
+            if (!webSessionClosing) {
+                sendWebSessionHeartbeat('active');
+            }
+        }, WEB_SESSION_HEARTBEAT_MS);
+    }
+
+    if (!webSessionListenersBound) {
+        webSessionListenersBound = true;
+        window.addEventListener('pagehide', closeWebSession);
+        window.addEventListener('beforeunload', closeWebSession);
+        window.addEventListener('pageshow', () => {
+            if (webSessionClosing) {
+                webSessionClosing = false;
+                startWebSessionHeartbeat();
+            }
+        });
+        document.addEventListener('visibilitychange', () => {
+            if (document.visibilityState === 'visible' && !webSessionClosing) {
+                sendWebSessionHeartbeat('active');
+            }
+        });
     }
 }
 
