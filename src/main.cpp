@@ -8,6 +8,7 @@
 #include "hal_adc.h"
 #include "gui_app.h"
 #include "events.h"
+#include "dev_simulator.h"
 #include <ArduinoOTA.h>
 #include <freertos/FreeRTOS.h>
 #include <freertos/task.h>
@@ -46,72 +47,6 @@ static void log_ram_checkpoint(const char *stage)
 static float ads_raw_to_voltage(int16_t raw)
 {
     return (static_cast<float>(raw) * 4.096f) / 32768.0f;
-}
-
-static int16_t voltage_to_ads_raw(float voltage)
-{
-    const float clamped = constrain(voltage, 0.0f, 4.095f);
-    return static_cast<int16_t>(lroundf((clamped * 32767.0f) / 4.096f));
-}
-
-struct DevTelemetrySample
-{
-    float temperatureC;
-    float ph;
-    float phVoltage;
-    int16_t phRaw;
-    float ecConductivity;
-    float ecVoltage;
-    int16_t ecRaw;
-    int ldr;
-    uint16_t mcpState;
-};
-
-static uint32_t dev_telemetry_noise = 0x5A17C0DEUL;
-
-static float dev_unit_noise()
-{
-    dev_telemetry_noise = dev_telemetry_noise * 1664525UL + 1013904223UL;
-    const uint16_t raw = static_cast<uint16_t>((dev_telemetry_noise >> 16) & 0x03FFU);
-    return (static_cast<float>(raw) / 511.5f) - 1.0f;
-}
-
-static DevTelemetrySample build_dev_telemetry_sample(uint32_t now_ms)
-{
-    const float t = static_cast<float>(now_ms) * 0.001f;
-    DevTelemetrySample sample = {};
-
-    sample.temperatureC = 25.0f +
-                          0.42f * sinf(t / 43.0f) +
-                          0.16f * sinf(t / 9.5f) +
-                          0.04f * dev_unit_noise();
-    sample.ph = 6.86f +
-                0.10f * sinf(t / 57.0f) +
-                0.035f * sinf(t / 13.0f) +
-                0.012f * dev_unit_noise();
-    sample.ecConductivity = 440.0f +
-                            34.0f * sinf(t / 61.0f) +
-                            9.0f * sinf(t / 17.0f) +
-                            4.0f * dev_unit_noise();
-
-    sample.ph = constrain(sample.ph, 6.55f, 7.25f);
-    sample.ecConductivity = constrain(sample.ecConductivity, 360.0f, 540.0f);
-    sample.phVoltage = constrain(((sample.ph - 4.0f) / 6.0f) * 4.096f, 0.0f, 4.095f);
-    sample.ecVoltage = constrain(sample.ecConductivity / 1000.0f, 0.0f, 4.095f);
-    sample.phRaw = voltage_to_ads_raw(sample.phVoltage);
-    sample.ecRaw = voltage_to_ads_raw(sample.ecVoltage);
-
-    const float ldr_wave = 760.0f + 420.0f * sinf(t / 73.0f) + 95.0f * sinf(t / 11.0f);
-    sample.ldr = constrain(static_cast<int>(lroundf(ldr_wave + 18.0f * dev_unit_noise())), 120, 1550);
-
-    const uint16_t water_level_mask = static_cast<uint16_t>(1U << static_cast<uint8_t>(HwConfig::CH_WATER_LEVEL));
-    const uint16_t flow_mask = static_cast<uint16_t>(1U << static_cast<uint8_t>(HwConfig::CH_FLOW_PULSE));
-    sample.mcpState = water_level_mask;
-    if ((now_ms / 5000UL) % 2UL == 0UL) {
-        sample.mcpState |= flow_mask;
-    }
-
-    return sample;
 }
 
 static void publish_sensor_sample(SensorId id, float value, bool valid)
@@ -293,12 +228,16 @@ void loop() {
 
         const bool dev_mode = gui_app_is_dev_mode();
 
-        DevTelemetrySample dev_sample = {};
+        const aquarium::DevSnapshot *dev_sample = nullptr;
         if (dev_mode) {
-            dev_sample = build_dev_telemetry_sample(current_time);
+            const uint16_t minute_of_day = static_cast<uint16_t>(clock_hour) * 60U +
+                                           static_cast<uint16_t>(clock_minute);
+            dev_sample = &aquarium::dev_simulator().step(current_time,
+                                                         minute_of_day,
+                                                         static_cast<uint8_t>(clock_second));
         }
 
-        int ldr_value = dev_mode ? dev_sample.ldr : -1;
+        int ldr_value = dev_mode ? dev_sample->ldr : -1;
         const bool ldr_valid = true;
         if (!dev_mode) {
             ldr_value = analogRead(LDR_PIN);
@@ -314,11 +253,11 @@ void loop() {
         float ec_voltage = 0.0f;
         float ec_publish_value = NAN;
         if (dev_mode) {
-            ph_raw = dev_sample.phRaw;
-            ec_raw = dev_sample.ecRaw;
-            ph_voltage = dev_sample.phVoltage;
-            ec_voltage = dev_sample.ecVoltage;
-            ec_publish_value = dev_sample.ecConductivity;
+            ph_raw = dev_sample->phRaw;
+            ec_raw = dev_sample->ecRaw;
+            ph_voltage = dev_sample->phVoltage;
+            ec_voltage = dev_sample->ecVoltage;
+            ec_publish_value = dev_sample->ecConductivity;
             ph_adc_ok = true;
             ec_adc_ok = true;
         } else if (adc_present) {
@@ -337,7 +276,15 @@ void loop() {
         bool mcp_present = false;
         bool mcp_ok = false;
         if (dev_mode) {
-            mcp_state = dev_sample.mcpState;
+            if (dev_sample->waterLevelHigh) {
+                mcp_state |= static_cast<uint16_t>(1U << static_cast<uint8_t>(HwConfig::CH_WATER_LEVEL));
+            }
+            if (dev_sample->leakDetected) {
+                mcp_state |= static_cast<uint16_t>(1U << static_cast<uint8_t>(HwConfig::CH_LEAK));
+            }
+            if (dev_sample->flowActive) {
+                mcp_state |= static_cast<uint16_t>(1U << static_cast<uint8_t>(HwConfig::CH_FLOW_PULSE));
+            }
             mcp_present = true;
             mcp_ok = true;
         } else {
@@ -345,8 +292,8 @@ void loop() {
             mcp_ok = mcp_present && hal_mcp_read_all(&mcp_state);
         }
 
-        const float temp_to_send = dev_mode ? dev_sample.temperatureC : NAN;
-        const float ph_to_send = dev_mode ? dev_sample.ph : (ph_adc_ok ? (4.0f + (ph_voltage / 4.096f) * 6.0f) : NAN);
+        const float temp_to_send = dev_mode ? dev_sample->temperatureC : NAN;
+        const float ph_to_send = dev_mode ? dev_sample->ph : (ph_adc_ok ? (4.0f + (ph_voltage / 4.096f) * 6.0f) : NAN);
 
         // Aktualizacja interfejsu graficznego (Zegar, Temperatura, pH, RAM)
         gui_update_metrics(temp_to_send, ph_to_send, free_heap, time_str);

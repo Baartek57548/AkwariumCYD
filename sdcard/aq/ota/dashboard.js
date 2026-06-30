@@ -1392,6 +1392,52 @@ function formatChartTemperature(value, digits = 1) {
     return `${Number(value).toFixed(digits)}\u00B0C`;
 }
 
+function formatChartTemperatureDelta(value) {
+    const numeric = Number(value);
+    return Number.isFinite(numeric) ? `${Math.abs(numeric).toFixed(1)}\u00B0C` : '--.-\u00B0C';
+}
+
+function appendChartChip(svg, options) {
+    if (!svg || !options || typeof options.text !== 'string') return null;
+
+    const bounds = options.bounds || {};
+    const height = 26;
+    const width = clamp(options.text.length * 7 + 20, 64, 180);
+    const anchor = options.anchor || 'start';
+    let left = Number(options.x) || 0;
+    if (anchor === 'end') left -= width;
+    if (anchor === 'middle') left -= width / 2;
+    let top = Number(options.y) || 0;
+
+    const minX = Number.isFinite(bounds.minX) ? bounds.minX : 0;
+    const maxX = Number.isFinite(bounds.maxX) ? bounds.maxX : Number(svg.getAttribute('width')) || 960;
+    const minY = Number.isFinite(bounds.minY) ? bounds.minY : 0;
+    const maxY = Number.isFinite(bounds.maxY) ? bounds.maxY : Number(svg.getAttribute('height')) || 260;
+    left = clamp(left, minX, Math.max(minX, maxX - width));
+    top = clamp(top, minY, Math.max(minY, maxY - height));
+
+    const tone = ['live', 'target', 'band', 'offscreen'].includes(options.tone) ? options.tone : 'live';
+    const group = createSvgEl('g', { class: `chart-chip chart-chip-${tone}` });
+    group.appendChild(createSvgEl('rect', {
+        x: left,
+        y: top,
+        width,
+        height,
+        rx: 8,
+        class: 'chart-chip-bg'
+    }));
+    const label = createSvgEl('text', {
+        x: left + width / 2,
+        y: top + 17,
+        class: 'chart-chip-text',
+        'text-anchor': 'middle'
+    });
+    label.textContent = options.text;
+    group.appendChild(label);
+    svg.appendChild(group);
+    return group;
+}
+
 function buildSmoothChartPath(coords) {
     if (!coords.length) return '';
     if (coords.length === 1) {

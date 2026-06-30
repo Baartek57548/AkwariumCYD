@@ -1,0 +1,13 @@
+{
+  "name": "cydakwarium-tools",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": {
+    "dev:web": "node tools/dev-server/server.js",
+    "test:api": "node --test tools/dev-server/test/*.test.js",
+    "test:e2e": "playwright test --config tools/web-e2e/playwright.config.js"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.55.0"
+  }
+}

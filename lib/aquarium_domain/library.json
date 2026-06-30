@@ -1,0 +1,9 @@
+{
+  "name": "aquarium_domain",
+  "version": "1.0.0",
+  "description": "Platform-independent scheduling, automation and development simulation for cydAkwarium",
+  "build": {
+    "includeDir": "include",
+    "srcDir": "src"
+  }
+}

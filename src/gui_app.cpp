@@ -5,6 +5,11 @@
 #include "hal_adc.h"
 #include "hal_mcp23017.h"
 #include "hal_sd.h"
+#include "aquarium_automation.h"
+#include "aquarium_schedule.h"
+#include "dev_simulator.h"
+#include "web_activity_tracker.h"
+#include "wifi_retry_policy.h"
 
 #include <Preferences.h>
 #include <SD.h>
@@ -77,7 +82,6 @@ constexpr uint32_t WEB_UI_ACTIVITY_TIMEOUT_MS = 12000UL;
 constexpr uint32_t WEB_UI_CLIENT_TIMEOUT_MS = 15000UL;
 constexpr uint32_t WEB_UI_CONTROL_REFRESH_MS = 1000UL;
 constexpr uint8_t WEB_UI_FOCUS_PAGE_INDEX = 4U;
-constexpr uint8_t WEB_UI_CLIENT_SLOT_COUNT = 4U;
 constexpr size_t WEB_UI_SESSION_ID_MAX_LEN = 24U;
 constexpr uint32_t AQUAEL_DN_MAX_TOGGLE_WINDOW_MS = 5000UL;
 constexpr uint32_t AQUAEL_DN_CYCLE_OFF_MS = 260UL;
@@ -114,11 +118,7 @@ constexpr char NTP_TZ_POLAND[] = "CET-1CEST,M3.5.0/2,M10.5.0/3";
 constexpr char NTP_SERVER_1[] = "pool.ntp.org";
 constexpr char NTP_SERVER_2[] = "time.nist.gov";
 
-enum class ScheduleMode : uint8_t {
-    Schedule = 0,
-    AlwaysOn = 1,
-    AlwaysOff = 2
-};
+using ScheduleMode = aquarium::ScheduleMode;
 
 enum class HeaterMode : uint8_t {
     Threshold = 0,
@@ -569,12 +569,7 @@ enum class ActiveSubpage : int {
 };
 static ActiveSubpage current_subpage = ActiveSubpage::None;
 static int current_page_index = 0;
-struct WebUiClientSlot {
-    char id[WEB_UI_SESSION_ID_MAX_LEN + 1U];
-    uint32_t lastSeenMs;
-    bool active;
-};
-static WebUiClientSlot web_ui_clients[WEB_UI_CLIENT_SLOT_COUNT] = {};
+static aquarium::WebActivityTracker web_ui_clients(WEB_UI_CLIENT_TIMEOUT_MS);
 static uint32_t web_ui_last_request_ms = 0;
 static uint32_t web_ui_last_control_ms = 0;
 static uint32_t web_ui_last_screen_ms = 0;
@@ -810,7 +805,8 @@ static unsigned long scan_start_ms = 0;
 static bool wifi_events_registered = false;
 static volatile uint8_t wifi_last_disconnect_reason = 0;
 static volatile uint32_t wifi_last_disconnect_ms = 0;
-static uint32_t wifi_assoc_toomany_retry_after_ms = 0;
+static aquarium::WifiRetryPolicy wifi_retry_policy(WIFI_REASON_ASSOC_TOOMANY_CODE,
+                                                    WIFI_ASSOC_TOOMANY_COOLDOWN_MS);
 static IPAddress ota_portal_ip(192, 168, 4, 1);
 static IPAddress ota_portal_gateway(192, 168, 4, 1);
 static IPAddress ota_portal_subnet(255, 255, 255, 0);
@@ -992,7 +988,6 @@ static void register_wifi_event_handlers();
 static const char *wifi_disconnect_reason_name(uint8_t reason);
 static bool wifi_disconnect_reason_is_ap_capacity(uint8_t reason);
 static bool web_ui_session_id_valid(const char *session_id);
-static uint8_t web_ui_prune_clients(uint32_t now_ms);
 static uint8_t web_ui_active_client_count(uint32_t now_ms);
 static void web_ui_track_client(const char *session_id, uint32_t now_ms);
 static void web_ui_release_client(const char *session_id);
@@ -1895,7 +1890,7 @@ static uint8_t migrate_legacy_schedule_light_profile(uint8_t legacy_encoded_prof
 }
 
 static uint16_t to_minutes(uint8_t hour, uint8_t minute) {
-    return static_cast<uint16_t>(hour) * 60U + static_cast<uint16_t>(minute);
+    return aquarium::minutes_since_midnight({hour, minute});
 }
 
 static bool time_pair_matches(uint8_t hour, uint8_t minute, uint8_t expected_hour, uint8_t expected_minute) {
@@ -1911,57 +1906,23 @@ static bool factory_light_profile_at(uint16_t now, uint8_t *profile) {
     if (profile == nullptr) {
         return false;
     }
-
-    const uint16_t day_start = to_minutes(FACTORY_DAY_START_HOUR, FACTORY_DAY_START_MINUTE);
-    const uint16_t morning_daybreak_end = to_minutes(FACTORY_DAYBREAK_MORNING_END_HOUR, FACTORY_DAYBREAK_MORNING_END_MINUTE);
-    const uint16_t day_end = to_minutes(FACTORY_DAY_END_PROFILE_HOUR, FACTORY_DAY_END_PROFILE_MINUTE);
-    const uint16_t evening_daybreak_end = to_minutes(FACTORY_DAYBREAK_EVENING_END_HOUR, FACTORY_DAYBREAK_EVENING_END_MINUTE);
-    const uint16_t night_end = to_minutes(FACTORY_DAY_END_HOUR, FACTORY_DAY_END_MINUTE);
-
-    if (now >= day_start && now < morning_daybreak_end) {
-        *profile = 1U; // DAYBREAK 10:00-10:30
-        return true;
-    }
-    if (now >= morning_daybreak_end && now < day_end) {
-        *profile = 0U; // DAY 10:30-20:00
-        return true;
-    }
-    if (now >= day_end && now < evening_daybreak_end) {
-        *profile = 1U; // DAYBREAK 20:00-21:00
-        return true;
-    }
-    if (now >= evening_daybreak_end && now < night_end) {
-        *profile = 2U; // NIGHT 21:00-22:00
-        return true;
-    }
-
-    *profile = 0U;
-    return false;
+    aquarium::LightProfile resolved = aquarium::LightProfile::Day;
+    const bool active = aquarium::factory_light_profile_at(now, &resolved);
+    *profile = static_cast<uint8_t>(resolved);
+    return active;
 }
 
 static bool is_within_window(uint16_t now, uint8_t startHour, uint8_t startMinute,
                              uint8_t endHour, uint8_t endMinute) {
-    const uint16_t start = to_minutes(startHour, startMinute);
-    const uint16_t end = to_minutes(endHour, endMinute);
-    if (start == end) {
-        return false;
-    }
-    if (start < end) {
-        return now >= start && now < end;
-    }
-    return now >= start || now < end;
+    return aquarium::is_within_window(now, {{startHour, startMinute}, {endHour, endMinute}});
 }
 
 static bool schedule_active(uint8_t mode, uint16_t now, uint8_t startHour,
                             uint8_t startMinute, uint8_t endHour,
                             uint8_t endMinute) {
-    if (mode == static_cast<uint8_t>(ScheduleMode::AlwaysOn)) {
-        return true;
-    }
-    if (mode == static_cast<uint8_t>(ScheduleMode::AlwaysOff)) {
-        return false;
-    }
-    return is_within_window(now, startHour, startMinute, endHour, endMinute);
+    return aquarium::schedule_active(static_cast<ScheduleMode>(mode),
+                                     now,
+                                     {{startHour, startMinute}, {endHour, endMinute}});
 }
 
 static bool is_quiet_hours() {
@@ -4362,106 +4323,23 @@ static bool open_or_build_subpage(ActiveSubpage target) {
 }
 
 static bool web_ui_session_id_valid(const char *session_id) {
-    if (session_id == nullptr || session_id[0] == '\0') {
-        return false;
-    }
-
-    size_t len = 0;
-    while (session_id[len] != '\0') {
-        const char c = session_id[len];
-        const bool allowed =
-            (c >= '0' && c <= '9') ||
-            (c >= 'A' && c <= 'Z') ||
-            (c >= 'a' && c <= 'z') ||
-            c == '-' ||
-            c == '_';
-        if (!allowed) {
-            return false;
-        }
-        ++len;
-        if (len > WEB_UI_SESSION_ID_MAX_LEN) {
-            return false;
-        }
-    }
-
-    return len >= 6U;
-}
-
-static uint8_t web_ui_prune_clients(uint32_t now_ms) {
-    uint8_t active_count = 0;
-    for (uint8_t i = 0; i < WEB_UI_CLIENT_SLOT_COUNT; ++i) {
-        WebUiClientSlot &slot = web_ui_clients[i];
-        if (!slot.active) {
-            continue;
-        }
-        if (static_cast<uint32_t>(now_ms - slot.lastSeenMs) > WEB_UI_CLIENT_TIMEOUT_MS) {
-            slot.active = false;
-            slot.lastSeenMs = 0;
-            slot.id[0] = '\0';
-            continue;
-        }
-        ++active_count;
-    }
-    return active_count;
+    return aquarium::WebActivityTracker::valid_session_id(session_id);
 }
 
 static uint8_t web_ui_active_client_count(uint32_t now_ms) {
-    return web_ui_prune_clients(now_ms);
+    return web_ui_clients.active_count(now_ms);
 }
 
 static void web_ui_track_client(const char *session_id, uint32_t now_ms) {
-    if (!web_ui_session_id_valid(session_id)) {
-        return;
-    }
-
-    web_ui_prune_clients(now_ms);
-    int free_slot = -1;
-    int oldest_slot = 0;
-    uint32_t oldest_seen = UINT32_MAX;
-
-    for (uint8_t i = 0; i < WEB_UI_CLIENT_SLOT_COUNT; ++i) {
-        WebUiClientSlot &slot = web_ui_clients[i];
-        if (slot.active && strncmp(slot.id, session_id, WEB_UI_SESSION_ID_MAX_LEN) == 0) {
-            slot.lastSeenMs = now_ms;
-            return;
-        }
-        if (!slot.active && free_slot < 0) {
-            free_slot = i;
-        }
-        if (slot.lastSeenMs < oldest_seen) {
-            oldest_seen = slot.lastSeenMs;
-            oldest_slot = i;
-        }
-    }
-
-    WebUiClientSlot &target = web_ui_clients[free_slot >= 0 ? free_slot : oldest_slot];
-    snprintf(target.id, sizeof(target.id), "%s", session_id);
-    target.lastSeenMs = now_ms;
-    target.active = true;
+    web_ui_clients.touch(session_id, now_ms);
 }
 
 static void web_ui_release_client(const char *session_id) {
-    if (!web_ui_session_id_valid(session_id)) {
-        return;
-    }
-
-    for (uint8_t i = 0; i < WEB_UI_CLIENT_SLOT_COUNT; ++i) {
-        WebUiClientSlot &slot = web_ui_clients[i];
-        if (slot.active && strncmp(slot.id, session_id, WEB_UI_SESSION_ID_MAX_LEN) == 0) {
-            slot.active = false;
-            slot.lastSeenMs = 0;
-            slot.id[0] = '\0';
-            return;
-        }
-    }
+    web_ui_clients.release(session_id);
 }
 
 static void web_ui_clear_clients() {
-    for (uint8_t i = 0; i < WEB_UI_CLIENT_SLOT_COUNT; ++i) {
-        web_ui_clients[i].active = false;
-        web_ui_clients[i].lastSeenMs = 0;
-        web_ui_clients[i].id[0] = '\0';
-    }
+    web_ui_clients.clear();
 }
 
 static void ota_portal_mark_web_activity() {
@@ -5293,10 +5171,10 @@ static void try_autoconnect_wifi_profile(void) {
         return;
     }
     const uint32_t now_ms = millis();
-    if (wifi_assoc_toomany_retry_after_ms != 0U &&
-        static_cast<int32_t>(now_ms - wifi_assoc_toomany_retry_after_ms) < 0) {
+    const uint32_t retry_cooldown_ms = wifi_retry_policy.remaining_ms(now_ms);
+    if (retry_cooldown_ms > 0U) {
         Serial.printf("WIFI_SD: autoconnect delayed after ASSOC_TOOMANY for %lu ms\n",
-                      static_cast<unsigned long>(wifi_assoc_toomany_retry_after_ms - now_ms));
+                      static_cast<unsigned long>(retry_cooldown_ms));
         return;
     }
     if (!ota_portal_sd_ready()) {
@@ -5898,19 +5776,26 @@ static void ota_portal_handle_status() {
     char ldr_json[16];
     char battery_voltage_json[16];
     char battery_percent_json[8];
-    const float dev_status_phase = static_cast<float>((millis() / 1000UL) % 3600UL) / 60.0f;
-    const bool api_temp_valid = isfinite(runtime.lastTemp);
-    const bool api_ph_valid = isfinite(runtime.lastPh);
+    char supply_voltage_json[16];
+    const aquarium::DevSnapshot &dev_snapshot = aquarium::dev_simulator().latest();
+    const float api_temp_value = isfinite(runtime.lastTemp)
+                                     ? runtime.lastTemp
+                                     : (cfg.devMode ? dev_snapshot.temperatureC : NAN);
+    const float api_ph_value = isfinite(runtime.lastPh)
+                                   ? runtime.lastPh
+                                   : (cfg.devMode ? dev_snapshot.ph : NAN);
+    const bool api_temp_valid = isfinite(api_temp_value);
+    const bool api_ph_valid = isfinite(api_ph_value);
     const bool api_ec_valid = sensor_debug.ecValid || cfg.devMode;
     const bool api_ldr_valid = last_ldr_valid || cfg.devMode;
     const float api_ec_mv = sensor_debug.ecValid
                                 ? sensor_debug.ecVoltage * 1000.0f
-                                : (420.0f + 18.0f * sinf(dev_status_phase * 0.13f));
+                                : dev_snapshot.ecConductivity;
     const int api_ldr_value = last_ldr_valid
                                   ? last_ldr_value
-                                  : clamp_ldr_value(620 + static_cast<int>(lroundf(95.0f * sinf(dev_status_phase * 0.09f))));
-    snprintf(temp_json, sizeof(temp_json), isfinite(runtime.lastTemp) ? "%.2f" : "null", runtime.lastTemp);
-    snprintf(ph_json, sizeof(ph_json), isfinite(runtime.lastPh) ? "%.3f" : "null", runtime.lastPh);
+                                  : dev_snapshot.ldr;
+    snprintf(temp_json, sizeof(temp_json), api_temp_valid ? "%.2f" : "null", api_temp_value);
+    snprintf(ph_json, sizeof(ph_json), api_ph_valid ? "%.3f" : "null", api_ph_value);
     if (api_ec_valid) {
         snprintf(ec_json, sizeof(ec_json), "%.1f", api_ec_mv);
     } else {
@@ -5922,22 +5807,46 @@ static void ota_portal_handle_status() {
         snprintf(ldr_json, sizeof(ldr_json), "null");
     }
     if (cfg.devMode) {
-        const float battery_voltage = 3.24f + 0.035f * sinf(dev_status_phase * 0.05f);
-        const int battery_percent = constrain(76 + static_cast<int>(lroundf(9.0f * sinf(dev_status_phase * 0.04f))), 0, 100);
-        snprintf(battery_voltage_json, sizeof(battery_voltage_json), "%.2f", battery_voltage);
-        snprintf(battery_percent_json, sizeof(battery_percent_json), "%d", battery_percent);
+        snprintf(battery_voltage_json, sizeof(battery_voltage_json), "%.2f", dev_snapshot.batteryVoltage);
+        snprintf(battery_percent_json, sizeof(battery_percent_json), "%u",
+                 static_cast<unsigned>(dev_snapshot.batteryPercent));
+        snprintf(supply_voltage_json, sizeof(supply_voltage_json), "%.2f", dev_snapshot.supplyVoltage);
     } else {
         snprintf(battery_voltage_json, sizeof(battery_voltage_json), "null");
         snprintf(battery_percent_json, sizeof(battery_percent_json), "null");
+        snprintf(supply_voltage_json, sizeof(supply_voltage_json), "null");
     }
     const bool api_mcp_present = sensor_debug.mcpPresent || cfg.devMode;
     const bool mcp_status_valid = (sensor_debug.mcpPresent && sensor_debug.mcpValid) || cfg.devMode;
     const uint16_t water_level_mask = static_cast<uint16_t>(1U << static_cast<uint8_t>(HwConfig::CH_WATER_LEVEL));
     const uint16_t leak_mask = static_cast<uint16_t>(1U << static_cast<uint8_t>(HwConfig::CH_LEAK));
-    const bool water_level_high = cfg.devMode ? true : (mcp_status_valid && ((sensor_debug.mcpState & water_level_mask) != 0));
-    const bool leak_detected = cfg.devMode ? false : (mcp_status_valid && ((sensor_debug.mcpState & leak_mask) != 0));
+    const uint16_t flow_mask = static_cast<uint16_t>(1U << static_cast<uint8_t>(HwConfig::CH_FLOW_PULSE));
+    const bool water_level_high = cfg.devMode
+                                      ? dev_snapshot.waterLevelHigh
+                                      : (mcp_status_valid && ((sensor_debug.mcpState & water_level_mask) != 0U));
+    const bool leak_detected = cfg.devMode
+                                   ? dev_snapshot.leakDetected
+                                   : (mcp_status_valid && ((sensor_debug.mcpState & leak_mask) != 0U));
+    const bool flow_active = cfg.devMode
+                                 ? dev_snapshot.flowActive
+                                 : (mcp_status_valid && ((sensor_debug.mcpState & flow_mask) != 0U));
     const char *water_level_json = mcp_status_valid ? (water_level_high ? "true" : "false") : "null";
     const char *leak_json = mcp_status_valid ? (leak_detected ? "true" : "false") : "null";
+    const char *flow_json = mcp_status_valid ? (flow_active ? "true" : "false") : "null";
+    const unsigned int alarm_flags = cfg.devMode
+                                         ? dev_snapshot.alarmFlags
+                                         : aquarium::evaluate_alarm_flags({
+                                               api_temp_valid,
+                                               api_temp_value,
+                                               api_ph_valid,
+                                               api_ph_value,
+                                               mcp_status_valid,
+                                               water_level_high,
+                                               mcp_status_valid,
+                                               leak_detected,
+                                               false,
+                                               NAN
+                                           });
     const EcoRuntimeStatus eco = eco_collect_status();
     const bool sd_ready_for_status = ota_portal_sd_ready();
     const uint64_t sd_total_bytes = sd_ready_for_status ? SD.totalBytes() : 0ULL;
@@ -5948,11 +5857,7 @@ static void ota_portal_handle_status() {
     const uint32_t web_idle_ms = web_ui_last_request_ms == 0U
                                      ? 0U
                                      : static_cast<uint32_t>(status_now_ms - web_ui_last_request_ms);
-    const uint32_t wifi_retry_cooldown_ms =
-        (wifi_assoc_toomany_retry_after_ms != 0U &&
-         static_cast<int32_t>(status_now_ms - wifi_assoc_toomany_retry_after_ms) < 0)
-            ? static_cast<uint32_t>(wifi_assoc_toomany_retry_after_ms - status_now_ms)
-            : 0U;
+    const uint32_t wifi_retry_cooldown_ms = wifi_retry_policy.remaining_ms(status_now_ms);
 
     char line[512];
     ota_portal_no_cache();
@@ -5992,9 +5897,8 @@ static void ota_portal_handle_status() {
              "\"sensors\":{\"temp_c\":%s,\"temp_valid\":%s,\"ph\":%s,\"ph_valid\":%s,\"ec\":%s,\"ec_valid\":%s,"
              "\"ldr\":%s,\"ldr_valid\":%s,"
              "\"mcp_present\":%s,\"mcp_valid\":%s,\"water_level_high\":%s,\"water_level_valid\":%s,"
-             "\"leak_detected\":%s,\"leak_valid\":%s},"
-             "\"config\":{\"target_temp\":%.2f,\"temp_hysteresis\":%.2f,\"co2TargetPh\":%.2f,\"co2MaxTimeMin\":%u,\"dev_mode\":%s,"
-             "\"modem_sleep\":%s,\"always_screen_on\":%s,\"sound_enabled\":%s,\"quiet_hours_enabled\":%s,",
+             "\"leak_detected\":%s,\"leak_valid\":%s,\"flow_active\":%s,\"flow_valid\":%s,"
+             "\"supply_voltage\":%s,\"supply_valid\":%s},",
              temp_json,
              api_temp_valid ? "true" : "false",
              ph_json,
@@ -6009,6 +5913,28 @@ static void ota_portal_handle_status() {
              mcp_status_valid ? "true" : "false",
              leak_json,
              mcp_status_valid ? "true" : "false",
+             flow_json,
+             mcp_status_valid ? "true" : "false",
+             supply_voltage_json,
+             cfg.devMode ? "true" : "false");
+    ota_http_server.sendContent(line);
+
+    snprintf(line, sizeof(line),
+             "\"alarms\":{\"flags\":%u,\"activeCount\":%u,\"temperatureHigh\":%s,\"temperatureLow\":%s,"
+             "\"phOutOfRange\":%s,\"waterLevelLow\":%s,\"leak\":%s,\"supplyLow\":%s},",
+             alarm_flags,
+             aquarium::alarm_count(alarm_flags),
+             (alarm_flags & aquarium::AlarmTemperatureHigh) != 0U ? "true" : "false",
+             (alarm_flags & aquarium::AlarmTemperatureLow) != 0U ? "true" : "false",
+             (alarm_flags & aquarium::AlarmPhOutOfRange) != 0U ? "true" : "false",
+             (alarm_flags & aquarium::AlarmWaterLevelLow) != 0U ? "true" : "false",
+             (alarm_flags & aquarium::AlarmLeak) != 0U ? "true" : "false",
+             (alarm_flags & aquarium::AlarmSupplyLow) != 0U ? "true" : "false");
+    ota_http_server.sendContent(line);
+
+    snprintf(line, sizeof(line),
+             "\"config\":{\"target_temp\":%.2f,\"temp_hysteresis\":%.2f,\"co2TargetPh\":%.2f,\"co2MaxTimeMin\":%u,\"dev_mode\":%s,"
+             "\"modem_sleep\":%s,\"always_screen_on\":%s,\"sound_enabled\":%s,\"quiet_hours_enabled\":%s,",
              cfg.targetTemp,
              cfg.tempHysteresis,
              static_cast<double>(FACTORY_CO2_TARGET_PH),
@@ -7290,7 +7216,7 @@ static void wifi_check_timer_cb(lv_timer_t *timer) {
             is_connecting = false;
             wifi_connected = true;
             wifi_rssi = WiFi.RSSI();
-            wifi_assoc_toomany_retry_after_ms = 0;
+            wifi_retry_policy.on_connected();
             String ip_str = WiFi.localIP().toString();
             start_sta_service_portal();
 
@@ -7351,7 +7277,7 @@ static void wifi_check_timer_cb(lv_timer_t *timer) {
                 gui_app_update_wifi(0, 0);
 
                 if (ap_capacity_rejected) {
-                    wifi_assoc_toomany_retry_after_ms = millis() + WIFI_ASSOC_TOOMANY_COOLDOWN_MS;
+                    wifi_retry_policy.on_disconnect(disconnect_reason, millis());
                     add_gui_log("WiFi: router odrzuca STA - zbyt wielu klientow", true);
                 }
 
@@ -7504,7 +7430,7 @@ static const char *wifi_disconnect_reason_name(uint8_t reason) {
 }
 
 static bool wifi_disconnect_reason_is_ap_capacity(uint8_t reason) {
-    return reason == WIFI_REASON_ASSOC_TOOMANY_CODE;
+    return wifi_retry_policy.is_capacity_rejection(reason);
 }
 
 static void btn_sta_handler(lv_event_t *e) {
@@ -12563,8 +12489,12 @@ void gui_update_metrics(float temp, float ph, uint32_t free_heap, const char *ti
                                        : normalize_aquael_profile(cfg.plantLightColorMode);
     runtime.filterOn = output_runtime_available &&
                        schedule_active(cfg.filterMode, nowMins, cfg.filterStartHour, cfg.filterStartMinute, cfg.filterEndHour, cfg.filterEndMinute);
-    runtime.airOn = output_runtime_available && cfg.enableAerator &&
-                    schedule_active(cfg.airMode, nowMins, cfg.airStartHour, cfg.airStartMinute, cfg.airEndHour, cfg.airEndMinute);
+    const bool aerator_window_active = schedule_active(cfg.airMode,
+                                                       nowMins,
+                                                       cfg.airStartHour,
+                                                       cfg.airStartMinute,
+                                                       cfg.airEndHour,
+                                                       cfg.airEndMinute);
 
     const uint16_t leak_mask = static_cast<uint16_t>(1U << static_cast<uint8_t>(HwConfig::CH_LEAK));
     const bool leak_detected = sensor_debug.mcpValid && ((sensor_debug.mcpState & leak_mask) != 0U);
@@ -12573,21 +12503,31 @@ void gui_update_metrics(float temp, float ph, uint32_t free_heap, const char *ti
                                                     FACTORY_CO2_AIR_START_MINUTE,
                                                     FACTORY_CO2_AIR_END_HOUR,
                                                     FACTORY_CO2_AIR_END_MINUTE);
-    runtime.co2On = output_runtime_available && cfg.enableCo2 && co2_window_active &&
-                    ph_valid && ph > FACTORY_CO2_TARGET_PH && !leak_detected;
-    if (runtime.co2On) {
-        runtime.airOn = false; // Factory profile uses CO2 or aeration in this window, never both at once.
-    }
+    const aquarium::GasControlOutput gas_control = aquarium::evaluate_gas_control({
+        output_runtime_available,
+        cfg.enableCo2,
+        cfg.enableAerator,
+        co2_window_active,
+        aerator_window_active,
+        ph_valid,
+        ph,
+        FACTORY_CO2_TARGET_PH,
+        leak_detected
+    });
+    runtime.co2On = gas_control.co2On;
+    runtime.airOn = gas_control.aeratorOn;
 
     bool old_heater_on = runtime.heaterOn;
-    if (!output_runtime_available || !cfg.enableHeater || cfg.heaterMode == static_cast<uint8_t>(HeaterMode::Off) ||
-        !isfinite(temp)) {
-        runtime.heaterOn = false;
-    } else if (temp < cfg.targetTemp - cfg.tempHysteresis) {
-        runtime.heaterOn = true;
-    } else if (temp >= cfg.targetTemp) {
-        runtime.heaterOn = false;
-    }
+    runtime.heaterOn = aquarium::thermostat_next_state({
+        output_runtime_available,
+        cfg.enableHeater,
+        cfg.heaterMode == static_cast<uint8_t>(HeaterMode::Threshold),
+        temp_valid,
+        temp,
+        cfg.targetTemp,
+        cfg.tempHysteresis,
+        runtime.heaterOn
+    });
 
     if (runtime.heaterOn != old_heater_on) {
         if (runtime.heaterOn) {
@@ -12953,6 +12893,29 @@ void gui_app_update_sensor_debug(int ldr_value,
     const bool water_raw = mcp_bit(HwConfig::CH_WATER_LEVEL);
     const bool leak_raw = mcp_bit(HwConfig::CH_LEAK);
     const bool flow_raw = mcp_bit(HwConfig::CH_FLOW_PULSE);
+    if (cfg.devMode && mcp_valid) {
+        static bool dev_inputs_initialized = false;
+        static bool previous_water_high = true;
+        static bool previous_leak = false;
+        static bool previous_supply_low = false;
+        const bool supply_low = (aquarium::dev_simulator().latest().alarmFlags & aquarium::AlarmSupplyLow) != 0U;
+
+        if (dev_inputs_initialized) {
+            if (water_raw != previous_water_high) {
+                add_gui_log(water_raw ? "DEV: poziom wody przywrocony" : "DEV: niski poziom wody", !water_raw);
+            }
+            if (leak_raw != previous_leak) {
+                add_gui_log(leak_raw ? "DEV: wykryto wyciek" : "DEV: wyciek ustapil", leak_raw);
+            }
+            if (supply_low != previous_supply_low) {
+                add_gui_log(supply_low ? "DEV: niskie napiecie zasilania" : "DEV: zasilanie stabilne", supply_low);
+            }
+        }
+        previous_water_high = water_raw;
+        previous_leak = leak_raw;
+        previous_supply_low = supply_low;
+        dev_inputs_initialized = true;
+    }
     if (water_state_lbl != nullptr) {
         lv_label_set_text(water_state_lbl, mcp_valid ? (water_raw ? "RAW HIGH" : "RAW LOW") : "--");
     }
