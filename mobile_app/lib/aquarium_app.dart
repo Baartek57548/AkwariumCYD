@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
 
-import 'controller_page.dart';
+import 'connection_home_page.dart';
 
 class AquariumApp extends StatelessWidget {
   const AquariumApp({super.key});
@@ -24,7 +24,7 @@ class AquariumApp extends StatelessWidget {
         useMaterial3: true,
       ),
       themeMode: ThemeMode.system,
-      home: const ControllerPage(),
+      home: const ConnectionHomePage(),
     );
   }
 }

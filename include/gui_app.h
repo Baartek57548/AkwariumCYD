@@ -65,4 +65,50 @@ bool gui_app_is_dev_mode(void);
  */
 bool gui_app_is_web_focus_active(void);
 
+struct GuiBleSnapshot {
+    uint8_t protocol_version;
+    bool developer_mode;
+    uint32_t uptime_seconds;
+    uint32_t free_heap_bytes;
+    float temperature;
+    bool temperature_valid;
+    float target_temperature;
+    float ph;
+    bool ph_valid;
+    float ec;
+    bool ec_valid;
+    int ldr;
+    bool ldr_valid;
+    uint16_t alarm_flags;
+    bool water_level_high;
+    bool leak_detected;
+    bool light_on;
+    bool plant_light_on;
+    bool filter_on;
+    bool heater_on;
+    bool aeration_on;
+};
+
+struct GuiBleCommandResult {
+    bool success;
+    const char *code;
+    const char *message;
+};
+
+/**
+ * @brief Tworzy spójny, stałorozmiarowy obraz telemetrii dla transportu BLE.
+ * @return false przed zakończeniem inicjalizacji konfiguracji GUI.
+ */
+bool gui_app_ble_snapshot(GuiBleSnapshot *out);
+
+/**
+ * @brief Zmienia bezpieczny podzbiór wyjść sterownika po autoryzacji PIN-em.
+ */
+GuiBleCommandResult gui_app_ble_set_output(const char *target, bool state, const char *pin);
+
+/**
+ * @brief Uruchamia pojedynczą dawkę karmnika po autoryzacji PIN-em.
+ */
+GuiBleCommandResult gui_app_ble_feed(const char *pin);
+
 #endif // GUI_APP_H

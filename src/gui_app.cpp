@@ -12996,3 +12996,146 @@ bool gui_app_is_dev_mode(void) {
 bool gui_app_is_web_focus_active(void) {
     return web_ui_focus_active;
 }
+
+bool gui_app_ble_snapshot(GuiBleSnapshot *out) {
+    if (out == nullptr || cfg.magic != UI_CONFIG_MAGIC) {
+        return false;
+    }
+
+    const aquarium::DevSnapshot &dev = aquarium::dev_simulator().latest();
+    const bool dev_mode = cfg.devMode;
+    const float temperature = isfinite(runtime.lastTemp)
+                                  ? runtime.lastTemp
+                                  : (dev_mode ? dev.temperatureC : NAN);
+    const float ph = isfinite(runtime.lastPh)
+                         ? runtime.lastPh
+                         : (dev_mode ? dev.ph : NAN);
+    const bool ec_valid = sensor_debug.ecValid || dev_mode;
+    const float ec = sensor_debug.ecValid
+                         ? sensor_debug.ecVoltage * 1000.0f
+                         : (dev_mode ? dev.ecConductivity : NAN);
+    const bool ldr_valid = last_ldr_valid || dev_mode;
+    const int ldr = last_ldr_valid ? last_ldr_value : (dev_mode ? dev.ldr : 0);
+    const uint16_t water_mask = static_cast<uint16_t>(
+        1U << static_cast<uint8_t>(HwConfig::CH_WATER_LEVEL));
+    const uint16_t leak_mask = static_cast<uint16_t>(
+        1U << static_cast<uint8_t>(HwConfig::CH_LEAK));
+    const bool mcp_valid = (sensor_debug.mcpPresent && sensor_debug.mcpValid) || dev_mode;
+    const bool water_high = dev_mode
+                                ? dev.waterLevelHigh
+                                : (mcp_valid && (sensor_debug.mcpState & water_mask) != 0U);
+    const bool leak_detected = dev_mode
+                                   ? dev.leakDetected
+                                   : (mcp_valid && (sensor_debug.mcpState & leak_mask) != 0U);
+
+    out->protocol_version = 1U;
+    out->developer_mode = dev_mode;
+    out->uptime_seconds = millis() / 1000UL;
+    out->free_heap_bytes = ESP.getFreeHeap();
+    out->temperature = isfinite(temperature) ? temperature : 0.0f;
+    out->temperature_valid = isfinite(temperature);
+    out->target_temperature = cfg.targetTemp;
+    out->ph = isfinite(ph) ? ph : 0.0f;
+    out->ph_valid = isfinite(ph);
+    out->ec = isfinite(ec) ? ec : 0.0f;
+    out->ec_valid = ec_valid && isfinite(ec);
+    out->ldr = ldr;
+    out->ldr_valid = ldr_valid;
+    out->alarm_flags = dev_mode ? dev.alarmFlags : aquarium::evaluate_alarm_flags({
+        out->temperature_valid,
+        out->temperature,
+        out->ph_valid,
+        out->ph,
+        mcp_valid,
+        water_high,
+        mcp_valid,
+        leak_detected,
+        false,
+        NAN
+    });
+    out->water_level_high = water_high;
+    out->leak_detected = leak_detected;
+    out->light_on = runtime.lightOn;
+    out->plant_light_on = runtime.plantLightOn;
+    out->filter_on = runtime.filterOn;
+    out->heater_on = runtime.heaterOn;
+    out->aeration_on = runtime.airOn;
+    return true;
+}
+
+static bool gui_ble_pin_valid(const char *pin) {
+    if (pin == nullptr) {
+        return false;
+    }
+    const size_t expected_length = strlen(Secrets::DEFAULT_PIN);
+    if (strlen(pin) != expected_length) {
+        return false;
+    }
+    uint8_t difference = 0U;
+    for (size_t index = 0; index < expected_length; ++index) {
+        difference |= static_cast<uint8_t>(pin[index] ^ Secrets::DEFAULT_PIN[index]);
+    }
+    return difference == 0U;
+}
+
+GuiBleCommandResult gui_app_ble_set_output(const char *target, bool state, const char *pin) {
+    if (!gui_ble_pin_valid(pin)) {
+        return {false, "pin_invalid", "Nieprawidlowy PIN administratora."};
+    }
+    if (cfg.magic != UI_CONFIG_MAGIC) {
+        return {false, "not_ready", "Sterownik nie zakonczyl inicjalizacji."};
+    }
+    if (target == nullptr) {
+        return {false, "invalid_target", "Brak nazwy modulu."};
+    }
+    if (!cfg.devMode && !hal_mcp_is_present()) {
+        return {false, "output_unavailable", "Wyjscia fizyczne sa niedostepne."};
+    }
+
+    if (strcmp(target, "light") == 0) {
+        cfg.lightMode = state ? static_cast<uint8_t>(ScheduleMode::AlwaysOn)
+                              : static_cast<uint8_t>(ScheduleMode::AlwaysOff);
+        runtime.lightOn = state;
+    } else if (strcmp(target, "plant") == 0) {
+        cfg.plantLightMode = state ? static_cast<uint8_t>(ScheduleMode::AlwaysOn)
+                                   : static_cast<uint8_t>(ScheduleMode::AlwaysOff);
+        runtime.plantLightOn = state;
+    } else if (strcmp(target, "filter") == 0) {
+        cfg.filterMode = state ? static_cast<uint8_t>(ScheduleMode::AlwaysOn)
+                               : static_cast<uint8_t>(ScheduleMode::AlwaysOff);
+        runtime.filterOn = state;
+    } else if (strcmp(target, "heater") == 0) {
+        cfg.heaterMode = state ? static_cast<uint8_t>(HeaterMode::Threshold)
+                               : static_cast<uint8_t>(HeaterMode::Off);
+        cfg.enableHeater = state;
+        if (!state) {
+            runtime.heaterOn = false;
+        }
+    } else if (strcmp(target, "aeration") == 0) {
+        cfg.airMode = state ? static_cast<uint8_t>(ScheduleMode::AlwaysOn)
+                            : static_cast<uint8_t>(ScheduleMode::AlwaysOff);
+        runtime.airOn = state;
+    } else {
+        return {false, "invalid_target", "Nieznany modul BLE."};
+    }
+
+    gui_app_save_settings();
+    apply_mcp_outputs();
+    return {true, cfg.devMode ? "dev_simulated" : "ok",
+            cfg.devMode ? "Stan zasymulowany w trybie DEV." : "Stan modulu zapisany."};
+}
+
+GuiBleCommandResult gui_app_ble_feed(const char *pin) {
+    if (!gui_ble_pin_valid(pin)) {
+        return {false, "pin_invalid", "Nieprawidlowy PIN administratora."};
+    }
+    if (cfg.magic != UI_CONFIG_MAGIC) {
+        return {false, "not_ready", "Sterownik nie zakonczyl inicjalizacji."};
+    }
+    const bool started = run_feeder_pulse("Karmienie", "Dawka z BLE", false);
+    if (!started) {
+        return {false, "feed_busy", "Nie uruchomiono karmnika."};
+    }
+    return {true, cfg.devMode ? "dev_simulated" : "ok",
+            cfg.devMode ? "Karmienie zasymulowane w trybie DEV." : "Karmienie uruchomione."};
+}

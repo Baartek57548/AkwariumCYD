@@ -39,6 +39,8 @@
 	</array>
 	<key>NSLocalNetworkUsageDescription</key>
 	<string>Aplikacja łączy się z lokalnym sterownikiem akwarium ESP32.</string>
+	<key>NSBluetoothAlwaysUsageDescription</key>
+	<string>Aplikacja używa Bluetooth LE do odczytu telemetrii i sterowania modułami akwarium.</string>
 	<key>UIApplicationSceneManifest</key>
 	<dict>
 		<key>UIApplicationSupportsMultipleScenes</key>
