@@ -1,9 +1,10 @@
 import 'package:flutter/material.dart';
 
 import 'ble_scanner_page.dart';
-import 'connectivity/dev_controller_transport.dart';
 import 'controller_page.dart';
-import 'native_dashboard_page.dart';
+import 'full_controller/controller_session.dart';
+import 'full_controller/controller_shell.dart';
+import 'full_controller/wifi_connect_page.dart';
 
 class ConnectionHomePage extends StatelessWidget {
   const ConnectionHomePage({super.key});
@@ -55,6 +56,21 @@ class ConnectionHomePage extends StatelessWidget {
                     ),
                     const SizedBox(height: 30),
                     _ModeCard(
+                      icon: Icons.wifi_rounded,
+                      title: 'Pełna aplikacja przez Wi‑Fi',
+                      description:
+                          'Natywny odpowiednik całego panelu WWW: wykresy, automatyka, harmonogramy, przekaźniki, logi, diagnostyka, ustawienia i OTA.',
+                      badge: 'PEŁNA FUNKCJONALNOŚĆ',
+                      onTap: () {
+                        Navigator.of(context).push(
+                          MaterialPageRoute<void>(
+                            builder: (_) => const WifiConnectPage(),
+                          ),
+                        );
+                      },
+                    ),
+                    const SizedBox(height: 12),
+                    _ModeCard(
                       icon: Icons.bluetooth_searching_rounded,
                       title: 'Połącz przez Bluetooth BLE',
                       description:
@@ -78,8 +94,8 @@ class ConnectionHomePage extends StatelessWidget {
                       onTap: () {
                         Navigator.of(context).push(
                           MaterialPageRoute<void>(
-                            builder: (_) => NativeDashboardPage(
-                              transport: DevControllerTransport(),
+                            builder: (_) => ControllerShell(
+                              session: ControllerSession.development(),
                             ),
                           ),
                         );
@@ -88,9 +104,9 @@ class ConnectionHomePage extends StatelessWidget {
                     const SizedBox(height: 12),
                     _ModeCard(
                       icon: Icons.wifi_rounded,
-                      title: 'Panel WWW przez Wi‑Fi',
+                      title: 'Oryginalny panel WWW',
                       description:
-                          'Dotychczasowy pełny panel WebView przez akwarium.local lub adres IP.',
+                          'Tryb zgodności WebView — dokładny interfejs strony hostowanej przez sterownik.',
                       onTap: () {
                         Navigator.of(context).push(
                           MaterialPageRoute<void>(

@@ -1,17 +1,36 @@
 # cydAkwarium Mobile
 
-Aplikacja Flutter dla Androida i iOS obsługująca trzy niezależne sposoby pracy:
+Kompletna aplikacja Flutter dla Androida i iOS. Natywny tryb Wi-Fi używa
+bezpośrednio tego samego API i tych samych nazw akcji co panel `web/`, dlatego
+walidacja oraz zachowanie firmware pozostają wspólne dla strony i telefonu.
 
-- Bluetooth Low Energy — natywna telemetria i sterowanie bez Wi-Fi,
-- DEV RAM — pełna lokalna symulacja bez sterownika,
-- Wi-Fi — responsywny panel WWW w natywnym kontenerze WebView.
+## Funkcje
+
+- pulpit telemetryczny, alarmy i ręczne sterowanie pięcioma wyjściami,
+- karmienie ręczne z potwierdzeniem wykonania,
+- wykres temperatury 1/3/6/12/24 h, tabela próbek, archiwa SD i eksport CSV,
+- kompletny harmonogram światła, lampy roślinnej, filtra, napowietrzania,
+  termostatu i karmnika,
+- automatyka temperatury, CO₂, ATO i zabezpieczenie przed wyciekiem,
+- kreator mapy ośmiu przekaźników MCP23017, test kanałów oraz import/eksport JSON,
+- logi normalne i krytyczne, eksport TXT i czyszczenie ważnych wpisów,
+- diagnostyka czujników oraz skanowanie I²C, UART i OneWire,
+- ustawienia Wi-Fi, wyświetlacza CYD i zegara,
+- restart, reset fabryczny i aktualizacja firmware OTA,
+- tryb DEV z pełną symulacją wszystkich powyższych operacji w pamięci RAM,
+- podstawowe sterowanie BLE bez dostępu do sieci,
+- oryginalny panel WWW w WebView jako tryb zgodności.
+
+Operacje zmieniające konfigurację wymagają sesji administratora. Domyślny PIN
+firmware i symulatora DEV to `1234`.
 
 ## Wymagania
 
 - Flutter 3.41.5 lub nowszy z Dart 3.11,
 - Android SDK 24+ albo iOS 13+,
 - Bluetooth w telefonie dla trybu BLE,
-- telefon oraz sterownik w tej samej sieci Wi-Fi wyłącznie dla trybu WWW.
+- telefon oraz sterownik w tej samej sieci Wi-Fi albo połączenie z AP sterownika
+  dla pełnej aplikacji natywnej i WebView.
 
 ## Uruchomienie
 
@@ -21,22 +40,17 @@ flutter pub get
 flutter run
 ```
 
-Ekran początkowy pozwala wybrać BLE, DEV lub Wi-Fi. Tryb DEV używa PIN-u `1234`
-i symuluje czujniki, przekaźniki oraz karmienie wyłącznie w pamięci RAM. Nie
-wykonuje żadnych operacji na fizycznym sprzęcie.
+W trybie Wi-Fi domyślny adres to `http://akwarium.local`. Dla punktu dostępowego
+sterownika można użyć `http://192.168.4.1`. Lokalny symulator WWW działa przez
+`npm run dev:web`; emulator Androida łączy się z hostem przez
+`http://10.0.2.2:8000`.
 
-Tryb BLE skanuje wyłącznie urządzenia reklamujące usługę cydAkwarium. Komendy
-sterujące wymagają PIN-u administratora, a telemetria jest przesyłana co dwie
-sekundy w wersjonowanych, fragmentowanych ramkach GATT. Specyfikacja znajduje
-się w [docs/ble-protocol.md](docs/ble-protocol.md).
+Tryb DEV nie wykonuje operacji na fizycznym sprzęcie. Zawiera kompletne modele
+statusu, logów, diagnostyki, harmonogramów, ustawień, przekaźników i OTA, dzięki
+czemu pozwala sprawdzić całą nawigację bez sterownika.
 
-W trybie Wi-Fi domyślny adres to `http://akwarium.local`. Menu z trzema kropkami
-w prawym dolnym rogu pozwala odświeżyć panel lub ustawić adres IP, na przykład
-`http://192.168.1.40`.
-
-Lokalny symulator z repozytorium można uruchomić poleceniem `npm run dev:web`.
-Emulator Androida łączy się z serwerem hosta przez `http://10.0.2.2:8000`, a
-fizyczny telefon wymaga adresu IP komputera dostępnego w sieci LAN.
+Specyfikacja istniejącego transportu BLE znajduje się w
+[docs/ble-protocol.md](docs/ble-protocol.md).
 
 ## Weryfikacja
 
@@ -47,5 +61,4 @@ flutter build apk --debug --split-per-abi
 ```
 
 Wydanie produkcyjne Androida wymaga podpisania kluczem właściciela aplikacji.
-Klucz i hasła należy przechowywać poza repozytorium i przekazać Gradle przez
-bezpieczny magazyn CI lub lokalny plik właściwości wyłączony z kontroli wersji.
+Klucz oraz hasła muszą pozostać poza repozytorium.
