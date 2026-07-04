@@ -1,7 +1,7 @@
 name: cyd_aquarium_mobile
 description: Mobilny panel sterownika cydAkwarium dla Androida i iOS.
 publish_to: 'none'
-version: 3.1.0+4
+version: 3.1.1+5
 
 environment:
   sdk: ^3.11.3

@@ -61,4 +61,8 @@ flutter build apk --debug --split-per-abi
 ```
 
 Wydanie produkcyjne Androida wymaga podpisania kluczem właściciela aplikacji.
-Klucz oraz hasła muszą pozostać poza repozytorium.
+Klucz oraz hasła muszą pozostać poza repozytorium. Konfiguracja
+`android/key.properties` musi definiować niepuste pola `storePassword`,
+`keyPassword`, `keyAlias` oraz `storeFile`. Gradle celowo przerywa build release,
+jeśli konfiguracja podpisu jest niekompletna, aby nie opublikować ponownie
+nieinstalowalnego APK.
