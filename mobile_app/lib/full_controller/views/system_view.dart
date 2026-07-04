@@ -203,10 +203,14 @@ class _SystemViewState extends State<SystemView> {
                 ),
                 const SizedBox(height: 16),
                 OutlinedButton.icon(
-                  onPressed: uploading ? null : _pickFirmware,
+                  onPressed: uploading || !widget.session.supportsFirmwareUpload
+                      ? null
+                      : _pickFirmware,
                   icon: const Icon(Icons.folder_open_rounded),
                   label: Text(
-                    firmware == null
+                    !widget.session.supportsFirmwareUpload
+                        ? 'OTA wymaga połączenia Wi-Fi'
+                        : firmware == null
                         ? 'Wybierz plik firmware.bin'
                         : firmware!.name,
                   ),
@@ -219,7 +223,12 @@ class _SystemViewState extends State<SystemView> {
                 ],
                 const SizedBox(height: 12),
                 FilledButton.icon(
-                  onPressed: firmware == null || uploading ? null : _upload,
+                  onPressed:
+                      firmware == null ||
+                          uploading ||
+                          !widget.session.supportsFirmwareUpload
+                      ? null
+                      : _upload,
                   icon: uploading
                       ? const SizedBox.square(
                           dimension: 18,

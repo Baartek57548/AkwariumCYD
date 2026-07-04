@@ -6,11 +6,16 @@ import 'package:flutter/foundation.dart';
 import 'controller_api.dart';
 import 'data_access.dart';
 
-enum ControllerSessionKind { wifi, development }
+enum ControllerSessionKind { wifi, bluetooth, development }
 
 class ControllerSession extends ChangeNotifier {
-  ControllerSession.wifi(ControllerApi api)
+  ControllerSession.wifi(ControllerRemoteApi api)
     : kind = ControllerSessionKind.wifi,
+      _api = api,
+      _status = <String, dynamic>{};
+
+  ControllerSession.bluetooth(ControllerRemoteApi api)
+    : kind = ControllerSessionKind.bluetooth,
       _api = api,
       _status = <String, dynamic>{};
 
@@ -23,7 +28,7 @@ class ControllerSession extends ChangeNotifier {
   }
 
   final ControllerSessionKind kind;
-  final ControllerApi? _api;
+  final ControllerRemoteApi? _api;
   JsonMap _status;
   JsonMap _logs = <String, dynamic>{};
   JsonMap _diagnostics = <String, dynamic>{};
@@ -45,6 +50,7 @@ class ControllerSession extends ChangeNotifier {
 
   ControllerSessionKind get sessionKind => kind;
   bool get isDevelopment => kind == ControllerSessionKind.development;
+  bool get isBluetooth => kind == ControllerSessionKind.bluetooth;
   bool get connected => _connected;
   bool get busy => _busy;
   bool get isAdmin => _adminPin != null;
@@ -54,9 +60,16 @@ class ControllerSession extends ChangeNotifier {
   JsonMap get logsData => _logs;
   JsonMap get diagnostics => _diagnostics;
   List<dynamic> get historyFiles => List.unmodifiable(_historyFiles);
-  String get displayName =>
-      isDevelopment ? 'cydAkwarium DEV' : 'cydAkwarium Wi-Fi';
+  String get displayName => switch (kind) {
+    ControllerSessionKind.development => 'cydAkwarium DEV',
+    ControllerSessionKind.bluetooth => 'cydAkwarium BLE',
+    ControllerSessionKind.wifi => 'cydAkwarium Wi-Fi',
+  };
   Uri? get baseUri => _api?.baseUri;
+  bool get supportsFirmwareUpload =>
+      isDevelopment || (_api?.supportsFirmwareUpload ?? false);
+  bool get supportsFileDownload =>
+      isDevelopment || (_api?.supportsFileDownload ?? false);
 
   Future<void> connect() async {
     if (_disposed) return;
@@ -72,16 +85,21 @@ class ControllerSession extends ChangeNotifier {
           (_) => _tickDevelopment(),
         );
       } else {
+        await _api!.connect();
         await refresh(includeHistory: true, reportBusy: false);
-        await _sendWebSessionHeartbeat();
+        if (_api.supportsWebSession) {
+          await _sendWebSessionHeartbeat();
+        }
         _pollTimer ??= Timer.periodic(
           const Duration(seconds: 3),
           (_) => unawaited(refresh(reportBusy: false)),
         );
-        _webSessionTimer ??= Timer.periodic(
-          const Duration(seconds: 5),
-          (_) => unawaited(_sendWebSessionHeartbeat()),
-        );
+        if (_api.supportsWebSession) {
+          _webSessionTimer ??= Timer.periodic(
+            const Duration(seconds: 5),
+            (_) => unawaited(_sendWebSessionHeartbeat()),
+          );
+        }
       }
     } finally {
       _busy = false;
@@ -239,10 +257,15 @@ class ControllerSession extends ChangeNotifier {
       notifyListeners();
       return;
     }
+    if (!_api!.supportsFileDownload) {
+      _historyFiles = const [];
+      notifyListeners();
+      return;
+    }
     _busy = true;
     notifyListeners();
     try {
-      _historyFiles = await _api!.historyFiles();
+      _historyFiles = await _api.historyFiles();
     } finally {
       _busy = false;
       if (!_disposed) notifyListeners();
@@ -261,7 +284,13 @@ class ControllerSession extends ChangeNotifier {
       }
       return Uint8List.fromList(buffer.toString().codeUnits);
     }
-    return _api!.download('/api/history.csv');
+    if (!_api!.supportsFileDownload) {
+      throw const ControllerApiException(
+        code: 'transport_unsupported',
+        message: 'Eksport plików wymaga połączenia Wi-Fi.',
+      );
+    }
+    return _api.download('/api/history.csv');
   }
 
   Future<void> setBrowserTime() async {
@@ -298,7 +327,13 @@ class ControllerSession extends ChangeNotifier {
         message: 'Aktualizacja OTA została zasymulowana w trybie DEV.',
       );
     }
-    return _api!.uploadFirmware(bytes, fileName, pin, onProgress: onProgress);
+    if (!_api!.supportsFirmwareUpload) {
+      throw const ControllerApiException(
+        code: 'transport_unsupported',
+        message: 'Aktualizacja OTA wymaga połączenia Wi-Fi.',
+      );
+    }
+    return _api.uploadFirmware(bytes, fileName, pin, onProgress: onProgress);
   }
 
   String _requirePin() {
@@ -313,9 +348,9 @@ class ControllerSession extends ChangeNotifier {
   }
 
   Future<void> _sendWebSessionHeartbeat() async {
-    if (_disposed || isDevelopment) return;
+    if (_disposed || isDevelopment || !_api!.supportsWebSession) return;
     try {
-      await _api!.webSession(_webSessionId, 'active');
+      await _api.webSession(_webSessionId, 'active');
     } on ControllerApiException {
       // Status polling reports connectivity; heartbeat failure alone must not
       // interrupt a control operation already in progress.
@@ -994,8 +1029,11 @@ class ControllerSession extends ChangeNotifier {
 
   @override
   void dispose() {
+    if (!isDevelopment && _api!.supportsWebSession) {
+      unawaited(_api.webSession(_webSessionId, 'close').catchError((_) {}));
+    }
     if (!isDevelopment) {
-      unawaited(_api!.webSession(_webSessionId, 'close').catchError((_) {}));
+      unawaited(_api!.disconnect().catchError((_) {}));
     }
     _disposed = true;
     _pollTimer?.cancel();

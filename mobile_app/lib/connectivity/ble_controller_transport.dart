@@ -81,6 +81,8 @@ class BleControllerTransport implements ControllerTransport {
       StreamController.broadcast();
   final StreamController<ControllerSnapshot> _snapshotController =
       StreamController.broadcast();
+  final StreamController<Map<String, dynamic>> _messageController =
+      StreamController.broadcast();
   final Map<int, Completer<ControllerCommandResult>> _pendingCommands = {};
 
   StreamSubscription<ConnectionStateUpdate>? _connectionSubscription;
@@ -105,6 +107,8 @@ class BleControllerTransport implements ControllerTransport {
 
   @override
   Stream<ControllerSnapshot> get snapshots => _snapshotController.stream;
+
+  Stream<Map<String, dynamic>> get messages => _messageController.stream;
 
   @override
   Future<void> connect() async {
@@ -182,7 +186,7 @@ class BleControllerTransport implements ControllerTransport {
             },
           );
       await Future<void>.delayed(const Duration(milliseconds: 250));
-      final result = await _sendCommand({'op': 'status'});
+      final result = await sendCommand({'op': 'status'});
       if (!result.success) {
         throw StateError(result.message);
       }
@@ -203,6 +207,9 @@ class BleControllerTransport implements ControllerTransport {
         throw const FormatException('Wiadomość BLE nie jest obiektem JSON.');
       }
       final type = decoded['type'];
+      if (!_messageController.isClosed) {
+        _messageController.add(Map<String, dynamic>.unmodifiable(decoded));
+      }
       if (type == 'status') {
         final snapshot = ControllerSnapshot.fromJson(decoded);
         if (!_snapshotController.isClosed) {
@@ -238,7 +245,7 @@ class BleControllerTransport implements ControllerTransport {
     }
   }
 
-  Future<ControllerCommandResult> _sendCommand(
+  Future<ControllerCommandResult> sendCommand(
     Map<String, dynamic> command,
   ) async {
     final characteristic = _commandCharacteristic;
@@ -254,20 +261,39 @@ class BleControllerTransport implements ControllerTransport {
     _nextCommandId = _nextCommandId >= 65535 ? 1 : _nextCommandId + 1;
     final payload = <String, dynamic>{'id': id, ...command};
     final bytes = utf8.encode(jsonEncode(payload));
-    if (bytes.length > 160) {
+    if (bytes.length > 4096) {
       return const ControllerCommandResult(
         success: false,
         code: 'command_too_large',
-        message: 'Komenda przekracza limit pojedynczej ramki BLE.',
+        message: 'Komenda przekracza limit 4096 bajtów protokołu BLE.',
       );
     }
 
     final completer = Completer<ControllerCommandResult>();
     _pendingCommands[id] = completer;
     try {
-      await _ble.writeCharacteristicWithResponse(characteristic, value: bytes);
+      if (bytes.length <= 160) {
+        await _ble.writeCharacteristicWithResponse(
+          characteristic,
+          value: bytes,
+        );
+      } else {
+        final frames = encodeBleFrames(
+          bytes,
+          messageId: id,
+          maximumPayloadBytes: 156,
+          maximumPartCount: 32,
+        );
+        for (final frame in frames) {
+          await _ble.writeCharacteristicWithResponse(
+            characteristic,
+            value: frame,
+          );
+          await Future<void>.delayed(const Duration(milliseconds: 12));
+        }
+      }
       return await completer.future.timeout(
-        const Duration(seconds: 8),
+        const Duration(seconds: 15),
         onTimeout: () {
           _pendingCommands.remove(id);
           return const ControllerCommandResult(
@@ -293,7 +319,7 @@ class BleControllerTransport implements ControllerTransport {
     bool enabled,
     String pin,
   ) {
-    return _sendCommand({
+    return sendCommand({
       'op': 'set',
       'target': channel.protocolName,
       'state': enabled,
@@ -303,7 +329,7 @@ class BleControllerTransport implements ControllerTransport {
 
   @override
   Future<ControllerCommandResult> feed(String pin) {
-    return _sendCommand({'op': 'feed', 'pin': pin});
+    return sendCommand({'op': 'feed', 'pin': pin});
   }
 
   void _failPending(String message) {
@@ -350,5 +376,6 @@ class BleControllerTransport implements ControllerTransport {
     await disconnect();
     await _stateController.close();
     await _snapshotController.close();
+    await _messageController.close();
   }
 }

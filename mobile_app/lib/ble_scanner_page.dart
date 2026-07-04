@@ -4,7 +4,9 @@ import 'package:flutter/material.dart';
 import 'package:flutter_reactive_ble/flutter_reactive_ble.dart';
 
 import 'connectivity/ble_controller_transport.dart';
-import 'native_dashboard_page.dart';
+import 'full_controller/ble_remote_api.dart';
+import 'full_controller/controller_session.dart';
+import 'full_controller/controller_shell.dart';
 
 class BleScannerPage extends StatefulWidget {
   const BleScannerPage({super.key});
@@ -87,12 +89,15 @@ class _BleScannerPageState extends State<BleScannerPage> {
         : device.name.trim();
     await Navigator.of(context).push(
       MaterialPageRoute<void>(
-        builder: (_) => NativeDashboardPage(
-          transport: BleControllerTransport(
+        builder: (_) {
+          final transport = BleControllerTransport(
             deviceId: device.id,
             deviceName: name,
-          ),
-        ),
+          );
+          return ControllerShell(
+            session: ControllerSession.bluetooth(BleRemoteApi(transport)),
+          );
+        },
       ),
     );
   }

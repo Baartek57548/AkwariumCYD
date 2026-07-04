@@ -55,14 +55,64 @@ class ControllerActionResult {
   final String message;
 }
 
-class ControllerApi {
+abstract interface class ControllerRemoteApi {
+  Uri? get baseUri;
+  bool get supportsFirmwareUpload;
+  bool get supportsFileDownload;
+  bool get supportsWebSession;
+
+  Future<void> connect();
+  Future<void> disconnect();
+  Future<Map<String, dynamic>> status({bool includeHistory = false});
+  Future<Map<String, dynamic>> logs(String pin);
+  Future<Map<String, dynamic>> busDiagnostics(String pin);
+  Future<List<dynamic>> historyFiles();
+  Future<ControllerActionResult> authenticate(String pin);
+  Future<ControllerActionResult> action(
+    String action, {
+    Map<String, Object?> payload = const {},
+    String? pin,
+    bool includePin = true,
+  });
+  Future<void> setBrowserTime(int epochSeconds, String pin);
+  Future<Uint8List> download(
+    String path, {
+    Map<String, String>? queryParameters,
+    int maximumBytes = 64 * 1024 * 1024,
+  });
+  Future<ControllerActionResult> uploadFirmware(
+    Uint8List firmware,
+    String fileName,
+    String pin, {
+    void Function(int sent, int total)? onProgress,
+  });
+  Future<void> webSession(String sessionId, String state);
+}
+
+class ControllerApi implements ControllerRemoteApi {
   ControllerApi(Uri baseUri)
     : baseUri = ControllerAddress.parse(baseUri.toString());
 
   static const int maximumResponseBytes = 8 * 1024 * 1024;
   static const int maximumFirmwareBytes = 8 * 1024 * 1024;
 
+  @override
   final Uri baseUri;
+
+  @override
+  bool get supportsFirmwareUpload => true;
+
+  @override
+  bool get supportsFileDownload => true;
+
+  @override
+  bool get supportsWebSession => true;
+
+  @override
+  Future<void> connect() async {}
+
+  @override
+  Future<void> disconnect() async {}
 
   Uri resolve(String path, [Map<String, String>? queryParameters]) {
     final basePath = baseUri.path.endsWith('/')
@@ -75,6 +125,7 @@ class ControllerApi {
     );
   }
 
+  @override
   Future<Map<String, dynamic>> status({bool includeHistory = false}) {
     return getJson(
       '/api/status',
@@ -82,14 +133,17 @@ class ControllerApi {
     );
   }
 
+  @override
   Future<Map<String, dynamic>> logs(String pin) {
     return getJson('/api/logs', queryParameters: {'pin': pin});
   }
 
+  @override
   Future<Map<String, dynamic>> busDiagnostics(String pin) {
     return getJson('/api/bus-diagnostics', queryParameters: {'pin': pin});
   }
 
+  @override
   Future<void> webSession(String sessionId, String state) async {
     await getJson(
       '/api/web-session',
@@ -97,6 +151,7 @@ class ControllerApi {
     );
   }
 
+  @override
   Future<List<dynamic>> historyFiles() async {
     final value = await getJsonValue(
       '/api/files',
@@ -114,10 +169,12 @@ class ControllerApi {
     );
   }
 
+  @override
   Future<ControllerActionResult> authenticate(String pin) {
     return action('auth_check', pin: pin, includePin: true);
   }
 
+  @override
   Future<ControllerActionResult> action(
     String action, {
     Map<String, Object?> payload = const {},
@@ -158,6 +215,7 @@ class ControllerApi {
     return result;
   }
 
+  @override
   Future<void> setBrowserTime(int epochSeconds, String pin) async {
     final fields = {'epoch': '$epochSeconds', 'pin': pin};
     final response = await _request(
@@ -181,6 +239,7 @@ class ControllerApi {
     }
   }
 
+  @override
   Future<Uint8List> download(
     String path, {
     Map<String, String>? queryParameters,
@@ -201,6 +260,7 @@ class ControllerApi {
     return Uint8List.fromList(response.body);
   }
 
+  @override
   Future<ControllerActionResult> uploadFirmware(
     Uint8List firmware,
     String fileName,

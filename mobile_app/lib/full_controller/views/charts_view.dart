@@ -215,12 +215,20 @@ class _ChartsViewState extends State<ChartsView> {
           runSpacing: 10,
           children: [
             FilledButton.icon(
-              onPressed: _exportCsv,
+              onPressed: widget.session.supportsFileDownload
+                  ? _exportCsv
+                  : null,
               icon: const Icon(Icons.download_rounded),
-              label: const Text('Eksportuj CSV'),
+              label: Text(
+                widget.session.supportsFileDownload
+                    ? 'Eksportuj CSV'
+                    : 'Eksport wymaga Wi-Fi',
+              ),
             ),
             OutlinedButton.icon(
-              onPressed: loadingArchives ? null : _loadArchives,
+              onPressed: loadingArchives || !widget.session.supportsFileDownload
+                  ? null
+                  : _loadArchives,
               icon: loadingArchives
                   ? const SizedBox.square(
                       dimension: 18,

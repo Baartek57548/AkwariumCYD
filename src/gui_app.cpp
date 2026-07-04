@@ -13139,3 +13139,701 @@ GuiBleCommandResult gui_app_ble_feed(const char *pin) {
     return {true, cfg.devMode ? "dev_simulated" : "ok",
             cfg.devMode ? "Karmienie zasymulowane w trybie DEV." : "Karmienie uruchomione."};
 }
+
+namespace {
+
+template <typename... Args>
+bool ble_json_append(char *out, size_t out_size, size_t *used,
+                     const char *format, Args... args) {
+    if (out == nullptr || used == nullptr || format == nullptr || *used >= out_size) {
+        return false;
+    }
+    const int written = snprintf(out + *used, out_size - *used, format, args...);
+    if (written < 0 || static_cast<size_t>(written) >= out_size - *used) {
+        out[out_size - 1U] = '\0';
+        return false;
+    }
+    *used += static_cast<size_t>(written);
+    return true;
+}
+
+const char *ble_json_find_value(const char *json, const char *key) {
+    if (json == nullptr || key == nullptr) {
+        return nullptr;
+    }
+    char pattern[48];
+    const int length = snprintf(pattern, sizeof(pattern), "\"%s\"", key);
+    if (length <= 0 || static_cast<size_t>(length) >= sizeof(pattern)) {
+        return nullptr;
+    }
+    const char *cursor = json;
+    while ((cursor = strstr(cursor, pattern)) != nullptr) {
+        cursor += length;
+        while (*cursor != '\0' && isspace(static_cast<unsigned char>(*cursor))) {
+            ++cursor;
+        }
+        if (*cursor != ':') {
+            continue;
+        }
+        ++cursor;
+        while (*cursor != '\0' && isspace(static_cast<unsigned char>(*cursor))) {
+            ++cursor;
+        }
+        return cursor;
+    }
+    return nullptr;
+}
+
+bool ble_json_read_bool(const char *json, const char *key, bool *out) {
+    const char *value = ble_json_find_value(json, key);
+    if (value == nullptr || out == nullptr) {
+        return false;
+    }
+    if (strncmp(value, "true", 4U) == 0 || *value == '1') {
+        *out = true;
+        return true;
+    }
+    if (strncmp(value, "false", 5U) == 0 || *value == '0') {
+        *out = false;
+        return true;
+    }
+    return false;
+}
+
+bool ble_json_read_long(const char *json, const char *key, long minimum,
+                        long maximum, long *out) {
+    const char *value = ble_json_find_value(json, key);
+    if (value == nullptr || out == nullptr) {
+        return false;
+    }
+    if (*value == '"') {
+        ++value;
+    }
+    char *end = nullptr;
+    const long parsed = strtol(value, &end, 10);
+    if (end == value || parsed < minimum || parsed > maximum) {
+        return false;
+    }
+    *out = parsed;
+    return true;
+}
+
+bool ble_json_read_float(const char *json, const char *key, float minimum,
+                         float maximum, float *out) {
+    const char *value = ble_json_find_value(json, key);
+    if (value == nullptr || out == nullptr) {
+        return false;
+    }
+    if (*value == '"') {
+        ++value;
+    }
+    char *end = nullptr;
+    const float parsed = strtof(value, &end);
+    if (end == value || !isfinite(parsed) || parsed < minimum || parsed > maximum) {
+        return false;
+    }
+    *out = parsed;
+    return true;
+}
+
+bool ble_json_read_string(const char *json, const char *key, char *out, size_t out_size) {
+    const char *value = ble_json_find_value(json, key);
+    if (value == nullptr || out == nullptr || out_size < 2U || *value != '"') {
+        return false;
+    }
+    ++value;
+    size_t used = 0U;
+    while (*value != '\0' && *value != '"') {
+        unsigned char decoded = static_cast<unsigned char>(*value++);
+        if (decoded == '\\') {
+            const char escaped = *value++;
+            switch (escaped) {
+            case '"': decoded = '"'; break;
+            case '\\': decoded = '\\'; break;
+            case '/': decoded = '/'; break;
+            case 'b': decoded = '\b'; break;
+            case 'f': decoded = '\f'; break;
+            case 'n': decoded = '\n'; break;
+            case 'r': decoded = '\r'; break;
+            case 't': decoded = '\t'; break;
+            default: return false;
+            }
+        }
+        if (decoded < 0x20U || used + 1U >= out_size) {
+            return false;
+        }
+        out[used++] = static_cast<char>(decoded);
+    }
+    if (*value != '"') {
+        return false;
+    }
+    out[used] = '\0';
+    return true;
+}
+
+bool ble_json_read_time(const char *json, const char *key,
+                        uint8_t *hour, uint8_t *minute) {
+    char value[8];
+    return ble_json_read_string(json, key, value, sizeof(value)) &&
+           parse_time_text(value, hour, minute);
+}
+
+const char *ble_schedule_mode_name(uint8_t mode) {
+    if (mode == static_cast<uint8_t>(ScheduleMode::AlwaysOn)) {
+        return "always_on";
+    }
+    if (mode == static_cast<uint8_t>(ScheduleMode::AlwaysOff)) {
+        return "always_off";
+    }
+    return "schedule";
+}
+
+const char *ble_light_profile_name(uint8_t profile) {
+    switch (profile) {
+    case 1U: return "daybreak";
+    case 2U: return "night";
+    default: return "day";
+    }
+}
+
+bool ble_parse_light_profile(const char *json, const char *key, uint8_t *out) {
+    char value[16];
+    if (!ble_json_read_string(json, key, value, sizeof(value)) || out == nullptr) {
+        return false;
+    }
+    if (strcmp(value, "day") == 0 || strcmp(value, "0") == 0) {
+        *out = 0U;
+        return true;
+    }
+    if (strcmp(value, "daybreak") == 0 || strcmp(value, "dawn") == 0 ||
+        strcmp(value, "sunrise") == 0 || strcmp(value, "1") == 0) {
+        *out = 1U;
+        return true;
+    }
+    if (strcmp(value, "night") == 0 || strcmp(value, "moon") == 0 ||
+        strcmp(value, "2") == 0) {
+        *out = 2U;
+        return true;
+    }
+    return false;
+}
+
+} // namespace
+
+bool gui_app_ble_full_status_json(char *out, size_t out_size) {
+    if (out == nullptr || out_size < 1024U || cfg.magic != UI_CONFIG_MAGIC) {
+        return false;
+    }
+
+    GuiBleSnapshot snapshot = {};
+    if (!gui_app_ble_snapshot(&snapshot)) {
+        return false;
+    }
+    const bool mcp_valid = (sensor_debug.mcpPresent && sensor_debug.mcpValid) || cfg.devMode;
+    const uint16_t flow_mask = static_cast<uint16_t>(1U << static_cast<uint8_t>(HwConfig::CH_FLOW_PULSE));
+    const aquarium::DevSnapshot &dev = aquarium::dev_simulator().latest();
+    const bool flow_active = cfg.devMode
+                                 ? dev.flowActive
+                                 : (mcp_valid && (sensor_debug.mcpState & flow_mask) != 0U);
+    const uint32_t water_runtime = runtime.waterFillOn && ato_started_ms != 0U
+                                       ? (millis() - ato_started_ms) / 1000UL
+                                       : 0U;
+    const IPAddress ip = wifi_ota_active ? WiFi.softAPIP() : WiFi.localIP();
+    char ssid[96];
+    char configured_ssid[96];
+    json_escape_to_buffer(wifi_ota_active ? WiFi.softAPSSID().c_str() : WiFi.SSID().c_str(),
+                          ssid, sizeof(ssid));
+    json_escape_to_buffer(selected_ssid, configured_ssid, sizeof(configured_ssid));
+    const char *temperature = snapshot.temperature_valid ? nullptr : "null";
+    const char *ph = snapshot.ph_valid ? nullptr : "null";
+    const char *ec = snapshot.ec_valid ? nullptr : "null";
+    const char *ldr = snapshot.ldr_valid ? nullptr : "null";
+    char temperature_value[20];
+    char ph_value[20];
+    char ec_value[20];
+    char ldr_value[20];
+    if (temperature != nullptr) {
+        snprintf(temperature_value, sizeof(temperature_value), "%s", temperature);
+    } else {
+        snprintf(temperature_value, sizeof(temperature_value), "%.2f",
+                 static_cast<double>(snapshot.temperature));
+    }
+    if (ph != nullptr) {
+        snprintf(ph_value, sizeof(ph_value), "%s", ph);
+    } else {
+        snprintf(ph_value, sizeof(ph_value), "%.3f", static_cast<double>(snapshot.ph));
+    }
+    if (ec != nullptr) {
+        snprintf(ec_value, sizeof(ec_value), "%s", ec);
+    } else {
+        snprintf(ec_value, sizeof(ec_value), "%.1f", static_cast<double>(snapshot.ec));
+    }
+    if (ldr != nullptr) {
+        snprintf(ldr_value, sizeof(ldr_value), "%s", ldr);
+    } else {
+        snprintf(ldr_value, sizeof(ldr_value), "%d", snapshot.ldr);
+    }
+
+    size_t used = 0U;
+    bool ok = ble_json_append(out, out_size, &used,
+        "{\"type\":\"full_status\",\"data\":{\"device\":\"cydAkwarium\",\"mode\":\"BLE_V2\","
+        "\"ip\":\"%u.%u.%u.%u\",\"hostname\":\"cydAkwarium\",\"heap_free\":%lu,"
+        "\"heap_largest\":%lu,\"sd_mounted\":%s,\"history_points\":%u,\"uptime_ms\":%lu,"
+        "\"ota_active\":%s,",
+        ip[0], ip[1], ip[2], ip[3],
+        static_cast<unsigned long>(ESP.getFreeHeap()),
+        static_cast<unsigned long>(heap_caps_get_largest_free_block(MALLOC_CAP_8BIT)),
+        ota_portal_sd_ready() ? "true" : "false",
+        static_cast<unsigned>(history_count),
+        static_cast<unsigned long>(millis()),
+        wifi_ota_active ? "true" : "false");
+    ok = ok && ble_json_append(out, out_size, &used,
+        "\"sensors\":{\"temp_c\":%s,\"temp_valid\":%s,\"ph\":%s,\"ph_valid\":%s,"
+        "\"ec\":%s,\"ec_valid\":%s,\"ldr\":%s,\"ldr_valid\":%s,"
+        "\"mcp_present\":%s,\"mcp_valid\":%s,\"mcp_ok\":%s,"
+        "\"water_level_high\":%s,\"water_level_valid\":%s,"
+        "\"leak_detected\":%s,\"leak_valid\":%s,\"flow_active\":%s,\"flow_valid\":%s},",
+        temperature_value, snapshot.temperature_valid ? "true" : "false",
+        ph_value, snapshot.ph_valid ? "true" : "false",
+        ec_value, snapshot.ec_valid ? "true" : "false",
+        ldr_value, snapshot.ldr_valid ? "true" : "false",
+        (sensor_debug.mcpPresent || cfg.devMode) ? "true" : "false",
+        mcp_valid ? "true" : "false", mcp_valid ? "true" : "false",
+        snapshot.water_level_high ? "true" : "false", mcp_valid ? "true" : "false",
+        snapshot.leak_detected ? "true" : "false", mcp_valid ? "true" : "false",
+        flow_active ? "true" : "false", mcp_valid ? "true" : "false");
+    ok = ok && ble_json_append(out, out_size, &used,
+        "\"alarms\":{\"flags\":%u,\"activeCount\":%u,\"temperatureHigh\":%s,"
+        "\"temperatureLow\":%s,\"phOutOfRange\":%s,\"waterLevelLow\":%s,"
+        "\"leak\":%s,\"supplyLow\":%s},",
+        static_cast<unsigned>(snapshot.alarm_flags),
+        static_cast<unsigned>(aquarium::alarm_count(snapshot.alarm_flags)),
+        (snapshot.alarm_flags & aquarium::AlarmTemperatureHigh) ? "true" : "false",
+        (snapshot.alarm_flags & aquarium::AlarmTemperatureLow) ? "true" : "false",
+        (snapshot.alarm_flags & aquarium::AlarmPhOutOfRange) ? "true" : "false",
+        (snapshot.alarm_flags & aquarium::AlarmWaterLevelLow) ? "true" : "false",
+        (snapshot.alarm_flags & aquarium::AlarmLeak) ? "true" : "false",
+        (snapshot.alarm_flags & aquarium::AlarmSupplyLow) ? "true" : "false");
+    ok = ok && ble_json_append(out, out_size, &used,
+        "\"config\":{\"target_temp\":%.2f,\"temp_hysteresis\":%.2f,\"co2TargetPh\":%.2f,"
+        "\"co2MaxTimeMin\":%u,\"dev_mode\":%s,\"modem_sleep\":%s,"
+        "\"always_screen_on\":%s,\"sound_enabled\":%s},"
+        "\"display\":{\"autoBrightness\":%s,\"profile\":\"%s\",\"brightness\":%u,"
+        "\"appliedBrightness\":%u},\"water\":{\"timeoutSec\":%u,\"active\":%s,"
+        "\"timeoutLatched\":%s,\"runtimeSec\":%lu},\"leak\":{\"action\":\"%s\"},",
+        static_cast<double>(cfg.targetTemp), static_cast<double>(cfg.tempHysteresis),
+        static_cast<double>(co2_target_ph), static_cast<unsigned>(co2_max_time_minutes),
+        cfg.devMode ? "true" : "false", cfg.modemSleep ? "true" : "false",
+        cfg.alwaysScreenOn ? "true" : "false", cfg.soundEnabled ? "true" : "false",
+        display_auto_brightness ? "true" : "false", display_profile_code(display_power_profile),
+        static_cast<unsigned>(display_max_brightness),
+        static_cast<unsigned>(hal_display_get_brightness()),
+        static_cast<unsigned>(water_timeout_seconds), runtime.waterFillOn ? "true" : "false",
+        ato_timeout_latched ? "true" : "false", static_cast<unsigned long>(water_runtime),
+        leak_action_code(leak_action));
+    ok = ok && ble_json_append(out, out_size, &used,
+        "\"modules\":{\"light_on\":%s,\"plant_light_on\":%s,\"filter_on\":%s,"
+        "\"air_on\":%s,\"co2_on\":%s,\"heater_on\":%s,\"heater_enabled\":%s,"
+        "\"ph_sensor_enabled\":%s,\"co2_enabled\":%s,\"ec_enabled\":%s,"
+        "\"water_level_enabled\":%s,\"water_dosing_on\":%s,\"leak_enabled\":%s,"
+        "\"flow_enabled\":%s,\"feeder_enabled\":%s},",
+        runtime.lightOn ? "true" : "false", runtime.plantLightOn ? "true" : "false",
+        runtime.filterOn ? "true" : "false", runtime.airOn ? "true" : "false",
+        runtime.co2On ? "true" : "false", runtime.heaterOn ? "true" : "false",
+        cfg.enableHeater ? "true" : "false", (cfg.showPhSensor || cfg.devMode) ? "true" : "false",
+        cfg.enableCo2 ? "true" : "false", (cfg.enableEc || cfg.devMode) ? "true" : "false",
+        (cfg.enableWaterLevel || cfg.devMode) ? "true" : "false",
+        runtime.waterFillOn ? "true" : "false", (cfg.enableLeak || cfg.devMode) ? "true" : "false",
+        (cfg.enableFlow || cfg.devMode) ? "true" : "false", cfg.feedEnabled ? "true" : "false");
+    ok = ok && ble_json_append(out, out_size, &used,
+        "\"schedules\":{"
+        "\"light\":{\"mode\":\"%s\",\"start\":\"%02u:%02u\",\"end\":\"%02u:%02u\",\"profile\":\"%s\"},"
+        "\"plant_light\":{\"mode\":\"%s\",\"start\":\"%02u:%02u\",\"end\":\"%02u:%02u\",\"profile\":\"%s\"},"
+        "\"filter\":{\"mode\":\"%s\",\"start\":\"%02u:%02u\",\"end\":\"%02u:%02u\"},"
+        "\"air\":{\"mode\":\"%s\",\"start\":\"%02u:%02u\",\"end\":\"%02u:%02u\"},"
+        "\"feeder\":{\"enabled\":%s,\"count\":%u,\"time1\":\"%02u:%02u\",\"time2\":\"%02u:%02u\"}},",
+        ble_schedule_mode_name(cfg.lightMode), cfg.lightStartHour, cfg.lightStartMinute,
+        cfg.lightEndHour, cfg.lightEndMinute, ble_light_profile_name(cfg.lightColorMode),
+        ble_schedule_mode_name(cfg.plantLightMode), cfg.plantStartHour, cfg.plantStartMinute,
+        cfg.plantEndHour, cfg.plantEndMinute, ble_light_profile_name(cfg.plantLightColorMode),
+        ble_schedule_mode_name(cfg.filterMode), cfg.filterStartHour, cfg.filterStartMinute,
+        cfg.filterEndHour, cfg.filterEndMinute, ble_schedule_mode_name(cfg.airMode),
+        cfg.airStartHour, cfg.airStartMinute, cfg.airEndHour, cfg.airEndMinute,
+        cfg.feedEnabled ? "true" : "false", static_cast<unsigned>(cfg.feedCount),
+        cfg.feedHour1, cfg.feedMinute1, cfg.feedHour2, cfg.feedMinute2);
+    ok = ok && ble_json_append(out, out_size, &used,
+        "\"clock\":{\"year\":%d,\"month\":%d,\"day\":%d,\"hour\":%d,\"minute\":%d,"
+        "\"second\":%d,\"valid\":%s,\"source\":\"%s\"},"
+        "\"temperature\":{\"current\":%s,\"target\":%.2f,\"hysteresis\":%.2f,"
+        "\"historyCapacity\":%u,\"historyIntervalMinutes\":1,\"history\":[",
+        clock_year, clock_month, clock_day, clock_hour, clock_minute, clock_second,
+        controller_clock_reliable ? "true" : "false", controller_clock_source,
+        temperature_value, static_cast<double>(cfg.targetTemp), static_cast<double>(cfg.tempHysteresis),
+        static_cast<unsigned>(TEMP_HISTORY_POINTS));
+    constexpr uint8_t BLE_HISTORY_LIMIT = 48U;
+    const uint8_t history_start = history_count > BLE_HISTORY_LIMIT
+                                      ? static_cast<uint8_t>(history_count - BLE_HISTORY_LIMIT)
+                                      : 0U;
+    for (uint8_t index = history_start; ok && index < history_count; ++index) {
+        char history_temperature[20];
+        if (isfinite(temp_history[index])) {
+            snprintf(history_temperature, sizeof(history_temperature), "%.2f",
+                     static_cast<double>(temp_history[index]));
+        } else {
+            snprintf(history_temperature, sizeof(history_temperature), "null");
+        }
+        const uint32_t epoch = history_epoch[index] > 0U
+                                   ? history_epoch[index]
+                                   : controller_unix_time();
+        ok = ble_json_append(out, out_size, &used,
+                             "%s{\"value\":%s,\"epoch\":%lu}",
+                             index == history_start ? "" : ",",
+                             history_temperature,
+                             static_cast<unsigned long>(epoch));
+    }
+    ok = ok && ble_json_append(out, out_size, &used,
+        "],\"heaterMode\":%u},\"battery\":{\"voltage\":null,\"percent\":null},"
+        "\"firmware\":{\"version\":\"ble-v2\",\"buildDate\":\"%s\",\"buildTime\":\"%s\"},",
+        static_cast<unsigned>(cfg.heaterMode), __DATE__, __TIME__);
+    ok = ok && ble_json_append(out, out_size, &used,
+        "\"network\":{\"staConnected\":%s,\"staConnecting\":%s,\"apMode\":%s,"
+        "\"serviceMode\":%s,\"staSsid\":\"%s\",\"configuredStaSsid\":\"%s\","
+        "\"configuredApSsid\":\"cydAkwarium_AP\",\"ssid\":\"%s\","
+        "\"ip\":\"%u.%u.%u.%u\",\"rssi\":%d,\"clients\":%u},"
+        "\"system\":{\"uptime\":%lu,\"powerMode\":\"%s\",\"resetReason\":\"%d\","
+        "\"freeHeap\":%lu,\"largestHeap\":%lu},",
+        wifi_connected ? "true" : "false", is_connecting ? "true" : "false",
+        wifi_ota_active ? "true" : "false", ota_portal_sta_running ? "true" : "false",
+        ssid, configured_ssid, ssid, ip[0], ip[1], ip[2], ip[3], wifi_rssi,
+        static_cast<unsigned>(wifi_ota_active ? WiFi.softAPgetStationNum() : 0U),
+        static_cast<unsigned long>(millis() / 1000UL), cfg.modemSleep ? "eco" : "normal",
+        static_cast<int>(esp_reset_reason()), static_cast<unsigned long>(ESP.getFreeHeap()),
+        static_cast<unsigned long>(heap_caps_get_largest_free_block(MALLOC_CAP_8BIT)));
+    ok = ok && ble_json_append(out, out_size, &used,
+        "\"relays\":{\"light\":%s,\"plantLight\":%s,\"pump\":%s,\"heater\":%s,"
+        "\"co2\":%s,\"aeration\":%s,\"waterDosing\":%s,\"aerationPercent\":%u},"
+        "\"schedule\":{\"lightMode\":%u,\"dayStartHour\":%u,\"dayStartMin\":%u,"
+        "\"dayEndHour\":%u,\"dayEndMin\":%u,\"plantLightMode\":%u,"
+        "\"plantStartHour\":%u,\"plantStartMin\":%u,\"plantEndHour\":%u,"
+        "\"plantEndMin\":%u,\"filterMode\":%u,\"filterStartHour\":%u,"
+        "\"filterStartMin\":%u,\"filterEndHour\":%u,\"filterEndMin\":%u,"
+        "\"airMode\":%u,\"airStartHour\":%u,\"airStartMin\":%u,"
+        "\"airEndHour\":%u,\"airEndMin\":%u,\"heaterMode\":%u},"
+        "\"feeding\":{\"active\":%s,\"freq\":%u,\"hour\":%u,\"minute\":%u,"
+        "\"lastFeedEpoch\":%lu,\"lastResult\":\"%s\"},"
+        "\"eco\":{\"safe_active\":false,\"quiet_window\":false,\"deep_ready\":false,"
+        "\"rtc_ready\":%s,\"wake_after_sec\":0,\"last_wake_cause\":0,\"blockers\":[]}}}",
+        runtime.lightOn ? "true" : "false", runtime.plantLightOn ? "true" : "false",
+        runtime.filterOn ? "true" : "false", runtime.heaterOn ? "true" : "false",
+        runtime.co2On ? "true" : "false", runtime.airOn ? "true" : "false",
+        runtime.waterFillOn ? "true" : "false", runtime.airOn ? 100U : 0U,
+        cfg.lightMode, cfg.lightStartHour, cfg.lightStartMinute, cfg.lightEndHour, cfg.lightEndMinute,
+        cfg.plantLightMode, cfg.plantStartHour, cfg.plantStartMinute, cfg.plantEndHour, cfg.plantEndMinute,
+        cfg.filterMode, cfg.filterStartHour, cfg.filterStartMinute, cfg.filterEndHour, cfg.filterEndMinute,
+        cfg.airMode, cfg.airStartHour, cfg.airStartMinute, cfg.airEndHour, cfg.airEndMinute,
+        cfg.heaterMode, feeder_pulse_active ? "true" : "false",
+        cfg.feedEnabled ? static_cast<unsigned>(cfg.feedCount) : 0U,
+        cfg.feedHour1, cfg.feedMinute1, static_cast<unsigned long>(last_feed_epoch),
+        last_feed_result, controller_clock_reliable ? "true" : "false");
+    if (!ok) {
+        out[0] = '\0';
+    }
+    return ok;
+}
+
+bool gui_app_ble_logs_json(char *out, size_t out_size, const char *pin) {
+    if (!gui_ble_pin_valid(pin) || out == nullptr || out_size < 256U) {
+        return false;
+    }
+    size_t used = 0U;
+    bool ok = ble_json_append(out, out_size, &used, "{\"type\":\"logs\",\"data\":{\"normal\":[");
+    for (uint8_t i = 0U; ok && i < gui_logs_normal_count; ++i) {
+        char escaped[GUI_LOG_MESSAGE_LEN * 2U + 1U];
+        json_escape_to_buffer(gui_logs_normal[i].message, escaped, sizeof(escaped));
+        ok = ble_json_append(out, out_size, &used,
+                             "%s{\"ts\":%lu,\"level\":\"info\",\"code\":\"info\",\"message\":\"%s\"}",
+                             i == 0U ? "" : ",", static_cast<unsigned long>(gui_logs_normal[i].ts), escaped);
+    }
+    ok = ok && ble_json_append(out, out_size, &used, "],\"critical\":[");
+    for (uint8_t i = 0U; ok && i < gui_logs_important_count; ++i) {
+        char escaped[GUI_LOG_MESSAGE_LEN * 2U + 1U];
+        json_escape_to_buffer(gui_logs_important[i].message, escaped, sizeof(escaped));
+        ok = ble_json_append(out, out_size, &used,
+                             "%s{\"ts\":%lu,\"level\":\"error\",\"code\":\"wazne\",\"message\":\"%s\"}",
+                             i == 0U ? "" : ",", static_cast<unsigned long>(gui_logs_important[i].ts), escaped);
+    }
+    ok = ok && ble_json_append(out, out_size, &used,
+                               "],\"counts\":{\"normal\":%u,\"critical\":%u}}}",
+                               static_cast<unsigned>(gui_logs_normal_count),
+                               static_cast<unsigned>(gui_logs_important_count));
+    return ok;
+}
+
+bool gui_app_ble_diagnostics_json(char *out, size_t out_size, const char *pin) {
+    if (!gui_ble_pin_valid(pin) || out == nullptr || out_size < 512U) {
+        return false;
+    }
+    const int written = snprintf(
+        out, out_size,
+        "{\"type\":\"diagnostics\",\"data\":{\"ok\":true,\"simulated\":%s,"
+        "\"sda\":21,\"scl\":22,\"frequencyHz\":400000,\"scanMs\":0,"
+        "\"count\":%u,\"truncated\":false,\"devices\":[],"
+        "\"uart\":{\"ports\":[],\"discoverySupported\":false},"
+        "\"oneWire\":{\"dataPin\":17,\"scanMs\":0,\"count\":0,"
+        "\"truncated\":false,\"devices\":[]}}}",
+        cfg.devMode ? "true" : "false",
+        static_cast<unsigned>((sensor_debug.mcpPresent ? 1U : 0U) + (sensor_debug.adcPresent ? 1U : 0U)));
+    return written > 0 && static_cast<size_t>(written) < out_size;
+}
+
+GuiBleCommandResult gui_app_ble_action(const char *action,
+                                       const char *command_json,
+                                       const char *pin) {
+    if (!gui_ble_pin_valid(pin)) {
+        return {false, "pin_invalid", "Nieprawidlowy PIN administratora."};
+    }
+    if (action == nullptr || command_json == nullptr || cfg.magic != UI_CONFIG_MAGIC) {
+        return {false, "invalid_action", "Nieprawidlowa komenda BLE."};
+    }
+    if (strcmp(action, "auth_check") == 0) {
+        return {true, "admin_authenticated", "PIN administratora jest poprawny."};
+    }
+    if (strcmp(action, "feed_now") == 0) {
+        return gui_app_ble_feed(pin);
+    }
+
+    if (strcmp(action, "save_schedule") == 0) {
+        long value = 0L;
+        if (ble_json_read_long(command_json, "lightMode", 0L, 2L, &value)) cfg.lightMode = static_cast<uint8_t>(value);
+        if (ble_json_read_long(command_json, "plantLightMode", 0L, 2L, &value)) cfg.plantLightMode = static_cast<uint8_t>(value);
+        if (ble_json_read_long(command_json, "filterMode", 0L, 2L, &value)) cfg.filterMode = static_cast<uint8_t>(value);
+        if (ble_json_read_long(command_json, "aerationMode", 0L, 2L, &value)) cfg.airMode = static_cast<uint8_t>(value);
+        if (ble_json_read_long(command_json, "heaterMode", 0L, 1L, &value)) {
+            cfg.heaterMode = static_cast<uint8_t>(value);
+            cfg.enableHeater = value == 0L;
+        }
+        ble_json_read_time(command_json, "dayStart", &cfg.lightStartHour, &cfg.lightStartMinute);
+        ble_json_read_time(command_json, "dayEnd", &cfg.lightEndHour, &cfg.lightEndMinute);
+        ble_json_read_time(command_json, "plantLightStart", &cfg.plantStartHour, &cfg.plantStartMinute);
+        ble_json_read_time(command_json, "plantLightEnd", &cfg.plantEndHour, &cfg.plantEndMinute);
+        ble_json_read_time(command_json, "filterOn", &cfg.filterStartHour, &cfg.filterStartMinute);
+        ble_json_read_time(command_json, "filterOff", &cfg.filterEndHour, &cfg.filterEndMinute);
+        ble_json_read_time(command_json, "airOn", &cfg.airStartHour, &cfg.airStartMinute);
+        ble_json_read_time(command_json, "airOff", &cfg.airEndHour, &cfg.airEndMinute);
+        uint8_t profile = 0U;
+        if (ble_parse_light_profile(command_json, "lightProfile", &profile)) {
+            cfg.lightColorMode = profile;
+            cfg.lightSchedColorMode = aquael_profile_to_schedule(profile);
+        }
+        if (ble_parse_light_profile(command_json, "plantLightProfile", &profile)) {
+            cfg.plantLightColorMode = profile;
+            cfg.plantSchedColorMode = aquael_profile_to_schedule(profile);
+        }
+        if (ble_json_read_long(command_json, "feedFreq", 0L, 2L, &value)) {
+            cfg.feedEnabled = value > 0L;
+            cfg.feedCount = cfg.feedEnabled ? 1U : 0U;
+        }
+        ble_json_read_time(command_json, "feedTime", &cfg.feedHour1, &cfg.feedMinute1);
+        sanitize_config(cfg);
+        gui_app_save_settings();
+        return {true, "ok", "Harmonogramy zapisane."};
+    }
+
+    if (strcmp(action, "save_temperature") == 0) {
+        long mode = cfg.heaterMode;
+        float target = cfg.targetTemp;
+        float hysteresis = cfg.tempHysteresis;
+        ble_json_read_long(command_json, "heaterMode", 0L, 1L, &mode);
+        if (!ble_json_read_float(command_json, "target", 18.0f, 30.0f, &target) ||
+            !ble_json_read_float(command_json, "hysteresis", 0.1f, 5.0f, &hysteresis)) {
+            return {false, "invalid_temperature", "Temperatura lub histereza jest poza zakresem."};
+        }
+        cfg.heaterMode = static_cast<uint8_t>(mode);
+        cfg.enableHeater = mode == 0L;
+        cfg.targetTemp = target;
+        cfg.tempHysteresis = hysteresis;
+        gui_app_save_settings();
+        apply_mcp_outputs();
+        return {true, "ok", "Ustawienia temperatury zapisane."};
+    }
+
+    if (strcmp(action, "save_co2") == 0) {
+        bool enabled = cfg.enableCo2;
+        float target = co2_target_ph;
+        long limit = co2_max_time_minutes;
+        ble_json_read_bool(command_json, "co2Enabled", &enabled);
+        if (!ble_json_read_float(command_json, "targetPh", 5.0f, 8.5f, &target) ||
+            !ble_json_read_long(command_json, "co2Limit", 1L, 1440L, &limit)) {
+            return {false, "invalid_co2", "Parametry CO2 sa poza zakresem."};
+        }
+        cfg.enableCo2 = enabled;
+        co2_target_ph = target;
+        co2_max_time_minutes = static_cast<uint16_t>(limit);
+        gui_app_save_settings();
+        return {true, "ok", "Ustawienia CO2 zapisane."};
+    }
+
+    if (strcmp(action, "save_water") == 0) {
+        bool enabled = cfg.enableWaterLevel;
+        long timeout = water_timeout_seconds;
+        ble_json_read_bool(command_json, "waterEnabled", &enabled);
+        if (!ble_json_read_long(command_json, "waterTimeout", 5L, 300L, &timeout)) {
+            return {false, "invalid_water_timeout", "Limit ATO musi wynosic 5-300 sekund."};
+        }
+        cfg.enableWaterLevel = enabled;
+        water_timeout_seconds = static_cast<uint16_t>(timeout);
+        if (!enabled) {
+            runtime.waterFillOn = false;
+            ato_started_ms = 0U;
+            ato_timeout_latched = false;
+        }
+        gui_app_save_settings();
+        apply_mcp_outputs();
+        return {true, "ok", "Ustawienia ATO zapisane."};
+    }
+
+    if (strcmp(action, "save_leak") == 0) {
+        bool enabled = cfg.enableLeak;
+        char value[24];
+        ble_json_read_bool(command_json, "leakEnabled", &enabled);
+        if (!ble_json_read_string(command_json, "leakAction", value, sizeof(value))) {
+            return {false, "invalid_leak_action", "Brak poprawnej akcji wycieku."};
+        }
+        LeakAction parsed = leak_action;
+        if (!parse_leak_action(String(value), &parsed)) {
+            return {false, "invalid_leak_action", "Nieprawidlowa akcja wycieku."};
+        }
+        cfg.enableLeak = enabled;
+        leak_action = parsed;
+        gui_app_save_settings();
+        return {true, "ok", "Ustawienia wycieku zapisane."};
+    }
+
+    if (strcmp(action, "save_display") == 0) {
+        bool automatic = display_auto_brightness;
+        long brightness = display_max_brightness;
+        char profile[24];
+        ble_json_read_bool(command_json, "autoBrightness", &automatic);
+        if (!ble_json_read_long(command_json, "brightness", 10L, 100L, &brightness) ||
+            !ble_json_read_string(command_json, "profile", profile, sizeof(profile))) {
+            return {false, "invalid_display", "Nieprawidlowe ustawienia ekranu."};
+        }
+        DisplayPowerProfile parsed = display_power_profile;
+        if (!parse_display_profile(String(profile), &parsed)) {
+            return {false, "invalid_display_profile", "Nieprawidlowy profil ekranu."};
+        }
+        display_auto_brightness = automatic;
+        display_max_brightness = static_cast<uint8_t>(brightness);
+        display_power_profile = parsed;
+        gui_app_save_settings();
+        apply_display_backlight(last_ldr_value, last_ldr_valid);
+        return {true, "ok", "Ustawienia ekranu zapisane."};
+    }
+
+    if (strcmp(action, "save_network") == 0) {
+        char ssid[33];
+        char password[WIFI_PASSWORD_MAX_LEN + 1U] = {};
+        if (!ble_json_read_string(command_json, "staSsid", ssid, sizeof(ssid)) || ssid[0] == '\0') {
+            return {false, "wifi_profile_error", "SSID musi zawierac od 1 do 32 znakow."};
+        }
+        ble_json_read_string(command_json, "staPassword", password, sizeof(password));
+        if (password[0] != '\0' && strlen(password) < 8U) {
+            return {false, "wifi_profile_error", "Haslo WPA musi miec co najmniej 8 znakow."};
+        }
+        if (!save_wifi_profile_to_sd(ssid, password, "", 0)) {
+            return {false, "wifi_profile_error", "Nie zapisano profilu WiFi na karcie SD."};
+        }
+        snprintf(selected_ssid, sizeof(selected_ssid), "%s", ssid);
+        return {true, "ok", "Profil WiFi zapisany."};
+    }
+
+    if (strcmp(action, "wifi_session_start") == 0) {
+        try_autoconnect_wifi_profile();
+        return {true, "ok", "Sesja WiFi uruchomiona."};
+    }
+    if (strcmp(action, "wifi_session_stop") == 0) {
+        wifi_disconnect_pending = true;
+        wifi_disconnect_at_ms = millis() + 250UL;
+        return {true, "ok", "Sesja WiFi zostanie zatrzymana."};
+    }
+    if (strcmp(action, "sync_time_ntp") == 0) {
+        if (!wifi_connected) {
+            return {false, "wifi_required", "Synchronizacja NTP wymaga WiFi."};
+        }
+        return sync_clock_from_ntp(5000U)
+                   ? GuiBleCommandResult{true, "ok", "Czas zsynchronizowany przez NTP."}
+                   : GuiBleCommandResult{false, "ntp_failed", "Nie udalo sie pobrac czasu NTP."};
+    }
+    if (strcmp(action, "set_time") == 0) {
+        long epoch = 0L;
+        if (!ble_json_read_long(command_json, "epoch", 1704067200L, 2147483647L, &epoch)) {
+            return {false, "invalid_epoch", "Nieprawidlowy czas telefonu."};
+        }
+        setenv("TZ", NTP_TZ_POLAND, 1);
+        tzset();
+        const time_t raw = static_cast<time_t>(epoch);
+        struct tm local_time = {};
+        if (localtime_r(&raw, &local_time) == nullptr) {
+            return {false, "time_convert_failed", "Nie mozna przeliczyc czasu."};
+        }
+        clock_year = local_time.tm_year + 1900;
+        clock_month = local_time.tm_mon + 1;
+        clock_day = local_time.tm_mday;
+        clock_hour = local_time.tm_hour;
+        clock_minute = local_time.tm_min;
+        clock_second = local_time.tm_sec;
+        return gui_save_clock_settings(true, "mobile_ble")
+                   ? GuiBleCommandResult{true, "ok", "Czas sterownika ustawiony."}
+                   : GuiBleCommandResult{false, "save_failed", "Nie zapisano czasu w NVS."};
+    }
+    if (strcmp(action, "clear_critical_logs") == 0) {
+        gui_logs_important_count = 0U;
+        return {true, "ok", "Wyczyszczono wazne logi."};
+    }
+    if (strcmp(action, "test_relay") == 0) {
+        long channel = 0L;
+        long duration = 3L;
+        bool state = false;
+        if (!ble_json_read_long(command_json, "channel", 1L, 8L, &channel) ||
+            !ble_json_read_bool(command_json, "state", &state)) {
+            return {false, "invalid_relay_channel", "Kanal musi byc w zakresie 1-8."};
+        }
+        ble_json_read_long(command_json, "duration", 1L, 3L, &duration);
+        return start_relay_test(static_cast<uint8_t>(channel), state,
+                                state ? static_cast<uint32_t>(duration) * 1000UL : 0U)
+                   ? GuiBleCommandResult{true, "ok", "Test przekaznika wykonany."}
+                   : GuiBleCommandResult{false, "relay_test_unavailable", "Kanal jest niedostepny."};
+    }
+    if (strcmp(action, "restart_device") == 0) {
+        ota_reboot_pending = true;
+        ota_reboot_at_ms = millis() + 1000UL;
+        return {true, "ok", "Restart sterownika za chwile."};
+    }
+    if (strcmp(action, "factory_reset") == 0) {
+        if (prefs.begin("aquarium", false)) {
+            prefs.clear();
+            prefs.end();
+        }
+        load_default_config(cfg);
+        display_auto_brightness = true;
+        display_max_brightness = 100U;
+        display_power_profile = DisplayPowerProfile::AlwaysOn;
+        co2_target_ph = FACTORY_CO2_TARGET_PH;
+        co2_max_time_minutes = 540U;
+        water_timeout_seconds = 120U;
+        leak_action = LeakAction::DisableAll;
+        runtime.waterFillOn = false;
+        ato_started_ms = 0U;
+        ato_timeout_latched = false;
+        gui_app_save_settings();
+        apply_mcp_outputs();
+        ota_reboot_pending = true;
+        ota_reboot_at_ms = millis() + 1200UL;
+        return {true, "ok", "Konfiguracja fabryczna przywrocona."};
+    }
+    if (strcmp(action, "save_relays") == 0) {
+        return {false, "transport_unsupported",
+                "Profil przekaznikow jest zbyt duzy dla bezpiecznej edycji BLE; uzyj WiFi."};
+    }
+    return {false, "unknown_action", "Nieznana akcja BLE."};
+}

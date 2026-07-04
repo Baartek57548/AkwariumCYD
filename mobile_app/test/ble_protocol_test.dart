@@ -20,4 +20,27 @@ void main() {
     expect(() => assembler.add([1, 0, 1, 1, 65]), throwsFormatException);
     expect(() => assembler.add([1, 0, 0, 0, 65]), throwsFormatException);
   });
+
+  test('encodes a large command into frames accepted by the assembler', () {
+    final payload = utf8.encode(
+      jsonEncode({
+        'id': 77,
+        'op': 'action',
+        'name': 'save_relays',
+        'args': {'data': List.filled(700, 'x').join()},
+        'pin': '1234',
+      }),
+    );
+    final frames = encodeBleFrames(payload, messageId: 77);
+
+    expect(frames.length, greaterThan(1));
+    expect(frames.every((frame) => frame.length <= 160), isTrue);
+
+    final assembler = BleFrameAssembler();
+    String? decoded;
+    for (final frame in frames.reversed) {
+      decoded = assembler.add(frame) ?? decoded;
+    }
+    expect(decoded, utf8.decode(payload));
+  });
 }

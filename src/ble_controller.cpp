@@ -13,27 +13,62 @@ constexpr char BLE_SERVICE_UUID[] = "7c4a0001-6e8d-4f84-9f3f-2c3a0a0c0001";
 constexpr char BLE_COMMAND_UUID[] = "7c4a0002-6e8d-4f84-9f3f-2c3a0a0c0001";
 constexpr char BLE_EVENTS_UUID[] = "7c4a0003-6e8d-4f84-9f3f-2c3a0a0c0001";
 constexpr char BLE_INFO_UUID[] = "7c4a0004-6e8d-4f84-9f3f-2c3a0a0c0001";
-constexpr size_t BLE_COMMAND_MAX_BYTES = 160U;
+constexpr size_t BLE_COMMAND_MAX_BYTES = 4096U;
 constexpr size_t BLE_FRAME_PAYLOAD_BYTES = 156U;
+constexpr uint8_t BLE_COMMAND_MAX_PARTS = 32U;
+constexpr uint8_t BLE_EVENT_MAX_PARTS = 64U;
+constexpr uint32_t BLE_FRAGMENT_TIMEOUT_MS = 10000UL;
 constexpr uint32_t BLE_STATUS_INTERVAL_MS = 2000UL;
 constexpr uint32_t BLE_NOTIFY_GAP_MS = 12UL;
-constexpr UBaseType_t BLE_COMMAND_QUEUE_LENGTH = 8U;
+constexpr UBaseType_t BLE_COMMAND_QUEUE_LENGTH = 2U;
+constexpr size_t BLE_MESSAGE_BUFFER_BYTES = 8192U;
+
+enum class CallbackError : uint8_t {
+    None = 0U,
+    InvalidCommand = 1U,
+    QueueFull = 2U,
+    InvalidFragment = 3U
+};
 
 struct BleQueuedCommand {
+    char json[BLE_COMMAND_MAX_BYTES + 1U];
+};
+
+struct IncomingAssembly {
+    bool active;
+    uint16_t message_id;
+    uint8_t part_count;
+    uint8_t next_part;
+    size_t length;
+    uint32_t last_fragment_ms;
     char json[BLE_COMMAND_MAX_BYTES + 1U];
 };
 
 QueueHandle_t command_queue = nullptr;
 NimBLECharacteristic *events_characteristic = nullptr;
 volatile bool client_connected = false;
-volatile uint8_t pending_callback_error = 0U;
+volatile CallbackError pending_callback_error = CallbackError::None;
 uint16_t outgoing_message_id = 1U;
+IncomingAssembly incoming = {};
+BleQueuedCommand processing_command = {};
+BleQueuedCommand callback_command = {};
+char outgoing_json[BLE_MESSAGE_BUFFER_BYTES] = {};
+
+void reset_incoming() {
+    incoming.active = false;
+    incoming.message_id = 0U;
+    incoming.part_count = 0U;
+    incoming.next_part = 0U;
+    incoming.length = 0U;
+    incoming.last_fragment_ms = 0U;
+    incoming.json[0] = '\0';
+}
 
 bool extract_json_int(const char *json, const char *key, int *out) {
     if (json == nullptr || key == nullptr || out == nullptr) {
         return false;
     }
-    char pattern[32];
+    char pattern[40];
     const int pattern_length = snprintf(pattern, sizeof(pattern), "\"%s\":", key);
     if (pattern_length <= 0 || static_cast<size_t>(pattern_length) >= sizeof(pattern)) {
         return false;
@@ -56,7 +91,7 @@ bool extract_json_string(const char *json, const char *key, char *out, size_t ou
     if (json == nullptr || key == nullptr || out == nullptr || out_size < 2U) {
         return false;
     }
-    char pattern[32];
+    char pattern[40];
     const int pattern_length = snprintf(pattern, sizeof(pattern), "\"%s\":\"", key);
     if (pattern_length <= 0 || static_cast<size_t>(pattern_length) >= sizeof(pattern)) {
         return false;
@@ -85,7 +120,7 @@ bool extract_json_bool(const char *json, const char *key, bool *out) {
     if (json == nullptr || key == nullptr || out == nullptr) {
         return false;
     }
-    char pattern[32];
+    char pattern[40];
     const int pattern_length = snprintf(pattern, sizeof(pattern), "\"%s\":", key);
     if (pattern_length <= 0 || static_cast<size_t>(pattern_length) >= sizeof(pattern)) {
         return false;
@@ -106,6 +141,16 @@ bool extract_json_bool(const char *json, const char *key, bool *out) {
     return false;
 }
 
+bool enqueue_command(const char *json, size_t length) {
+    if (command_queue == nullptr || json == nullptr || length == 0U ||
+        length > BLE_COMMAND_MAX_BYTES || memchr(json, '\0', length) != nullptr) {
+        return false;
+    }
+    memcpy(callback_command.json, json, length);
+    callback_command.json[length] = '\0';
+    return xQueueSend(command_queue, &callback_command, 0) == pdTRUE;
+}
+
 void send_json(const char *json) {
     if (!client_connected || events_characteristic == nullptr || json == nullptr) {
         return;
@@ -116,7 +161,8 @@ void send_json(const char *json) {
     }
     const size_t part_count_size =
         (length + BLE_FRAME_PAYLOAD_BYTES - 1U) / BLE_FRAME_PAYLOAD_BYTES;
-    if (part_count_size == 0U || part_count_size > 255U) {
+    if (part_count_size == 0U || part_count_size > BLE_EVENT_MAX_PARTS) {
+        Serial.printf("BLE: response too large (%u bytes).\n", static_cast<unsigned>(length));
         return;
     }
     const uint8_t part_count = static_cast<uint8_t>(part_count_size);
@@ -144,7 +190,7 @@ void send_json(const char *json) {
 }
 
 void send_response(int id, const GuiBleCommandResult &result) {
-    char response[256];
+    char response[320];
     const int length = snprintf(
         response,
         sizeof(response),
@@ -158,7 +204,7 @@ void send_response(int id, const GuiBleCommandResult &result) {
     }
 }
 
-bool send_status() {
+bool send_legacy_status() {
     GuiBleSnapshot snapshot = {};
     if (!gui_app_ble_snapshot(&snapshot)) {
         return false;
@@ -200,34 +246,97 @@ bool send_status() {
     return true;
 }
 
+bool send_full_status() {
+    if (!gui_app_ble_full_status_json(outgoing_json, sizeof(outgoing_json))) {
+        return false;
+    }
+    send_json(outgoing_json);
+    return true;
+}
+
 void process_command(const BleQueuedCommand &queued) {
     int id = 0;
     if (!extract_json_int(queued.json, "id", &id)) {
         send_response(0, {false, "invalid_id", "Brak poprawnego identyfikatora komendy."});
         return;
     }
-    char operation[16];
+    char operation[24];
     if (!extract_json_string(queued.json, "op", operation, sizeof(operation))) {
         send_response(id, {false, "invalid_operation", "Brak poprawnej operacji BLE."});
         return;
     }
     if (strcmp(operation, "status") == 0) {
-        if (!send_status()) {
+        if (!send_legacy_status()) {
             send_response(id, {false, "not_ready", "Telemetria nie jest jeszcze gotowa."});
             return;
         }
         send_response(id, {true, "ok", "Telemetria BLE wyslana."});
         return;
     }
+    if (strcmp(operation, "full_status") == 0) {
+        if (!send_full_status()) {
+            send_response(id, {false, "status_too_large", "Nie mozna zbudowac pelnego statusu BLE."});
+            return;
+        }
+        send_response(id, {true, "ok", "Pelny status BLE wyslany."});
+        return;
+    }
 
-    char pin[12];
+    char pin[16];
     if (!extract_json_string(queued.json, "pin", pin, sizeof(pin))) {
         send_response(id, {false, "pin_invalid", "Brak poprawnego PIN-u."});
         return;
     }
+    if (strcmp(operation, "auth") == 0) {
+        send_response(id, gui_app_ble_action("auth_check", queued.json, pin));
+        return;
+    }
+    if (strcmp(operation, "logs") == 0) {
+        const GuiBleCommandResult auth = gui_app_ble_action("auth_check", queued.json, pin);
+        if (!auth.success) {
+            send_response(id, auth);
+            return;
+        }
+        if (!gui_app_ble_logs_json(outgoing_json, sizeof(outgoing_json), pin)) {
+            send_response(id, {false, "logs_failed", "Nie mozna zbudowac logow BLE."});
+            return;
+        }
+        send_json(outgoing_json);
+        send_response(id, {true, "ok", "Logi BLE wyslane."});
+        return;
+    }
+    if (strcmp(operation, "diagnostics") == 0) {
+        const GuiBleCommandResult auth = gui_app_ble_action("auth_check", queued.json, pin);
+        if (!auth.success) {
+            send_response(id, auth);
+            return;
+        }
+        if (!gui_app_ble_diagnostics_json(outgoing_json, sizeof(outgoing_json), pin)) {
+            send_response(id, {false, "diagnostics_failed", "Nie mozna zbudowac diagnostyki BLE."});
+            return;
+        }
+        send_json(outgoing_json);
+        send_response(id, {true, "ok", "Diagnostyka BLE wyslana."});
+        return;
+    }
+    if (strcmp(operation, "action") == 0) {
+        char action[40];
+        if (!extract_json_string(queued.json, "name", action, sizeof(action))) {
+            send_response(id, {false, "invalid_action", "Brak nazwy akcji BLE."});
+            return;
+        }
+        const GuiBleCommandResult result = gui_app_ble_action(action, queued.json, pin);
+        send_response(id, result);
+        if (result.success) {
+            send_full_status();
+        }
+        return;
+    }
+
+    // Operacje v1 pozostaja aktywne, aby starsze wydania aplikacji nadal dzialaly.
     if (strcmp(operation, "feed") == 0) {
         send_response(id, gui_app_ble_feed(pin));
-        send_status();
+        send_legacy_status();
         return;
     }
     if (strcmp(operation, "set") == 0) {
@@ -239,7 +348,7 @@ void process_command(const BleQueuedCommand &queued) {
             return;
         }
         send_response(id, gui_app_ble_set_output(target, state, pin));
-        send_status();
+        send_legacy_status();
         return;
     }
     send_response(id, {false, "unknown_operation", "Nieznana operacja BLE."});
@@ -249,32 +358,85 @@ class ControllerServerCallbacks final : public NimBLEServerCallbacks {
 public:
     void onConnect(NimBLEServer *, NimBLEConnInfo &) override {
         client_connected = true;
+        reset_incoming();
     }
 
     void onDisconnect(NimBLEServer *, NimBLEConnInfo &, int) override {
         client_connected = false;
+        reset_incoming();
         NimBLEDevice::startAdvertising();
     }
 };
 
 class CommandCharacteristicCallbacks final : public NimBLECharacteristicCallbacks {
 public:
-    void onWrite(NimBLECharacteristic *characteristic,
-                 NimBLEConnInfo &) override {
+    void onWrite(NimBLECharacteristic *characteristic, NimBLEConnInfo &) override {
         if (characteristic == nullptr || command_queue == nullptr) {
             return;
         }
         const std::string value = characteristic->getValue();
-        if (value.empty() || value.size() > BLE_COMMAND_MAX_BYTES ||
-            memchr(value.data(), '\0', value.size()) != nullptr) {
-            pending_callback_error = 1U;
+        if (value.empty()) {
+            pending_callback_error = CallbackError::InvalidCommand;
             return;
         }
-        BleQueuedCommand queued = {};
-        memcpy(queued.json, value.data(), value.size());
-        queued.json[value.size()] = '\0';
-        if (xQueueSend(command_queue, &queued, 0) != pdTRUE) {
-            pending_callback_error = 2U;
+
+        const bool unframed_json = value.size() >= 5U &&
+                                   memcmp(value.data(), "{\"id\"", 5U) == 0;
+        if (unframed_json) {
+            reset_incoming();
+            pending_callback_error = enqueue_command(value.data(), value.size())
+                                         ? CallbackError::None
+                                         : (value.size() > BLE_COMMAND_MAX_BYTES
+                                                ? CallbackError::InvalidCommand
+                                                : CallbackError::QueueFull);
+            return;
+        }
+
+        if (value.size() <= 4U) {
+            reset_incoming();
+            pending_callback_error = CallbackError::InvalidFragment;
+            return;
+        }
+        const uint8_t *bytes = reinterpret_cast<const uint8_t *>(value.data());
+        const uint16_t message_id = static_cast<uint16_t>(bytes[0]) |
+                                    (static_cast<uint16_t>(bytes[1]) << 8U);
+        const uint8_t part_index = bytes[2];
+        const uint8_t part_count = bytes[3];
+        const size_t payload_length = value.size() - 4U;
+        const uint32_t now_ms = millis();
+
+        if (part_count == 0U || part_count > BLE_COMMAND_MAX_PARTS ||
+            part_index >= part_count || payload_length > BLE_FRAME_PAYLOAD_BYTES) {
+            reset_incoming();
+            pending_callback_error = CallbackError::InvalidFragment;
+            return;
+        }
+        if (incoming.active && now_ms - incoming.last_fragment_ms > BLE_FRAGMENT_TIMEOUT_MS) {
+            reset_incoming();
+        }
+        if (part_index == 0U) {
+            reset_incoming();
+            incoming.active = true;
+            incoming.message_id = message_id;
+            incoming.part_count = part_count;
+        }
+        if (!incoming.active || incoming.message_id != message_id ||
+            incoming.part_count != part_count || incoming.next_part != part_index ||
+            incoming.length + payload_length > BLE_COMMAND_MAX_BYTES) {
+            reset_incoming();
+            pending_callback_error = CallbackError::InvalidFragment;
+            return;
+        }
+        memcpy(incoming.json + incoming.length, bytes + 4U, payload_length);
+        incoming.length += payload_length;
+        incoming.next_part++;
+        incoming.last_fragment_ms = now_ms;
+
+        if (incoming.next_part == incoming.part_count) {
+            incoming.json[incoming.length] = '\0';
+            const bool queued = enqueue_command(incoming.json, incoming.length);
+            reset_incoming();
+            pending_callback_error = queued ? CallbackError::None : CallbackError::QueueFull;
         }
     }
 };
@@ -298,16 +460,13 @@ void controller_ble_task(void *) {
     server->setCallbacks(new ControllerServerCallbacks());
     NimBLEService *service = server->createService(BLE_SERVICE_UUID);
     NimBLECharacteristic *command = service->createCharacteristic(
-        BLE_COMMAND_UUID,
-        NIMBLE_PROPERTY::WRITE | NIMBLE_PROPERTY::WRITE_NR);
+        BLE_COMMAND_UUID, NIMBLE_PROPERTY::WRITE | NIMBLE_PROPERTY::WRITE_NR);
     command->setCallbacks(new CommandCharacteristicCallbacks());
     events_characteristic = service->createCharacteristic(
-        BLE_EVENTS_UUID,
-        NIMBLE_PROPERTY::READ | NIMBLE_PROPERTY::NOTIFY);
+        BLE_EVENTS_UUID, NIMBLE_PROPERTY::READ | NIMBLE_PROPERTY::NOTIFY);
     NimBLECharacteristic *info = service->createCharacteristic(
-        BLE_INFO_UUID,
-        NIMBLE_PROPERTY::READ);
-    info->setValue("{\"name\":\"cydAkwarium\",\"protocol\":1}");
+        BLE_INFO_UUID, NIMBLE_PROPERTY::READ);
+    info->setValue("{\"name\":\"cydAkwarium\",\"protocol\":2,\"maxCommand\":4096,\"maxParts\":32}");
 
     NimBLEAdvertising *advertising = NimBLEDevice::getAdvertising();
     advertising->setName(BLE_DEVICE_NAME);
@@ -315,27 +474,29 @@ void controller_ble_task(void *) {
     advertising->enableScanResponse(true);
     advertising->setPreferredParams(0x06U, 0x12U);
     advertising->start();
-    Serial.println("BLE: cydAkwarium GATT service ready.");
+    Serial.println("BLE: cydAkwarium GATT protocol v2 ready.");
 
     uint32_t last_status_ms = 0U;
     for (;;) {
-        const uint8_t callback_error = pending_callback_error;
-        if (callback_error != 0U) {
-            pending_callback_error = 0U;
-            if (callback_error == 1U) {
-                send_response(0, {false, "invalid_command", "Nieprawidlowy rozmiar komendy BLE."});
-            } else {
+        const CallbackError callback_error = pending_callback_error;
+        if (callback_error != CallbackError::None) {
+            pending_callback_error = CallbackError::None;
+            if (callback_error == CallbackError::QueueFull) {
                 send_response(0, {false, "queue_full", "Kolejka komend BLE jest pelna."});
+            } else if (callback_error == CallbackError::InvalidFragment) {
+                send_response(0, {false, "invalid_fragment", "Nieprawidlowa sekwencja ramek BLE."});
+            } else {
+                send_response(0, {false, "invalid_command", "Nieprawidlowy rozmiar komendy BLE."});
             }
         }
-        BleQueuedCommand queued = {};
-        if (xQueueReceive(command_queue, &queued, pdMS_TO_TICKS(50U)) == pdTRUE) {
-            process_command(queued);
+        if (xQueueReceive(command_queue, &processing_command, pdMS_TO_TICKS(50U)) == pdTRUE) {
+            process_command(processing_command);
+            processing_command.json[0] = '\0';
         }
         const uint32_t now_ms = millis();
         if (client_connected && now_ms - last_status_ms >= BLE_STATUS_INTERVAL_MS) {
             last_status_ms = now_ms;
-            send_status();
+            send_legacy_status();
         }
     }
 }
@@ -343,13 +504,8 @@ void controller_ble_task(void *) {
 } // namespace
 
 extern "C" void initVariant(void) {
-    BaseType_t created = xTaskCreate(
-        controller_ble_task,
-        "ble_controller",
-        6144U,
-        nullptr,
-        1U,
-        nullptr);
+    const BaseType_t created = xTaskCreate(
+        controller_ble_task, "ble_controller", 8192U, nullptr, 1U, nullptr);
     if (created != pdPASS) {
         Serial.println("BLE: controller task creation failed.");
     }

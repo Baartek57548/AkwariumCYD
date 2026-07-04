@@ -111,4 +111,29 @@ GuiBleCommandResult gui_app_ble_set_output(const char *target, bool state, const
  */
 GuiBleCommandResult gui_app_ble_feed(const char *pin);
 
+/**
+ * @brief Serializuje kompletny status sterownika w formacie zgodnym z API WWW.
+ *
+ * Funkcja nie alokuje pamieci dynamicznie. Zwraca false, gdy bufor jest zbyt
+ * maly albo konfiguracja sterownika nie zostala jeszcze zainicjalizowana.
+ */
+bool gui_app_ble_full_status_json(char *out, size_t out_size);
+
+/** @brief Serializuje logi panelu WWW do komunikatu protokolu BLE v2. */
+bool gui_app_ble_logs_json(char *out, size_t out_size, const char *pin);
+
+/** @brief Serializuje podstawowa diagnostyke magistral do BLE v2. */
+bool gui_app_ble_diagnostics_json(char *out, size_t out_size, const char *pin);
+
+/**
+ * @brief Wykonuje akcje panelu WWW przeslana jako JSON protokolu BLE v2.
+ *
+ * @param action Nazwa akcji zgodna z endpointem /api/action.
+ * @param command_json Pelna komenda JSON zawierajaca obiekt args.
+ * @param pin PIN administratora.
+ */
+GuiBleCommandResult gui_app_ble_action(const char *action,
+                                       const char *command_json,
+                                       const char *pin);
+
 #endif // GUI_APP_H

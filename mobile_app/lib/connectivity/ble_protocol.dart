@@ -53,6 +53,41 @@ class BleFrameAssembler {
   void clear() => _pending.clear();
 }
 
+List<Uint8List> encodeBleFrames(
+  List<int> payload, {
+  required int messageId,
+  int maximumPayloadBytes = 156,
+  int maximumPartCount = 64,
+}) {
+  if (payload.isEmpty) {
+    throw const FormatException('Wiadomość BLE nie może być pusta.');
+  }
+  if (messageId < 1 || messageId > 65535) {
+    throw const FormatException(
+      'Identyfikator wiadomości BLE jest poza zakresem.',
+    );
+  }
+  if (maximumPayloadBytes < 1 || maximumPayloadBytes > 251) {
+    throw const FormatException('Nieprawidłowy rozmiar fragmentu BLE.');
+  }
+  final partCount =
+      (payload.length + maximumPayloadBytes - 1) ~/ maximumPayloadBytes;
+  if (partCount < 1 || partCount > maximumPartCount || partCount > 255) {
+    throw const FormatException('Wiadomość BLE ma zbyt wiele fragmentów.');
+  }
+  return List<Uint8List>.generate(partCount, (partIndex) {
+    final start = partIndex * maximumPayloadBytes;
+    final end = (start + maximumPayloadBytes).clamp(0, payload.length);
+    return Uint8List.fromList([
+      messageId & 0xff,
+      (messageId >> 8) & 0xff,
+      partIndex,
+      partCount,
+      ...payload.sublist(start, end),
+    ]);
+  }, growable: false);
+}
+
 class _PendingBleMessage {
   _PendingBleMessage(this.partCount)
     : createdAt = DateTime.now(),
