@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 
+import '../display_refresh_rate.dart';
 import 'controller_api.dart';
 import 'controller_session.dart';
 import 'views/automation_view.dart';
@@ -182,6 +183,7 @@ class _ControllerShellState extends State<ControllerShell> {
   @override
   Widget build(BuildContext context) {
     final width = MediaQuery.sizeOf(context).width;
+    final refreshProfile = DisplayRefreshRateScope.of(context);
     final extended = width >= 1100;
     final showRail = width >= 760;
     return Scaffold(
@@ -199,6 +201,17 @@ class _ControllerShellState extends State<ControllerShell> {
           ],
         ),
         actions: [
+          if (width >= 620)
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 4),
+              child: Tooltip(
+                message: refreshProfile.description,
+                child: Chip(
+                  avatar: const Icon(Icons.speed_rounded, size: 17),
+                  label: Text('${refreshProfile.roundedHertz} Hz'),
+                ),
+              ),
+            ),
           if (session.isDevelopment)
             const Padding(
               padding: EdgeInsets.symmetric(horizontal: 8),
@@ -277,9 +290,29 @@ class _ControllerShellState extends State<ControllerShell> {
                 : Stack(
                     children: [
                       Positioned.fill(
-                        child: KeyedSubtree(
-                          key: ValueKey(_section),
-                          child: _currentView(),
+                        child: AnimatedSwitcher(
+                          duration: refreshProfile.transitionDuration,
+                          reverseDuration:
+                              refreshProfile.shortAnimationDuration,
+                          switchInCurve: Curves.easeOutCubic,
+                          switchOutCurve: Curves.easeInCubic,
+                          transitionBuilder: (child, animation) {
+                            final offset = Tween<Offset>(
+                              begin: const Offset(0.015, 0),
+                              end: Offset.zero,
+                            ).animate(animation);
+                            return FadeTransition(
+                              opacity: animation,
+                              child: SlideTransition(
+                                position: offset,
+                                child: child,
+                              ),
+                            );
+                          },
+                          child: KeyedSubtree(
+                            key: ValueKey(_section),
+                            child: _currentView(),
+                          ),
                         ),
                       ),
                       if (!session.connected && session.error != null)
