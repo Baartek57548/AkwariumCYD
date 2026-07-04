@@ -1,4 +1,4 @@
-# cydAkwarium Mobile
+# AquaCYD Control
 
 Kompletna aplikacja Flutter dla Androida i iOS. Natywny tryb Wi-Fi używa
 bezpośrednio tego samego API i tych samych nazw akcji co panel `web/`, dlatego

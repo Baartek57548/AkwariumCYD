@@ -38,7 +38,7 @@ class _AquariumAppState extends State<AquariumApp> {
     return DisplayRefreshRateScope(
       profile: refreshRateController.profile,
       child: MaterialApp(
-        title: 'cydAkwarium',
+        title: 'AquaCYD Control',
         debugShowCheckedModeBanner: false,
         theme: ThemeData(
           colorScheme: ColorScheme.fromSeed(seedColor: seed),

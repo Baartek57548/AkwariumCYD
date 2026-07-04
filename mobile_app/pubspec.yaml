@@ -1,7 +1,7 @@
 name: cyd_aquarium_mobile
-description: Mobilny panel sterownika cydAkwarium dla Androida i iOS.
+description: AquaCYD Control — mobilny panel sterownika akwarium dla Androida i iOS.
 publish_to: 'none'
-version: 3.1.1+5
+version: 3.2.0+6
 
 environment:
   sdk: ^3.11.3
@@ -21,6 +21,16 @@ dev_dependencies:
   flutter_test:
     sdk: flutter
   flutter_lints: ^6.0.0
+  flutter_launcher_icons: ^0.14.4
 
 flutter:
   uses-material-design: true
+  assets:
+    - assets/branding/aquacyd-control-icon.png
+
+flutter_launcher_icons:
+  android: true
+  ios: true
+  image_path: assets/branding/aquacyd-control-icon.png
+  min_sdk_android: 24
+  remove_alpha_ios: true

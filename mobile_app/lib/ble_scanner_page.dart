@@ -85,7 +85,7 @@ class _BleScannerPageState extends State<BleScannerPage> {
       return;
     }
     final name = device.name.trim().isEmpty
-        ? 'cydAkwarium BLE'
+        ? 'AquaCYD BLE'
         : device.name.trim();
     await Navigator.of(context).push(
       MaterialPageRoute<void>(
@@ -145,7 +145,7 @@ class _BleScannerPageState extends State<BleScannerPage> {
                     itemBuilder: (context, index) {
                       final device = devices[index];
                       final name = device.name.trim().isEmpty
-                          ? 'cydAkwarium BLE'
+                          ? 'AquaCYD BLE'
                           : device.name.trim();
                       return Card(
                         child: ListTile(

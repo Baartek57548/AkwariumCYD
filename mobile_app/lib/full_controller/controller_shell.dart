@@ -382,7 +382,7 @@ class _MobileDrawer extends StatelessWidget {
         const Padding(
           padding: EdgeInsets.fromLTRB(28, 24, 16, 12),
           child: Text(
-            'cydAkwarium',
+            'AquaCYD Control',
             style: TextStyle(fontSize: 24, fontWeight: FontWeight.w800),
           ),
         ),

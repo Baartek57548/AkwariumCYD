@@ -61,9 +61,9 @@ class ControllerSession extends ChangeNotifier {
   JsonMap get diagnostics => _diagnostics;
   List<dynamic> get historyFiles => List.unmodifiable(_historyFiles);
   String get displayName => switch (kind) {
-    ControllerSessionKind.development => 'cydAkwarium DEV',
-    ControllerSessionKind.bluetooth => 'cydAkwarium BLE',
-    ControllerSessionKind.wifi => 'cydAkwarium Wi-Fi',
+    ControllerSessionKind.development => 'AquaCYD DEV',
+    ControllerSessionKind.bluetooth => 'AquaCYD BLE',
+    ControllerSessionKind.wifi => 'AquaCYD Wi-Fi',
   };
   Uri? get baseUri => _api?.baseUri;
   bool get supportsFirmwareUpload =>

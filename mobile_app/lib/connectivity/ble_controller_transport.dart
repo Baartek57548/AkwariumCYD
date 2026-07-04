@@ -94,7 +94,7 @@ class BleControllerTransport implements ControllerTransport {
   bool _disposed = false;
 
   @override
-  String get displayName => deviceName.isEmpty ? 'cydAkwarium BLE' : deviceName;
+  String get displayName => deviceName.isEmpty ? 'AquaCYD BLE' : deviceName;
 
   @override
   bool get isDeveloperTransport => false;

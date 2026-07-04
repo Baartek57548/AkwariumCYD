@@ -36,21 +36,28 @@ class ConnectionHomePage extends StatelessWidget {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [
-                    Icon(
-                      Icons.water_drop_rounded,
-                      size: 64,
-                      color: colors.primary,
+                    Center(
+                      child: ClipRRect(
+                        borderRadius: BorderRadius.circular(24),
+                        child: Image.asset(
+                          'assets/branding/aquacyd-control-icon.png',
+                          width: 88,
+                          height: 88,
+                          fit: BoxFit.cover,
+                          semanticLabel: 'Logo AquaCYD Control',
+                        ),
+                      ),
                     ),
                     const SizedBox(height: 12),
                     Text(
-                      'cydAkwarium',
+                      'AquaCYD Control',
                       textAlign: TextAlign.center,
                       style: Theme.of(context).textTheme.displaySmall?.copyWith(
                         fontWeight: FontWeight.w800,
                       ),
                     ),
                     Text(
-                      'Mobilny panel sterownika',
+                      'Inteligentne sterowanie akwarium',
                       textAlign: TextAlign.center,
                       style: Theme.of(context).textTheme.titleMedium?.copyWith(
                         color: colors.onSurfaceVariant,
