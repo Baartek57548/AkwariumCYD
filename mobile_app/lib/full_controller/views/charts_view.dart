@@ -6,6 +6,7 @@ import 'package:flutter/material.dart';
 import '../controller_api.dart';
 import '../controller_session.dart';
 import '../data_access.dart';
+import '../history_data.dart';
 import '../widgets.dart';
 
 class ChartsView extends StatefulWidget {
@@ -18,14 +19,49 @@ class ChartsView extends StatefulWidget {
 }
 
 class _ChartsViewState extends State<ChartsView> {
+  static const ranges = <int>[1, 3, 6, 12, 24, 72, 168];
+
   int rangeHours = 3;
-  bool loadingArchives = false;
+  _HistoryMetric metric = _HistoryMetric.temperature;
+  HistoryLoadResult? history;
+  bool loading = false;
   String? message;
 
   @override
   void initState() {
     super.initState();
-    unawaited(widget.session.refresh(includeHistory: true));
+    unawaited(_load());
+  }
+
+  Future<void> _load() async {
+    if (loading) return;
+    setState(() {
+      loading = true;
+      message = null;
+    });
+    try {
+      final result = await widget.session.loadHistory(
+        Duration(hours: rangeHours),
+      );
+      if (mounted) {
+        setState(() {
+          history = result;
+          message = result.warning;
+        });
+      }
+    } on ControllerApiException catch (error) {
+      if (mounted) setState(() => message = error.message);
+    } on FormatException catch (error) {
+      if (mounted) setState(() => message = error.message);
+    } finally {
+      if (mounted) setState(() => loading = false);
+    }
+  }
+
+  Future<void> _changeRange(int hours) async {
+    if (hours == rangeHours) return;
+    setState(() => rangeHours = hours);
+    await _load();
   }
 
   Future<void> _exportCsv() async {
@@ -48,259 +84,398 @@ class _ChartsViewState extends State<ChartsView> {
     }
   }
 
-  Future<void> _loadArchives() async {
-    setState(() => loadingArchives = true);
-    try {
-      await widget.session.loadHistoryFiles();
-      if (mounted) {
-        setState(() => message = 'Lista archiwów została odświeżona.');
-      }
-    } on ControllerApiException catch (error) {
-      if (mounted) setState(() => message = error.message);
-    } finally {
-      if (mounted) setState(() => loadingArchives = false);
-    }
-  }
-
   @override
   Widget build(BuildContext context) {
     final status = widget.session.status;
     final temperature = status.section('temperature');
-    final sensors = status.section('sensors');
-    final rawSamples = temperature.list('history');
-    final cutoff =
-        DateTime.now().millisecondsSinceEpoch ~/ 1000 - rangeHours * 3600;
-    final samples = rawSamples
-        .map(jsonMap)
-        .where((item) => item.integer('epoch') >= cutoff)
-        .map(
-          (item) => _ChartSample(item.integer('epoch'), item.number('value')),
-        )
+    final targetTemperature = temperature.number('target', 25);
+    final targetPh = status.section('config').number('co2TargetPh', 6.8);
+    final allSamples = history?.samples ?? const <HistorySample>[];
+    final points = allSamples
+        .map((sample) => _PlotPoint(sample.epoch, metric.value(sample)))
+        .where((point) => point.value != null)
+        .map((point) => _PlotPoint(point.epoch, point.value!))
         .toList(growable: false);
-    final values = samples.map((item) => item.value).toList(growable: false);
+    final values = points.map((point) => point.value!).toList(growable: false);
     final minimum = values.isEmpty
-        ? 0.0
-        : values.reduce((a, b) => a < b ? a : b);
+        ? null
+        : values.reduce((first, second) => first < second ? first : second);
     final maximum = values.isEmpty
-        ? 0.0
-        : values.reduce((a, b) => a > b ? a : b);
+        ? null
+        : values.reduce((first, second) => first > second ? first : second);
     final average = values.isEmpty
-        ? 0.0
-        : values.reduce((a, b) => a + b) / values.length;
+        ? null
+        : values.reduce((first, second) => first + second) / values.length;
+    final chartPoints = _downsample(points, 360);
+    final target = switch (metric) {
+      _HistoryMetric.temperature => targetTemperature,
+      _HistoryMetric.ph => targetPh,
+      _HistoryMetric.ldr => null,
+    };
 
     return ControllerPageBody(
+      maxWidth: 900,
+      padding: const EdgeInsets.fromLTRB(12, 10, 12, 28),
+      onRefresh: _load,
       children: [
         SectionHeader(
-          title: 'Historia pomiarów',
-          description:
-              'Wykres wykorzystuje ten sam bufor /api/status?history=1 co panel WWW.',
+          title: 'Historia i wykresy',
+          description: history?.usedArchive == true
+              ? 'Dane bieżące i archiwum SD sterownika.'
+              : 'Dane dostępne przez ${widget.session.displayName}.',
           trailing: IconButton(
-            onPressed: () => widget.session.refresh(includeHistory: true),
-            icon: const Icon(Icons.refresh_rounded),
+            onPressed: loading ? null : _load,
+            icon: loading
+                ? const SizedBox.square(
+                    dimension: 20,
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  )
+                : const Icon(Icons.refresh_rounded),
             tooltip: 'Odśwież historię',
           ),
         ),
-        ResponsiveGrid(
-          children: [
-            MetricTile(
-              icon: Icons.thermostat_rounded,
-              label: 'Aktualna',
-              value: sensors.flag('temp_valid')
-                  ? '${sensors.number('temp_c').toStringAsFixed(2)} °C'
-                  : '--',
-              detail:
-                  'Cel ${temperature.number('target').toStringAsFixed(1)} °C',
-            ),
-            MetricTile(
-              icon: Icons.south_rounded,
-              label: 'Minimum',
-              value: values.isEmpty ? '--' : '${minimum.toStringAsFixed(2)} °C',
-              detail: 'Wybrany zakres $rangeHours h',
-            ),
-            MetricTile(
-              icon: Icons.horizontal_rule_rounded,
-              label: 'Średnia',
-              value: values.isEmpty ? '--' : '${average.toStringAsFixed(2)} °C',
-              detail: '${values.length} próbek',
-            ),
-            MetricTile(
-              icon: Icons.north_rounded,
-              label: 'Maksimum',
-              value: values.isEmpty ? '--' : '${maximum.toStringAsFixed(2)} °C',
-              detail:
-                  'Interwał ${temperature.integer('historyIntervalMinutes', 1)} min',
-            ),
-          ],
-        ),
-        const SizedBox(height: 14),
         Card(
           child: Padding(
-            padding: const EdgeInsets.fromLTRB(16, 16, 16, 10),
+            padding: const EdgeInsets.all(10),
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
-                Wrap(
-                  spacing: 8,
-                  runSpacing: 8,
-                  children: [
-                    for (final hours in const [1, 3, 6, 12, 24])
-                      ChoiceChip(
-                        label: Text('${hours}H'),
-                        selected: rangeHours == hours,
-                        onSelected: (_) => setState(() => rangeHours = hours),
+                SingleChildScrollView(
+                  scrollDirection: Axis.horizontal,
+                  child: Row(
+                    children: [
+                      for (final hours in ranges) ...[
+                        ChoiceChip(
+                          label: Text(_rangeLabel(hours)),
+                          selected: rangeHours == hours,
+                          onSelected: loading
+                              ? null
+                              : (_) => unawaited(_changeRange(hours)),
+                          visualDensity: VisualDensity.compact,
+                        ),
+                        const SizedBox(width: 6),
+                      ],
+                    ],
+                  ),
+                ),
+                const SizedBox(height: 8),
+                SegmentedButton<_HistoryMetric>(
+                  showSelectedIcon: false,
+                  segments: [
+                    for (final value in _HistoryMetric.values)
+                      ButtonSegment(
+                        value: value,
+                        label: Text(value.shortLabel),
+                        icon: Icon(value.icon, size: 18),
                       ),
                   ],
-                ),
-                const SizedBox(height: 16),
-                SizedBox(
-                  height: 300,
-                  child: samples.length < 2
-                      ? const Center(
-                          child: Text(
-                            'Brak wystarczającej liczby próbek w wybranym zakresie.',
-                          ),
-                        )
-                      : CustomPaint(
-                          painter: _TemperatureChartPainter(
-                            samples: samples,
-                            target: temperature.number('target', 25),
-                            lineColor: Theme.of(context).colorScheme.primary,
-                            targetColor: Theme.of(context).colorScheme.tertiary,
-                            gridColor: Theme.of(
-                              context,
-                            ).colorScheme.outlineVariant,
-                            textColor: Theme.of(
-                              context,
-                            ).colorScheme.onSurfaceVariant,
-                          ),
-                        ),
+                  selected: {metric},
+                  onSelectionChanged: (selection) =>
+                      setState(() => metric = selection.single),
                 ),
               ],
             ),
           ),
         ),
-        const SectionHeader(
-          title: 'Bieżące próbki',
-          description: 'Ostatnie wartości zapisane w pamięci sterownika.',
+        const SizedBox(height: 10),
+        _CompactStatistics(
+          metric: metric,
+          minimum: minimum,
+          average: average,
+          maximum: maximum,
+          sampleCount: values.length,
+          availableRange: history?.availableRange ?? Duration.zero,
         ),
+        const SizedBox(height: 10),
         Card(
-          child: SingleChildScrollView(
-            scrollDirection: Axis.horizontal,
-            child: DataTable(
-              columns: const [
-                DataColumn(label: Text('Czas')),
-                DataColumn(label: Text('Temperatura')),
-                DataColumn(label: Text('Odchylenie od celu')),
-              ],
-              rows: [
-                for (final sample in samples.reversed.take(20))
-                  DataRow(
-                    cells: [
-                      DataCell(Text(_formatEpoch(sample.epoch))),
-                      DataCell(Text('${sample.value.toStringAsFixed(2)} °C')),
-                      DataCell(
-                        Text(
-                          '${(sample.value - temperature.number('target', 25)).toStringAsFixed(2)} °C',
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(10, 12, 10, 8),
+            child: SizedBox(
+              height: 220,
+              child: loading && history == null
+                  ? const Center(child: CircularProgressIndicator())
+                  : chartPoints.length < 2
+                  ? Center(
+                      child: Text(
+                        'Brak wystarczającej liczby próbek ${metric.label}.',
+                        textAlign: TextAlign.center,
+                      ),
+                    )
+                  : RepaintBoundary(
+                      child: CustomPaint(
+                        painter: _HistoryChartPainter(
+                          points: chartPoints,
+                          target: target,
+                          valueDecimals: metric.decimals,
+                          lineColor: Theme.of(context).colorScheme.primary,
+                          targetColor: Theme.of(context).colorScheme.tertiary,
+                          gridColor: Theme.of(
+                            context,
+                          ).colorScheme.outlineVariant,
+                          textColor: Theme.of(
+                            context,
+                          ).colorScheme.onSurfaceVariant,
+                        ),
+                      ),
+                    ),
+            ),
+          ),
+        ),
+        if (message != null) ...[
+          const SizedBox(height: 10),
+          StatusBanner(
+            icon: Icons.info_outline_rounded,
+            title: 'Zakres danych',
+            message: message!,
+            isError: false,
+          ),
+        ],
+        SectionHeader(
+          title: 'Próbki',
+          description:
+              '${values.length} wartości · zakres ${_rangeLabel(rangeHours)}',
+        ),
+        _DenseHistoryTable(
+          samples: allSamples.reversed.take(80).toList(growable: false),
+          metric: metric,
+          target: target,
+        ),
+        const SizedBox(height: 10),
+        Align(
+          alignment: Alignment.centerLeft,
+          child: FilledButton.icon(
+            onPressed: widget.session.supportsFileDownload ? _exportCsv : null,
+            icon: const Icon(Icons.download_rounded),
+            label: Text(
+              widget.session.supportsFileDownload
+                  ? 'Eksportuj CSV'
+                  : 'Eksport wymaga Wi‑Fi',
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+enum _HistoryMetric {
+  temperature('Temperatura', 'Temp.', '°C', 2, Icons.thermostat_rounded),
+  ph('Odczyn pH', 'pH', '', 2, Icons.science_outlined),
+  ldr('Jasność względna', 'LDR', ' ADC', 0, Icons.light_mode_outlined);
+
+  const _HistoryMetric(
+    this.label,
+    this.shortLabel,
+    this.unit,
+    this.decimals,
+    this.icon,
+  );
+
+  final String label;
+  final String shortLabel;
+  final String unit;
+  final int decimals;
+  final IconData icon;
+
+  double? value(HistorySample sample) => switch (this) {
+    temperature => sample.temperature,
+    ph => sample.ph,
+    ldr => sample.ldr?.toDouble(),
+  };
+
+  String format(double? value) =>
+      value == null ? '—' : '${value.toStringAsFixed(decimals)}$unit';
+}
+
+class _CompactStatistics extends StatelessWidget {
+  const _CompactStatistics({
+    required this.metric,
+    required this.minimum,
+    required this.average,
+    required this.maximum,
+    required this.sampleCount,
+    required this.availableRange,
+  });
+
+  final _HistoryMetric metric;
+  final double? minimum;
+  final double? average;
+  final double? maximum;
+  final int sampleCount;
+  final Duration availableRange;
+
+  @override
+  Widget build(BuildContext context) {
+    return Card(
+      child: LayoutBuilder(
+        builder: (context, constraints) {
+          final columns = constraints.maxWidth >= 620 ? 4 : 2;
+          final entries = [
+            ('Minimum', metric.format(minimum)),
+            ('Średnia', metric.format(average)),
+            ('Maksimum', metric.format(maximum)),
+            ('Dane', '$sampleCount · ${_compactDuration(availableRange)}'),
+          ];
+          return GridView.count(
+            padding: const EdgeInsets.all(8),
+            physics: const NeverScrollableScrollPhysics(),
+            shrinkWrap: true,
+            crossAxisCount: columns,
+            childAspectRatio: columns == 4 ? 1.75 : 2.2,
+            children: [
+              for (final entry in entries)
+                Padding(
+                  padding: const EdgeInsets.all(6),
+                  child: Column(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      Text(
+                        entry.$1,
+                        style: Theme.of(context).textTheme.labelMedium
+                            ?.copyWith(
+                              color: Theme.of(
+                                context,
+                              ).colorScheme.onSurfaceVariant,
+                            ),
+                      ),
+                      const SizedBox(height: 3),
+                      FittedBox(
+                        child: Text(
+                          entry.$2,
+                          style: const TextStyle(
+                            fontSize: 17,
+                            fontWeight: FontWeight.w800,
+                          ),
                         ),
                       ),
                     ],
                   ),
-              ],
-            ),
+                ),
+            ],
+          );
+        },
+      ),
+    );
+  }
+}
+
+class _DenseHistoryTable extends StatelessWidget {
+  const _DenseHistoryTable({
+    required this.samples,
+    required this.metric,
+    required this.target,
+  });
+
+  final List<HistorySample> samples;
+  final _HistoryMetric metric;
+  final double? target;
+
+  @override
+  Widget build(BuildContext context) {
+    final divider = Theme.of(context).dividerColor;
+    return Card(
+      clipBehavior: Clip.antiAlias,
+      child: Column(
+        children: [
+          _DenseRow(
+            cells: const ['Czas', 'Wartość', 'Odchylenie'],
+            header: true,
+            divider: divider,
           ),
-        ),
-        const SizedBox(height: 12),
-        Wrap(
-          spacing: 10,
-          runSpacing: 10,
-          children: [
-            FilledButton.icon(
-              onPressed: widget.session.supportsFileDownload
-                  ? _exportCsv
-                  : null,
-              icon: const Icon(Icons.download_rounded),
-              label: Text(
-                widget.session.supportsFileDownload
-                    ? 'Eksportuj CSV'
-                    : 'Eksport wymaga Wi-Fi',
-              ),
-            ),
-            OutlinedButton.icon(
-              onPressed: loadingArchives || !widget.session.supportsFileDownload
-                  ? null
-                  : _loadArchives,
-              icon: loadingArchives
-                  ? const SizedBox.square(
-                      dimension: 18,
-                      child: CircularProgressIndicator(strokeWidth: 2),
-                    )
-                  : const Icon(Icons.folder_copy_outlined),
-              label: const Text('Odśwież archiwa SD'),
-            ),
-          ],
-        ),
-        if (message != null)
-          Padding(
-            padding: const EdgeInsets.only(top: 10),
-            child: Text(message!),
-          ),
-        if (widget.session.historyFiles.isNotEmpty) ...[
-          const SectionHeader(title: 'Archiwa miesięczne'),
-          Card(
-            child: Column(
-              children: [
-                for (
-                  var index = 0;
-                  index < widget.session.historyFiles.length;
-                  index++
-                ) ...[
-                  Builder(
-                    builder: (context) {
-                      final file = jsonMap(widget.session.historyFiles[index]);
-                      return ListTile(
-                        leading: const Icon(Icons.insert_drive_file_outlined),
-                        title: Text(file.text('name', 'archiwum')),
-                        subtitle: Text(formatBytes(file.integer('size'))),
-                      );
-                    },
-                  ),
-                  if (index < widget.session.historyFiles.length - 1)
-                    const Divider(height: 1),
+          if (samples.isEmpty)
+            const Padding(
+              padding: EdgeInsets.all(18),
+              child: Text('Brak próbek w wybranym zakresie.'),
+            )
+          else
+            for (final sample in samples)
+              _DenseRow(
+                cells: [
+                  _formatEpoch(sample.epoch),
+                  metric.format(metric.value(sample)),
+                  _deviation(metric.value(sample), target, metric),
                 ],
-              ],
-            ),
-          ),
+                divider: divider,
+              ),
         ],
-      ],
+      ),
     );
   }
 
-  String _formatEpoch(int epoch) {
-    final date = DateTime.fromMillisecondsSinceEpoch(epoch * 1000).toLocal();
-    return '${date.day.toString().padLeft(2, '0')}.${date.month.toString().padLeft(2, '0')} '
-        '${date.hour.toString().padLeft(2, '0')}:${date.minute.toString().padLeft(2, '0')}';
+  static String _deviation(
+    double? value,
+    double? target,
+    _HistoryMetric metric,
+  ) {
+    if (value == null || target == null) return '—';
+    final delta = value - target;
+    final prefix = delta > 0 ? '+' : '';
+    return '$prefix${delta.toStringAsFixed(metric.decimals)}${metric.unit}';
   }
 }
 
-class _ChartSample {
-  const _ChartSample(this.epoch, this.value);
+class _DenseRow extends StatelessWidget {
+  const _DenseRow({
+    required this.cells,
+    required this.divider,
+    this.header = false,
+  });
 
-  final int epoch;
-  final double value;
+  final List<String> cells;
+  final Color divider;
+  final bool header;
+
+  @override
+  Widget build(BuildContext context) {
+    final style = Theme.of(context).textTheme.bodySmall?.copyWith(
+      fontWeight: header ? FontWeight.w800 : FontWeight.w500,
+    );
+    return Container(
+      constraints: BoxConstraints(minHeight: header ? 42 : 38),
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 7),
+      decoration: BoxDecoration(
+        border: Border(bottom: BorderSide(color: divider, width: 0.6)),
+      ),
+      child: Row(
+        children: [
+          for (var index = 0; index < cells.length; index++)
+            Expanded(
+              flex: index == 0 ? 34 : 33,
+              child: Text(
+                cells[index],
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                textAlign: index == 0 ? TextAlign.start : TextAlign.end,
+                style: style,
+              ),
+            ),
+        ],
+      ),
+    );
+  }
 }
 
-class _TemperatureChartPainter extends CustomPainter {
-  const _TemperatureChartPainter({
-    required this.samples,
+class _PlotPoint {
+  const _PlotPoint(this.epoch, this.value);
+
+  final int epoch;
+  final double? value;
+}
+
+class _HistoryChartPainter extends CustomPainter {
+  const _HistoryChartPainter({
+    required this.points,
     required this.target,
+    required this.valueDecimals,
     required this.lineColor,
     required this.targetColor,
     required this.gridColor,
     required this.textColor,
   });
 
-  final List<_ChartSample> samples;
-  final double target;
+  final List<_PlotPoint> points;
+  final double? target;
+  final int valueDecimals;
   final Color lineColor;
   final Color targetColor;
   final Color gridColor;
@@ -308,25 +483,23 @@ class _TemperatureChartPainter extends CustomPainter {
 
   @override
   void paint(Canvas canvas, Size size) {
-    const left = 48.0;
-    const right = 12.0;
-    const top = 12.0;
-    const bottom = 28.0;
+    const left = 42.0;
+    const right = 8.0;
+    const top = 8.0;
+    const bottom = 24.0;
     final chart = Rect.fromLTRB(
       left,
       top,
       size.width - right,
       size.height - bottom,
     );
-    final values = samples.map((item) => item.value).followedBy([
-      target,
-    ]).toList();
-    var minimum = values.reduce((a, b) => a < b ? a : b) - 0.5;
-    var maximum = values.reduce((a, b) => a > b ? a : b) + 0.5;
-    if ((maximum - minimum).abs() < 0.2) {
-      minimum -= 0.5;
-      maximum += 0.5;
-    }
+    final numeric = points.map((point) => point.value!).toList();
+    if (target != null) numeric.add(target!);
+    var minimum = numeric.reduce((a, b) => a < b ? a : b);
+    var maximum = numeric.reduce((a, b) => a > b ? a : b);
+    final padding = ((maximum - minimum).abs() * 0.12).clamp(0.2, 200.0);
+    minimum -= padding;
+    maximum += padding;
     final gridPaint = Paint()
       ..color = gridColor
       ..strokeWidth = 1;
@@ -336,50 +509,94 @@ class _TemperatureChartPainter extends CustomPainter {
       canvas.drawLine(Offset(chart.left, y), Offset(chart.right, y), gridPaint);
       final value = maximum - (maximum - minimum) * index / 4;
       textPainter.text = TextSpan(
-        text: value.toStringAsFixed(1),
-        style: TextStyle(color: textColor, fontSize: 11),
+        text: value.toStringAsFixed(valueDecimals > 1 ? 1 : valueDecimals),
+        style: TextStyle(color: textColor, fontSize: 10),
       );
       textPainter.layout();
-      textPainter.paint(canvas, Offset(2, y - textPainter.height / 2));
+      textPainter.paint(canvas, Offset(1, y - textPainter.height / 2));
     }
     double yFor(double value) =>
         chart.bottom - (value - minimum) / (maximum - minimum) * chart.height;
-    final targetY = yFor(target);
-    canvas.drawLine(
-      Offset(chart.left, targetY),
-      Offset(chart.right, targetY),
-      Paint()
-        ..color = targetColor
-        ..strokeWidth = 1.5,
-    );
-    final firstEpoch = samples.first.epoch;
-    final lastEpoch = samples.last.epoch;
-    final epochSpan = (lastEpoch - firstEpoch).clamp(1, 1 << 31);
+    if (target != null) {
+      final targetY = yFor(target!);
+      canvas.drawLine(
+        Offset(chart.left, targetY),
+        Offset(chart.right, targetY),
+        Paint()
+          ..color = targetColor
+          ..strokeWidth = 1.5,
+      );
+    }
+    final firstEpoch = points.first.epoch;
+    final lastEpoch = points.last.epoch;
+    final span = (lastEpoch - firstEpoch).clamp(1, 1 << 31);
     final path = Path();
-    for (var index = 0; index < samples.length; index++) {
-      final sample = samples[index];
-      final x =
-          chart.left + (sample.epoch - firstEpoch) / epochSpan * chart.width;
-      final y = yFor(sample.value);
-      if (index == 0) {
-        path.moveTo(x, y);
-      } else {
-        path.lineTo(x, y);
-      }
+    for (var index = 0; index < points.length; index++) {
+      final point = points[index];
+      final x = chart.left + (point.epoch - firstEpoch) / span * chart.width;
+      final y = yFor(point.value!);
+      index == 0 ? path.moveTo(x, y) : path.lineTo(x, y);
     }
     canvas.drawPath(
       path,
       Paint()
         ..color = lineColor
-        ..strokeWidth = 2.5
+        ..strokeWidth = 2
         ..style = PaintingStyle.stroke
         ..strokeJoin = StrokeJoin.round,
     );
+    final labels = [firstEpoch, firstEpoch + span ~/ 2, lastEpoch];
+    for (var index = 0; index < labels.length; index++) {
+      textPainter.text = TextSpan(
+        text: _formatChartTime(labels[index]),
+        style: TextStyle(color: textColor, fontSize: 9),
+      );
+      textPainter.layout();
+      final x = chart.left + chart.width * index / 2;
+      final offset = index == 0
+          ? 0.0
+          : index == 2
+          ? -textPainter.width
+          : -textPainter.width / 2;
+      textPainter.paint(canvas, Offset(x + offset, chart.bottom + 5));
+    }
   }
 
   @override
-  bool shouldRepaint(covariant _TemperatureChartPainter oldDelegate) =>
-      oldDelegate.samples != samples ||
+  bool shouldRepaint(covariant _HistoryChartPainter oldDelegate) =>
+      oldDelegate.points != points ||
       oldDelegate.target != target ||
       oldDelegate.lineColor != lineColor;
+}
+
+List<_PlotPoint> _downsample(List<_PlotPoint> source, int maximumPoints) {
+  if (source.length <= maximumPoints) return source;
+  final result = <_PlotPoint>[];
+  final step = (source.length - 1) / (maximumPoints - 1);
+  for (var index = 0; index < maximumPoints; index++) {
+    result.add(source[(index * step).round().clamp(0, source.length - 1)]);
+  }
+  return result;
+}
+
+String _rangeLabel(int hours) {
+  if (hours >= 24 && hours % 24 == 0) return '${hours ~/ 24}D';
+  return '${hours}H';
+}
+
+String _compactDuration(Duration duration) {
+  if (duration.inDays >= 1) return '${duration.inDays} d';
+  if (duration.inHours >= 1) return '${duration.inHours} h';
+  return '${duration.inMinutes} min';
+}
+
+String _formatEpoch(int epoch) {
+  final date = DateTime.fromMillisecondsSinceEpoch(epoch * 1000).toLocal();
+  return '${date.day.toString().padLeft(2, '0')}.${date.month.toString().padLeft(2, '0')} '
+      '${date.hour.toString().padLeft(2, '0')}:${date.minute.toString().padLeft(2, '0')}';
+}
+
+String _formatChartTime(int epoch) {
+  final date = DateTime.fromMillisecondsSinceEpoch(epoch * 1000).toLocal();
+  return '${date.hour.toString().padLeft(2, '0')}:${date.minute.toString().padLeft(2, '0')}';
 }

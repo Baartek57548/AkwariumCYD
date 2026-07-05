@@ -5,6 +5,7 @@ import 'package:flutter/foundation.dart';
 
 import 'controller_api.dart';
 import 'data_access.dart';
+import 'history_data.dart';
 
 enum ControllerSessionKind { wifi, bluetooth, development }
 
@@ -33,6 +34,7 @@ class ControllerSession extends ChangeNotifier {
   JsonMap _logs = <String, dynamic>{};
   JsonMap _diagnostics = <String, dynamic>{};
   List<dynamic> _historyFiles = const [];
+  final Map<String, List<HistorySample>> _historyArchiveCache = {};
   Timer? _pollTimer;
   Timer? _developmentTimer;
   Timer? _webSessionTimer;
@@ -270,6 +272,131 @@ class ControllerSession extends ChangeNotifier {
       _busy = false;
       if (!_disposed) notifyListeners();
     }
+  }
+
+  Future<HistoryLoadResult> loadHistory(Duration range) async {
+    if (range <= Duration.zero) {
+      throw const ControllerApiException(
+        code: 'invalid_history_range',
+        message: 'Zakres historii musi być większy od zera.',
+      );
+    }
+    if (isDevelopment) return _developmentHistory(range);
+
+    await refresh(includeHistory: true, reportBusy: false);
+    final cutoff =
+        DateTime.now().millisecondsSinceEpoch ~/ 1000 - range.inSeconds;
+    final merged = <int, HistorySample>{};
+    for (final raw in _status.section('temperature').list('history')) {
+      final sample = HistorySample.fromStatus(raw);
+      if (sample.epoch > 0) merged[sample.epoch] = sample;
+    }
+
+    var usedArchive = false;
+    String? warning;
+    if (_api?.supportsFileDownload == true) {
+      _busy = true;
+      notifyListeners();
+      try {
+        _historyFiles = await _api!.historyFiles();
+        final relevant = _relevantHistoryFiles(_historyFiles, cutoff);
+        for (final file in relevant) {
+          final path = file.text('path');
+          if (path.isEmpty) continue;
+          try {
+            final samples =
+                _historyArchiveCache[path] ??
+                HistoryArchiveCodec.decode(
+                  await _api.download(
+                    '/download',
+                    queryParameters: {'path': path},
+                  ),
+                );
+            _historyArchiveCache[path] = samples;
+            for (final sample in samples) {
+              if (sample.epoch >= cutoff) merged[sample.epoch] = sample;
+            }
+            usedArchive = true;
+          } on Object catch (error) {
+            warning =
+                'Nie udało się odczytać archiwum ${file.text('name')}: $error';
+          }
+        }
+      } on ControllerApiException catch (error) {
+        warning = 'Archiwum SD jest niedostępne: ${error.message}';
+      } finally {
+        _busy = false;
+        if (!_disposed) notifyListeners();
+      }
+    } else if (isBluetooth) {
+      warning = 'BLE udostępnia tylko bieżący bufor historii sterownika.';
+    }
+
+    final samples =
+        merged.values.where((sample) => sample.epoch >= cutoff).toList()
+          ..sort((a, b) => a.epoch.compareTo(b.epoch));
+    if (samples.length >= 2 &&
+        samples.last.epoch - samples.first.epoch < range.inSeconds * 0.9) {
+      warning ??=
+          'Dostępne dane obejmują ${_durationLabel(Duration(seconds: samples.last.epoch - samples.first.epoch))} z wybranego zakresu ${_durationLabel(range)}.';
+    }
+    return HistoryLoadResult(
+      samples: List.unmodifiable(samples),
+      requestedRange: range,
+      usedArchive: usedArchive,
+      warning: warning,
+    );
+  }
+
+  List<JsonMap> _relevantHistoryFiles(List<dynamic> files, int cutoff) {
+    final cutoffDate = DateTime.fromMillisecondsSinceEpoch(
+      cutoff * 1000,
+    ).toLocal();
+    final now = DateTime.now();
+    final months = <String>{};
+    var cursor = DateTime(cutoffDate.year, cutoffDate.month);
+    final last = DateTime(now.year, now.month);
+    while (!cursor.isAfter(last) && months.length < 24) {
+      months.add(
+        '${cursor.year.toString().padLeft(4, '0')}-${cursor.month.toString().padLeft(2, '0')}.aqbin',
+      );
+      cursor = DateTime(cursor.year, cursor.month + 1);
+    }
+    return files
+        .map(jsonMap)
+        .where((file) => months.contains(file.text('name')))
+        .toList(growable: false);
+  }
+
+  HistoryLoadResult _developmentHistory(Duration range) {
+    final now = DateTime.now().millisecondsSinceEpoch ~/ 1000;
+    final intervalSeconds = range > const Duration(hours: 24) ? 300 : 60;
+    final count = (range.inSeconds ~/ intervalSeconds).clamp(2, 4096) + 1;
+    final samples = List<HistorySample>.generate(count, (index) {
+      final epoch = now - (count - index - 1) * intervalSeconds;
+      final phase = epoch / 3600;
+      return HistorySample(
+        epoch: epoch,
+        temperature: 24.7 + sin(phase * 0.8) * 0.45,
+        ph: 6.85 + sin(phase * 0.37) * 0.12,
+        ldr: (760 + sin(phase * 0.55) * 620).round().clamp(0, 4095),
+        heapBytes: 181000 - (index % 20) * 120,
+        heaterOn: sin(phase * 0.8) < -0.25,
+      );
+    });
+    return HistoryLoadResult(
+      samples: List.unmodifiable(samples),
+      requestedRange: range,
+      usedArchive: true,
+    );
+  }
+
+  static String _durationLabel(Duration value) {
+    if (value.inHours >= 24 && value.inHours % 24 == 0) {
+      return '${value.inDays} d';
+    }
+    if (value.inHours >= 1) return '${value.inHours} h';
+    return '${value.inMinutes} min';
   }
 
   Future<Uint8List> downloadCurrentHistory() async {

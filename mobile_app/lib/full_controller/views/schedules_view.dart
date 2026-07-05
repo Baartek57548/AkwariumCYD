@@ -157,6 +157,16 @@ class _SchedulesViewState extends State<SchedulesView> {
             tooltip: 'Przywróć dane sterownika',
           ),
         ),
+        _ScheduleTimeline(
+          light: light,
+          plant: plant,
+          filter: filter,
+          air: air,
+          heaterEnabled: heaterMode == 0,
+          feederEnabled: feederEnabled,
+          feedTime: feedTime,
+        ),
+        const SizedBox(height: 10),
         _ScheduleCard(
           title: 'Światło główne',
           icon: Icons.lightbulb_rounded,
@@ -209,6 +219,7 @@ class _SchedulesViewState extends State<SchedulesView> {
                 const SizedBox(height: 10),
                 DropdownButtonFormField<int>(
                   initialValue: heaterMode,
+                  isExpanded: true,
                   decoration: const InputDecoration(
                     labelText: 'Tryb termostatu',
                     border: OutlineInputBorder(),
@@ -219,6 +230,10 @@ class _SchedulesViewState extends State<SchedulesView> {
                       child: Text('Automatycznie według temperatury'),
                     ),
                     DropdownMenuItem(value: 1, child: Text('Zawsze wyłączona')),
+                  ],
+                  selectedItemBuilder: (context) => const [
+                    Text('Automatycznie', overflow: TextOverflow.ellipsis),
+                    Text('Zawsze wyłączona', overflow: TextOverflow.ellipsis),
                   ],
                   onChanged: (value) =>
                       setState(() => heaterMode = value ?? heaterMode),
@@ -281,6 +296,305 @@ class _SchedulesViewState extends State<SchedulesView> {
   }
 }
 
+class _ScheduleTimeline extends StatelessWidget {
+  const _ScheduleTimeline({
+    required this.light,
+    required this.plant,
+    required this.filter,
+    required this.air,
+    required this.heaterEnabled,
+    required this.feederEnabled,
+    required this.feedTime,
+  });
+
+  final _ScheduleEntry light;
+  final _ScheduleEntry plant;
+  final _ScheduleEntry filter;
+  final _ScheduleEntry air;
+  final bool heaterEnabled;
+  final bool feederEnabled;
+  final TimeOfDay feedTime;
+
+  @override
+  Widget build(BuildContext context) {
+    final colors = Theme.of(context).colorScheme;
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(12, 12, 12, 14),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            const Text(
+              'Harmonogram dobowy 24 h',
+              style: TextStyle(fontWeight: FontWeight.w800, fontSize: 16),
+            ),
+            const SizedBox(height: 10),
+            const _TimelineAxis(),
+            _TimelineRow(
+              label: 'Światło',
+              entry: light,
+              color: const Color(0xFFFFB020),
+            ),
+            _TimelineRow(
+              label: 'Rośliny',
+              entry: plant,
+              color: const Color(0xFF84CC16),
+            ),
+            _TimelineRow(
+              label: 'Filtr',
+              entry: filter,
+              color: const Color(0xFF38BDF8),
+            ),
+            _TimelineRow(
+              label: 'Napowietrzanie',
+              entry: air,
+              color: const Color(0xFF8B5CF6),
+            ),
+            _TimelineRow(
+              label: 'Grzałka',
+              entry: _ScheduleEntry(
+                mode: heaterEnabled ? 1 : 2,
+                start: const TimeOfDay(hour: 0, minute: 0),
+                end: const TimeOfDay(hour: 23, minute: 59),
+              ),
+              color: const Color(0xFFEF4444),
+              statusOverride: heaterEnabled ? 'AUTOMATYKA 24H' : 'OFF',
+            ),
+            const SizedBox(height: 4),
+            Row(
+              children: [
+                SizedBox(
+                  width: 82,
+                  child: Text(
+                    'Karmnik',
+                    style: Theme.of(context).textTheme.labelSmall,
+                  ),
+                ),
+                Expanded(
+                  child: _FeederTimeline(
+                    enabled: feederEnabled,
+                    time: feedTime,
+                    color: colors.tertiary,
+                  ),
+                ),
+              ],
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _TimelineAxis extends StatelessWidget {
+  const _TimelineAxis();
+
+  @override
+  Widget build(BuildContext context) {
+    final style = Theme.of(context).textTheme.labelSmall?.copyWith(
+      color: Theme.of(context).colorScheme.onSurfaceVariant,
+      fontSize: 10,
+    );
+    return Padding(
+      padding: const EdgeInsets.only(left: 82, bottom: 3),
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+        children: [
+          Text('00', style: style),
+          Text('06', style: style),
+          Text('12', style: style),
+          Text('18', style: style),
+          Text('24', style: style),
+        ],
+      ),
+    );
+  }
+}
+
+class _TimelineRow extends StatelessWidget {
+  const _TimelineRow({
+    required this.label,
+    required this.entry,
+    required this.color,
+    this.statusOverride,
+  });
+
+  final String label;
+  final _ScheduleEntry entry;
+  final Color color;
+  final String? statusOverride;
+
+  @override
+  Widget build(BuildContext context) {
+    final modeText = switch (entry.mode) {
+      1 => 'ON 24H',
+      2 => 'OFF',
+      _ => '${_timeText(entry.start)}–${_timeText(entry.end)}',
+    };
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 3),
+      child: Row(
+        children: [
+          SizedBox(
+            width: 82,
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  label,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                    fontSize: 11,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+                Text(
+                  statusOverride ?? modeText,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: Theme.of(context).textTheme.labelSmall?.copyWith(
+                    fontSize: 8,
+                    color: Theme.of(context).colorScheme.onSurfaceVariant,
+                  ),
+                ),
+              ],
+            ),
+          ),
+          Expanded(
+            child: _TimelineTrack(entry: entry, color: color),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _TimelineTrack extends StatelessWidget {
+  const _TimelineTrack({required this.entry, required this.color});
+
+  final _ScheduleEntry entry;
+  final Color color;
+
+  @override
+  Widget build(BuildContext context) {
+    return SizedBox(
+      height: 24,
+      child: LayoutBuilder(
+        builder: (context, constraints) {
+          final segments = _segments();
+          return ClipRRect(
+            borderRadius: BorderRadius.circular(5),
+            child: Stack(
+              children: [
+                Positioned.fill(
+                  child: ColoredBox(
+                    color: Theme.of(
+                      context,
+                    ).colorScheme.surfaceContainerHighest,
+                  ),
+                ),
+                for (final fraction in const [0.25, 0.5, 0.75])
+                  Positioned(
+                    left: constraints.maxWidth * fraction,
+                    top: 0,
+                    bottom: 0,
+                    child: Container(
+                      width: 0.7,
+                      color: Theme.of(context).colorScheme.outlineVariant,
+                    ),
+                  ),
+                for (final segment in segments)
+                  Positioned(
+                    left: constraints.maxWidth * segment.$1,
+                    width: constraints.maxWidth * segment.$2,
+                    top: 2,
+                    bottom: 2,
+                    child: ColoredBox(color: color),
+                  ),
+                if (entry.mode == 2)
+                  const Center(
+                    child: Text(
+                      'OFF',
+                      style: TextStyle(
+                        fontSize: 9,
+                        fontWeight: FontWeight.w800,
+                      ),
+                    ),
+                  ),
+              ],
+            ),
+          );
+        },
+      ),
+    );
+  }
+
+  List<(double, double)> _segments() {
+    if (entry.mode == 1) return const [(0, 1)];
+    if (entry.mode == 2) return const [];
+    final start = (entry.start.hour * 60 + entry.start.minute) / 1440;
+    final end = (entry.end.hour * 60 + entry.end.minute) / 1440;
+    if ((start - end).abs() < 0.0001) return const [];
+    if (end > start) return [(start, end - start)];
+    return [(0, end), (start, 1 - start)];
+  }
+}
+
+class _FeederTimeline extends StatelessWidget {
+  const _FeederTimeline({
+    required this.enabled,
+    required this.time,
+    required this.color,
+  });
+
+  final bool enabled;
+  final TimeOfDay time;
+  final Color color;
+
+  @override
+  Widget build(BuildContext context) {
+    return SizedBox(
+      height: 28,
+      child: LayoutBuilder(
+        builder: (context, constraints) {
+          final position =
+              constraints.maxWidth * (time.hour * 60 + time.minute) / 1440;
+          return Stack(
+            clipBehavior: Clip.none,
+            children: [
+              Positioned(
+                left: 0,
+                right: 0,
+                top: 13,
+                child: Container(
+                  height: 2,
+                  color: Theme.of(context).colorScheme.outlineVariant,
+                ),
+              ),
+              if (enabled)
+                Positioned(
+                  left: (position - 3).clamp(0, constraints.maxWidth - 6),
+                  top: 5,
+                  child: Container(width: 6, height: 18, color: color),
+                ),
+              Center(
+                child: Text(
+                  enabled ? _timeText(time) : 'OFF',
+                  style: const TextStyle(
+                    fontSize: 9,
+                    fontWeight: FontWeight.w800,
+                  ),
+                ),
+              ),
+            ],
+          );
+        },
+      ),
+    );
+  }
+}
+
 class _ScheduleCard extends StatelessWidget {
   const _ScheduleCard({
     required this.title,
@@ -316,42 +630,58 @@ class _ScheduleCard extends StatelessWidget {
         padding: const EdgeInsets.all(16),
         child: Column(
           children: [
-            Row(
-              children: [
-                Icon(icon),
-                const SizedBox(width: 10),
-                Expanded(
-                  child: Text(
-                    title,
-                    style: const TextStyle(
-                      fontWeight: FontWeight.w800,
-                      fontSize: 17,
+            LayoutBuilder(
+              builder: (context, constraints) {
+                final heading = Row(
+                  children: [
+                    Icon(icon),
+                    const SizedBox(width: 10),
+                    Expanded(
+                      child: Text(
+                        title,
+                        style: const TextStyle(
+                          fontWeight: FontWeight.w800,
+                          fontSize: 17,
+                        ),
+                      ),
                     ),
+                  ],
+                );
+                final mode = DropdownButtonFormField<int>(
+                  initialValue: entry.mode,
+                  isExpanded: true,
+                  decoration: const InputDecoration(
+                    labelText: 'Tryb',
+                    border: OutlineInputBorder(),
                   ),
-                ),
-                SizedBox(
-                  width: 190,
-                  child: DropdownButtonFormField<int>(
-                    initialValue: entry.mode,
-                    decoration: const InputDecoration(
-                      labelText: 'Tryb',
-                      border: OutlineInputBorder(),
-                    ),
-                    items: const [
-                      DropdownMenuItem(value: 0, child: Text('Harmonogram')),
-                      DropdownMenuItem(value: 1, child: Text('Zawsze ON')),
-                      DropdownMenuItem(value: 2, child: Text('Zawsze OFF')),
-                    ],
-                    onChanged: (value) =>
-                        onChanged(entry.copyWith(mode: value ?? entry.mode)),
-                  ),
-                ),
-              ],
+                  items: const [
+                    DropdownMenuItem(value: 0, child: Text('Harmonogram')),
+                    DropdownMenuItem(value: 1, child: Text('Zawsze ON')),
+                    DropdownMenuItem(value: 2, child: Text('Zawsze OFF')),
+                  ],
+                  onChanged: (value) =>
+                      onChanged(entry.copyWith(mode: value ?? entry.mode)),
+                );
+                if (constraints.maxWidth < 520) {
+                  return Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [heading, const SizedBox(height: 10), mode],
+                  );
+                }
+                return Row(
+                  children: [
+                    Expanded(child: heading),
+                    const SizedBox(width: 12),
+                    SizedBox(width: 190, child: mode),
+                  ],
+                );
+              },
             ),
             if (profileEnabled) ...[
               const SizedBox(height: 12),
               DropdownButtonFormField<String>(
                 initialValue: entry.profile,
+                isExpanded: true,
                 decoration: const InputDecoration(
                   labelText: 'Profil Aquael Day & Night',
                   border: OutlineInputBorder(),
@@ -370,33 +700,46 @@ class _ScheduleCard extends StatelessWidget {
                     child: Text('NIGHT — światło nocne'),
                   ),
                 ],
+                selectedItemBuilder: (context) => const [
+                  Text('DAY', overflow: TextOverflow.ellipsis),
+                  Text('DAYBREAK', overflow: TextOverflow.ellipsis),
+                  Text('NIGHT', overflow: TextOverflow.ellipsis),
+                ],
                 onChanged: (value) =>
                     onChanged(entry.copyWith(profile: value ?? entry.profile)),
               ),
             ],
             const SizedBox(height: 12),
-            Row(
-              children: [
-                Expanded(
-                  child: OutlinedButton.icon(
-                    onPressed: scheduled
-                        ? () => _pickTime(context, true)
-                        : null,
-                    icon: const Icon(Icons.play_arrow_rounded),
-                    label: Text('Start ${_timeText(entry.start)}'),
-                  ),
-                ),
-                const SizedBox(width: 10),
-                Expanded(
-                  child: OutlinedButton.icon(
-                    onPressed: scheduled
-                        ? () => _pickTime(context, false)
-                        : null,
-                    icon: const Icon(Icons.stop_rounded),
-                    label: Text('Koniec ${_timeText(entry.end)}'),
-                  ),
-                ),
-              ],
+            LayoutBuilder(
+              builder: (context, constraints) {
+                final startButton = OutlinedButton.icon(
+                  onPressed: scheduled ? () => _pickTime(context, true) : null,
+                  icon: const Icon(Icons.play_arrow_rounded),
+                  label: Text('Start ${_timeText(entry.start)}'),
+                );
+                final endButton = OutlinedButton.icon(
+                  onPressed: scheduled ? () => _pickTime(context, false) : null,
+                  icon: const Icon(Icons.stop_rounded),
+                  label: Text('Koniec ${_timeText(entry.end)}'),
+                );
+                if (constraints.maxWidth < 400) {
+                  return Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      startButton,
+                      const SizedBox(height: 8),
+                      endButton,
+                    ],
+                  );
+                }
+                return Row(
+                  children: [
+                    Expanded(child: startButton),
+                    const SizedBox(width: 10),
+                    Expanded(child: endButton),
+                  ],
+                );
+              },
             ),
           ],
         ),
