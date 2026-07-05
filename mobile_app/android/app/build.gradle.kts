@@ -45,6 +45,24 @@ android {
         versionName = flutter.versionName
     }
 
+    flavorDimensions += "appMode"
+    productFlavors {
+        create("current") {
+            dimension = "appMode"
+            manifestPlaceholders["appName"] = "AquaCYD Control"
+        }
+        create("full") {
+            dimension = "appMode"
+            applicationIdSuffix = ".full"
+            manifestPlaceholders["appName"] = "AquaCYD Full"
+        }
+        create("dev") {
+            dimension = "appMode"
+            applicationIdSuffix = ".dev"
+            manifestPlaceholders["appName"] = "AquaCYD DEV"
+        }
+    }
+
     signingConfigs {
         create("release") {
             keyAlias = requiredSigningProperty("keyAlias")

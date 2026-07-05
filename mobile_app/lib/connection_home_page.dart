@@ -7,7 +7,16 @@ import 'full_controller/controller_shell.dart';
 import 'full_controller/wifi_connect_page.dart';
 
 class ConnectionHomePage extends StatelessWidget {
-  const ConnectionHomePage({super.key});
+  const ConnectionHomePage({
+    super.key,
+    this.brandName = 'AquaCYD Control',
+    this.showDevelopment = true,
+    this.showLegacyWebView = true,
+  });
+
+  final String brandName;
+  final bool showDevelopment;
+  final bool showLegacyWebView;
 
   @override
   Widget build(BuildContext context) {
@@ -48,7 +57,7 @@ class ConnectionHomePage extends StatelessWidget {
                     ),
                     const SizedBox(height: 12),
                     Text(
-                      'AquaCYD Control',
+                      brandName,
                       textAlign: TextAlign.center,
                       style: Theme.of(context).textTheme.displaySmall?.copyWith(
                         fontWeight: FontWeight.w800,
@@ -91,37 +100,41 @@ class ConnectionHomePage extends StatelessWidget {
                         );
                       },
                     ),
-                    const SizedBox(height: 12),
-                    _ModeCard(
-                      icon: Icons.science_outlined,
-                      title: 'Uruchom tryb DEV',
-                      description:
-                          'Symulowane czujniki i moduły w pamięci RAM. Nie wykonuje operacji na sprzęcie.',
-                      badge: 'BEZ SPRZĘTU',
-                      onTap: () {
-                        Navigator.of(context).push(
-                          MaterialPageRoute<void>(
-                            builder: (_) => ControllerShell(
-                              session: ControllerSession.development(),
+                    if (showDevelopment) ...[
+                      const SizedBox(height: 12),
+                      _ModeCard(
+                        icon: Icons.science_outlined,
+                        title: 'Uruchom tryb DEV',
+                        description:
+                            'Symulowane czujniki i moduły w pamięci RAM. Nie wykonuje operacji na sprzęcie.',
+                        badge: 'BEZ SPRZĘTU',
+                        onTap: () {
+                          Navigator.of(context).push(
+                            MaterialPageRoute<void>(
+                              builder: (_) => ControllerShell(
+                                session: ControllerSession.development(),
+                              ),
                             ),
-                          ),
-                        );
-                      },
-                    ),
-                    const SizedBox(height: 12),
-                    _ModeCard(
-                      icon: Icons.wifi_rounded,
-                      title: 'Oryginalny panel WWW',
-                      description:
-                          'Tryb zgodności WebView — dokładny interfejs strony hostowanej przez sterownik.',
-                      onTap: () {
-                        Navigator.of(context).push(
-                          MaterialPageRoute<void>(
-                            builder: (_) => const ControllerPage(),
-                          ),
-                        );
-                      },
-                    ),
+                          );
+                        },
+                      ),
+                    ],
+                    if (showLegacyWebView) ...[
+                      const SizedBox(height: 12),
+                      _ModeCard(
+                        icon: Icons.language_rounded,
+                        title: 'Oryginalny panel WWW',
+                        description:
+                            'Tryb zgodności WebView — dokładny interfejs strony hostowanej przez sterownik.',
+                        onTap: () {
+                          Navigator.of(context).push(
+                            MaterialPageRoute<void>(
+                              builder: (_) => const ControllerPage(),
+                            ),
+                          );
+                        },
+                      ),
+                    ],
                   ],
                 ),
               ),

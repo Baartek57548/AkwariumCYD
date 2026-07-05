@@ -4,7 +4,10 @@ import 'connection_home_page.dart';
 import 'display_refresh_rate.dart';
 
 class AquariumApp extends StatefulWidget {
-  const AquariumApp({super.key});
+  const AquariumApp({super.key, this.title = 'AquaCYD Control', this.home});
+
+  final String title;
+  final Widget? home;
 
   @override
   State<AquariumApp> createState() => _AquariumAppState();
@@ -39,12 +42,12 @@ class _AquariumAppState extends State<AquariumApp> {
       profile: refreshRateController.profile,
       state: refreshRateController.state,
       child: MaterialApp(
-        title: 'AquaCYD Control',
+        title: widget.title,
         debugShowCheckedModeBanner: false,
         theme: _theme(seed, Brightness.light),
         darkTheme: _theme(seed, Brightness.dark),
         themeMode: ThemeMode.system,
-        home: const ConnectionHomePage(),
+        home: widget.home ?? const ConnectionHomePage(),
       ),
     );
   }
