@@ -35,4 +35,39 @@ void main() {
     expect(profile.tier, DisplayRefreshTier.standard);
     expect(profile.roundedHertz, 60);
   });
+
+  test('groups fractional refresh rates with a 0.5 Hz tolerance', () {
+    const state = DisplayRefreshState(
+      supportedModes: [
+        DisplayModeInfo(
+          modeId: 1,
+          width: 1080,
+          height: 2400,
+          refreshRate: 59.94,
+        ),
+        DisplayModeInfo(modeId: 2, width: 1080, height: 2400, refreshRate: 60),
+        DisplayModeInfo(modeId: 3, width: 1080, height: 2400, refreshRate: 120),
+      ],
+      requestedMode: null,
+      activeMode: null,
+      fallbackRefreshRate: 60,
+    );
+
+    expect(state.groupedSupportedRates, [59.94, 120]);
+    expect(state.supportedRatesLabel, '60 / 120');
+    expect(state.maximumRefreshRate, 120);
+  });
+
+  test('keeps exact rates internally and formats diagnostics readably', () {
+    const mode = DisplayModeInfo(
+      modeId: 7,
+      width: 2400,
+      height: 1080,
+      refreshRate: 59.94,
+    );
+
+    expect(mode.refreshRate, 59.94);
+    expect(mode.refreshRateLabel, '60');
+    expect(mode.label, '2400×1080 @ 60 Hz');
+  });
 }

@@ -5,15 +5,12 @@ import 'package:flutter/material.dart';
 import '../display_refresh_rate.dart';
 import 'controller_api.dart';
 import 'controller_session.dart';
-import 'views/automation_view.dart';
+import 'data_access.dart';
 import 'views/charts_view.dart';
+import 'views/control_hub_view.dart';
 import 'views/dashboard_view.dart';
-import 'views/diagnostics_view.dart';
-import 'views/logs_view.dart';
-import 'views/relays_view.dart';
 import 'views/schedules_view.dart';
-import 'views/settings_view.dart';
-import 'views/system_view.dart';
+import 'views/settings_hub_view.dart';
 
 typedef RunControllerAction =
     Future<ControllerActionResult> Function(
@@ -138,41 +135,36 @@ class _ControllerShellState extends State<ControllerShell> {
       );
   }
 
+  void _openCharts() {
+    Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        builder: (context) => Scaffold(
+          appBar: AppBar(title: const Text('Historia i wykresy')),
+          body: AnimatedBuilder(
+            animation: session,
+            builder: (context, _) => ChartsView(session: session),
+          ),
+        ),
+      ),
+    );
+  }
+
   Widget _currentView() {
     return switch (_section) {
       _ControllerSection.dashboard => DashboardView(
         session: session,
-        runAction: _runAction,
+        onOpenCharts: _openCharts,
       ),
-      _ControllerSection.charts => ChartsView(session: session),
-      _ControllerSection.relays => RelaysView(
+      _ControllerSection.control => ControlHubView(
         session: session,
         runAction: _runAction,
         ensureAdmin: _ensureAdmin,
-      ),
-      _ControllerSection.automation => AutomationView(
-        session: session,
-        runAction: _runAction,
       ),
       _ControllerSection.schedules => SchedulesView(
         session: session,
         runAction: _runAction,
       ),
-      _ControllerSection.system => SystemView(
-        session: session,
-        runAction: _runAction,
-        ensureAdmin: _ensureAdmin,
-      ),
-      _ControllerSection.logs => LogsView(
-        session: session,
-        runAction: _runAction,
-        ensureAdmin: _ensureAdmin,
-      ),
-      _ControllerSection.diagnostics => DiagnosticsView(
-        session: session,
-        ensureAdmin: _ensureAdmin,
-      ),
-      _ControllerSection.settings => SettingsView(
+      _ControllerSection.settings => SettingsHubView(
         session: session,
         runAction: _runAction,
         ensureAdmin: _ensureAdmin,
@@ -180,95 +172,92 @@ class _ControllerShellState extends State<ControllerShell> {
     };
   }
 
+  void _selectSection(int index) {
+    final next = _ControllerSection.values[index];
+    if (next == _section) return;
+    setState(() => _section = next);
+  }
+
+  Future<void> _handleMenu(_HeaderAction action) async {
+    switch (action) {
+      case _HeaderAction.refresh:
+        await session.refresh(includeHistory: true);
+      case _HeaderAction.admin:
+        if (session.isAdmin) {
+          session.logout();
+          if (mounted) {
+            _showMessage('Wylogowano administratora.', success: true);
+          }
+        } else {
+          await _ensureAdmin();
+        }
+      case _HeaderAction.connection:
+        if (mounted) Navigator.of(context).pop();
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final width = MediaQuery.sizeOf(context).width;
-    final refreshProfile = DisplayRefreshRateScope.of(context);
-    final extended = width >= 1100;
     final showRail = width >= 760;
+    final extendedRail = width >= 1100;
+    final refreshProfile = DisplayRefreshRateScope.of(context);
     return Scaffold(
       appBar: AppBar(
-        title: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(_section.label),
-            Text(
-              session.connected
-                  ? '${session.displayName} · połączono'
-                  : '${session.displayName} · rozłączono',
-              style: Theme.of(context).textTheme.labelSmall,
-            ),
-          ],
-        ),
+        automaticallyImplyLeading: false,
+        toolbarHeight: 76,
+        titleSpacing: 16,
+        title: _ControllerHeader(session: session),
         actions: [
-          if (width >= 620)
-            Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 4),
-              child: Tooltip(
-                message: refreshProfile.description,
-                child: Chip(
-                  avatar: const Icon(Icons.speed_rounded, size: 17),
-                  label: Text('${refreshProfile.roundedHertz} Hz'),
+          PopupMenuButton<_HeaderAction>(
+            tooltip: 'Menu urządzenia',
+            onSelected: (value) => unawaited(_handleMenu(value)),
+            itemBuilder: (context) => [
+              const PopupMenuItem(
+                value: _HeaderAction.refresh,
+                child: ListTile(
+                  leading: Icon(Icons.refresh_rounded),
+                  title: Text('Odśwież dane'),
+                  contentPadding: EdgeInsets.zero,
                 ),
               ),
-            ),
-          if (session.isDevelopment)
-            const Padding(
-              padding: EdgeInsets.symmetric(horizontal: 8),
-              child: Chip(
-                avatar: Icon(Icons.science_outlined, size: 18),
-                label: Text('DEV'),
+              PopupMenuItem(
+                value: _HeaderAction.admin,
+                child: ListTile(
+                  leading: Icon(
+                    session.isAdmin
+                        ? Icons.lock_open_rounded
+                        : Icons.lock_outline_rounded,
+                  ),
+                  title: Text(
+                    session.isAdmin
+                        ? 'Wyloguj administratora'
+                        : 'Zaloguj administratora',
+                  ),
+                  contentPadding: EdgeInsets.zero,
+                ),
               ),
-            ),
-          IconButton(
-            onPressed: session.busy
-                ? null
-                : () => unawaited(session.refresh(includeHistory: true)),
-            tooltip: 'Odśwież dane',
-            icon: session.busy
-                ? const SizedBox.square(
-                    dimension: 20,
-                    child: CircularProgressIndicator(strokeWidth: 2),
-                  )
-                : const Icon(Icons.refresh_rounded),
+              const PopupMenuItem(
+                value: _HeaderAction.connection,
+                child: ListTile(
+                  leading: Icon(Icons.swap_horiz_rounded),
+                  title: Text('Zmień połączenie'),
+                  contentPadding: EdgeInsets.zero,
+                ),
+              ),
+            ],
           ),
-          IconButton(
-            onPressed: session.isAdmin
-                ? () {
-                    session.logout();
-                    _showMessage('Wylogowano administratora.', success: true);
-                  }
-                : () => unawaited(_ensureAdmin()),
-            tooltip: session.isAdmin
-                ? 'Wyloguj administratora'
-                : 'Zaloguj administratora',
-            icon: Icon(
-              session.isAdmin
-                  ? Icons.lock_open_rounded
-                  : Icons.lock_outline_rounded,
-            ),
-          ),
+          const SizedBox(width: 4),
         ],
       ),
-      drawer: showRail
-          ? null
-          : _MobileDrawer(
-              selected: _section,
-              onSelected: (value) {
-                setState(() => _section = value);
-                Navigator.pop(context);
-              },
-            ),
       body: Row(
         children: [
           if (showRail)
             NavigationRail(
-              extended: extended,
+              extended: extendedRail,
               selectedIndex: _section.index,
-              onDestinationSelected: (index) {
-                setState(() => _section = _ControllerSection.values[index]);
-              },
-              labelType: extended
+              onDestinationSelected: _selectSection,
+              labelType: extendedRail
                   ? NavigationRailLabelType.none
                   : NavigationRailLabelType.selected,
               destinations: [
@@ -285,7 +274,7 @@ class _ControllerShellState extends State<ControllerShell> {
             child: session.status.isEmpty
                 ? _ConnectionFailure(
                     message: session.error,
-                    retry: () => session.connect(),
+                    retry: session.connect,
                   )
                 : Stack(
                     children: [
@@ -296,19 +285,8 @@ class _ControllerShellState extends State<ControllerShell> {
                               refreshProfile.shortAnimationDuration,
                           switchInCurve: Curves.easeOutCubic,
                           switchOutCurve: Curves.easeInCubic,
-                          transitionBuilder: (child, animation) {
-                            final offset = Tween<Offset>(
-                              begin: const Offset(0.015, 0),
-                              end: Offset.zero,
-                            ).animate(animation);
-                            return FadeTransition(
-                              opacity: animation,
-                              child: SlideTransition(
-                                position: offset,
-                                child: child,
-                              ),
-                            );
-                          },
+                          transitionBuilder: (child, animation) =>
+                              FadeTransition(opacity: animation, child: child),
                           child: KeyedSubtree(
                             key: ValueKey(_section),
                             child: _currentView(),
@@ -325,7 +303,7 @@ class _ControllerShellState extends State<ControllerShell> {
                             leading: const Icon(Icons.cloud_off_rounded),
                             actions: [
                               TextButton(
-                                onPressed: () => session.connect(),
+                                onPressed: session.connect,
                                 child: const Text('Połącz ponownie'),
                               ),
                             ],
@@ -336,26 +314,118 @@ class _ControllerShellState extends State<ControllerShell> {
           ),
         ],
       ),
+      bottomNavigationBar: showRail
+          ? null
+          : NavigationBar(
+              selectedIndex: _section.index,
+              onDestinationSelected: _selectSection,
+              destinations: [
+                for (final item in _ControllerSection.values)
+                  NavigationDestination(
+                    icon: Icon(item.icon),
+                    selectedIcon: Icon(item.selectedIcon),
+                    label: item.label,
+                  ),
+              ],
+            ),
+    );
+  }
+}
+
+class _ControllerHeader extends StatelessWidget {
+  const _ControllerHeader({required this.session});
+
+  final ControllerSession session;
+
+  @override
+  Widget build(BuildContext context) {
+    final status = session.status;
+    final width = MediaQuery.sizeOf(context).width;
+    final deviceName = status.text('device', 'cydAkwarium');
+    final address =
+        session.baseUri?.host ??
+        status.section('network').text('ip', 'akwarium.local');
+    final (icon, label) = switch (session.sessionKind) {
+      ControllerSessionKind.bluetooth => (Icons.bluetooth_rounded, 'BLE'),
+      ControllerSessionKind.development => (Icons.science_outlined, 'DEV'),
+      ControllerSessionKind.wifi => (Icons.wifi_rounded, 'Wi‑Fi'),
+    };
+    final colors = Theme.of(context).colorScheme;
+    return Row(
+      children: [
+        ClipRRect(
+          borderRadius: BorderRadius.circular(14),
+          child: Image.asset(
+            'assets/branding/aquacyd-control-icon.png',
+            width: 46,
+            height: 46,
+            fit: BoxFit.cover,
+          ),
+        ),
+        const SizedBox(width: 12),
+        Expanded(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                deviceName,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(
+                  fontSize: 18,
+                  fontWeight: FontWeight.w800,
+                ),
+              ),
+              Text(
+                address,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: Theme.of(
+                  context,
+                ).textTheme.bodySmall?.copyWith(color: colors.onSurfaceVariant),
+              ),
+            ],
+          ),
+        ),
+        DecoratedBox(
+          decoration: BoxDecoration(
+            border: Border.all(color: colors.outlineVariant),
+            borderRadius: BorderRadius.circular(24),
+          ),
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Icon(
+                  session.connected ? icon : Icons.cloud_off_rounded,
+                  size: 20,
+                  color: session.connected ? null : colors.error,
+                ),
+                if (width >= 340) ...[
+                  const SizedBox(width: 7),
+                  Text(
+                    session.connected ? label : 'Offline',
+                    style: const TextStyle(fontWeight: FontWeight.w700),
+                  ),
+                ],
+              ],
+            ),
+          ),
+        ),
+      ],
     );
   }
 }
 
 enum _ControllerSection {
-  dashboard('Pulpit', Icons.dashboard_outlined, Icons.dashboard_rounded),
-  charts('Wykresy', Icons.show_chart_rounded, Icons.area_chart_rounded),
-  relays('Przekaźniki', Icons.cable_outlined, Icons.cable_rounded),
-  automation('Automatyka', Icons.auto_mode_outlined, Icons.auto_mode_rounded),
-  schedules('Harmonogramy', Icons.schedule_outlined, Icons.schedule_rounded),
-  system(
-    'Zasilanie i OTA',
-    Icons.battery_charging_full_outlined,
-    Icons.battery_charging_full_rounded,
-  ),
-  logs('Logi', Icons.receipt_long_outlined, Icons.receipt_long_rounded),
-  diagnostics(
-    'Diagnostyka',
-    Icons.monitor_heart_outlined,
-    Icons.monitor_heart_rounded,
+  dashboard('Pulpit', Icons.speed_outlined, Icons.speed_rounded),
+  control('Sterowanie', Icons.tune_outlined, Icons.tune_rounded),
+  schedules(
+    'Harmonogram',
+    Icons.calendar_month_outlined,
+    Icons.calendar_month_rounded,
   ),
   settings('Ustawienia', Icons.settings_outlined, Icons.settings_rounded);
 
@@ -366,36 +436,7 @@ enum _ControllerSection {
   final IconData selectedIcon;
 }
 
-class _MobileDrawer extends StatelessWidget {
-  const _MobileDrawer({required this.selected, required this.onSelected});
-
-  final _ControllerSection selected;
-  final ValueChanged<_ControllerSection> onSelected;
-
-  @override
-  Widget build(BuildContext context) {
-    return NavigationDrawer(
-      selectedIndex: selected.index,
-      onDestinationSelected: (index) =>
-          onSelected(_ControllerSection.values[index]),
-      children: [
-        const Padding(
-          padding: EdgeInsets.fromLTRB(28, 24, 16, 12),
-          child: Text(
-            'AquaCYD Control',
-            style: TextStyle(fontSize: 24, fontWeight: FontWeight.w800),
-          ),
-        ),
-        for (final item in _ControllerSection.values)
-          NavigationDrawerDestination(
-            icon: Icon(item.icon),
-            selectedIcon: Icon(item.selectedIcon),
-            label: Text(item.label),
-          ),
-      ],
-    );
-  }
-}
+enum _HeaderAction { refresh, admin, connection }
 
 class _AdminPinDialog extends StatefulWidget {
   const _AdminPinDialog();

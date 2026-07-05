@@ -2,7 +2,6 @@ import 'package:flutter/material.dart';
 
 import 'ble_scanner_page.dart';
 import 'controller_page.dart';
-import 'display_refresh_rate.dart';
 import 'full_controller/controller_session.dart';
 import 'full_controller/controller_shell.dart';
 import 'full_controller/wifi_connect_page.dart';
@@ -13,7 +12,6 @@ class ConnectionHomePage extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final colors = Theme.of(context).colorScheme;
-    final refreshProfile = DisplayRefreshRateScope.of(context);
     return Scaffold(
       body: DecoratedBox(
         decoration: BoxDecoration(
@@ -61,21 +59,6 @@ class ConnectionHomePage extends StatelessWidget {
                       textAlign: TextAlign.center,
                       style: Theme.of(context).textTheme.titleMedium?.copyWith(
                         color: colors.onSurfaceVariant,
-                      ),
-                    ),
-                    const SizedBox(height: 8),
-                    Center(
-                      child: Tooltip(
-                        message:
-                            'Budżet klatki: '
-                            '${refreshProfile.frameBudgetMilliseconds.toStringAsFixed(2)} ms',
-                        child: Chip(
-                          avatar: const Icon(Icons.speed_rounded, size: 18),
-                          label: Text(
-                            '${refreshProfile.roundedHertz} Hz · '
-                            '${refreshProfile.description}',
-                          ),
-                        ),
                       ),
                     ),
                     const SizedBox(height: 30),

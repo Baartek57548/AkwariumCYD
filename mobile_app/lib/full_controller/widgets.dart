@@ -6,17 +6,21 @@ class ControllerPageBody extends StatelessWidget {
     required this.children,
     this.maxWidth = 1180,
     this.padding = const EdgeInsets.fromLTRB(16, 12, 16, 32),
+    this.onRefresh,
   });
 
   final List<Widget> children;
   final double maxWidth;
   final EdgeInsets padding;
+  final Future<void> Function()? onRefresh;
 
   @override
   Widget build(BuildContext context) {
     return RefreshIndicator(
-      onRefresh: () async {},
-      notificationPredicate: (_) => false,
+      onRefresh: onRefresh ?? () async {},
+      notificationPredicate: onRefresh == null
+          ? (_) => false
+          : (notification) => notification.depth == 0,
       child: ListView(
         padding: padding,
         children: [

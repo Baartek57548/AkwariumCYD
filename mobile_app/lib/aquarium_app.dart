@@ -34,26 +34,73 @@ class _AquariumAppState extends State<AquariumApp> {
 
   @override
   Widget build(BuildContext context) {
-    const seed = Color(0xFF0891B2);
+    const seed = Color(0xFF33A6B8);
     return DisplayRefreshRateScope(
       profile: refreshRateController.profile,
+      state: refreshRateController.state,
       child: MaterialApp(
         title: 'AquaCYD Control',
         debugShowCheckedModeBanner: false,
-        theme: ThemeData(
-          colorScheme: ColorScheme.fromSeed(seedColor: seed),
-          scaffoldBackgroundColor: const Color(0xFFF4FAFC),
-          useMaterial3: true,
-        ),
-        darkTheme: ThemeData(
-          colorScheme: ColorScheme.fromSeed(
-            seedColor: seed,
-            brightness: Brightness.dark,
-          ),
-          useMaterial3: true,
-        ),
+        theme: _theme(seed, Brightness.light),
+        darkTheme: _theme(seed, Brightness.dark),
         themeMode: ThemeMode.system,
         home: const ConnectionHomePage(),
+      ),
+    );
+  }
+
+  ThemeData _theme(Color seed, Brightness brightness) {
+    final dark = brightness == Brightness.dark;
+    final scheme = ColorScheme.fromSeed(
+      seedColor: seed,
+      brightness: brightness,
+      surface: dark ? const Color(0xFF101112) : const Color(0xFFF7F8F8),
+    );
+    return ThemeData(
+      colorScheme: scheme,
+      scaffoldBackgroundColor: dark
+          ? const Color(0xFF080909)
+          : const Color(0xFFF1F4F4),
+      useMaterial3: true,
+      cardTheme: CardThemeData(
+        elevation: 0,
+        color: dark ? const Color(0xFF151616) : Colors.white,
+        margin: EdgeInsets.zero,
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(22),
+          side: BorderSide(
+            color: dark ? const Color(0xFF272929) : const Color(0xFFE1E6E6),
+          ),
+        ),
+      ),
+      appBarTheme: AppBarTheme(
+        elevation: 0,
+        scrolledUnderElevation: 0,
+        centerTitle: false,
+        backgroundColor: dark ? const Color(0xFF080909) : Colors.white,
+        surfaceTintColor: Colors.transparent,
+      ),
+      navigationBarTheme: NavigationBarThemeData(
+        elevation: 0,
+        height: 72,
+        backgroundColor: dark ? const Color(0xFF121313) : Colors.white,
+        indicatorColor: scheme.primaryContainer,
+        labelTextStyle: WidgetStateProperty.resolveWith((states) {
+          return TextStyle(
+            fontSize: 12,
+            fontWeight: states.contains(WidgetState.selected)
+                ? FontWeight.w700
+                : FontWeight.w500,
+          );
+        }),
+      ),
+      dividerTheme: DividerThemeData(
+        color: dark ? const Color(0xFF272929) : const Color(0xFFE1E6E6),
+      ),
+      inputDecorationTheme: InputDecorationTheme(
+        filled: true,
+        fillColor: dark ? const Color(0xFF111212) : Colors.white,
+        border: OutlineInputBorder(borderRadius: BorderRadius.circular(16)),
       ),
     );
   }

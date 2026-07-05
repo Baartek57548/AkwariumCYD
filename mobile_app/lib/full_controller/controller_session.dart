@@ -740,7 +740,7 @@ class ControllerSession extends ChangeNotifier {
   static JsonMap _createDevelopmentStatus() {
     final now = DateTime.now();
     final epoch = now.millisecondsSinceEpoch ~/ 1000;
-    final history = List.generate(36, (index) {
+    final history = List<dynamic>.generate(36, (index) {
       final phase = index / 5;
       return {
         'value': double.parse((24.6 + sin(phase) * 0.35).toStringAsFixed(2)),
