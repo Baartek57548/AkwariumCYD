@@ -354,7 +354,7 @@ class _ControllerHeader extends StatelessWidget {
     return Row(
       children: [
         ClipRRect(
-          borderRadius: BorderRadius.circular(14),
+          borderRadius: BorderRadius.circular(5),
           child: Image.asset(
             'assets/branding/aquacyd-control-icon.png',
             width: 46,
@@ -391,7 +391,7 @@ class _ControllerHeader extends StatelessWidget {
         DecoratedBox(
           decoration: BoxDecoration(
             border: Border.all(color: colors.outlineVariant),
-            borderRadius: BorderRadius.circular(24),
+            borderRadius: BorderRadius.circular(5),
           ),
           child: Padding(
             padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),

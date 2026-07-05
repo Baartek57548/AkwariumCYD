@@ -357,7 +357,7 @@ class _DevBanner extends StatelessWidget {
       padding: const EdgeInsets.all(12),
       decoration: BoxDecoration(
         color: colors.tertiaryContainer,
-        borderRadius: BorderRadius.circular(14),
+        borderRadius: BorderRadius.circular(5),
       ),
       child: const Row(
         children: [
@@ -387,7 +387,7 @@ class _SafetyBanner extends StatelessWidget {
       padding: const EdgeInsets.all(14),
       decoration: BoxDecoration(
         color: safe ? colors.primaryContainer : colors.errorContainer,
-        borderRadius: BorderRadius.circular(16),
+        borderRadius: BorderRadius.circular(5),
       ),
       child: Row(
         children: [

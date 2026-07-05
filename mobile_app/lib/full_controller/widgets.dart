@@ -241,7 +241,7 @@ class StatusBanner extends StatelessWidget {
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
         color: isError ? colors.errorContainer : colors.primaryContainer,
-        borderRadius: BorderRadius.circular(18),
+        borderRadius: BorderRadius.circular(5),
       ),
       child: Row(
         children: [

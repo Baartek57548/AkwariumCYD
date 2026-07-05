@@ -295,7 +295,7 @@ class _TemperatureCard extends StatelessWidget {
                     child: DecoratedBox(
                       decoration: BoxDecoration(
                         color: colors.surfaceContainerHighest,
-                        borderRadius: BorderRadius.circular(20),
+                        borderRadius: BorderRadius.circular(5),
                       ),
                       child: Padding(
                         padding: const EdgeInsets.symmetric(

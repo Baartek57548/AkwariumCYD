@@ -45,7 +45,7 @@ class ConnectionHomePage extends StatelessWidget {
                   children: [
                     Center(
                       child: ClipRRect(
-                        borderRadius: BorderRadius.circular(24),
+                        borderRadius: BorderRadius.circular(5),
                         child: Image.asset(
                           'assets/branding/aquacyd-control-icon.png',
                           width: 88,
@@ -177,7 +177,7 @@ class _ModeCard extends StatelessWidget {
                 height: 52,
                 decoration: BoxDecoration(
                   color: colors.primaryContainer,
-                  borderRadius: BorderRadius.circular(16),
+                  borderRadius: BorderRadius.circular(5),
                 ),
                 child: Icon(icon, color: colors.primary),
               ),

@@ -447,7 +447,9 @@ class _ControllerMenu extends StatelessWidget {
     return Material(
       color: Theme.of(context).colorScheme.surface.withValues(alpha: 0.92),
       elevation: 4,
-      shape: const StadiumBorder(),
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.all(Radius.circular(5)),
+      ),
       child: PopupMenuButton<_MenuAction>(
         tooltip: 'Opcje połączenia',
         icon: const Icon(Icons.more_horiz),
