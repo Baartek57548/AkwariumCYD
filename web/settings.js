@@ -149,16 +149,16 @@ function renderModuleEdgeCases(data) {
 
     const lightMode = Number(schedule.lightMode);
     if (lightMode === 2) {
-        items.push(buildModuleHealthItem('Światło główne', 'OFF', 'idle', 'Tryb ręcznie wyłączony'));
+        items.push(buildModuleHealthItem('Światło 1', 'OFF', 'idle', 'Tryb ręcznie wyłączony'));
     } else {
-        items.push(buildModuleHealthItem('Światło główne', relays.light ? 'AKTYWNE' : 'OK', relays.light ? 'ok' : 'idle', lightMode === 1 ? 'Tryb zawsze włączony' : 'Sterowane oknem pracy akwarium'));
+        items.push(buildModuleHealthItem('Światło 1', (relays.light1 ?? relays.light) ? 'AKTYWNE' : 'OK', (relays.light1 ?? relays.light) ? 'ok' : 'idle', lightMode === 1 ? 'Tryb zawsze włączony' : 'Sterowane profilem Aquael D&N'));
     }
 
     const plantScheduleMode = data.schedules?.plant_light?.mode || 'schedule';
     if (plantScheduleMode === 'always_off') {
-        items.push(buildModuleHealthItem('Światło roślinne', 'OFF', 'idle', 'Tryb ręcznie wyłączony'));
+        items.push(buildModuleHealthItem('Światło 2', 'OFF', 'idle', 'Tryb ręcznie wyłączony'));
     } else {
-        items.push(buildModuleHealthItem('Światło roślinne', relays.plantLight ? 'AKTYWNE' : 'OK', relays.plantLight ? 'ok' : 'idle', plantScheduleMode === 'always_on' ? 'Tryb zawsze włączony' : 'Osobny harmonogram roślinny'));
+        items.push(buildModuleHealthItem('Światło 2', (relays.light2 ?? relays.plantLight) ? 'AKTYWNE' : 'OK', (relays.light2 ?? relays.plantLight) ? 'ok' : 'idle', plantScheduleMode === 'always_on' ? 'Tryb zawsze włączony' : 'Sterowane profilem Aquael D&N'));
     }
 
     const pumpMode = Number(schedule.filterMode);
@@ -966,7 +966,6 @@ function renderModulesTab(data) {
     const config = data.config || {};
     const sensors = data.sensors || {};
 
-    // 1. Grzałka
     const heaterOn = modules.heater_on ?? false;
     const heaterEnabled = getHeaterAutomationEnabled(data);
     const heaterStatusEl = document.getElementById('module-status-heater');
@@ -979,40 +978,56 @@ function renderModulesTab(data) {
             heaterStatusEl.style.color = heaterOn ? 'var(--accent-orange)' : 'var(--success-color)';
         }
     }
+    setCommandStatus(
+        'auto-strip-heater',
+        !heaterEnabled ? 'OFF' : (heaterOn ? 'GRZANIE' : 'CZUWANIE'),
+        !heaterEnabled ? 'Automatyka termostatu wyłączona' : `Cel ${formatTemperature(data.temperature?.target ?? config.target_temp)}`,
+        !heaterEnabled ? 'neutral' : (heaterOn ? 'warn' : 'ok')
+    );
 
-    // 2. CO2
     const co2Enabled = modules.co2_enabled ?? false;
     const currentPh = toFiniteNumber(sensors.ph);
     const targetPh = toFiniteNumber(config.co2TargetPh ?? data.co2?.targetPh ?? modules.co2_target_ph ?? 6.8) ?? 6.8;
+    const co2Dosing = modules.co2_on ?? data.relays?.co2 ?? false;
     const co2StatusEl = document.getElementById('module-status-co2');
     if (co2StatusEl) {
         if (!co2Enabled) {
             co2StatusEl.textContent = 'WYŁĄCZONY';
             co2StatusEl.style.color = 'var(--text-muted)';
         } else {
-            const dosing = currentPh !== null && currentPh > targetPh;
-            co2StatusEl.textContent = dosing ? 'DOZOWANIE' : 'ZAMKNIĘTY';
-            co2StatusEl.style.color = dosing ? 'var(--accent-cyan)' : 'var(--success-color)';
+            co2StatusEl.textContent = co2Dosing ? 'DOZOWANIE' : 'ZAMKNIĘTY';
+            co2StatusEl.style.color = co2Dosing ? 'var(--accent-cyan)' : 'var(--success-color)';
         }
     }
     setCheckboxIfClean('settings-co2-enabled', co2Enabled);
     setNumericValueIfClean('settings-co2-ph-target', targetPh, 2);
     setNumericValueIfClean('settings-co2-limit', config.co2MaxTimeMin ?? data.co2?.limitMinutes ?? 180, 0);
+    setCommandStatus(
+        'auto-strip-co2',
+        !co2Enabled ? 'OFF' : (co2Dosing ? 'DOZOWANIE' : 'CZUWANIE'),
+        currentPh === null ? `Cel pH ${targetPh.toFixed(2)}` : `pH ${currentPh.toFixed(2)} / cel ${targetPh.toFixed(2)}`,
+        !co2Enabled ? 'neutral' : (co2Dosing ? 'info' : 'ok')
+    );
 
-    // 3. ATO (Poziom wody)
     const waterEnabled = modules.water_level_enabled ?? false;
     const levelLabel = document.getElementById('settings-water-level-label');
     const waterState = normalizeDigitalSensorState(sensors.water_level_high);
+    const waterDosing = modules.water_dosing_on ?? data.water?.active ?? data.relays?.waterDosing ?? false;
+    const waterTimeoutLatched = data.water?.timeoutLatched === true;
     if (levelLabel) {
         if (!waterEnabled) {
-            levelLabel.value = 'MODUL WYLACZONY';
+            levelLabel.value = 'MODUŁ WYŁĄCZONY';
             levelLabel.style.color = 'var(--text-muted)';
         } else if (!waterState.valid) {
             levelLabel.value = 'BRAK ODCZYTU MCP';
             levelLabel.style.color = 'var(--warning-color)';
         } else {
-            levelLabel.value = waterState.active ? 'OK (WYSOKI)' : 'NISKI (DOLEWANIE)';
-            levelLabel.style.color = waterState.active ? 'var(--success-color)' : 'var(--warning-color)';
+            levelLabel.value = waterState.active
+                ? 'OK (WYSOKI)'
+                : (waterTimeoutLatched ? 'NISKI - LIMIT PRZEKROCZONY' : (waterDosing ? 'NISKI (DOLEWANIE)' : 'NISKI (BLOKADA)'));
+            levelLabel.style.color = waterState.active
+                ? 'var(--success-color)'
+                : (waterTimeoutLatched ? 'var(--danger-color)' : 'var(--warning-color)');
         }
     }
     const waterStatusEl = document.getElementById('module-status-water');
@@ -1024,20 +1039,29 @@ function renderModulesTab(data) {
             waterStatusEl.textContent = 'BRAK ODCZYTU';
             waterStatusEl.style.color = 'var(--warning-color)';
         } else {
-            waterStatusEl.textContent = !waterState.active ? 'DOLEWANIE' : 'CZUWANIE';
-            waterStatusEl.style.color = !waterState.active ? 'var(--accent-blue)' : 'var(--success-color)';
+            waterStatusEl.textContent = waterTimeoutLatched ? 'LIMIT' : (waterDosing ? 'DOLEWANIE' : 'CZUWANIE');
+            waterStatusEl.style.color = waterTimeoutLatched
+                ? 'var(--danger-color)'
+                : (waterDosing ? 'var(--accent-blue)' : 'var(--success-color)');
         }
     }
     setCheckboxIfClean('settings-water-enabled', waterEnabled);
     setNumericValueIfClean('settings-water-timeout', config.waterTimeoutSec ?? data.water?.timeoutSec ?? 30, 0);
+    setCommandStatus(
+        'auto-strip-ato',
+        !waterEnabled ? 'OFF' : (waterTimeoutLatched ? 'BLOKADA' : (waterDosing ? 'DOLEWANIE' : 'CZUWANIE')),
+        waterTimeoutLatched
+            ? 'Przekroczono limit pracy pompy'
+            : (waterState.valid ? (waterState.active ? 'Poziom wody prawidłowy' : 'Niski poziom wody') : 'Brak odczytu poziomu'),
+        !waterEnabled ? 'neutral' : (waterTimeoutLatched ? 'danger' : (waterDosing ? 'info' : (waterState.valid ? 'ok' : 'warn')))
+    );
 
-    // 4. Wyciek (Leak)
     const leakEnabled = modules.leak_enabled ?? false;
     const leakSensorEl = document.getElementById('settings-leak-sensor-label');
     const leakState = normalizeDigitalSensorState(sensors.leak_detected);
     if (leakSensorEl) {
         if (!leakEnabled) {
-            leakSensorEl.value = 'MODUL WYLACZONY';
+            leakSensorEl.value = 'MODUŁ WYŁĄCZONY';
             leakSensorEl.style.color = 'var(--text-muted)';
         } else if (!leakState.valid) {
             leakSensorEl.value = 'BRAK ODCZYTU MCP';
@@ -1060,6 +1084,12 @@ function renderModulesTab(data) {
             leakStatusEl.style.color = leakState.active ? '#ef4444' : 'var(--success-color)';
         }
     }
+    setCommandStatus(
+        'auto-strip-leak',
+        !leakEnabled ? 'OFF' : (leakState.active ? 'ALARM' : 'CZUWANIE'),
+        !leakEnabled ? 'Ochrona przed zalaniem wyłączona' : (leakState.valid ? (leakState.active ? 'Wykryto wodę' : 'Sensor suchy') : 'Brak odczytu sensora'),
+        !leakEnabled ? 'neutral' : (leakState.active ? 'danger' : (leakState.valid ? 'ok' : 'warn'))
+    );
     setCheckboxIfClean('settings-leak-enabled', leakEnabled);
     setInputValueIfClean(
         'settings-leak-action',

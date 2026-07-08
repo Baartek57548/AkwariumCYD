@@ -1,3 +1,244 @@
+const API_BUS_DIAGNOSTICS = '/api/bus-diagnostics';
+const I2C_DEVICE_TYPES = Object.freeze({
+    mcp23017: {
+        name: 'MCP23017',
+        role: 'Ekspander GPIO: przekaźniki oraz wejścia bezpieczeństwa.',
+        certainty: 'Skonfigurowany w firmware'
+    },
+    gpio_expander: {
+        name: 'Ekspander GPIO',
+        role: 'Możliwy MCP23017 albo PCF8574. Adres nie rozstrzyga typu układu.',
+        certainty: 'Identyfikacja prawdopodobna'
+    },
+    ads1115: {
+        name: 'ADS1115',
+        role: 'Przetwornik ADC dla pH, EC i wejść analogowych.',
+        certainty: 'Skonfigurowany w firmware'
+    },
+    oled: {
+        name: 'Wyświetlacz OLED',
+        role: 'Możliwy sterownik SSD1306 albo SH1106.',
+        certainty: 'Identyfikacja prawdopodobna'
+    },
+    current_pwm_sensor: {
+        name: 'Czujnik lub sterownik',
+        role: 'Możliwy INA219, PCA9685 albo czujnik SHT.',
+        certainty: 'Adres współdzielony przez wiele układów'
+    },
+    sht3x: {
+        name: 'Czujnik SHT3x',
+        role: 'Prawdopodobny czujnik temperatury i wilgotności.',
+        certainty: 'Identyfikacja prawdopodobna'
+    },
+    eeprom: {
+        name: 'Pamięć EEPROM',
+        role: 'Prawdopodobna pamięć z rodziny AT24Cxx.',
+        certainty: 'Identyfikacja prawdopodobna'
+    },
+    rtc_or_imu: {
+        name: 'RTC lub IMU',
+        role: 'Możliwy DS3231/DS1307 albo MPU6050.',
+        certainty: 'Adres współdzielony przez wiele układów'
+    },
+    environmental: {
+        name: 'Czujnik środowiskowy',
+        role: 'Możliwy BMP280, BME280 albo BME680.',
+        certainty: 'Identyfikacja prawdopodobna'
+    },
+    unknown: {
+        name: 'Nieznane urządzenie',
+        role: 'Adres odpowiada, ale moduł nie występuje w mapie projektu.',
+        certainty: 'Typ nierozpoznany'
+    }
+});
+
+const ONEWIRE_DEVICE_TYPES = Object.freeze({
+    ds1990_serial: { name: 'DS1990 / DS2401', role: 'Elektroniczny identyfikator lub numer seryjny.' },
+    ds18s20: { name: 'DS18S20', role: 'Czujnik temperatury OneWire.' },
+    ds1822: { name: 'DS1822', role: 'Czujnik temperatury OneWire.' },
+    ds18b20: { name: 'DS18B20', role: 'Cyfrowy czujnik temperatury akwarium.' },
+    ds2423_counter: { name: 'DS2423', role: 'Licznik impulsów z pamięcią.' },
+    ds2438_battery: { name: 'DS2438', role: 'Monitor napięcia, temperatury i akumulatora.' },
+    ds2431_eeprom: { name: 'DS2431', role: 'Pamięć EEPROM OneWire.' },
+    max31850: { name: 'MAX31850', role: 'Przetwornik termopary OneWire.' },
+    unknown: { name: 'Nieznane urządzenie', role: 'Rodzina ROM nie występuje w mapie projektu.' }
+});
+
+let busDiagnosticsInFlight = false;
+let busDiagnosticsLastScanAtMs = 0;
+
+function normalizeI2cDevices(payload) {
+    if (!Array.isArray(payload?.devices)) return [];
+    return payload.devices.slice(0, 16).map((device) => {
+        const numericAddress = Number(device?.address);
+        const address = Number.isInteger(numericAddress) && numericAddress >= 0x08 && numericAddress <= 0x77
+            ? numericAddress
+            : null;
+        const type = Object.prototype.hasOwnProperty.call(I2C_DEVICE_TYPES, device?.type)
+            ? device.type
+            : 'unknown';
+        return {
+            address,
+            hex: address === null ? '--' : `0x${address.toString(16).toUpperCase().padStart(2, '0')}`,
+            type,
+            configured: Boolean(device?.configured)
+        };
+    }).filter((device) => device.address !== null);
+}
+
+function i2cDeviceCountLabel(count) {
+    if (count === 1) return '1 urządzenie';
+    if (count >= 2 && count <= 4) return `${count} urządzenia`;
+    return `${count} urządzeń`;
+}
+
+function normalizeOneWireDevices(payload) {
+    if (!Array.isArray(payload?.oneWire?.devices)) return [];
+    return payload.oneWire.devices.slice(0, 8).map((device) => {
+        const type = Object.prototype.hasOwnProperty.call(ONEWIRE_DEVICE_TYPES, device?.type)
+            ? device.type
+            : 'unknown';
+        return {
+            rom: String(device?.rom || '').toUpperCase().replace(/[^0-9A-F-]/g, '').slice(0, 23),
+            family: Number(device?.family),
+            type,
+            crcValid: device?.crcValid === true
+        };
+    }).filter((device) => device.rom.length > 0);
+}
+
+function setBusState(id, text, tone) {
+    const element = document.getElementById(id);
+    if (!element) return;
+    element.textContent = text;
+    element.dataset.tone = tone;
+}
+
+function renderHardwareBusDiagnostics(payload) {
+    const devices = normalizeI2cDevices(payload);
+    const oneWireDevices = normalizeOneWireDevices(payload);
+    const sda = Number(payload?.sda);
+    const scl = Number(payload?.scl);
+    const frequencyHz = Number(payload?.frequencyHz);
+    const scanMs = Number(payload?.scanMs);
+    const i2cList = document.getElementById('i2c-device-list');
+    const oneWireList = document.getElementById('onewire-device-list');
+    const status = document.getElementById('bus-scan-status');
+    const uart = Array.isArray(payload?.uart?.ports) ? payload.uart.ports[0] : null;
+
+    setText('i2c-sda-pin', Number.isInteger(sda) ? `GPIO ${sda}` : '--');
+    setText('i2c-scl-pin', Number.isInteger(scl) ? `GPIO ${scl}` : '--');
+    setText('i2c-frequency', Number.isFinite(frequencyHz) ? `${Math.round(frequencyHz / 1000)} kHz` : '--');
+    setText('i2c-device-count', i2cDeviceCountLabel(devices.length));
+    setBusState('i2c-bus-state', devices.length ? 'AKTYWNA' : 'BRAK URZĄDZEŃ', devices.length ? 'ok' : 'warn');
+
+    if (i2cList) {
+        i2cList.innerHTML = devices.length
+            ? devices.map((device) => {
+                const info = I2C_DEVICE_TYPES[device.type] || I2C_DEVICE_TYPES.unknown;
+                return `<article class="bus-device-card" data-configured="${device.configured ? 'true' : 'false'}">
+                    <div class="bus-device-head">
+                        <span class="bus-address">${escapeHtml(device.hex)}</span>
+                        <span class="bus-confidence">${device.configured ? 'KONFIGURACJA' : 'WYKRYTO'}</span>
+                    </div>
+                    <strong>${escapeHtml(info.name)}</strong>
+                    <p>${escapeHtml(info.role)}</p>
+                    <small>${escapeHtml(info.certainty)}</small>
+                </article>`;
+            }).join('')
+            : '<div class="bus-empty-state">Nie wykryto urządzeń odpowiadających na adresach 0x08-0x77.</div>';
+    }
+
+    const uartActive = uart?.active === true;
+    setText('uart-port', Number.isInteger(Number(uart?.port)) ? `UART${Number(uart.port)}` : '--');
+    setText('uart-tx-pin', Number.isInteger(Number(uart?.tx)) ? `GPIO ${Number(uart.tx)}` : '--');
+    setText('uart-rx-pin', Number.isInteger(Number(uart?.rx)) ? `GPIO ${Number(uart.rx)}` : '--');
+    setText('uart-baud', Number.isFinite(Number(uart?.baud)) ? `${Number(uart.baud).toLocaleString('pl-PL')} bps` : '--');
+    setText('uart-format', uart?.format || '--');
+    setBusState('uart-bus-state', uartActive ? 'AKTYWNA' : 'NIEAKTYWNA', uartActive ? 'ok' : 'warn');
+
+    const oneWirePin = Number(payload?.oneWire?.dataPin);
+    const oneWireScanMs = Number(payload?.oneWire?.scanMs);
+    setText('onewire-data-pin', Number.isInteger(oneWirePin) ? `GPIO ${oneWirePin}` : '--');
+    setText('onewire-device-count', i2cDeviceCountLabel(oneWireDevices.length));
+    setBusState('onewire-bus-state', oneWireDevices.length ? 'AKTYWNA' : 'BRAK URZĄDZEŃ', oneWireDevices.length ? 'ok' : 'warn');
+    if (oneWireList) {
+        oneWireList.innerHTML = oneWireDevices.length
+            ? oneWireDevices.map((device) => {
+                const info = ONEWIRE_DEVICE_TYPES[device.type] || ONEWIRE_DEVICE_TYPES.unknown;
+                return `<article class="bus-device-card" data-configured="${device.type === 'ds18b20' ? 'true' : 'false'}">
+                    <div class="bus-device-head">
+                        <span class="bus-address bus-rom">${escapeHtml(device.rom)}</span>
+                        <span class="bus-confidence">${device.crcValid ? 'CRC OK' : 'CRC BŁĄD'}</span>
+                    </div>
+                    <strong>${escapeHtml(info.name)}</strong>
+                    <p>${escapeHtml(info.role)}</p>
+                    <small>Rodzina 0x${Number.isInteger(device.family) ? device.family.toString(16).toUpperCase().padStart(2, '0') : '--'}</small>
+                </article>`;
+            }).join('')
+            : '<div class="bus-empty-state">Nie wykryto urządzeń OneWire. Sprawdź rezystor podciągający 4,7 kΩ i połączenie GPIO 17.</div>';
+    }
+
+    if (status) {
+        const i2cDuration = Number.isFinite(scanMs) ? `${Math.max(0, Math.round(scanMs))} ms` : '--';
+        const oneWireDuration = Number.isFinite(oneWireScanMs) ? `${Math.max(0, Math.round(oneWireScanMs))} ms` : '--';
+        status.textContent = payload?.simulated
+            ? `Tryb DEV: symulowane magistrale. I2C ${i2cDuration}, OneWire ${oneWireDuration}.`
+            : `Diagnostyka sprzętowa zakończona. I2C ${i2cDuration}, OneWire ${oneWireDuration}.`;
+        status.dataset.tone = devices.length || oneWireDevices.length ? 'ok' : 'warn';
+    }
+
+    window.lastI2cScanData = { ...payload, devices };
+    window.lastBusDiagnosticsData = { ...payload, devices, oneWire: { ...payload.oneWire, devices: oneWireDevices } };
+    setCommandStatus(
+        'diag-strip-bus',
+        `${devices.length} I2C · ${oneWireDevices.length} OneWire`,
+        uartActive ? `UART${Number(uart.port)} · ${Number(uart.baud).toLocaleString('pl-PL')} bps` : 'UART nieaktywny',
+        devices.length || oneWireDevices.length || uartActive ? 'ok' : 'warn'
+    );
+}
+
+async function fetchHardwareBusDiagnostics(force = false) {
+    if (!isAdminAuthenticated() || busDiagnosticsInFlight) return;
+    if (!force && window.lastBusDiagnosticsData && Date.now() - busDiagnosticsLastScanAtMs < 10000) {
+        renderHardwareBusDiagnostics(window.lastBusDiagnosticsData);
+        return;
+    }
+
+    const button = document.getElementById('bus-scan-refresh');
+    const status = document.getElementById('bus-scan-status');
+    busDiagnosticsInFlight = true;
+    if (button) button.disabled = true;
+    if (status) {
+        status.textContent = 'Skanowanie I2C i OneWire oraz odczyt konfiguracji UART...';
+        status.dataset.tone = 'info';
+    }
+    setCommandStatus('diag-strip-bus', 'Skanowanie...', 'I2C · UART · OneWire', 'info');
+
+    try {
+        const pin = getAdminPinForRequest();
+        const response = await fetch(`${API_BUS_DIAGNOSTICS}?pin=${encodeURIComponent(pin)}`, { cache: 'no-store' });
+        const payload = await response.json().catch(() => ({}));
+        if (!response.ok || payload?.ok !== true) {
+            if (response.status === 403) logoutAdmin();
+            throw new Error(payload?.message || `HTTP ${response.status}`);
+        }
+        busDiagnosticsLastScanAtMs = Date.now();
+        renderHardwareBusDiagnostics(payload);
+    } catch (error) {
+        if (status) {
+            status.textContent = `Błąd diagnostyki magistral: ${error.message}`;
+            status.dataset.tone = 'danger';
+        }
+        setCommandStatus('diag-strip-bus', 'Błąd magistral', error.message, 'danger');
+    } finally {
+        busDiagnosticsInFlight = false;
+        if (button) button.disabled = false;
+    }
+}
+
+window.fetchHardwareBusDiagnostics = fetchHardwareBusDiagnostics;
+
 function normalizeFeedResultCode(code) {
     const raw = String(code || '').trim().toLowerCase();
     if (raw.startsWith('feed_')) {
@@ -503,8 +744,8 @@ function relayQuickButtonLabel(active) {
 const RELAY_QUICK_ACTIONS = {
     light: {
         buttonId: 'relay-light-toggle',
-        actionName: 'set_light',
-        isActive: (data) => !!data?.relays?.light,
+        actionName: 'set_light1',
+        isActive: (data) => !!(data?.relays?.light1 ?? data?.relays?.light),
         buildPayload: (active) => ({ state: active ? '0' : '1' })
     },
     filter: {
@@ -515,21 +756,21 @@ const RELAY_QUICK_ACTIONS = {
     },
     plant: {
         buttonId: 'relay-plant-toggle',
-        actionName: 'save_schedule',
-        isActive: (data) => !!data?.relays?.plantLight,
-        buildPayload: (active) => ({ plantLightMode: active ? 2 : 1 })
+        actionName: 'set_light2',
+        isActive: (data) => !!(data?.relays?.light2 ?? data?.relays?.plantLight),
+        buildPayload: (active) => ({ state: active ? '0' : '1' })
     },
     heater: {
         buttonId: 'relay-heater-toggle',
-        actionName: 'save_schedule',
+        actionName: 'set_heater',
         isActive: isHeaterAutomationEnabled,
-        buildPayload: (active) => ({ heaterMode: active ? 1 : 0 })
+        buildPayload: (active) => ({ state: active ? '0' : '1' })
     },
     aeration: {
         buttonId: 'relay-aeration-toggle',
-        actionName: 'save_schedule',
+        actionName: 'set_aeration',
         isActive: (data) => !!data?.relays?.aeration,
-        buildPayload: (active) => ({ aerationMode: active ? 2 : 1 })
+        buildPayload: (active) => ({ state: active ? '0' : '1' })
     }
 };
 
@@ -706,8 +947,8 @@ function isSensorValid(data, name, value) {
 
 function countActiveRelays(relays) {
     return [
-        relays?.light,
-        relays?.plantLight,
+        relays?.light1 ?? relays?.light,
+        relays?.light2 ?? relays?.plantLight,
         relays?.pump,
         relays?.heater,
         relays?.aeration
@@ -841,12 +1082,20 @@ function renderStatusCommandStrips(data) {
         `Najwiekszy blok: ${largestHeapKb}`,
         freeHeap !== null && freeHeap < 32000 ? 'warn' : 'ok'
     );
-    const clockValid = !!data.clock?.valid || !!formatControllerClock(data.clock || {});
+    const busDiagnostics = window.lastBusDiagnosticsData;
+    const i2cDevices = Array.isArray(busDiagnostics?.devices) ? busDiagnostics.devices : null;
+    const oneWireDevices = Array.isArray(busDiagnostics?.oneWire?.devices) ? busDiagnostics.oneWire.devices : null;
+    const uartPort = Array.isArray(busDiagnostics?.uart?.ports) ? busDiagnostics.uart.ports[0] : null;
+    const mcpResponding = sensors.mcp_ok === true || system.mcpConnected === true;
     setCommandStatus(
         'diag-strip-bus',
-        network.staConnected ? 'STA online' : (network.apMode ? 'AP aktywne' : 'Radio OFF'),
-        `${clockValid ? 'czas OK' : 'czas brak'} / ${network.lastTimeSyncStatus || 'NTP --'}`,
-        clockValid || network.staConnected || network.apMode ? 'ok' : 'warn'
+        i2cDevices && oneWireDevices
+            ? `${i2cDevices.length} I2C · ${oneWireDevices.length} OneWire`
+            : (mcpResponding ? 'MCP 0x20' : 'Nie skanowano'),
+        uartPort?.active
+            ? `UART${Number(uartPort.port)} · ${Number(uartPort.baud).toLocaleString('pl-PL')} bps`
+            : (mcpResponding ? 'Ekspander odpowiada; pełna diagnostyka po otwarciu zakładki' : 'I2C · UART · OneWire'),
+        i2cDevices && oneWireDevices ? 'ok' : (mcpResponding ? 'ok' : 'neutral')
     );
 
     const batteryPercent = toFiniteNumber(data.battery?.percent);
@@ -900,8 +1149,8 @@ const RELAY_FUNCTIONS_INFO = {
     none: { label: "Brak / nieużywany", icon: "fa-xmark" },
     filter: { label: "Filtr", icon: "fa-filter" },
     heater: { label: "Grzałka", icon: "fa-temperature-half" },
-    main_light: { label: "Światło główne", icon: "fa-lightbulb" },
-    plant_light: { label: "Światło roślin", icon: "fa-seedling" },
+    main_light: { label: "Światło 1", icon: "fa-lightbulb" },
+    plant_light: { label: "Światło 2", icon: "fa-lightbulb" },
     aeration: { label: "Napowietrzanie", icon: "fa-wind" },
     co2: { label: "CO2", icon: "fa-cloud" },
     water_dosing: { label: "Dolewka wody (ATO)", icon: "fa-droplet" },
@@ -1108,8 +1357,8 @@ function renderRelaysLegacy(data) {
     const airMode = modeValue(schedule.airMode);
     const heaterMode = modeValue(schedule.heaterMode);
 
-    const lightState = relays.light ? 'on' : (lightMode === 2 ? 'off' : 'standby');
-    const plantState = relays.plantLight ? 'on' : (plantRange.mode === 'zawsze_wylaczone' ? 'off' : 'standby');
+    const lightState = (relays.light1 ?? relays.light) ? 'on' : (lightMode === 2 ? 'off' : 'standby');
+    const plantState = (relays.light2 ?? relays.plantLight) ? 'on' : (plantRange.mode === 'zawsze_wylaczone' ? 'off' : 'standby');
     const filterState = relays.pump ? 'on' : (filterMode === 2 ? 'off' : 'standby');
     const heaterState = relays.heater ? 'on' : (heaterMode === 1 ? 'off' : 'standby');
     const aerationState = aerationPercent > 0 ? 'on' : (airMode === 2 ? 'off' : 'standby');
@@ -1147,9 +1396,9 @@ function renderRelaysLegacy(data) {
     setText('relay-count', `${activeCount} / 5 aktywne`);
 
     const toggles = {
-        light: relays.light,
+        light: relays.light1 ?? relays.light,
         filter: relays.pump,
-        plant: relays.plantLight,
+        plant: relays.light2 ?? relays.plantLight,
         heater: isHeaterAutomationEnabled(data),
         aeration: relays.aeration
     };
@@ -1264,7 +1513,7 @@ function renderTodaySchedule(data) {
             })
         },
         {
-            label: 'Światło główne',
+            label: 'Światło 1',
             value: modeValue(schedule.lightMode) === 1
                 ? 'Zawsze włączone'
                 : (modeValue(schedule.lightMode) === 2
@@ -1272,7 +1521,7 @@ function renderTodaySchedule(data) {
                     : workRange.label)
         },
         {
-            label: 'Światło roślinne',
+            label: 'Światło 2',
             value: describeDashboardRange(plantRange, {
                 on: 'Zawsze włączone',
                 off: 'Wyłączone'
@@ -1298,7 +1547,7 @@ function renderTodaySchedule(data) {
             label: 'Grzałka',
             value: modeValue(schedule.heaterMode) === 1
                 ? 'Wyłączona'
-                : `Auto progowe ${workRange.label}`
+                : 'Auto progowe 24/7'
         },
         {
             label: 'Karmienie',
@@ -1395,47 +1644,6 @@ function formatChartTemperature(value, digits = 1) {
 function formatChartTemperatureDelta(value) {
     const numeric = Number(value);
     return Number.isFinite(numeric) ? `${Math.abs(numeric).toFixed(1)}\u00B0C` : '--.-\u00B0C';
-}
-
-function appendChartChip(svg, options) {
-    if (!svg || !options || typeof options.text !== 'string') return null;
-
-    const bounds = options.bounds || {};
-    const height = 26;
-    const width = clamp(options.text.length * 7 + 20, 64, 180);
-    const anchor = options.anchor || 'start';
-    let left = Number(options.x) || 0;
-    if (anchor === 'end') left -= width;
-    if (anchor === 'middle') left -= width / 2;
-    let top = Number(options.y) || 0;
-
-    const minX = Number.isFinite(bounds.minX) ? bounds.minX : 0;
-    const maxX = Number.isFinite(bounds.maxX) ? bounds.maxX : Number(svg.getAttribute('width')) || 960;
-    const minY = Number.isFinite(bounds.minY) ? bounds.minY : 0;
-    const maxY = Number.isFinite(bounds.maxY) ? bounds.maxY : Number(svg.getAttribute('height')) || 260;
-    left = clamp(left, minX, Math.max(minX, maxX - width));
-    top = clamp(top, minY, Math.max(minY, maxY - height));
-
-    const tone = ['live', 'target', 'band', 'offscreen'].includes(options.tone) ? options.tone : 'live';
-    const group = createSvgEl('g', { class: `chart-chip chart-chip-${tone}` });
-    group.appendChild(createSvgEl('rect', {
-        x: left,
-        y: top,
-        width,
-        height,
-        rx: 8,
-        class: 'chart-chip-bg'
-    }));
-    const label = createSvgEl('text', {
-        x: left + width / 2,
-        y: top + 17,
-        class: 'chart-chip-text',
-        'text-anchor': 'middle'
-    });
-    label.textContent = options.text;
-    group.appendChild(label);
-    svg.appendChild(group);
-    return group;
 }
 
 function buildSmoothChartPath(coords) {
@@ -1784,13 +1992,6 @@ function renderTemperatureSnapshot(svg, points, target, hysteresis, domain, layo
     const span = Math.max(0.1, domain.maxValue - domain.minValue);
     const valueToX = (value) => rail.startX + ((value - domain.minValue) / span) * (rail.endX - rail.startX);
     const currentX = valueToX(latest.value);
-    const chipBounds = {
-        minX: rail.startX - 8,
-        maxX: rail.endX + 8,
-        minY: padding.top + 8,
-        maxY: height - padding.bottom - 8
-    };
-
     appendTemperatureChartDefs(svg);
     appendTemperatureChartFrame(svg, padding, plotWidth, plotHeight);
 
@@ -1972,14 +2173,6 @@ function renderTemperatureSnapshot(svg, points, target, hysteresis, domain, layo
         class: 'chart-point-core'
     }));
 
-    appendChartChip(svg, {
-        x: currentX - (stacked ? 52 : 58),
-        y: rail.y - (stacked ? 66 : 88),
-        text: `Teraz ${latest.valueLabel}`,
-        tone: 'live',
-        bounds: chipBounds
-    });
-
     const currentHit = createSvgEl('circle', {
         cx: currentX,
         cy: rail.y,
@@ -2010,12 +2203,6 @@ function renderTemperatureTrendChart(svg, points, target, hysteresis, domain, la
     const compact = !!layout.compact;
     const xFor = (index) => padding.left + (points.length === 1 ? plotWidth / 2 : (index / (points.length - 1)) * plotWidth);
     const yFor = (value) => padding.top + ((maxValue - value) / (maxValue - minValue)) * plotHeight;
-    const chipBounds = {
-        minX: padding.left + 8,
-        maxX: padding.left + plotWidth - 8,
-        minY: padding.top + 8,
-        maxY: padding.top + plotHeight - 8
-    };
     const targetVisible = target !== null && target >= minValue && target <= maxValue;
 
     appendTemperatureChartDefs(svg);
@@ -2068,14 +2255,6 @@ function renderTemperatureTrendChart(svg, points, target, hysteresis, domain, la
             y2: targetY,
             class: 'chart-target-line'
         }));
-        appendChartChip(svg, {
-            x: padding.left + plotWidth - 12,
-            y: targetY - 30,
-            text: `Cel ${formatChartTemperature(target)}`,
-            tone: 'target',
-            anchor: 'end',
-            bounds: chipBounds
-        });
     }
 
     const coords = points.map((point, index) => ({
@@ -2085,7 +2264,6 @@ function renderTemperatureTrendChart(svg, points, target, hysteresis, domain, la
     const pathData = buildSmoothChartPath(coords);
     const firstCoord = coords[0];
     const lastCoord = coords[coords.length - 1];
-    const latestPoint = points[points.length - 1];
     const areaData = `${pathData} L ${lastCoord.x.toFixed(2)} ${(padding.top + plotHeight).toFixed(2)} L ${firstCoord.x.toFixed(2)} ${(padding.top + plotHeight).toFixed(2)} Z`;
 
     svg.appendChild(createSvgEl('path', { d: areaData, class: 'chart-area' }));
@@ -2101,19 +2279,6 @@ function renderTemperatureTrendChart(svg, points, target, hysteresis, domain, la
             class: 'chart-focus-line'
         }));
     }
-
-    const latestChipAnchor = lastCoord.x > padding.left + plotWidth * 0.72 ? 'end' : 'start';
-    const latestChipY = lastCoord.y < padding.top + (compact ? 50 : 42)
-        ? lastCoord.y + (compact ? 16 : 12)
-        : lastCoord.y - (compact ? 30 : 34);
-    appendChartChip(svg, {
-        x: latestChipAnchor === 'end' ? lastCoord.x - 14 : lastCoord.x + 14,
-        y: latestChipY,
-        text: `Teraz ${latestPoint.valueLabel}`,
-        tone: 'live',
-        anchor: latestChipAnchor,
-        bounds: chipBounds
-    });
 
     svg.appendChild(createSvgEl('circle', {
         cx: lastCoord.x,
@@ -2300,6 +2465,9 @@ function renderDashboard(data) {
     renderDiagnosticsPanel(data);
     if (typeof renderModulesTab === 'function') {
         renderModulesTab(data);
+    }
+    if (typeof window.renderRelayModuleOverview === 'function') {
+        window.renderRelayModuleOverview(data);
     }
     renderScheduleEditor(data);
     renderRelays(data);

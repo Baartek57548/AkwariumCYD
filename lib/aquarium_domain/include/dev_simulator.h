@@ -29,6 +29,8 @@ struct DevSnapshot {
     bool filterOn;
     bool lightOn;
     LightProfile lightProfile;
+    bool light2On;
+    LightProfile light2Profile;
     unsigned int alarmFlags;
 };
 

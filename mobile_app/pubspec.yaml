@@ -1,7 +1,7 @@
 name: cyd_aquarium_mobile
 description: AquaCYD Control — mobilny panel sterownika akwarium dla Androida i iOS.
 publish_to: 'none'
-version: 3.4.0+9
+version: 3.5.0+10
 
 environment:
   sdk: ^3.11.3

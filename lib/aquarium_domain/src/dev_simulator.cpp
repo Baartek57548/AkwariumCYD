@@ -27,6 +27,7 @@ void DevSimulator::reset(uint32_t seed) {
     snapshot_.batteryVoltage = 3.25f;
     snapshot_.batteryPercent = 82U;
     snapshot_.lightProfile = LightProfile::Day;
+    snapshot_.light2Profile = LightProfile::Day;
 }
 
 float DevSimulator::noise() {
@@ -110,9 +111,11 @@ const DevSnapshot &DevSimulator::step(uint32_t now_ms, uint16_t minute_of_day, u
 
     snapshot_.lightOn = schedule.lightOn;
     snapshot_.lightProfile = schedule.lightProfile;
+    snapshot_.light2On = schedule.light2On;
+    snapshot_.light2Profile = schedule.light2Profile;
     snapshot_.filterOn = schedule.filterOn;
     float ldr_base = 95.0f;
-    if (snapshot_.lightOn) {
+    if (snapshot_.lightOn || snapshot_.light2On) {
         if (snapshot_.lightProfile == LightProfile::Day) ldr_base = 1280.0f;
         if (snapshot_.lightProfile == LightProfile::Daybreak) ldr_base = 690.0f;
         if (snapshot_.lightProfile == LightProfile::Night) ldr_base = 330.0f;

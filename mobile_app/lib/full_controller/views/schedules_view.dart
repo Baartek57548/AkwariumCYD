@@ -40,8 +40,14 @@ class _SchedulesViewState extends State<SchedulesView> {
   void _loadFromStatus() {
     final schedules = widget.session.status.section('schedules');
     final legacy = widget.session.status.section('schedule');
+    final lightSchedule = schedules.section('light1').isNotEmpty
+        ? schedules.section('light1')
+        : schedules.section('light');
+    final light2Schedule = schedules.section('light2').isNotEmpty
+        ? schedules.section('light2')
+        : schedules.section('plant_light');
     light = _ScheduleEntry.fromJson(
-      schedules.section('light'),
+      lightSchedule,
       fallbackStart: formatClock(
         legacy.integer('dayStartHour', 10),
         legacy.integer('dayStartMin'),
@@ -51,20 +57,24 @@ class _SchedulesViewState extends State<SchedulesView> {
         legacy.integer('dayEndMin'),
       ),
       fallbackMode: legacy.integer('lightMode'),
-      profile: schedules.section('light').text('profile', 'day'),
+      profile: lightSchedule.flag('profileCycle')
+          ? 'cycle'
+          : lightSchedule.text('profile', 'day'),
     );
     plant = _ScheduleEntry.fromJson(
-      schedules.section('plant_light'),
+      light2Schedule,
       fallbackStart: formatClock(
         legacy.integer('plantStartHour', 10),
-        legacy.integer('plantStartMin', 30),
+        legacy.integer('plantStartMin'),
       ),
       fallbackEnd: formatClock(
-        legacy.integer('plantEndHour', 21),
-        legacy.integer('plantEndMin', 30),
+        legacy.integer('plantEndHour', 22),
+        legacy.integer('plantEndMin'),
       ),
       fallbackMode: legacy.integer('plantLightMode'),
-      profile: schedules.section('plant_light').text('profile', 'day'),
+      profile: light2Schedule.flag('profileCycle')
+          ? 'cycle'
+          : light2Schedule.text('profile', 'day'),
     );
     filter = _ScheduleEntry.fromJson(
       schedules.section('filter'),
@@ -113,11 +123,23 @@ class _SchedulesViewState extends State<SchedulesView> {
           'dayEnd': _timeText(light.end),
           'lightStart': _timeText(light.start),
           'lightEnd': _timeText(light.end),
-          'lightProfile': light.profile,
+          'lightProfile': light.profile == 'cycle' ? 'day' : light.profile,
+          'lightProfileCycle': light.profile == 'cycle',
+          'light1Mode': light.mode,
+          'light1Start': _timeText(light.start),
+          'light1End': _timeText(light.end),
+          'light1Profile': light.profile == 'cycle' ? 'day' : light.profile,
+          'light1ProfileCycle': light.profile == 'cycle',
           'plantLightMode': plant.mode,
           'plantLightStart': _timeText(plant.start),
           'plantLightEnd': _timeText(plant.end),
-          'plantLightProfile': plant.profile,
+          'plantLightProfile': plant.profile == 'cycle' ? 'day' : plant.profile,
+          'plantLightProfileCycle': plant.profile == 'cycle',
+          'light2Mode': plant.mode,
+          'light2Start': _timeText(plant.start),
+          'light2End': _timeText(plant.end),
+          'light2Profile': plant.profile == 'cycle' ? 'day' : plant.profile,
+          'light2ProfileCycle': plant.profile == 'cycle',
           'aerationMode': air.mode,
           'airOn': _timeText(air.start),
           'airOff': _timeText(air.end),
@@ -168,7 +190,7 @@ class _SchedulesViewState extends State<SchedulesView> {
         ),
         const SizedBox(height: 10),
         _ScheduleCard(
-          title: 'Światło główne',
+          title: 'Światło 1',
           icon: Icons.lightbulb_rounded,
           entry: light,
           profileEnabled: true,
@@ -176,8 +198,8 @@ class _SchedulesViewState extends State<SchedulesView> {
         ),
         const SizedBox(height: 10),
         _ScheduleCard(
-          title: 'Światło roślinne',
-          icon: Icons.local_florist_rounded,
+          title: 'Światło 2',
+          icon: Icons.lightbulb_outline_rounded,
           entry: plant,
           profileEnabled: true,
           onChanged: (value) => setState(() => plant = value),
@@ -331,14 +353,20 @@ class _ScheduleTimeline extends StatelessWidget {
             const SizedBox(height: 10),
             const _TimelineAxis(),
             _TimelineRow(
-              label: 'Światło',
+              label: 'Światło 1',
               entry: light,
               color: const Color(0xFFFFB020),
+              lightProfiles: true,
             ),
             _TimelineRow(
-              label: 'Rośliny',
+              label: 'Światło 2',
               entry: plant,
-              color: const Color(0xFF84CC16),
+              color: const Color(0xFFFACC15),
+              lightProfiles: true,
+            ),
+            const Padding(
+              padding: EdgeInsets.only(left: 82, bottom: 4),
+              child: _ProfileLegend(),
             ),
             _TimelineRow(
               label: 'Filtr',
@@ -386,6 +414,42 @@ class _ScheduleTimeline extends StatelessWidget {
   }
 }
 
+class _ProfileLegend extends StatelessWidget {
+  const _ProfileLegend();
+
+  @override
+  Widget build(BuildContext context) {
+    return const Wrap(
+      spacing: 10,
+      runSpacing: 3,
+      children: [
+        _ProfileLegendItem(label: 'DAYBREAK', color: Color(0xFFF59E0B)),
+        _ProfileLegendItem(label: 'DAY', color: Color(0xFFFACC15)),
+        _ProfileLegendItem(label: 'NIGHT', color: Color(0xFF3B82F6)),
+      ],
+    );
+  }
+}
+
+class _ProfileLegendItem extends StatelessWidget {
+  const _ProfileLegendItem({required this.label, required this.color});
+
+  final String label;
+  final Color color;
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        ColoredBox(color: color, child: SizedBox.square(dimension: 7)),
+        SizedBox(width: 3),
+        Text(label, style: TextStyle(fontSize: 8, fontWeight: FontWeight.w700)),
+      ],
+    );
+  }
+}
+
 class _TimelineAxis extends StatelessWidget {
   const _TimelineAxis();
 
@@ -417,12 +481,14 @@ class _TimelineRow extends StatelessWidget {
     required this.entry,
     required this.color,
     this.statusOverride,
+    this.lightProfiles = false,
   });
 
   final String label;
   final _ScheduleEntry entry;
   final Color color;
   final String? statusOverride;
+  final bool lightProfiles;
 
   @override
   Widget build(BuildContext context) {
@@ -462,7 +528,11 @@ class _TimelineRow extends StatelessWidget {
             ),
           ),
           Expanded(
-            child: _TimelineTrack(entry: entry, color: color),
+            child: _TimelineTrack(
+              entry: entry,
+              color: color,
+              lightProfiles: lightProfiles,
+            ),
           ),
         ],
       ),
@@ -471,10 +541,15 @@ class _TimelineRow extends StatelessWidget {
 }
 
 class _TimelineTrack extends StatelessWidget {
-  const _TimelineTrack({required this.entry, required this.color});
+  const _TimelineTrack({
+    required this.entry,
+    required this.color,
+    this.lightProfiles = false,
+  });
 
   final _ScheduleEntry entry;
   final Color color;
+  final bool lightProfiles;
 
   @override
   Widget build(BuildContext context) {
@@ -483,6 +558,9 @@ class _TimelineTrack extends StatelessWidget {
       child: LayoutBuilder(
         builder: (context, constraints) {
           final segments = _segments();
+          final activeColor = lightProfiles
+              ? _profileColor(entry.profile)
+              : color;
           return ClipRRect(
             borderRadius: BorderRadius.circular(5),
             child: Stack(
@@ -504,14 +582,42 @@ class _TimelineTrack extends StatelessWidget {
                       color: Theme.of(context).colorScheme.outlineVariant,
                     ),
                   ),
-                for (final segment in segments)
-                  Positioned(
-                    left: constraints.maxWidth * segment.$1,
-                    width: constraints.maxWidth * segment.$2,
-                    top: 2,
-                    bottom: 2,
-                    child: ColoredBox(color: color),
+                if (lightProfiles &&
+                    entry.mode == 0 &&
+                    entry.profile == 'cycle') ...[
+                  _profileSegment(
+                    constraints.maxWidth,
+                    600,
+                    30,
+                    const Color(0xFFF59E0B),
                   ),
+                  _profileSegment(
+                    constraints.maxWidth,
+                    630,
+                    570,
+                    const Color(0xFFFACC15),
+                  ),
+                  _profileSegment(
+                    constraints.maxWidth,
+                    1200,
+                    60,
+                    const Color(0xFFF59E0B),
+                  ),
+                  _profileSegment(
+                    constraints.maxWidth,
+                    1260,
+                    60,
+                    const Color(0xFF3B82F6),
+                  ),
+                ] else
+                  for (final segment in segments)
+                    Positioned(
+                      left: constraints.maxWidth * segment.$1,
+                      width: constraints.maxWidth * segment.$2,
+                      top: 2,
+                      bottom: 2,
+                      child: ColoredBox(color: activeColor),
+                    ),
                 if (entry.mode == 2)
                   const Center(
                     child: Text(
@@ -529,6 +635,27 @@ class _TimelineTrack extends StatelessWidget {
       ),
     );
   }
+
+  Positioned _profileSegment(
+    double width,
+    int startMinute,
+    int durationMinutes,
+    Color segmentColor,
+  ) {
+    return Positioned(
+      left: width * startMinute / 1440,
+      width: width * durationMinutes / 1440,
+      top: 2,
+      bottom: 2,
+      child: ColoredBox(color: segmentColor),
+    );
+  }
+
+  Color _profileColor(String profile) => switch (profile) {
+    'daybreak' => const Color(0xFFF59E0B),
+    'night' => const Color(0xFF3B82F6),
+    _ => const Color(0xFFFACC15),
+  };
 
   List<(double, double)> _segments() {
     if (entry.mode == 1) return const [(0, 1)];
@@ -688,6 +815,10 @@ class _ScheduleCard extends StatelessWidget {
                 ),
                 items: const [
                   DropdownMenuItem(
+                    value: 'cycle',
+                    child: Text('AUTO — DAYBREAK → DAY → NIGHT'),
+                  ),
+                  DropdownMenuItem(
                     value: 'day',
                     child: Text('DAY — pełne światło dzienne'),
                   ),
@@ -701,6 +832,7 @@ class _ScheduleCard extends StatelessWidget {
                   ),
                 ],
                 selectedItemBuilder: (context) => const [
+                  Text('AUTO — 3 tryby', overflow: TextOverflow.ellipsis),
                   Text('DAY', overflow: TextOverflow.ellipsis),
                   Text('DAYBREAK', overflow: TextOverflow.ellipsis),
                   Text('NIGHT', overflow: TextOverflow.ellipsis),
@@ -774,7 +906,7 @@ class _ScheduleEntry {
       mode: mode,
       start: _parseTime(data.text('start', fallbackStart)),
       end: _parseTime(data.text('end', fallbackEnd)),
-      profile: profile,
+      profile: data.flag('profileCycle') ? 'cycle' : profile,
     );
   }
 

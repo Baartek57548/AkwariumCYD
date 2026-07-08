@@ -33,6 +33,11 @@ GasControlOutput evaluate_gas_control(const GasControlInput &input) {
     return output;
 }
 
+bool evaluate_ato_control(const AtoControlInput &input) {
+    return input.runtimeAvailable && input.enabled && input.waterLevelValid &&
+           !input.waterLevelHigh && !input.leakDetected && !input.timeoutLatched;
+}
+
 unsigned int evaluate_alarm_flags(const AlarmInput &input) {
     unsigned int flags = AlarmNone;
     if (input.temperatureValid && isfinite(input.temperatureC)) {

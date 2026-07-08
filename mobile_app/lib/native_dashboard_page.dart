@@ -494,7 +494,7 @@ class _OutputTile extends StatelessWidget {
   IconData _channelIcon(OutputChannel channel) {
     return switch (channel) {
       OutputChannel.light => Icons.lightbulb_rounded,
-      OutputChannel.plantLight => Icons.local_florist_rounded,
+      OutputChannel.plantLight => Icons.lightbulb_outline_rounded,
       OutputChannel.filter => Icons.filter_alt_rounded,
       OutputChannel.heater => Icons.thermostat_rounded,
       OutputChannel.aeration => Icons.air_rounded,

@@ -5,6 +5,12 @@
 
 void hal_display_init(void);
 
+void hal_display_set_brightness(uint8_t percent);
+
+uint8_t hal_display_get_brightness(void);
+
+uint32_t hal_display_last_touch_ms(void);
+
 bool hal_display_draw_rgb565_file(const char *path, uint16_t width, uint16_t height);
 
 bool hal_display_play_rgb565_sequence(const char *frame_pattern,

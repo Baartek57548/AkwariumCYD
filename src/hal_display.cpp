@@ -85,6 +85,11 @@ public:
 };
 
 static LGFX lcd;
+constexpr uint8_t DISPLAY_BACKLIGHT_PIN = 21U;
+constexpr uint8_t DISPLAY_BACKLIGHT_LEDC_CHANNEL = 7U;
+constexpr uint32_t DISPLAY_BACKLIGHT_PWM_HZ = 5000U;
+static uint8_t display_brightness_percent = 100U;
+static uint32_t display_last_touch_ms = 0U;
 
 // Zmienne sterowników LVGL
 static lv_disp_draw_buf_t draw_buf;
@@ -115,6 +120,7 @@ static void my_touchpad_read(lv_indev_drv_t *indev_driver, lv_indev_data_t *data
         data->state = LV_INDEV_STATE_REL;
     } else {
         data->state = LV_INDEV_STATE_PR;
+        display_last_touch_ms = millis();
         
         // LovyanGFX automatycznie skaluje i rotuje współrzędne, ale oś Y jest odwrócona fizycznie
         int16_t mappedX = touchX;
@@ -177,6 +183,24 @@ void hal_display_init(void) {
     indev_drv.type = LV_INDEV_TYPE_POINTER;
     indev_drv.read_cb = my_touchpad_read;
     lv_indev_drv_register(&indev_drv);
+
+    ledcSetup(DISPLAY_BACKLIGHT_LEDC_CHANNEL, DISPLAY_BACKLIGHT_PWM_HZ, 8);
+    ledcAttachPin(DISPLAY_BACKLIGHT_PIN, DISPLAY_BACKLIGHT_LEDC_CHANNEL);
+    hal_display_set_brightness(display_brightness_percent);
+}
+
+void hal_display_set_brightness(uint8_t percent) {
+    display_brightness_percent = percent > 100U ? 100U : percent;
+    const uint32_t duty = (static_cast<uint32_t>(display_brightness_percent) * 255U + 50U) / 100U;
+    ledcWrite(DISPLAY_BACKLIGHT_LEDC_CHANNEL, duty);
+}
+
+uint8_t hal_display_get_brightness(void) {
+    return display_brightness_percent;
+}
+
+uint32_t hal_display_last_touch_ms(void) {
+    return display_last_touch_ms;
 }
 
 bool hal_display_draw_rgb565_file(const char *path, uint16_t width, uint16_t height) {

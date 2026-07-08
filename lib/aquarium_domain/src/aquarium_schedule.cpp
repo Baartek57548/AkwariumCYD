@@ -70,6 +70,7 @@ bool feeding_due(uint16_t now_minutes, uint8_t second, TimeOfDay feeding_time) {
 FactoryScheduleState factory_schedule_at(uint16_t now_minutes, uint8_t second) {
     FactoryScheduleState state = {};
     state.lightOn = factory_light_profile_at(now_minutes, &state.lightProfile);
+    state.light2On = factory_light_profile_at(now_minutes, &state.light2Profile);
     state.filterOn = is_within_window(now_minutes, factory::kFilter);
     state.gasWindowActive = is_within_window(now_minutes, factory::kGas);
     state.feedingDue = feeding_due(now_minutes, second, factory::kFeeding);

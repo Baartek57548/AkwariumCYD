@@ -1,6 +1,6 @@
 ﻿portal=cydAkwarium-panel
 schema=2
-ui=20260629devsim
+ui=20260705dual-light
 entry=/aq/ota/index.html
 sta_url=http://akwarium.local/
 ap_url=http://192.168.4.1/

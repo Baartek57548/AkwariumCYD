@@ -19,8 +19,8 @@
         relays: [
             { channel: 1, function: "filter", label: "Filtr główny", defaultState: "auto", safeState: "on", manualAllowed: true, pinRequired: false },
             { channel: 2, function: "heater", label: "Grzałka", defaultState: "auto", safeState: "off", manualAllowed: true, pinRequired: true },
-            { channel: 3, function: "main_light", label: "Światło główne", defaultState: "auto", safeState: "off", manualAllowed: true, pinRequired: false },
-            { channel: 4, function: "plant_light", label: "Światło roślin", defaultState: "auto", safeState: "off", manualAllowed: true, pinRequired: false },
+            { channel: 3, function: "main_light", label: "Światło 1", defaultState: "auto", safeState: "off", manualAllowed: true, pinRequired: false },
+            { channel: 4, function: "plant_light", label: "Światło 2", defaultState: "auto", safeState: "off", manualAllowed: true, pinRequired: false },
             { channel: 5, function: "aeration", label: "Napowietrzanie", defaultState: "auto", safeState: "off", manualAllowed: true, pinRequired: false },
             { channel: 6, function: "co2", label: "Elektrozawór CO2", defaultState: "auto", safeState: "off", manualAllowed: true, pinRequired: true },
             { channel: 7, function: "water_dosing", label: "Dolewka wody ATO", defaultState: "auto", safeState: "off", manualAllowed: true, pinRequired: false },
@@ -32,8 +32,8 @@
         { value: "none", label: "Brak / nieużywany", icon: "fa-xmark", critical: false },
         { value: "filter", label: "Filtr", icon: "fa-filter", critical: true },
         { value: "heater", label: "Grzałka", icon: "fa-temperature-half", critical: true },
-        { value: "main_light", label: "Światło główne", icon: "fa-lightbulb", critical: false },
-        { value: "plant_light", label: "Światło roślin", icon: "fa-seedling", critical: false },
+        { value: "main_light", label: "Światło 1", icon: "fa-lightbulb", critical: false },
+        { value: "plant_light", label: "Światło 2", icon: "fa-lightbulb", critical: false },
         { value: "aeration", label: "Napowietrzanie", icon: "fa-wind", critical: false },
         { value: "co2", label: "CO2", icon: "fa-cloud", critical: true },
         { value: "water_dosing", label: "Dolewka wody (ATO)", icon: "fa-droplet", critical: true },
@@ -48,6 +48,108 @@
         return RELAY_FUNCTIONS.find(f => f.value === value) || RELAY_FUNCTIONS[0];
     }
 
+    function buildFirmwareDefaultMap() {
+        return [
+            { channel: 1, function: "main_light", label: "Światło 1", defaultState: "auto", safeState: "off", manualAllowed: true, pinRequired: false },
+            { channel: 2, function: "plant_light", label: "Światło 2", defaultState: "auto", safeState: "off", manualAllowed: true, pinRequired: false },
+            { channel: 3, function: "filter", label: "Filtr", defaultState: "auto", safeState: "on", manualAllowed: true, pinRequired: false },
+            { channel: 4, function: "aeration", label: "Napowietrzanie", defaultState: "auto", safeState: "off", manualAllowed: true, pinRequired: false },
+            { channel: 5, function: "heater", label: "Grzałka", defaultState: "auto", safeState: "off", manualAllowed: true, pinRequired: true },
+            { channel: 6, function: "co2", label: "Elektrozawór CO2", defaultState: "auto", safeState: "off", manualAllowed: true, pinRequired: true },
+            { channel: 7, function: "feeder", label: "Karmnik", defaultState: "off", safeState: "off", manualAllowed: true, pinRequired: true },
+            { channel: 8, function: "water_dosing", label: "Dolewka ATO", defaultState: "auto", safeState: "off", manualAllowed: false, pinRequired: true }
+        ];
+    }
+
+    const FIRMWARE_RELAY_MAP = buildFirmwareDefaultMap();
+    relaysConfig.relays = FIRMWARE_RELAY_MAP.map((relay) => ({ ...relay }));
+
+    function relayRuntimeState(functionName, status) {
+        const relays = status?.relays || {};
+        const mapping = {
+            main_light: relays.light,
+            plant_light: relays.light2 ?? relays.plantLight,
+            filter: relays.pump,
+            aeration: relays.aeration,
+            heater: relays.heater,
+            co2: relays.co2,
+            water_dosing: status?.modules?.water_dosing_on ?? status?.water?.active ?? relays.waterDosing,
+            feeder: status?.feeding?.active
+        };
+        return Object.prototype.hasOwnProperty.call(mapping, functionName)
+            ? Boolean(mapping[functionName])
+            : null;
+    }
+
+    function setModuleCommand(id, value, detail, tone) {
+        const valueElement = document.getElementById(id);
+        const detailElement = document.getElementById(`${id}-detail`);
+        if (valueElement) {
+            valueElement.textContent = value;
+            valueElement.closest('.module-command-card')?.setAttribute('data-tone', tone || 'neutral');
+        }
+        if (detailElement) detailElement.textContent = detail;
+    }
+
+    function setModuleMessage(message, tone = 'neutral') {
+        const element = document.getElementById('module-map-warning');
+        if (!element) return;
+        element.textContent = message;
+        element.setAttribute('data-tone', tone);
+    }
+
+    function validateRelayMap(relays = relaysConfig.relays) {
+        const warnings = [];
+        ['filter', 'heater', 'co2', 'water_dosing'].forEach((functionName) => {
+            const matches = relays.filter((relay) => relay.function === functionName);
+            if (matches.length > 1) warnings.push(`Funkcja ${getFunctionInfo(functionName).label} ma kilka kanałów.`);
+        });
+        relays.forEach((relay) => {
+            if (['heater', 'co2', 'water_dosing'].includes(relay.function) && relay.safeState !== 'off') {
+                warnings.push(`CH${relay.channel} ${relay.label}: stan awaryjny powinien być OFF.`);
+            }
+        });
+        return warnings;
+    }
+
+    function renderRelayModuleOverview(status = window.lastStatusData || {}) {
+        const system = status.system || {};
+        const mcpOk = status.sensors?.mcp_ok ?? system.mcpConnected ?? system.i2cConnected ?? null;
+        const activeCount = FIRMWARE_RELAY_MAP.reduce((count, relay) =>
+            count + (relayRuntimeState(relay.function, status) === true ? 1 : 0), 0);
+        const warnings = validateRelayMap(FIRMWARE_RELAY_MAP);
+
+        setModuleCommand('module-overview-i2c', mcpOk === true ? 'ONLINE' : (mcpOk === false ? 'BRAK' : 'OCZEKUJE'),
+            mcpOk === true ? 'MCP23017 odpowiada pod 0x20' : 'Brak potwierdzonej odpowiedzi magistrali',
+            mcpOk === true ? 'ok' : (mcpOk === false ? 'danger' : 'warn'));
+        setModuleCommand('module-overview-map', '8 kanałów', '8 funkcji firmware', 'ok');
+        setModuleCommand('module-overview-active', `${activeCount} / 8`, 'Stan z ostatniej telemetrii', activeCount > 0 ? 'ok' : 'neutral');
+        setModuleCommand('module-overview-safety', warnings.length ? `${warnings.length} UWAG` : 'GOTOWE',
+            warnings.length ? warnings[0] : 'Stany awaryjne funkcji krytycznych są poprawne', warnings.length ? 'warn' : 'ok');
+
+        const grid = document.getElementById('module-channel-grid');
+        if (grid) {
+            grid.innerHTML = FIRMWARE_RELAY_MAP.map((relay) => {
+                const info = getFunctionInfo(relay.function);
+                const runtimeState = relayRuntimeState(relay.function, status);
+                const stateText = runtimeState === null ? 'REZERWA' : (runtimeState ? 'ON' : 'OFF');
+                const defaultText = relay.defaultState === 'auto' ? 'harmonogram/automatyka' : relay.defaultState.toUpperCase();
+                return `<article class="module-channel-card" data-critical="${info.critical ? 'true' : 'false'}">
+                    <div class="module-channel-head"><span class="module-channel-number">CH ${relay.channel}</span><span class="module-channel-state" data-active="${runtimeState === true ? 'true' : 'false'}">${stateText}</span></div>
+                    <h3>${window.escapeHtml(relay.label || info.label)}</h3>
+                    <p>${window.escapeHtml(info.label)} · start: ${window.escapeHtml(defaultText)}</p>
+                    <div class="module-channel-failsafe">Awaria: <strong>${window.escapeHtml(String(relay.safeState || 'off').toUpperCase())}</strong></div>
+                </article>`;
+            }).join('');
+        }
+
+        const warningElement = document.getElementById('module-map-warning');
+        if (warningElement) {
+            warningElement.textContent = warnings.length ? warnings.join(' ') : 'Mapa kanałów jest spójna z profilem bezpieczeństwa firmware.';
+            warningElement.setAttribute('data-tone', warnings.length ? 'warn' : 'ok');
+        }
+    }
+
     // Inicjalizacja i nasłuchiwanie zdarzeń
     function initWizard() {
         // Podpięcie przycisków nawigacji
@@ -57,6 +159,10 @@
         document.getElementById("wizard-default-map-btn")?.addEventListener("click", restoreDefaultMap);
         document.getElementById("wizard-export-btn")?.addEventListener("click", exportConfigJson);
         document.getElementById("wizard-import-file")?.addEventListener("change", importConfigJson);
+        document.getElementById("module-open-wizard")?.addEventListener("click", () => {
+            goToStep(1);
+            document.getElementById("relays-wizard-card")?.scrollIntoView({ behavior: "smooth", block: "start" });
+        });
 
         // Nasłuchiwanie zmian konfiguracji sprzętowej w kroku 1
         document.getElementById("wizard-expander")?.addEventListener("change", (e) => {
@@ -110,10 +216,14 @@
         const mcpOk = status.sensors?.mcp_ok ?? system.mcpConnected ?? system.i2cConnected ?? null;
 
         if (i2cStatus && i2cAddress) {
-            if (mcpOk === true || window.backendConnected) {
+            if (mcpOk === true) {
                 i2cStatus.textContent = "POŁĄCZONO";
                 i2cStatus.style.color = "var(--success-color)";
                 i2cAddress.textContent = system.mcpAddress || relaysConfig.relayBoard.i2cAddress || "0x20";
+            } else if (mcpOk === null) {
+                i2cStatus.textContent = "OCZEKIWANIE";
+                i2cStatus.style.color = "var(--warning-color)";
+                i2cAddress.textContent = relaysConfig.relayBoard.i2cAddress || "0x20";
             } else {
                 i2cStatus.textContent = "BŁĄD POŁĄCZENIA";
                 i2cStatus.style.color = "var(--danger-color)";
@@ -136,6 +246,8 @@
                 console.warn("Błąd parsowania relaysConfig ze sterownika", e);
             }
         }
+
+        renderRelayModuleOverview(status);
 
         // Rozpocznij od kroku 1
         goToStep(1);
@@ -236,7 +348,7 @@
                 const limitInput = document.getElementById("wizard-ato-limit");
                 const val = parseInt(limitInput?.value || 30);
                 if (Number.isNaN(val) || val < 5 || val > 300) {
-                    alert("Czas limitu dolewki ATO musi wynosić od 5 do 300 sekund.");
+                    setModuleMessage("Czas limitu dolewki ATO musi wynosić od 5 do 300 sekund.", 'danger');
                     limitInput.focus();
                     return false;
                 }
@@ -462,11 +574,12 @@
                         channel: String(channel),
                         state: String(state),
                         duration: state === 1 ? "3" : "0"
-                    }, { showSaveAnimation: false });
+                    }, { requirePin: true, showSaveAnimation: false });
                     e.target.textContent = "Wykonano!";
+                    setModuleMessage(`Kanał ${channel}: test ${state === 1 ? 'ON przez 3 sekundy' : 'OFF'} wykonany.`, 'ok');
                 } catch (err) {
                     e.target.textContent = "Błąd";
-                    alert(`Błąd podczas testu: ${err.message}`);
+                    setModuleMessage(`Błąd testu kanału ${channel}: ${err.message}`, 'danger');
                 } finally {
                     setTimeout(() => {
                         e.target.disabled = false;
@@ -555,13 +668,14 @@
                 const parsed = JSON.parse(evt.target.result);
                 if (parsed && Array.isArray(parsed.relays)) {
                     relaysConfig = parsed;
-                    alert("Pomyślnie zaimportowano konfigurację przekaźników! Weryfikacja nastąpi w kolejnych krokach.");
+                    renderRelayModuleOverview();
+                    setModuleMessage("Zaimportowano profil mapowania. Zweryfikuj kolejne kroki przed zapisem.", 'ok');
                     goToStep(1);
                 } else {
-                    alert("Błąd: Plik nie posiada prawidłowej struktury konfiguracji przekaźników.");
+                    setModuleMessage("Plik nie zawiera prawidłowej struktury profilu mapowania.", 'danger');
                 }
             } catch (err) {
-                alert("Błąd podczas odczytu pliku JSON: " + err.message);
+                setModuleMessage(`Błąd odczytu pliku JSON: ${err.message}`, 'danger');
             }
         };
         reader.readAsText(file);
@@ -571,18 +685,10 @@
     function restoreDefaultMap() {
         if (!confirm("Czy na pewno chcesz przywrócić domyślne mapowanie przekaźników?")) return;
 
-        relaysConfig.relays = [
-            { channel: 1, function: "filter", label: "Filtr główny", defaultState: "auto", safeState: "on", manualAllowed: true, pinRequired: false },
-            { channel: 2, function: "heater", label: "Grzałka", defaultState: "auto", safeState: "off", manualAllowed: true, pinRequired: true },
-            { channel: 3, function: "main_light", label: "Światło główne", defaultState: "auto", safeState: "off", manualAllowed: true, pinRequired: false },
-            { channel: 4, function: "plant_light", label: "Światło roślin", defaultState: "auto", safeState: "off", manualAllowed: true, pinRequired: false },
-            { channel: 5, function: "aeration", label: "Napowietrzanie", defaultState: "auto", safeState: "off", manualAllowed: true, pinRequired: false },
-            { channel: 6, function: "co2", label: "Elektrozawór CO2", defaultState: "auto", safeState: "off", manualAllowed: true, pinRequired: true },
-            { channel: 7, function: "water_dosing", label: "Dolewka wody ATO", defaultState: "auto", safeState: "off", manualAllowed: true, pinRequired: false },
-            { channel: 8, function: "reserve", label: "Rezerwa", defaultState: "off", safeState: "off", manualAllowed: true, pinRequired: false }
-        ];
+        relaysConfig.relays = FIRMWARE_RELAY_MAP.map((relay) => ({ ...relay }));
 
         renderStep2();
+        renderRelayModuleOverview();
     }
 
     // Zapis konfiguracji do sterownika
@@ -608,16 +714,12 @@
                 data: dataString
             }, { requirePin: true });
 
-            alert("Pomyślnie zapisano konfigurację przekaźników na ESP32! Sterownik zrestartuje się, aby zastosować ustawienia.");
-            
-            // Wymuś powrót do pulpitu i pobranie statusu
-            window.switchTab("dashboard");
-            setTimeout(() => {
-                if (typeof window.fetchStatus === 'function') window.fetchStatus(true);
-            }, 3000);
+            renderRelayModuleOverview();
+            if (typeof window.fetchStatus === 'function') await window.fetchStatus(false);
+            setModuleMessage("Profil mapowania zapisano. Aktywne kanały pozostają zgodne ze stałym układem firmware.", 'ok');
 
         } catch (e) {
-            alert(`Błąd podczas zapisywania konfiguracji: ${e.message}`);
+            setModuleMessage(`Błąd zapisu profilu mapowania: ${e.message}`, 'danger');
         } finally {
             if (button) button.disabled = false;
         }
@@ -626,6 +728,9 @@
     // Inicjalizacja po załadowaniu DOM
     document.addEventListener("DOMContentLoaded", () => {
         initWizard();
+        renderRelayModuleOverview();
     });
+
+    window.renderRelayModuleOverview = renderRelayModuleOverview;
 
 })();

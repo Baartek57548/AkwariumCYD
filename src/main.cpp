@@ -21,7 +21,10 @@ const int LDR_PIN = HwConfig::LDR_PIN;
 static unsigned long last_lvgl_tick = 0;
 static unsigned long last_lvgl_handler_time = 0;
 static unsigned long last_gui_update_time = 0;
-constexpr unsigned long WEB_FOCUS_LVGL_HANDLER_INTERVAL_MS = 20UL;
+constexpr unsigned long WEB_FOCUS_LVGL_HANDLER_INTERVAL_MS = 100UL;
+constexpr unsigned long SENSOR_CONTROL_INTERVAL_MS = 1000UL;
+constexpr uint32_t NORMAL_LOOP_YIELD_MS = 5U;
+constexpr uint32_t WEB_FOCUS_LOOP_YIELD_MS = 1U;
 
 // Lokalny zegar programowy uzywany do czasu podlaczenia RTC/NTP.
 static uint32_t uptime_seconds = 0;
@@ -136,7 +139,7 @@ static void update_local_clock() {
 
 void setup() {
     // Initialize serial port
-    Serial.begin(115200);
+    Serial.begin(HwConfig::UartConsole::BAUD);
     delay(100);
     Serial.println("\n--- STARTING ESP32 CYD DASHBOARD (STABLE RUNTIME) ---");
     if (!events_init()) {
@@ -200,6 +203,13 @@ void loop() {
     hal_display_loop_cb();
     
     // Płynna i nieblokowana pętla obsługi grafiki oraz dotyku
+    if (wifi_ota_active) {
+        ArduinoOTA.handle();
+    }
+    gui_app_handle_ota_portal();
+
+    // HTTP is serviced first. During an active web session LVGL receives a
+    // bounded maintenance slice while sensor and control deadlines stay fixed.
     const bool web_focus_active = gui_app_is_web_focus_active();
     if (!web_focus_active ||
         current_time - last_lvgl_handler_time >= WEB_FOCUS_LVGL_HANDLER_INTERVAL_MS) {
@@ -207,13 +217,8 @@ void loop() {
         last_lvgl_handler_time = current_time;
     }
 
-    if (wifi_ota_active) {
-        ArduinoOTA.handle();
-    }
-    gui_app_handle_ota_portal();
-
     // --- WĄTEK AKTUALIZACJI METRYK (Nieblokujący - Co 1000ms) ---
-    if (current_time - last_gui_update_time >= 1000) {
+    if (current_time - last_gui_update_time >= SENSOR_CONTROL_INTERVAL_MS) {
         last_gui_update_time = current_time;
 
         // Aktualizacja lokalnego zegara programowego bez generowania probek sensorow
@@ -295,17 +300,8 @@ void loop() {
         const float temp_to_send = dev_mode ? dev_sample->temperatureC : NAN;
         const float ph_to_send = dev_mode ? dev_sample->ph : (ph_adc_ok ? (4.0f + (ph_voltage / 4.096f) * 6.0f) : NAN);
 
-        // Aktualizacja interfejsu graficznego (Zegar, Temperatura, pH, RAM)
-        gui_update_metrics(temp_to_send, ph_to_send, free_heap, time_str);
-        publish_sensor_sample(SensorId::Temp, temp_to_send, isfinite(temp_to_send));
-        publish_sensor_sample(SensorId::Ph, ph_to_send, isfinite(ph_to_send));
-        publish_sensor_sample(SensorId::Ec, ec_publish_value, ec_adc_ok && isfinite(ec_publish_value));
-        publish_sensor_sample(SensorId::Ldr, ldr_valid ? static_cast<float>(ldr_value) : NAN, ldr_valid);
-        publish_sensor_sample(SensorId::Heap, static_cast<float>(free_heap), true);
-        drain_event_samples();
-
-        // Aktualizacja czasu pracy (uptime) w zakładce System
-        gui_app_update_system_info(free_heap, uptime_seconds);
+        // Make current digital safety inputs visible before automation is
+        // evaluated; leak handling must not lag by one sampling cycle.
         gui_app_update_sensor_debug(ldr_value,
                                     adc_present,
                                     ph_adc_ok,
@@ -318,11 +314,22 @@ void loop() {
                                     mcp_ok,
                                     mcp_state);
 
+        // Automation and physical outputs run even when local rendering is deferred.
+        gui_update_metrics(temp_to_send, ph_to_send, free_heap, time_str);
+        publish_sensor_sample(SensorId::Temp, temp_to_send, isfinite(temp_to_send));
+        publish_sensor_sample(SensorId::Ph, ph_to_send, isfinite(ph_to_send));
+        publish_sensor_sample(SensorId::Ec, ec_publish_value, ec_adc_ok && isfinite(ec_publish_value));
+        publish_sensor_sample(SensorId::Ldr, ldr_valid ? static_cast<float>(ldr_value) : NAN, ldr_valid);
+        publish_sensor_sample(SensorId::Heap, static_cast<float>(free_heap), true);
+        drain_event_samples();
+
+        // Aktualizacja czasu pracy (uptime) w zakładce System
+        gui_app_update_system_info(free_heap, uptime_seconds);
         // Update Wi-Fi status in the header (0=OFF, 1=STA, 2=AP)
         gui_app_update_wifi(wifi_ota_active ? 2 : (wifi_connected ? 1 : 0), wifi_rssi);
 
     }
 
-    // Short delay (5ms) to prevent watchdog starvation in FreeRTOS
-    delay(5);
+    // Keep FreeRTOS fed while giving active HTTP sessions a larger CPU share.
+    delay(web_focus_active ? WEB_FOCUS_LOOP_YIELD_MS : NORMAL_LOOP_YIELD_MS);
 }

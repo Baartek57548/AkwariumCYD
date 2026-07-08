@@ -5,6 +5,7 @@
 #include <Wire.h>
 #include <freertos/FreeRTOS.h>
 #include <freertos/semphr.h>
+#include <string.h>
 
 namespace {
 
@@ -58,4 +59,40 @@ void hal_i2c_bus_unlock(void)
 bool hal_i2c_bus_is_initialized(void)
 {
     return i2c_initialized;
+}
+
+bool hal_i2c_bus_scan(HalI2cScanResult *result)
+{
+    if (result == nullptr) {
+        return false;
+    }
+
+    memset(result, 0, sizeof(*result));
+    if (!hal_i2c_bus_lock(250U)) {
+        return false;
+    }
+
+    uint8_t detected_count = 0;
+    for (uint8_t address = 0x08U; address <= 0x77U; ++address) {
+        Wire.beginTransmission(address);
+        const uint8_t error = Wire.endTransmission(true);
+        if (error == 0U) {
+            if (detected_count < HAL_I2C_SCAN_MAX_DEVICES) {
+                result->addresses[detected_count] = address;
+            } else {
+                result->truncated = true;
+            }
+            ++detected_count;
+        }
+
+        if ((address & 0x0FU) == 0U) {
+            delay(0);
+        }
+    }
+
+    hal_i2c_bus_unlock();
+    result->count = detected_count < HAL_I2C_SCAN_MAX_DEVICES
+                        ? detected_count
+                        : HAL_I2C_SCAN_MAX_DEVICES;
+    return true;
 }

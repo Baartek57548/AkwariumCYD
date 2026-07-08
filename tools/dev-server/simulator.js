@@ -67,6 +67,8 @@ class DevSimulator {
         this.feedActiveUntil = 0;
         this.lastFeedEpoch = 0;
         this.lastFeedResult = 'brak';
+        this.waterFillStartedAt = 0;
+        this.waterTimeoutLatched = false;
         this.history = [];
         this.logs = { normal: [], critical: [] };
         this.webSessions = new Map();
@@ -78,11 +80,30 @@ class DevSimulator {
             co2MaxTimeMin: 540,
             heaterMode: 0,
             lightMode: 0,
+            lightStart: FACTORY.lightStart,
+            lightEnd: FACTORY.lightEnd,
+            lightProfile: 0,
+            lightProfileCycle: true,
             plantLightMode: 0,
+            plantStart: FACTORY.lightStart,
+            plantEnd: FACTORY.lightEnd,
+            plantLightProfile: 0,
+            plantLightProfileCycle: true,
             filterMode: 0,
+            filterStart: FACTORY.filterStart,
+            filterEnd: FACTORY.filterEnd,
             airMode: 0,
+            airStart: FACTORY.gasStart,
+            airEnd: FACTORY.gasEnd,
+            feedEnabled: true,
+            feedMinute: FACTORY.feedMinute,
             soundEnabled: true,
             alwaysScreenOn: false,
+            displayAutoBrightness: true,
+            displayProfile: 'always_on',
+            displayBrightness: 100,
+            waterTimeoutSec: 120,
+            leakAction: 'disable_all',
             modemSleep: false,
             quietHoursEnabled: true,
             staSsid: 'AkwariumWiFi_5G',
@@ -139,12 +160,34 @@ class DevSimulator {
 
     scheduleState(date) {
         const minute = date.getHours() * 60 + date.getMinutes();
-        const profile = profileAt(minute);
+        const factoryLightWindow = this.config.lightProfileCycle && this.config.lightStart === FACTORY.lightStart && this.config.lightEnd === FACTORY.lightEnd;
+        const scheduledProfile = factoryLightWindow
+            ? profileAt(minute)
+            : (inWindow(minute, this.config.lightStart, this.config.lightEnd)
+                ? { value: this.config.lightProfile, name: ['DAY', 'DAYBREAK', 'NIGHT'][this.config.lightProfile] || 'DAY' }
+                : null);
+        const profile = this.config.lightMode === 1
+            ? { value: this.config.lightProfile, name: ['DAY', 'DAYBREAK', 'NIGHT'][this.config.lightProfile] || 'DAY' }
+            : (this.config.lightMode === 2 ? null : scheduledProfile);
+        const factoryLight2Window = this.config.plantLightProfileCycle && this.config.plantStart === FACTORY.lightStart && this.config.plantEnd === FACTORY.lightEnd;
+        const plantScheduledProfile = factoryLight2Window
+            ? profileAt(minute)
+            : (inWindow(minute, this.config.plantStart, this.config.plantEnd)
+                ? { value: this.config.plantLightProfile, name: ['DAY', 'DAYBREAK', 'NIGHT'][this.config.plantLightProfile] || 'DAY' }
+                : null);
+        const plantProfile = this.config.plantLightMode === 1
+            ? { value: this.config.plantLightProfile, name: ['DAY', 'DAYBREAK', 'NIGHT'][this.config.plantLightProfile] || 'DAY' }
+            : (this.config.plantLightMode === 2 ? null : plantScheduledProfile);
+        const filterScheduled = inWindow(minute, this.config.filterStart, this.config.filterEnd);
+        const airScheduled = inWindow(minute, this.config.airStart, this.config.airEnd);
         return {
             minute,
             profile,
+            plantProfile,
             lightOn: profile !== null,
-            filterOn: inWindow(minute, FACTORY.filterStart, FACTORY.filterEnd),
+            plantLightOn: plantProfile !== null,
+            filterOn: this.config.filterMode === 1 ? true : (this.config.filterMode === 2 ? false : filterScheduled),
+            aerationWindow: this.config.airMode === 1 ? true : (this.config.airMode === 2 ? false : airScheduled),
             gasWindow: inWindow(minute, FACTORY.gasStart, FACTORY.gasEnd)
         };
     }
@@ -162,7 +205,22 @@ class DevSimulator {
         const supplyVoltage = supplyLow ? 4.55 : 5.01 + Math.sin(uptime / 83) * 0.035;
 
         const co2On = this.config.modules.co2 && schedule.gasWindow && this.ph > this.config.co2TargetPh && !leakDetected;
-        const aerationOn = this.config.modules.aerator && schedule.gasWindow && !co2On && !leakDetected;
+        const aerationOn = this.config.modules.aerator && schedule.aerationWindow && !co2On && !leakDetected;
+        if (waterLevelHigh) {
+            this.waterFillStartedAt = 0;
+            this.waterTimeoutLatched = false;
+        }
+        let waterDosingOn = this.config.modules.waterLevel && !waterLevelHigh && !leakDetected && !this.waterTimeoutLatched;
+        if (waterDosingOn) {
+            if (!this.waterFillStartedAt) this.waterFillStartedAt = now;
+            if (now - this.waterFillStartedAt >= this.config.waterTimeoutSec * 1000) {
+                waterDosingOn = false;
+                this.waterFillStartedAt = 0;
+                this.waterTimeoutLatched = true;
+            }
+        } else if (!this.waterTimeoutLatched) {
+            this.waterFillStartedAt = 0;
+        }
         if (this.config.heaterMode === 1 || !this.config.modules.heater) {
             this.heaterOn = false;
         } else if (this.temperature < this.config.targetTemp - this.config.tempHysteresis) {
@@ -210,7 +268,7 @@ class DevSimulator {
 
         this.snapshot = this.buildStatus(now, {
             date, schedule, uptime, waterLevelHigh, leakDetected, supplyVoltage,
-            alarmFlags, ldr, co2On, aerationOn, feedActive
+            alarmFlags, ldr, co2On, aerationOn, waterDosingOn, feedActive
         });
         return this.snapshot;
     }
@@ -220,13 +278,17 @@ class DevSimulator {
         const schedule = runtime.schedule || this.scheduleState(date);
         const uptime = runtime.uptime ?? Math.max(0, Math.floor((now - this.startedAt) / 1000));
         const profile = schedule.profile || { value: 0, name: 'DAY' };
+        const plantProfile = schedule.plantProfile || { value: 0, name: 'DAY' };
+        const factoryLightWindow = this.config.lightProfileCycle && this.config.lightStart === FACTORY.lightStart && this.config.lightEnd === FACTORY.lightEnd;
+        const factoryLight2Window = this.config.plantLightProfileCycle && this.config.plantStart === FACTORY.lightStart && this.config.plantEnd === FACTORY.lightEnd;
         const relays = {
             light: this.manualRelays.light ?? schedule.lightOn,
-            plantLight: this.manualRelays.plantLight ?? inWindow(schedule.minute, FACTORY.morningDaybreakEnd, FACTORY.dayEnd),
+            plantLight: this.manualRelays.plantLight ?? schedule.plantLightOn,
             pump: this.manualRelays.pump ?? schedule.filterOn,
             heater: this.heaterOn,
             co2: runtime.co2On ?? false,
             aeration: this.manualRelays.aeration ?? runtime.aerationOn ?? false,
+            waterDosing: runtime.waterDosingOn ?? false,
             aerationPercent: runtime.aerationOn ? 100 : 0
         };
         const alarmFlags = runtime.alarmFlags || 0;
@@ -289,20 +351,35 @@ class DevSimulator {
                 quiet_hours_enabled: this.config.quietHoursEnabled,
                 quiet_start: '20:00', quiet_end: '10:00'
             },
+            display: {
+                autoBrightness: this.config.displayAutoBrightness,
+                profile: this.config.displayProfile,
+                brightness: this.config.displayBrightness,
+                appliedBrightness: this.config.displayBrightness
+            },
+            water: {
+                timeoutSec: this.config.waterTimeoutSec,
+                active: relays.waterDosing,
+                timeoutLatched: this.waterTimeoutLatched,
+                runtimeSec: this.waterFillStartedAt ? Math.max(0, Math.floor((now - this.waterFillStartedAt) / 1000)) : 0
+            },
+            leak: { action: this.config.leakAction },
             modules: {
-                light_on: relays.light, plant_light_on: relays.plantLight, filter_on: relays.pump,
+                light_on: relays.light, plant_light_on: relays.plantLight,
+                light1_on: relays.light, light2_on: relays.plantLight, filter_on: relays.pump,
                 air_on: relays.aeration, co2_on: relays.co2, heater_on: relays.heater,
                 heater_enabled: this.config.modules.heater, ph_sensor_enabled: this.config.modules.ph,
                 co2_enabled: this.config.modules.co2, ec_enabled: this.config.modules.ec,
-                water_level_enabled: this.config.modules.waterLevel, leak_enabled: this.config.modules.leak,
+                water_level_enabled: this.config.modules.waterLevel, water_dosing_on: relays.waterDosing,
+                leak_enabled: this.config.modules.leak,
                 flow_enabled: this.config.modules.flow, feeder_enabled: this.config.modules.feeder
             },
             schedules: {
-                light: { mode: 0, start: '10:00', end: '22:00', active: relays.light, profile: profile.value, profileName: profile.name },
-                plant_light: { mode: 0, start: '10:30', end: '20:00', active: relays.plantLight, profile: 0, profileName: 'DAY' },
-                filter: { mode: 0, start: '10:30', end: '20:30', active: relays.pump },
-                air: { mode: 0, start: '10:00', end: '19:00', active: relays.aeration },
-                feeder: { enabled: true, count: 1, time1: '14:00', time2: '08:00' }
+                light: { mode: this.config.lightMode, start: this.formatMinute(this.config.lightStart), end: this.formatMinute(this.config.lightEnd), active: relays.light, profile: profile.value, profileName: profile.name, profileCycle: factoryLightWindow },
+                plant_light: { mode: this.config.plantLightMode, start: this.formatMinute(this.config.plantStart), end: this.formatMinute(this.config.plantEnd), active: relays.plantLight, profile: plantProfile.value, profileName: plantProfile.name, profileCycle: factoryLight2Window },
+                filter: { mode: this.config.filterMode, start: this.formatMinute(this.config.filterStart), end: this.formatMinute(this.config.filterEnd), active: relays.pump },
+                air: { mode: this.config.airMode, start: this.formatMinute(this.config.airStart), end: this.formatMinute(this.config.airEnd), active: relays.aeration },
+                feeder: { enabled: this.config.feedEnabled, count: this.config.feedEnabled ? 1 : 0, time1: this.formatMinute(this.config.feedMinute), time2: '08:00' }
             },
             eco: { safe_active: false, quiet_window: false, deep_ready: false, rtc_ready: true, wake_after_sec: 0, last_wake_cause: 0, blockers: ['dev_mode'] },
             clock: {
@@ -320,19 +397,37 @@ class DevSimulator {
                 ip: '127.0.0.1', rssi: -47, clients: this.activeWebSessions(now),
                 lastTimeSyncOk: true, lastTimeSyncStatus: 'DEV_RAM'
             },
-            web: { focus: this.activeWebSessions(now) > 0, activeClients: this.activeWebSessions(now), lastSeenMs: 0, timeoutMs: this.webSessionTimeoutMs },
-            system: { uptime, powerMode: 'normal', resetReason: '1', freeHeap: 93684 - uptime % 512, largestHeap: 90100, mcpConnected: true, i2cConnected: true },
-            relays,
-            schedule: {
-                lightMode: this.config.lightMode, dayStartHour: 10, dayStartMin: 0, dayEndHour: 22, dayEndMin: 0,
-                airMode: this.config.airMode, airStartHour: 10, airStartMin: 0, airEndHour: 19, airEndMin: 0,
-                filterMode: this.config.filterMode, filterStartHour: 10, filterStartMin: 30, filterEndHour: 20, filterEndMin: 30,
-                heaterMode: this.config.heaterMode, lightProfile: profile.value, lightProfileName: profile.name,
-                plantLightMode: this.config.plantLightMode, plantStartHour: 10, plantStartMin: 30, plantEndHour: 20, plantEndMin: 0,
-                plantLightProfile: 0, plantLightProfileName: 'DAY'
+            web: {
+                focus: this.activeWebSessions(now) > 0,
+                activeClients: this.activeWebSessions(now),
+                lastSeenMs: 0,
+                timeoutMs: this.webSessionTimeoutMs,
+                cpuProfile: this.activeWebSessions(now) > 0 ? 'web_sensor_control' : 'local_ui',
+                localUiDeferred: this.activeWebSessions(now) > 0,
+                sensorControlIntervalMs: 1000
             },
-            feeding: { active: runtime.feedActive ?? false, freq: 1, hour: 14, minute: 0, lastFeedEpoch: this.lastFeedEpoch, lastResult: this.lastFeedResult }
+            system: { uptime, powerMode: 'normal', resetReason: '1', freeHeap: 93684 - uptime % 512, largestHeap: 90100, mcpConnected: true, i2cConnected: true },
+            relays: { ...relays, light1: relays.light, light2: relays.plantLight },
+            lights: {
+                light1: { on: relays.light, profile: ['day', 'daybreak', 'night'][profile.value] || 'day', profileName: profile.name, profileCycle: factoryLightWindow },
+                light2: { on: relays.plantLight, profile: ['day', 'daybreak', 'night'][plantProfile.value] || 'day', profileName: plantProfile.name, profileCycle: factoryLight2Window },
+                supportedProfiles: ['day', 'daybreak', 'night']
+            },
+            schedule: {
+                lightMode: this.config.lightMode, dayStartHour: Math.floor(this.config.lightStart / 60), dayStartMin: this.config.lightStart % 60, dayEndHour: Math.floor(this.config.lightEnd / 60), dayEndMin: this.config.lightEnd % 60,
+                airMode: this.config.airMode, airStartHour: Math.floor(this.config.airStart / 60), airStartMin: this.config.airStart % 60, airEndHour: Math.floor(this.config.airEnd / 60), airEndMin: this.config.airEnd % 60,
+                filterMode: this.config.filterMode, filterStartHour: Math.floor(this.config.filterStart / 60), filterStartMin: this.config.filterStart % 60, filterEndHour: Math.floor(this.config.filterEnd / 60), filterEndMin: this.config.filterEnd % 60,
+                heaterMode: this.config.heaterMode, lightProfile: profile.value, lightProfileName: profile.name,
+                plantLightMode: this.config.plantLightMode, plantStartHour: Math.floor(this.config.plantStart / 60), plantStartMin: this.config.plantStart % 60, plantEndHour: Math.floor(this.config.plantEnd / 60), plantEndMin: this.config.plantEnd % 60,
+                plantLightProfile: this.config.plantLightProfile, plantLightProfileName: ['DAY', 'DAYBREAK', 'NIGHT'][this.config.plantLightProfile] || 'DAY'
+            },
+            feeding: { active: runtime.feedActive ?? false, freq: this.config.feedEnabled ? 1 : 0, hour: Math.floor(this.config.feedMinute / 60), minute: this.config.feedMinute % 60, lastFeedEpoch: this.lastFeedEpoch, lastResult: this.lastFeedResult }
         };
+    }
+
+    formatMinute(value) {
+        const minute = Math.max(0, Math.min(1439, Number(value) || 0));
+        return `${String(Math.floor(minute / 60)).padStart(2, '0')}:${String(minute % 60).padStart(2, '0')}`;
     }
 
     addLog(message, critical = false, now = Date.now()) {

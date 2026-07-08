@@ -508,9 +508,11 @@ class ControllerSession extends ChangeNotifier {
       case 'auth_check':
         break;
       case 'set_light':
+      case 'set_light1':
         _setDevOutput(payload, modules, relays, 'light_on', 'light');
         break;
       case 'set_plant':
+      case 'set_light2':
         _setDevOutput(payload, modules, relays, 'plant_light_on', 'plantLight');
         break;
       case 'set_filter':
@@ -653,6 +655,13 @@ class ControllerSession extends ChangeNotifier {
     final enabled = _toBool(payload['state']);
     modules[moduleKey] = enabled;
     relays[relayKey] = enabled;
+    if (moduleKey == 'light_on') {
+      modules['light1_on'] = enabled;
+      relays['light1'] = enabled;
+    } else if (moduleKey == 'plant_light_on') {
+      modules['light2_on'] = enabled;
+      relays['light2'] = enabled;
+    }
   }
 
   void _applyDevSchedule(
@@ -661,11 +670,11 @@ class ControllerSession extends ChangeNotifier {
     JsonMap schedules,
   ) {
     schedule['lightMode'] = _toInt(
-      payload['lightMode'],
+      payload['light1Mode'] ?? payload['lightMode'],
       schedule.integer('lightMode'),
     );
     schedule['plantLightMode'] = _toInt(
-      payload['plantLightMode'],
+      payload['light2Mode'] ?? payload['plantLightMode'],
       schedule.integer('plantLightMode'),
     );
     schedule['filterMode'] = _toInt(
@@ -680,10 +689,26 @@ class ControllerSession extends ChangeNotifier {
       payload['heaterMode'],
       schedule.integer('heaterMode'),
     );
-    _applyTimeToSchedule(payload['dayStart'], schedule, 'dayStart');
-    _applyTimeToSchedule(payload['dayEnd'], schedule, 'dayEnd');
-    _applyTimeToSchedule(payload['plantLightStart'], schedule, 'plantStart');
-    _applyTimeToSchedule(payload['plantLightEnd'], schedule, 'plantEnd');
+    _applyTimeToSchedule(
+      payload['light1Start'] ?? payload['dayStart'],
+      schedule,
+      'dayStart',
+    );
+    _applyTimeToSchedule(
+      payload['light1End'] ?? payload['dayEnd'],
+      schedule,
+      'dayEnd',
+    );
+    _applyTimeToSchedule(
+      payload['light2Start'] ?? payload['plantLightStart'],
+      schedule,
+      'plantStart',
+    );
+    _applyTimeToSchedule(
+      payload['light2End'] ?? payload['plantLightEnd'],
+      schedule,
+      'plantEnd',
+    );
     _applyTimeToSchedule(payload['filterOn'], schedule, 'filterStart');
     _applyTimeToSchedule(payload['filterOff'], schedule, 'filterEnd');
     _applyTimeToSchedule(payload['airOn'], schedule, 'airStart');
@@ -698,7 +723,10 @@ class ControllerSession extends ChangeNotifier {
         schedule.integer('dayEndHour'),
         schedule.integer('dayEndMin'),
       ),
-      payload['lightProfile']?.toString() ?? 'day',
+      payload['light1Profile']?.toString() ??
+          payload['lightProfile']?.toString() ??
+          'day',
+      _toBool(payload['light1ProfileCycle'] ?? payload['lightProfileCycle']),
     );
     schedules['plant_light'] = _scheduleObject(
       schedule.integer('plantLightMode'),
@@ -710,7 +738,12 @@ class ControllerSession extends ChangeNotifier {
         schedule.integer('plantEndHour'),
         schedule.integer('plantEndMin'),
       ),
-      payload['plantLightProfile']?.toString() ?? 'day',
+      payload['light2Profile']?.toString() ??
+          payload['plantLightProfile']?.toString() ??
+          'day',
+      _toBool(
+        payload['light2ProfileCycle'] ?? payload['plantLightProfileCycle'],
+      ),
     );
     schedules['filter'] = _scheduleObject(
       schedule.integer('filterMode'),
@@ -749,6 +782,7 @@ class ControllerSession extends ChangeNotifier {
     String start,
     String end, [
     String? profile,
+    bool profileCycle = false,
   ]) => {
     'mode': switch (mode) {
       1 => 'always_on',
@@ -758,6 +792,8 @@ class ControllerSession extends ChangeNotifier {
     'start': start,
     'end': end,
     'profile': ?profile,
+    if (profile != null) 'profileCycle': profileCycle,
+    if (profile != null) 'supportedProfiles': ['day', 'daybreak', 'night'],
   };
 
   static void _applyTimeToSchedule(
@@ -807,6 +843,7 @@ class ControllerSession extends ChangeNotifier {
     system['uptime'] = system.integer('uptime') + 2;
     _status['uptime_ms'] = system.integer('uptime') * 1000;
     _applyDevelopmentClock(DateTime.now());
+    _applyDevelopmentLightProfiles(DateTime.now());
     final history = temperature.list('history');
     history.add({
       'value': sensors['temp_c'],
@@ -828,6 +865,54 @@ class ControllerSession extends ChangeNotifier {
       ..['second'] = now.second
       ..['valid'] = true
       ..['source'] = 'dev';
+  }
+
+  void _applyDevelopmentLightProfiles(DateTime now) {
+    final minute = now.hour * 60 + now.minute;
+    final profile = switch (minute) {
+      >= 600 && < 630 => ('daybreak', 'DAYBREAK'),
+      >= 630 && < 1200 => ('day', 'DAY'),
+      >= 1200 && < 1260 => ('daybreak', 'DAYBREAK'),
+      >= 1260 && < 1320 => ('night', 'NIGHT'),
+      _ => ('day', 'DAY'),
+    };
+    final active = minute >= 600 && minute < 1320;
+    final schedules = _status.section('schedules');
+    final relays = _status.section('relays');
+    final modules = _status.section('modules');
+    final lights = _status.section('lights');
+    for (final entry in [
+      (
+        schedule: schedules.section('light'),
+        light: lights.section('light1'),
+        moduleLegacy: 'light_on',
+        moduleCanonical: 'light1_on',
+        relayLegacy: 'light',
+        relayCanonical: 'light1',
+      ),
+      (
+        schedule: schedules.section('plant_light'),
+        light: lights.section('light2'),
+        moduleLegacy: 'plant_light_on',
+        moduleCanonical: 'light2_on',
+        relayLegacy: 'plantLight',
+        relayCanonical: 'light2',
+      ),
+    ]) {
+      if (entry.schedule.flag('profileCycle') &&
+          entry.schedule.text('mode') == 'schedule') {
+        entry.schedule['profile'] = profile.$1;
+        entry.schedule['profileName'] = profile.$2;
+        entry.schedule['active'] = active;
+        entry.light['profile'] = profile.$1;
+        entry.light['profileName'] = profile.$2;
+        entry.light['on'] = active;
+        modules[entry.moduleLegacy] = active;
+        modules[entry.moduleCanonical] = active;
+        relays[entry.relayLegacy] = active;
+        relays[entry.relayCanonical] = active;
+      }
+    }
   }
 
   void _addDevelopmentLog(String message, bool critical) {
@@ -951,6 +1036,8 @@ class ControllerSession extends ChangeNotifier {
       'modules': {
         'light_on': true,
         'plant_light_on': true,
+        'light1_on': true,
+        'light2_on': true,
         'filter_on': true,
         'air_on': true,
         'co2_on': false,
@@ -966,8 +1053,8 @@ class ControllerSession extends ChangeNotifier {
         'feeder_enabled': true,
       },
       'schedules': {
-        'light': _scheduleObject(0, '10:00', '22:00', 'day'),
-        'plant_light': _scheduleObject(0, '10:30', '21:30', 'day'),
+        'light': _scheduleObject(0, '10:00', '22:00', 'day', true),
+        'plant_light': _scheduleObject(0, '10:00', '22:00', 'day', true),
         'filter': _scheduleObject(0, '09:30', '22:30'),
         'air': _scheduleObject(0, '22:00', '09:00'),
         'feeder': {
@@ -1047,12 +1134,29 @@ class ControllerSession extends ChangeNotifier {
       'relays': {
         'light': true,
         'plantLight': true,
+        'light1': true,
+        'light2': true,
         'pump': true,
         'heater': false,
         'co2': false,
         'aeration': true,
         'waterDosing': false,
         'aerationPercent': 100,
+      },
+      'lights': {
+        'light1': {
+          'on': true,
+          'profile': 'day',
+          'profileName': 'DAY',
+          'profileCycle': true,
+        },
+        'light2': {
+          'on': true,
+          'profile': 'day',
+          'profileName': 'DAY',
+          'profileCycle': true,
+        },
+        'supportedProfiles': ['day', 'daybreak', 'night'],
       },
       'schedule': {
         'lightMode': 0,
@@ -1075,9 +1179,9 @@ class ControllerSession extends ChangeNotifier {
         'lightProfileName': 'DAY',
         'plantLightMode': 0,
         'plantStartHour': 10,
-        'plantStartMin': 30,
-        'plantEndHour': 21,
-        'plantEndMin': 30,
+        'plantStartMin': 0,
+        'plantEndHour': 22,
+        'plantEndMin': 0,
         'plantLightProfile': 0,
         'plantLightProfileName': 'DAY',
       },

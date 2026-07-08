@@ -10,19 +10,17 @@
     <meta name="color-scheme" content="light dark">
     <script>
         (function () {
-            document.documentElement.setAttribute('data-theme', 'light');
-            document.documentElement.style.colorScheme = 'light';
+            var supportsMediaQueries = typeof window.matchMedia === 'function';
+            var mobile = supportsMediaQueries && window.matchMedia('(max-width: 760px)').matches;
+            var dark = mobile && window.matchMedia('(prefers-color-scheme: dark)').matches;
+            var theme = dark ? 'dark' : 'light';
+            document.documentElement.setAttribute('data-theme', theme);
+            document.documentElement.setAttribute('data-theme-source', mobile ? 'system' : 'device');
+            document.documentElement.style.colorScheme = theme;
         }());
     </script>
-    <meta name="color-scheme" content="light dark">
-    <script>
-        (function () {
-            document.documentElement.setAttribute('data-theme', 'light');
-            document.documentElement.style.colorScheme = 'light';
-        }());
-    </script>
-    <link rel="stylesheet" href="charts.css?v=20260629devsim">
-    <link rel="stylesheet" href="style.css?v=20260629devsim">
+    <link rel="stylesheet" href="charts.css?v=20260702buses">
+    <link rel="stylesheet" href="style.css?v=20260702buses">
 </head>
 <body class="role-guest">
     <canvas id="bubbles-canvas" class="bubbles-canvas"></canvas>
@@ -98,9 +96,15 @@
 
         <!-- Main Content -->
         <main class="main-content">
-            <button class="mobile-nav-toggle glass" id="mobile-nav-toggle" type="button" aria-controls="app-sidebar" aria-expanded="false">
-                <i id="mobile-nav-toggle-icon" class="fa-solid fa-bars"></i>
-                <span id="mobile-nav-toggle-label">Menu</span>
+            <button class="mobile-nav-toggle glass" id="mobile-nav-toggle" type="button" aria-controls="app-sidebar" aria-expanded="false" aria-label="Otwórz menu">
+                <span class="mobile-nav-icon" aria-hidden="true">
+                    <i id="mobile-nav-toggle-icon" class="fa-solid fa-bars"></i>
+                </span>
+                <span class="mobile-nav-copy">
+                    <strong>cydAkwarium</strong>
+                    <small id="mobile-current-view">Pulpit</small>
+                </span>
+                <span id="mobile-nav-toggle-label" class="mobile-nav-action">Menu</span>
             </button>
 
             <!-- Topbar -->
@@ -423,20 +427,30 @@
                         </div>
                         <div class="factory-timeline" role="img" aria-label="DAYBREAK 10:00-10:30, DAY 10:30-20:00, DAYBREAK 20:00-21:00, NIGHT 21:00-22:00, filtr 10:30-20:30, karmienie 14:00, CO2 i napowietrzanie 10:00-19:00, poziom wody, wyciek i termostat 24/7.">
                             <div class="factory-scale">
-                                <span>00:00</span>
-                                <span>06:00</span>
-                                <span>10:00</span>
-                                <span>14:00</span>
-                                <span>19:00</span>
-                                <span>22:00</span>
-                                <span>24:00</span>
+                                <span class="factory-scale-spacer" aria-hidden="true"></span>
+                                <div class="factory-scale-track">
+                                    <span style="--pos: 0;">00:00</span>
+                                    <span style="--pos: 25;">06:00</span>
+                                    <span style="--pos: 41.6667;">10:00</span>
+                                    <span style="--pos: 58.3333;">14:00</span>
+                                    <span style="--pos: 79.1667;">19:00</span>
+                                    <span style="--pos: 91.6667;">22:00</span>
+                                    <span style="--pos: 100;">24:00</span>
+                                </div>
                             </div>
                             <div class="factory-row factory-row-light">
-                                <span class="factory-row-label">Aquael D&amp;N</span>
-                                <span class="factory-segment factory-daybreak" style="--start: 41.6667; --end: 43.75;">DAYBREAK 10:00 - 10:30</span>
-                                <span class="factory-segment factory-day" style="--start: 43.75; --end: 83.3333;">DAY 10:30 - 20:00</span>
-                                <span class="factory-segment factory-daybreak" style="--start: 83.3333; --end: 87.5;">DAYBREAK 20:00 - 21:00</span>
-                                <span class="factory-segment factory-night" style="--start: 87.5; --end: 91.6667;">NIGHT 21:00 - 22:00</span>
+                                <span class="factory-row-label">Światło 1</span>
+                                <span class="factory-segment factory-daybreak factory-segment-micro" style="--start: 41.6667; --end: 43.75;" title="DAYBREAK 10:00-10:30" aria-label="DAYBREAK 10:00-10:30"></span>
+                                <span class="factory-segment factory-day" style="--start: 43.75; --end: 83.3333;"><strong>DAY</strong><small>10:30-20:00</small></span>
+                                <span class="factory-segment factory-daybreak factory-segment-short" style="--start: 83.3333; --end: 87.5;" title="DAYBREAK 20:00-21:00" aria-label="DAYBREAK 20:00-21:00"><strong>DB</strong></span>
+                                <span class="factory-segment factory-night factory-segment-short" style="--start: 87.5; --end: 91.6667;" title="NIGHT 21:00-22:00" aria-label="NIGHT 21:00-22:00"><strong>NOC</strong></span>
+                            </div>
+                            <div class="factory-row factory-row-light">
+                                <span class="factory-row-label">Światło 2</span>
+                                <span class="factory-segment factory-daybreak factory-segment-micro" style="--start: 41.6667; --end: 43.75;" title="DAYBREAK 10:00-10:30" aria-label="DAYBREAK 10:00-10:30"></span>
+                                <span class="factory-segment factory-day" style="--start: 43.75; --end: 83.3333;"><strong>DAY</strong><small>10:30-20:00</small></span>
+                                <span class="factory-segment factory-daybreak factory-segment-short" style="--start: 83.3333; --end: 87.5;" title="DAYBREAK 20:00-21:00" aria-label="DAYBREAK 20:00-21:00"><strong>DB</strong></span>
+                                <span class="factory-segment factory-night factory-segment-short" style="--start: 87.5; --end: 91.6667;" title="NIGHT 21:00-22:00" aria-label="NIGHT 21:00-22:00"><strong>NOC</strong></span>
                             </div>
                             <div class="factory-row">
                                 <span class="factory-row-label">Filtr</span>
@@ -465,8 +479,31 @@
                             </div>
                             <div class="factory-row factory-row-full">
                                 <span class="factory-row-label">Termostat</span>
-                                <span class="factory-segment factory-thermostat" style="--start: 0; --end: 100;">Termostat i grzalka 24/7</span>
+                                <span class="factory-segment factory-thermostat" style="--start: 0; --end: 100;">Termostat i grzałka 24/7</span>
                             </div>
+                        </div>
+                        <div class="factory-phase-legend" aria-label="Legenda faz oświetlenia Aquael D&N">
+                            <span><i class="factory-legend-swatch factory-daybreak"></i><strong>DAYBREAK</strong> 10:00-10:30</span>
+                            <span><i class="factory-legend-swatch factory-day"></i><strong>DAY</strong> 10:30-20:00</span>
+                            <span><i class="factory-legend-swatch factory-daybreak"></i><strong>DAYBREAK</strong> 20:00-21:00</span>
+                            <span><i class="factory-legend-swatch factory-night"></i><strong>NIGHT</strong> 21:00-22:00</span>
+                        </div>
+                        <div class="schedule-logic-grid" aria-label="Reguły wykonywania harmonogramu">
+                            <article>
+                                <span class="schedule-logic-kicker">Priorytet 1</span>
+                                <strong>Zabezpieczenia działają 24/7</strong>
+                                <p>Wyciek, poziom wody i termostat nie są wyłączane przez koniec okna dziennego.</p>
+                            </article>
+                            <article>
+                                <span class="schedule-logic-kicker">Priorytet 2</span>
+                                <strong>CO2 i powietrze są rozłączne</strong>
+                                <p>Wspólne okno 10:00-19:00 wyznacza dostępność. Sterownik nigdy nie uruchamia obu wyjść jednocześnie.</p>
+                            </article>
+                            <article>
+                                <span class="schedule-logic-kicker">Profil światła</span>
+                                <strong>Aquael przełącza DAY / DAYBREAK / NIGHT</strong>
+                                <p>Szybki cykl OFF/ON wybiera kolejną fazę, a filtr pozostaje niezależny od profilu LED.</p>
+                            </article>
                         </div>
                     </section>
 
@@ -544,8 +581,8 @@
                             <div class="schedule-details">
                                 <div class="schedule-item-header">
                                     <div>
-                                        <div class="schedule-title">Światło główne</div>
-                                        <div class="schedule-description">Kanał dzienny: obserwacja zbiornika i bazowe oświetlenie.</div>
+                                        <div class="schedule-title">Światło 1</div>
+                                        <div class="schedule-description">Pierwsza lampa Aquael D&amp;N: DAY, DAYBREAK i NIGHT.</div>
                                     </div>
                                     <select id="schedule-light-mode" class="form-control schedule-mode-select">
                                         <option value="harmonogram" selected>Harmonogram</option>
@@ -556,6 +593,7 @@
                                 <div class="schedule-profile-row" aria-label="Tryb Aquael D&amp;N dla swiatla glownego">
                                     <label for="schedule-light-profile">Tryb Aquael D&amp;N</label>
                                     <select id="schedule-light-profile" class="form-control schedule-profile-select">
+                                        <option value="cycle">AUTO - DAYBREAK → DAY → DAYBREAK → NIGHT</option>
                                         <option value="day">DAY - najmocniejsze dzienne</option>
                                         <option value="daybreak">DAYBREAK - ok. 50% + niebieskie</option>
                                         <option value="night">NIGHT - niebieska poswiata</option>
@@ -575,8 +613,8 @@
                             <div class="schedule-details">
                                 <div class="schedule-item-header">
                                     <div>
-                                        <div class="schedule-title">Światło roślinne</div>
-                                        <div class="schedule-description">Kanał roślinny pracuje w fabrycznym oknie DAY 10:30 - 20:00.</div>
+                                        <div class="schedule-title">Światło 2</div>
+                                        <div class="schedule-description">Druga niezależna lampa Aquael D&amp;N: DAY, DAYBREAK i NIGHT.</div>
                                     </div>
                                     <select id="schedule-plant-light-mode" class="form-control schedule-mode-select">
                                         <option value="harmonogram" selected>Harmonogram</option>
@@ -587,11 +625,12 @@
                                 <div class="schedule-profile-row" aria-label="Tryb Aquael D&amp;N dla swiatla roslinnego">
                                     <label for="schedule-plant-light-profile">Tryb Aquael D&amp;N</label>
                                     <select id="schedule-plant-light-profile" class="form-control schedule-profile-select">
+                                        <option value="cycle">AUTO - DAYBREAK → DAY → DAYBREAK → NIGHT</option>
                                         <option value="day">DAY - najmocniejsze dzienne</option>
                                         <option value="daybreak">DAYBREAK - ok. 50% + niebieskie</option>
                                         <option value="night">NIGHT - niebieska poswiata</option>
                                     </select>
-                                    <small>DAY zasila rosliny w dzien, DAYBREAK lagodzi poranek/zmierzch, NIGHT jest tylko do obserwacji.</small>
+                                    <small>Każda lampa niezależnie obsługuje DAY, DAYBREAK i NIGHT.</small>
                                 </div>
                                 <div class="schedule-bar-container">
                                     <div class="schedule-bar" data-bar-color="var(--success-color)" style="background: var(--success-color);"></div>
@@ -837,9 +876,9 @@
                         <small id="diag-strip-heap-detail">Wolny heap / największy blok</small>
                     </article>
                     <article class="view-command-card" data-tone="neutral" data-tier="extended">
-                        <span>Komunikacja</span>
-                        <strong id="diag-strip-bus">Oczekuje</strong>
-                        <small id="diag-strip-bus-detail">RTC, NTP i WiFi</small>
+                        <span>Magistrale sprzętowe</span>
+                        <strong id="diag-strip-bus">Nie skanowano</strong>
+                        <small id="diag-strip-bus-detail">I2C · UART · OneWire</small>
                     </article>
                 </div>
 
@@ -910,6 +949,73 @@
                             </div>
                         </div>
 
+                        <div class="diag-column diag-column-wide bus-diagnostics-column">
+                            <div class="diag-col-header-row">
+                                <span class="diag-col-title"><i class="fa-solid fa-diagram-project"></i> Magistrale sprzętowe</span>
+                                <button id="bus-scan-refresh" class="btn btn-secondary btn-sm" type="button">
+                                    <i class="fa-solid fa-rotate"></i> Odśwież magistrale
+                                </button>
+                            </div>
+                            <div class="hardware-bus-stack">
+                                <section class="hardware-bus-section" aria-labelledby="i2c-bus-title">
+                                    <div class="hardware-bus-title-row">
+                                        <div>
+                                            <strong id="i2c-bus-title">I2C</strong>
+                                            <small>Adresowane moduły peryferyjne</small>
+                                        </div>
+                                        <span id="i2c-bus-state" class="bus-state-badge">OCZEKUJE</span>
+                                    </div>
+                                    <div class="hardware-bus-summary" aria-label="Parametry magistrali I2C">
+                                        <span><small>SDA</small><strong id="i2c-sda-pin">GPIO 27</strong></span>
+                                        <span><small>SCL</small><strong id="i2c-scl-pin">GPIO 22</strong></span>
+                                        <span><small>Prędkość</small><strong id="i2c-frequency">400 kHz</strong></span>
+                                        <span><small>Wykryto</small><strong id="i2c-device-count">--</strong></span>
+                                    </div>
+                                    <div id="i2c-device-list" class="bus-device-grid" aria-live="polite">
+                                        <div class="bus-empty-state">Uruchamianie skanu I2C...</div>
+                                    </div>
+                                </section>
+
+                                <section class="hardware-bus-section" aria-labelledby="uart-bus-title">
+                                    <div class="hardware-bus-title-row">
+                                        <div>
+                                            <strong id="uart-bus-title">UART</strong>
+                                            <small>Port szeregowy konsoli diagnostycznej</small>
+                                        </div>
+                                        <span id="uart-bus-state" class="bus-state-badge">OCZEKUJE</span>
+                                    </div>
+                                    <div class="hardware-bus-summary hardware-bus-summary-five" aria-label="Parametry UART">
+                                        <span><small>Port</small><strong id="uart-port">UART--</strong></span>
+                                        <span><small>TX</small><strong id="uart-tx-pin">--</strong></span>
+                                        <span><small>RX</small><strong id="uart-rx-pin">--</strong></span>
+                                        <span><small>Prędkość</small><strong id="uart-baud">--</strong></span>
+                                        <span><small>Format</small><strong id="uart-format">--</strong></span>
+                                    </div>
+                                    <p class="hardware-bus-note">UART nie posiada adresowania ani standardowego skanowania urządzeń. Panel pokazuje aktywną konfigurację portu.</p>
+                                </section>
+
+                                <section class="hardware-bus-section" aria-labelledby="onewire-bus-title">
+                                    <div class="hardware-bus-title-row">
+                                        <div>
+                                            <strong id="onewire-bus-title">OneWire</strong>
+                                            <small>Urządzenia identyfikowane 64-bitowym numerem ROM</small>
+                                        </div>
+                                        <span id="onewire-bus-state" class="bus-state-badge">OCZEKUJE</span>
+                                    </div>
+                                    <div class="hardware-bus-summary" aria-label="Parametry magistrali OneWire">
+                                        <span><small>DATA</small><strong id="onewire-data-pin">GPIO 17</strong></span>
+                                        <span><small>Topologia</small><strong>1 przewód</strong></span>
+                                        <span><small>Identyfikacja</small><strong>ROM 64-bit</strong></span>
+                                        <span><small>Wykryto</small><strong id="onewire-device-count">--</strong></span>
+                                    </div>
+                                    <div id="onewire-device-list" class="bus-device-grid" aria-live="polite">
+                                        <div class="bus-empty-state">Uruchamianie wyszukiwania OneWire...</div>
+                                    </div>
+                                </section>
+                            </div>
+                            <div id="bus-scan-status" class="bus-scan-status">Diagnostyka magistral uruchomi się po otwarciu zakładki.</div>
+                        </div>
+
                         <!-- Column 3: Actuator edge health -->
                         <div class="diag-column diag-column-wide">
                             <span class="diag-col-title"><i class="fa-solid fa-circle-check"></i> Kontrola Modułów</span>
@@ -977,7 +1083,7 @@
                                 <span class="chart-subtitle" id="chart-subtitle">Ostatnie 3 godziny</span>
                             </div>
                             <div class="chart-controls">
-                                <button class="fullscreen-btn" id="fullscreen-btn" type="button" title="Pelny ekran">
+                                <button class="fullscreen-btn" id="fullscreen-btn" type="button" title="Pełny ekran" aria-label="Pełny ekran">
                                     <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M8 3H5a2 2 0 0 0-2 2v3M21 8V5a2 2 0 0 0-2-2h-3M3 16v3a2 2 0 0 0 2 2h3M16 21h3a2 2 0 0 0 2-2v-3"/></svg>
                                 </button>
                                 <div class="range-selector" id="range-selector">
@@ -1123,16 +1229,57 @@
             <!-- Przekazniki View -->
             <section id="przekazniki" class="view-section" data-admin-only="true">
                 <div class="view-header">
-                    <h2>Kreator Przekaźników</h2>
-                    <p>Kreator konfiguracji modułu przekaźników 8CH na magistrali I2C.</p>
+                    <h2>Moduły i wyjścia</h2>
+                    <p>Stan ekspandera, mapa kanałów, zabezpieczenia i testy przekaźników w jednym miejscu.</p>
                 </div>
+
+                <div class="module-command-strip" aria-label="Stan modułu przekaźników">
+                    <article class="module-command-card" data-tone="neutral">
+                        <span>Ekspander I2C</span>
+                        <strong id="module-overview-i2c">OCZEKUJE</strong>
+                        <small id="module-overview-i2c-detail">MCP23017 / adres 0x20</small>
+                    </article>
+                    <article class="module-command-card" data-tone="neutral">
+                        <span>Mapa kanałów</span>
+                        <strong id="module-overview-map">8 kanałów</strong>
+                        <small id="module-overview-map-detail">8 funkcji firmware</small>
+                    </article>
+                    <article class="module-command-card" data-tone="neutral">
+                        <span>Wyjścia aktywne</span>
+                        <strong id="module-overview-active">0 / 8</strong>
+                        <small id="module-overview-active-detail">Stan z ostatniej telemetrii</small>
+                    </article>
+                    <article class="module-command-card" data-tone="neutral">
+                        <span>Bezpieczeństwo</span>
+                        <strong id="module-overview-safety">WERYFIKACJA</strong>
+                        <small id="module-overview-safety-detail">Grzałka i CO2 wymagają OFF awaryjnego</small>
+                    </article>
+                </div>
+
+                <section class="card glass module-map-card" aria-labelledby="module-map-title">
+                    <div class="card-header">
+                        <div class="card-title">
+                            <i class="fa-solid fa-microchip" style="color: var(--accent-cyan);"></i>
+                            <div>
+                                <h2 id="module-map-title">Aktualna mapa 8 kanałów</h2>
+                                <p>Numer kanału odpowiada fizycznemu wyjściu MCP23017.</p>
+                            </div>
+                        </div>
+                        <button id="module-open-wizard" class="btn btn-secondary" type="button">Konfiguruj mapę</button>
+                    </div>
+                    <div class="module-channel-grid" id="module-channel-grid"></div>
+                    <div class="module-map-footer">
+                        <div id="module-map-warning" class="module-map-message" data-tone="neutral">Sprawdzam spójność konfiguracji i stanów awaryjnych.</div>
+                        <span>Wejścia czujników MCP są niezależne od ośmiu wyjść przekaźnikowych.</span>
+                    </div>
+                </section>
 
                 <!-- Wizard Main Card Container -->
                 <div class="card glass mb-4" id="relays-wizard-card">
                     <div class="card-header">
                         <div class="card-title">
                             <i class="fa-solid fa-wand-magic-sparkles" style="color: var(--accent-cyan);"></i>
-                            <h2>Kreator Przekaźników 8CH</h2>
+                            <h2>Zaawansowana konfiguracja mapowania</h2>
                         </div>
                         <span class="card-chip">Krok po kroku</span>
                     </div>
@@ -1173,7 +1320,6 @@
                                                 <label>Typ ekspandera I2C:</label>
                                                 <select id="wizard-expander" class="form-control">
                                                     <option value="MCP23017" selected>MCP23017 (Zalecany)</option>
-                                                    <option value="PCF8574">PCF8574</option>
                                                 </select>
                                             </div>
                                             <div>
@@ -1194,7 +1340,7 @@
                                                 <input type="number" id="wizard-start-delay" class="form-control" min="0" max="5000" step="100" value="500">
                                             </div>
                                         </div>
-                                        <p class="text-muted" style="font-size: 11px; margin-top: 10px;"><i class="fa-solid fa-triangle-exclamation" style="color: var(--accent-yellow); margin-right: 6px;"></i> Sterownik automatycznie odpytuje adresy 0x20-0x27 na szynie I2C w celu wykryciaMCP23017.</p>
+                                        <p class="text-muted" style="font-size: 11px; margin-top: 10px;"><i class="fa-solid fa-triangle-exclamation" style="color: var(--accent-yellow); margin-right: 6px;"></i> Sterownik odpytuje adresy 0x20-0x27 i obsługuje ekspander MCP23017.</p>
                                     </div>
                                 </div>
                             </div>
@@ -1307,7 +1453,7 @@
                             <button type="button" class="btn btn-secondary" id="wizard-prev-btn" style="min-width: 120px;" disabled>Wstecz</button>
                             <button type="button" class="btn btn-secondary" id="wizard-default-map-btn" style="display: none; color: var(--accent-orange); border-color: rgba(249, 115, 22, 0.3);">Przywróć domyślne</button>
                             <button type="button" class="btn btn-primary" id="wizard-next-btn" style="min-width: 120px;">Dalej</button>
-                            <button type="button" class="btn btn-success" id="wizard-save-btn" style="min-width: 180px; display: none; background: var(--success-color); box-shadow: 0 4px 12px rgba(16, 185, 129, 0.3);"><i class="fa-solid fa-floppy-disk"></i> Zastosuj konfigurację</button>
+                            <button type="button" class="btn btn-success" id="wizard-save-btn" style="min-width: 180px; display: none; background: var(--success-color); box-shadow: 0 4px 12px rgba(16, 185, 129, 0.3);"><i class="fa-solid fa-floppy-disk"></i> Zapisz profil mapowania</button>
                         </div>
 
                     </div>
@@ -1436,7 +1582,7 @@
                                 <input id="settings-water-timeout" type="number" class="form-control" min="5" max="300" step="1" value="30">
                             </div>
                             <button id="save-water-btn" class="btn btn-secondary w-100" type="button"><i class="fa-solid fa-floppy-disk"></i> Zapisz ATO</button>
-                            <div id="settings-water-status" class="text-muted" style="font-size: 11px;">Ochrona przed pracą na sucho.</div>
+                            <div id="settings-water-status" class="text-muted" style="font-size: 11px;">Limit ciągłego dolewania chroni zbiornik przed przelaniem.</div>
                         </div>
                     </div>
 
@@ -1854,7 +2000,7 @@
     <div class="fullscreen-overlay" id="fullscreen-overlay" hidden>
         <div class="fullscreen-header">
             <h2>Przebieg Temperatury</h2>
-            <button class="fullscreen-close-btn" id="fullscreen-close-btn" type="button">
+            <button class="fullscreen-close-btn" id="fullscreen-close-btn" type="button" title="Zamknij pełny ekran" aria-label="Zamknij pełny ekran">
                 <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><path d="M18 6L6 18M6 6l12 12"/></svg>
             </button>
         </div>
@@ -1875,17 +2021,17 @@
         <div class="chart-time-axis fullscreen-time-axis" id="fullscreen-time-axis"></div>
     </div>
 
-    <script src="chart-engine.js?v=20260629devsim"></script>
-    <script src="charts.js?v=20260629devsim"></script>
-    <script src="app-core.js?v=20260629devsim"></script>
-    <script src="theme.js?v=20260629devsim"></script>
-    <script src="logs.js?v=20260629devsim"></script>
-    <script src="settings.js?v=20260629devsim"></script>
-    <script src="schedules.js?v=20260629devsim"></script>
-    <script src="dashboard.js?v=20260629devsim"></script>
-    <script src="ota.js?v=20260629devsim"></script>
-    <script src="relays-wizard.js?v=20260629devsim"></script>
-    <script src="app-init.js?v=20260629devsim"></script>
+    <script src="chart-engine.js?v=20260702buses"></script>
+    <script src="charts.js?v=20260702buses"></script>
+    <script src="app-core.js?v=20260702buses"></script>
+    <script src="theme.js?v=20260702buses"></script>
+    <script src="logs.js?v=20260702buses"></script>
+    <script src="settings.js?v=20260702buses"></script>
+    <script src="schedules.js?v=20260702buses"></script>
+    <script src="dashboard.js?v=20260702buses"></script>
+    <script src="ota.js?v=20260702buses"></script>
+    <script src="relays-wizard.js?v=20260702buses"></script>
+    <script src="app-init.js?v=20260702buses"></script>
 </body>
 </html>
 

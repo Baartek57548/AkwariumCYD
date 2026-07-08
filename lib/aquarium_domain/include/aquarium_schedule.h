@@ -30,6 +30,8 @@ struct TimeWindow {
 struct FactoryScheduleState {
     bool lightOn;
     LightProfile lightProfile;
+    bool light2On;
+    LightProfile light2Profile;
     bool filterOn;
     bool gasWindowActive;
     bool feedingDue;

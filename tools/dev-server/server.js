@@ -8,9 +8,10 @@ const { URL, URLSearchParams } = require('node:url');
 const { DevSimulator } = require('./simulator');
 
 const DEFAULT_PORT = 8000;
-const HOST = '127.0.0.1';
-const ADMIN_PIN = '1234';
+const HOST = process.env.CYD_DEV_HOST || '127.0.0.1';
+const ADMIN_PIN = process.env.CYD_DEV_PIN || '1234';
 const MAX_BODY_BYTES = 64 * 1024;
+const MAX_OTA_BYTES = 4 * 1024 * 1024 + 64 * 1024;
 const WEB_ROOT = path.resolve(__dirname, '..', '..', 'web');
 const MIME_TYPES = Object.freeze({
     '.css': 'text/css; charset=utf-8',
@@ -72,6 +73,24 @@ function readBody(request) {
     });
 }
 
+function readBinaryBody(request, maximumBytes) {
+    return new Promise((resolve, reject) => {
+        const chunks = [];
+        let totalBytes = 0;
+        request.on('data', (chunk) => {
+            totalBytes += chunk.length;
+            if (totalBytes > maximumBytes) {
+                reject(Object.assign(new Error('request_too_large'), { status: 413 }));
+                request.destroy();
+                return;
+            }
+            chunks.push(chunk);
+        });
+        request.on('end', () => resolve(Buffer.concat(chunks, totalBytes)));
+        request.on('error', reject);
+    });
+}
+
 function requirePin(params, response) {
     if (params.get('pin') === ADMIN_PIN) return true;
     sendJson(response, 403, { success: false, code: 'invalid_pin', message: 'Błędny PIN administratora.' });
@@ -117,6 +136,24 @@ function createDevServer(options = {}) {
             const value = Number(params.get(name));
             return Number.isFinite(value) ? Math.max(minimum, Math.min(maximum, value)) : fallback;
         };
+        const timeValue = (name, fallback) => {
+            if (!params.has(name)) return fallback;
+            const match = /^(\d{2}):(\d{2})$/.exec(String(params.get(name)));
+            if (!match) return fallback;
+            const hour = Number(match[1]);
+            const minute = Number(match[2]);
+            return hour >= 0 && hour <= 23 && minute >= 0 && minute <= 59
+                ? hour * 60 + minute
+                : fallback;
+        };
+        const profileValue = (name, fallback) => {
+            if (!params.has(name)) return fallback;
+            const value = String(params.get(name)).trim().toLowerCase();
+            if (value === 'day' || value === '0') return 0;
+            if (value === 'daybreak' || value === '1') return 1;
+            if (value === 'night' || value === '2') return 2;
+            return fallback;
+        };
 
         switch (action) {
         case 'feed_now': {
@@ -129,6 +166,7 @@ function createDevServer(options = {}) {
             sendJson(response, 200, { success: true, code: 'ok', message: 'Usunięto logi krytyczne.' });
             break;
         case 'set_light':
+        case 'set_light1':
             simulator.manualRelays.light = params.get('state') === '1';
             simulator.addLog(`Światło ustawiono ${simulator.manualRelays.light ? 'ON' : 'OFF'} z panelu.`);
             sendJson(response, 200, { success: true, code: 'ok' });
@@ -138,12 +176,46 @@ function createDevServer(options = {}) {
             simulator.addLog(`Filtr ustawiono ${simulator.manualRelays.pump ? 'ON' : 'OFF'} z panelu.`);
             sendJson(response, 200, { success: true, code: 'ok' });
             break;
+        case 'set_plant':
+        case 'set_light2':
+            simulator.manualRelays.plantLight = params.get('state') === '1';
+            simulator.config.plantLightMode = simulator.manualRelays.plantLight ? 1 : 2;
+            simulator.addLog(`Światło 2 ustawiono ${simulator.manualRelays.plantLight ? 'ON' : 'OFF'} z panelu.`);
+            sendJson(response, 200, { success: true, code: 'ok' });
+            break;
+        case 'set_heater':
+            simulator.config.modules.heater = params.get('state') === '1';
+            simulator.config.heaterMode = simulator.config.modules.heater ? 0 : 1;
+            if (!simulator.config.modules.heater) simulator.heaterOn = false;
+            simulator.addLog(`Termostat ustawiono ${simulator.config.modules.heater ? 'AUTO' : 'OFF'} z panelu.`);
+            sendJson(response, 200, { success: true, code: 'ok' });
+            break;
+        case 'set_aeration':
+            simulator.manualRelays.aeration = params.get('state') === '1';
+            simulator.config.airMode = simulator.manualRelays.aeration ? 1 : 2;
+            simulator.addLog(`Napowietrzanie ustawiono ${simulator.manualRelays.aeration ? 'ON' : 'OFF'} z panelu.`);
+            sendJson(response, 200, { success: true, code: 'ok' });
+            break;
         case 'save_schedule':
-            if (params.has('lightMode')) simulator.config.lightMode = numberValue('lightMode', 0, 0, 2);
-            if (params.has('plantLightMode')) simulator.config.plantLightMode = numberValue('plantLightMode', 0, 0, 2);
+            if (params.has('light1Mode') || params.has('lightMode')) simulator.config.lightMode = numberValue(params.has('light1Mode') ? 'light1Mode' : 'lightMode', 0, 0, 2);
+            if (params.has('light2Mode') || params.has('plantLightMode')) simulator.config.plantLightMode = numberValue(params.has('light2Mode') ? 'light2Mode' : 'plantLightMode', 0, 0, 2);
             if (params.has('filterMode')) simulator.config.filterMode = numberValue('filterMode', 0, 0, 2);
             if (params.has('airMode') || params.has('aerationMode')) simulator.config.airMode = numberValue(params.has('airMode') ? 'airMode' : 'aerationMode', 0, 0, 2);
             if (params.has('heaterMode')) simulator.config.heaterMode = numberValue('heaterMode', 0, 0, 1);
+            simulator.config.lightStart = timeValue(params.has('light1Start') ? 'light1Start' : (params.has('dayStart') ? 'dayStart' : 'lightStart'), simulator.config.lightStart);
+            simulator.config.lightEnd = timeValue(params.has('light1End') ? 'light1End' : (params.has('dayEnd') ? 'dayEnd' : 'lightEnd'), simulator.config.lightEnd);
+            simulator.config.plantStart = timeValue(params.has('light2Start') ? 'light2Start' : 'plantLightStart', simulator.config.plantStart);
+            simulator.config.plantEnd = timeValue(params.has('light2End') ? 'light2End' : 'plantLightEnd', simulator.config.plantEnd);
+            simulator.config.filterStart = timeValue('filterOn', simulator.config.filterStart);
+            simulator.config.filterEnd = timeValue('filterOff', simulator.config.filterEnd);
+            simulator.config.airStart = timeValue('airOn', simulator.config.airStart);
+            simulator.config.airEnd = timeValue('airOff', simulator.config.airEnd);
+            simulator.config.feedMinute = timeValue('feedTime', simulator.config.feedMinute);
+            if (params.has('feedFreq')) simulator.config.feedEnabled = numberValue('feedFreq', 1, 0, 2) > 0;
+            simulator.config.lightProfile = profileValue(params.has('light1Profile') ? 'light1Profile' : 'lightProfile', simulator.config.lightProfile);
+            simulator.config.plantLightProfile = profileValue(params.has('light2Profile') ? 'light2Profile' : 'plantLightProfile', simulator.config.plantLightProfile);
+            simulator.config.lightProfileCycle = booleanValue(params.has('light1ProfileCycle') ? 'light1ProfileCycle' : 'lightProfileCycle', simulator.config.lightProfileCycle);
+            simulator.config.plantLightProfileCycle = booleanValue(params.has('light2ProfileCycle') ? 'light2ProfileCycle' : 'plantLightProfileCycle', simulator.config.plantLightProfileCycle);
             simulator.addLog('Zapisano harmonogram w symulatorze RAM.');
             sendJson(response, 200, { success: true, code: 'ok', message: 'Harmonogram zapisany w RAM.' });
             break;
@@ -162,14 +234,35 @@ function createDevServer(options = {}) {
             break;
         case 'save_water':
             simulator.config.modules.waterLevel = booleanValue('waterEnabled', simulator.config.modules.waterLevel);
+            simulator.config.waterTimeoutSec = numberValue('waterTimeout', simulator.config.waterTimeoutSec, 5, 300);
+            if (!simulator.config.modules.waterLevel) {
+                simulator.waterFillStartedAt = 0;
+                simulator.waterTimeoutLatched = false;
+            }
             sendJson(response, 200, { success: true, code: 'ok', message: 'Dolewka zapisana w RAM.' });
             break;
         case 'save_leak':
             simulator.config.modules.leak = booleanValue('leakEnabled', simulator.config.modules.leak);
+            if (params.has('leakAction')) {
+                const action = String(params.get('leakAction'));
+                if (!['alarm', 'disable_valves', 'disable_all'].includes(action)) {
+                    throw new Error('Nieprawidlowa akcja wycieku.');
+                }
+                simulator.config.leakAction = action;
+            }
             sendJson(response, 200, { success: true, code: 'ok', message: 'Zabezpieczenie wycieku zapisane w RAM.' });
             break;
         case 'save_display':
-            simulator.config.alwaysScreenOn = booleanValue('alwaysScreenOn', simulator.config.alwaysScreenOn);
+            simulator.config.displayAutoBrightness = booleanValue('autoBrightness', simulator.config.displayAutoBrightness);
+            simulator.config.displayBrightness = numberValue('brightness', simulator.config.displayBrightness, 10, 100);
+            if (params.has('profile')) {
+                const profile = String(params.get('profile'));
+                if (!['always_on', 'timeout_60s', 'always_off'].includes(profile)) {
+                    throw new Error('Nieprawidlowy profil ekranu.');
+                }
+                simulator.config.displayProfile = profile;
+                simulator.config.alwaysScreenOn = profile === 'always_on';
+            }
             sendJson(response, 200, { success: true, code: 'ok', message: 'Ekran zapisany w RAM.' });
             break;
         case 'save_network':
@@ -242,6 +335,39 @@ function createDevServer(options = {}) {
                 sendJson(response, 200, simulator.step());
                 return;
             }
+            if (request.method === 'GET' && (pathname === '/api/bus-diagnostics' || pathname === '/api/i2c-scan')) {
+                if (!requirePin(requestUrl.searchParams, response)) return;
+                sendJson(response, 200, {
+                    ok: true,
+                    simulated: true,
+                    sda: 27,
+                    scl: 22,
+                    frequencyHz: 400000,
+                    scanMs: 3,
+                    count: 2,
+                    truncated: false,
+                    devices: [
+                        { address: 0x20, hex: '0x20', type: 'mcp23017', configured: true },
+                        { address: 0x48, hex: '0x48', type: 'ads1115', configured: true }
+                    ],
+                    uart: {
+                        discoverySupported: false,
+                        ports: [
+                            { port: 0, active: true, role: 'console', tx: 1, rx: 3, baud: 115200, format: '8N1' }
+                        ]
+                    },
+                    oneWire: {
+                        dataPin: 17,
+                        scanMs: 4,
+                        count: 1,
+                        truncated: false,
+                        devices: [
+                            { rom: '28-FF641D871603-5F', family: 0x28, type: 'ds18b20', crcValid: true }
+                        ]
+                    }
+                });
+                return;
+            }
             if (request.method === 'GET' && pathname === '/api/events') {
                 response.writeHead(200, {
                     'Content-Type': 'text/event-stream; charset=utf-8',
@@ -292,6 +418,16 @@ function createDevServer(options = {}) {
             }
             if (request.method === 'POST' && pathname === '/api/action') {
                 await handleAction(request, response);
+                return;
+            }
+            if (request.method === 'POST' && pathname === '/update') {
+                if (!requirePin(requestUrl.searchParams, response)) return;
+                const upload = await readBinaryBody(request, MAX_OTA_BYTES);
+                if (upload.length < 16) {
+                    sendJson(response, 400, { success: false, code: 'empty_firmware', message: 'Pakiet OTA jest pusty.' });
+                    return;
+                }
+                sendJson(response, 200, { success: true, code: 'simulated', bytes: upload.length, message: 'Pakiet OTA odebrany w trybie DEV bez restartu.' });
                 return;
             }
             if (request.method === 'POST' && pathname === '/settime') {

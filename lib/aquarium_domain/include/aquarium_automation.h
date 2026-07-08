@@ -31,6 +31,15 @@ struct GasControlOutput {
     bool aeratorOn;
 };
 
+struct AtoControlInput {
+    bool runtimeAvailable;
+    bool enabled;
+    bool waterLevelValid;
+    bool waterLevelHigh;
+    bool leakDetected;
+    bool timeoutLatched;
+};
+
 struct AlarmInput {
     bool temperatureValid;
     float temperatureC;
@@ -56,6 +65,7 @@ enum AlarmFlags {
 
 bool thermostat_next_state(const ThermostatInput &input);
 GasControlOutput evaluate_gas_control(const GasControlInput &input);
+bool evaluate_ato_control(const AtoControlInput &input);
 unsigned int evaluate_alarm_flags(const AlarmInput &input);
 unsigned int alarm_count(unsigned int flags);
 

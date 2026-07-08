@@ -39,10 +39,12 @@ Odczyt bieżącego statusu:
 Zmiana stanu modułu:
 
 ```json
-{"id":2,"op":"set","target":"light","state":true,"pin":"1234"}
+{"id":2,"op":"set","target":"light1","state":true,"pin":"1234"}
 ```
 
-Dozwolone cele: `light`, `plant`, `filter`, `heater`, `aeration`.
+Dozwolone cele: `light1`, `light2`, `filter`, `heater`, `aeration`. Starsze aliasy `light` i `plant` pozostają obsługiwane.
+
+Oba kanały światła obsługują niezależnie profile `day`, `daybreak` i `night`. W pełnym statusie BLE pole `profileCycle` informuje, czy aktywny jest automatyczny cykl `DAYBREAK → DAY → DAYBREAK → NIGHT`.
 
 Uruchomienie karmienia:
 

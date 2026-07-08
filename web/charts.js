@@ -821,7 +821,7 @@
 
     function refreshData() {
         if (typeof window.fetchStatus === 'function') {
-            window.fetchStatus(true);
+            window.fetchStatus(true, true);
         }
         startDrawAnimation();
     }
@@ -1202,7 +1202,7 @@
         refreshArchiveFiles();
         setInterval(() => {
             if (typeof window.fetchStatus === 'function' && document.visibilityState === 'visible') {
-                window.fetchStatus(true);
+                window.fetchStatus(true, true);
             }
         }, 300000);
     }

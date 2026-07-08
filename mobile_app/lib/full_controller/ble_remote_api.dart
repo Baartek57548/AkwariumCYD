@@ -208,7 +208,9 @@ class BleRemoteApi implements ControllerRemoteApi {
   ) {
     final target = switch (action) {
       'set_light' => 'light',
+      'set_light1' => 'light1',
       'set_plant' => 'plant',
+      'set_light2' => 'light2',
       'set_filter' => 'filter',
       'set_heater' => 'heater',
       'set_aeration' => 'aeration',
@@ -286,6 +288,8 @@ class BleRemoteApi implements ControllerRemoteApi {
     'modules': {
       'light_on': snapshot.outputs[OutputChannel.light] ?? false,
       'plant_light_on': snapshot.outputs[OutputChannel.plantLight] ?? false,
+      'light1_on': snapshot.outputs[OutputChannel.light] ?? false,
+      'light2_on': snapshot.outputs[OutputChannel.plantLight] ?? false,
       'filter_on': snapshot.outputs[OutputChannel.filter] ?? false,
       'heater_on': snapshot.outputs[OutputChannel.heater] ?? false,
       'air_on': snapshot.outputs[OutputChannel.aeration] ?? false,
@@ -306,6 +310,8 @@ class BleRemoteApi implements ControllerRemoteApi {
     'relays': {
       'light': snapshot.outputs[OutputChannel.light] ?? false,
       'plantLight': snapshot.outputs[OutputChannel.plantLight] ?? false,
+      'light1': snapshot.outputs[OutputChannel.light] ?? false,
+      'light2': snapshot.outputs[OutputChannel.plantLight] ?? false,
       'pump': snapshot.outputs[OutputChannel.filter] ?? false,
       'heater': snapshot.outputs[OutputChannel.heater] ?? false,
       'aeration': snapshot.outputs[OutputChannel.aeration] ?? false,

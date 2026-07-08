@@ -6,7 +6,8 @@ const API_WEB_SESSION = '/api/web-session';
 const API_OTA = '/update';
 const API_SETTIME = '/settime';
 const LOGS_PAGE_SIZE = 10;
-const WEB_SESSION_HEARTBEAT_MS = 3000;
+const WEB_SESSION_HEARTBEAT_MS = 5000;
+const ENABLE_EVENT_STREAM = false;
 
 let backendConnected = false;
 let activeLogType = 'normal';
@@ -23,6 +24,8 @@ const OLED_SAVE_ACTIONS = new Set([
     'save_schedule',
     'save_network',
     'set_light',
+    'set_light1',
+    'set_light2',
     'set_filter',
     'set_plant',
     'set_heater',
@@ -44,6 +47,8 @@ const PIN_GUARDED_ACTIONS = new Set([
     'save_temperature',
     'sync_time_ntp',
     'set_light',
+    'set_light1',
+    'set_light2',
     'set_filter',
     'set_plant',
     'set_heater',
@@ -57,8 +62,10 @@ const OLED_SAVE_TITLES = {
     save_schedule: 'Zapisywanie harmonogramów',
     save_network: 'Zapisywanie ustawień WiFi',
     set_light: 'Zapisywanie stanu światła',
+    set_light1: 'Zapisywanie światła 1',
+    set_light2: 'Zapisywanie światła 2',
     set_filter: 'Zapisywanie stanu filtra',
-    set_plant: 'Zapisywanie światła roślin',
+    set_plant: 'Zapisywanie światła 2',
     set_heater: 'Zapisywanie grzałki',
     set_aeration: 'Zapisywanie napowietrzania',
     save_display: 'Zapisywanie ustawień ekranu',
@@ -932,13 +939,13 @@ function startWebSessionHeartbeat() {
     }
 }
 
-async function fetchStatus(force = false) {
+async function fetchStatus(force = false, includeHistory = false) {
     if (eventStreamConnected && !force) {
         return;
     }
 
     try {
-        const response = await fetch(force ? `${API_STATUS}?history=1` : API_STATUS, {
+        const response = await fetch(includeHistory ? `${API_STATUS}?history=1` : API_STATUS, {
             cache: 'no-store'
         });
         if (!response.ok) throw new Error('status http');
@@ -996,7 +1003,7 @@ function startPollingFallback() {
 }
 
 function startEventStream() {
-    if (eventStream || !('EventSource' in window)) {
+    if (!ENABLE_EVENT_STREAM || eventStream || !('EventSource' in window)) {
         startPollingFallback();
         return;
     }
@@ -1084,7 +1091,7 @@ function hideOledSaveAnimation() {
     }
 
     const elapsedMs = Date.now() - oledSaveOverlayShownAtMs;
-    const delayMs = Math.max(0, 900 - elapsedMs);
+    const delayMs = Math.max(0, 300 - elapsedMs);
     oledSaveOverlayHideTimer = setTimeout(() => {
         overlay.style.display = 'none';
         overlay.setAttribute('aria-hidden', 'true');
@@ -1112,6 +1119,18 @@ function setPinModalError(message) {
     } else {
         errorEl.style.display = 'none';
     }
+}
+
+function setPinModalBusy(isBusy) {
+    const input = document.getElementById('pin-modal-input');
+    const submit = document.getElementById('pin-modal-submit');
+    const cancel = document.getElementById('pin-modal-cancel');
+    if (input) input.disabled = isBusy;
+    if (submit) {
+        submit.disabled = isBusy;
+        submit.textContent = isBusy ? 'Sprawdzam...' : 'OK';
+    }
+    if (cancel) cancel.disabled = isBusy;
 }
 
 function setAdminSession(pin) {
@@ -1162,6 +1181,7 @@ function promptForPin(errorMessage = '') {
     }
 
     input.value = '';
+    setPinModalBusy(false);
     setPinModalError(errorMessage);
     modal.style.display = 'flex';
     input.focus();
@@ -1231,11 +1251,26 @@ window.applyAuthState = applyAuthState;
 
 async function verifyAdminPin(pin) {
     const params = new URLSearchParams({ action: 'auth_check', pin });
-    const response = await fetch(API_ACTION, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-        body: params.toString()
-    });
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 5000);
+    let response;
+    try {
+        response = await fetch(API_ACTION, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+            body: params.toString(),
+            signal: controller.signal
+        });
+    } catch (error) {
+        if (error?.name === 'AbortError') {
+            const timeoutError = new Error('Sterownik nie odpowiedział na logowanie w ciągu 5 sekund.');
+            timeoutError.code = 'auth_timeout';
+            throw timeoutError;
+        }
+        throw error;
+    } finally {
+        clearTimeout(timeout);
+    }
     const contentType = response.headers.get('content-type') || '';
     const responsePayload = contentType.includes('application/json')
         ? await response.json()
@@ -1268,6 +1303,7 @@ async function loginAsAdmin() {
         }
 
         try {
+            setPinModalBusy(true);
             await verifyAdminPin(pin);
             setAdminSession(pin);
             const modal = document.getElementById('pin-modal');
@@ -1275,12 +1311,17 @@ async function loginAsAdmin() {
             return true;
         } catch (error) {
             clearAdminSession();
-            message = attempt >= 1
-                ? 'Błędny PIN admina. Pozostała ostatnia próba.'
-                : 'Błędny PIN admina. Spróbuj ponownie.';
+            const connectionError = error?.code === 'auth_timeout' || !error?.status;
+            message = connectionError
+                ? (error?.message || 'Brak odpowiedzi sterownika. Spróbuj ponownie.')
+                : (attempt >= 1
+                    ? 'Błędny PIN admina. Pozostała ostatnia próba.'
+                    : 'Błędny PIN admina. Spróbuj ponownie.');
             if (attempt === 2) {
                 throw error;
             }
+        } finally {
+            setPinModalBusy(false);
         }
     }
     return false;
@@ -1379,6 +1420,7 @@ function setMobileNavOpen(isOpen) {
     backdrop.classList.toggle('visible', open);
     backdrop.setAttribute('aria-hidden', open ? 'false' : 'true');
     toggle.setAttribute('aria-expanded', open ? 'true' : 'false');
+    toggle.setAttribute('aria-label', open ? 'Zamknij menu' : 'Otwórz menu');
     document.body.classList.toggle('nav-open', open);
 
     if (toggleLabel) {
@@ -1389,6 +1431,16 @@ function setMobileNavOpen(isOpen) {
         toggleIcon.className = open ? 'fa-solid fa-xmark' : 'fa-solid fa-bars';
         renderLocalIcon(toggleIcon);
     }
+}
+
+function updateMobileCurrentView(tabId) {
+    const currentView = document.getElementById('mobile-current-view');
+    if (!currentView) return;
+
+    const activeNav = Array.from(document.querySelectorAll('.nav-item[data-target]'))
+        .find((nav) => nav.getAttribute('data-target') === tabId);
+    const label = activeNav?.querySelector('a')?.textContent?.trim();
+    currentView.textContent = label || 'Panel sterownika';
 }
 
 function initMobileNavigation() {
@@ -1422,6 +1474,7 @@ function initMobileNavigation() {
     });
 
     setMobileNavOpen(false);
+    updateMobileCurrentView(document.querySelector('.view-section.active')?.id || 'dashboard');
 }
 
 function initNavigation() {
@@ -1486,6 +1539,7 @@ function switchTab(tabId, updateHash = true) {
     if (targetSection) {
         targetSection.classList.add('active');
         document.body.dataset.activeView = tabId;
+        updateMobileCurrentView(tabId);
         if (updateHash) {
             updateLocationHash(tabId);
         }
@@ -1497,6 +1551,10 @@ function switchTab(tabId, updateHash = true) {
 
     if (tabId === 'wykresy' && typeof renderAllCharts === 'function') {
         requestAnimationFrame(renderAllCharts);
+    }
+
+    if (tabId === 'diag' && typeof fetchHardwareBusDiagnostics === 'function') {
+        requestAnimationFrame(() => fetchHardwareBusDiagnostics(false));
     }
 
     setMobileNavOpen(false);

@@ -82,18 +82,18 @@ class _ControlHubViewState extends State<ControlHubView> {
             children: [
               _OutputSwitch(
                 icon: Icons.lightbulb_rounded,
-                title: 'Światło główne',
+                title: 'Światło 1',
                 value: modules.flag('light_on'),
-                busy: _busyOutputs.contains('light'),
-                onChanged: (value) => _toggle('set_light', 'light', value),
+                busy: _busyOutputs.contains('light1'),
+                onChanged: (value) => _toggle('set_light1', 'light1', value),
               ),
               const Divider(height: 1),
               _OutputSwitch(
-                icon: Icons.local_florist_rounded,
-                title: 'Światło roślinne',
+                icon: Icons.lightbulb_outline_rounded,
+                title: 'Światło 2',
                 value: modules.flag('plant_light_on'),
-                busy: _busyOutputs.contains('plant'),
-                onChanged: (value) => _toggle('set_plant', 'plant', value),
+                busy: _busyOutputs.contains('light2'),
+                onChanged: (value) => _toggle('set_light2', 'light2', value),
               ),
               const Divider(height: 1),
               _OutputSwitch(

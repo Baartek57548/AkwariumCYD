@@ -33,6 +33,9 @@ function scheduleModeToApi(value) {
 
 function aquaelProfileToUi(value) {
     const normalized = String(value ?? '').trim().toLowerCase();
+    if (normalized === 'cycle' || normalized === 'auto') {
+        return 'cycle';
+    }
     if (normalized === '1' || normalized === 'daybreak' || normalized === 'dawn' || normalized === 'sunrise') {
         return 'daybreak';
     }
@@ -123,7 +126,10 @@ function parseScheduleClock(value, fallbackHour, fallbackMinute) {
 }
 
 function nestedSchedule(data, key) {
-    const schedule = data?.schedules?.[key];
+    const schedules = data?.schedules || {};
+    const schedule = key === 'light'
+        ? (schedules.light1 || schedules.light)
+        : (key === 'plant_light' ? (schedules.light2 || schedules.plant_light) : schedules[key]);
     return schedule && typeof schedule === 'object' ? schedule : null;
 }
 
@@ -148,6 +154,7 @@ function readScheduleRange(data, key, legacy, fallback) {
 function readAquaelProfile(data, key, legacyProfileKey, fallback = 'day') {
     const flat = data.schedule || {};
     const nested = nestedSchedule(data, key);
+    if (nested?.profileCycle === true) return 'cycle';
     return aquaelProfileToUi(nested?.profile ?? nested?.profileLabel ?? flat[legacyProfileKey] ?? fallback);
 }
 
@@ -248,6 +255,8 @@ function renderScheduleEditor(data) {
     );
     const lightProfile = readAquaelProfile(data, 'light', 'lightProfile', 'day');
     const plantLightProfile = readAquaelProfile(data, 'plant_light', 'plantLightProfile', 'day');
+    const lightProfileCycle = lightProfile === 'cycle';
+    const light2ProfileCycle = plantLightProfile === 'cycle';
 
     setInputValueIfClean('schedule-work-mode', 'harmonogram');
     setInputValueIfClean('schedule-work-start', work.start);
@@ -262,6 +271,11 @@ function renderScheduleEditor(data) {
     setInputValueIfClean('schedule-plant-light-profile', plantLightProfile);
     setInputValueIfClean('schedule-plant-light-start', plant.start);
     setInputValueIfClean('schedule-plant-light-end', plant.end);
+
+    const lightItem = document.getElementById('schedule-light-profile')?.closest('.schedule-item');
+    const light2Item = document.getElementById('schedule-plant-light-profile')?.closest('.schedule-item');
+    if (lightItem) lightItem.dataset.profileCycle = lightProfileCycle ? '1' : '0';
+    if (light2Item) light2Item.dataset.profileCycle = light2ProfileCycle ? '1' : '0';
 
     setInputValueIfClean('schedule-filter-mode', filter.mode);
     setInputValueIfClean('schedule-filter-start', filter.start);
@@ -306,7 +320,7 @@ function renderScheduleEditor(data) {
     setCommandStatus(
         'schedule-strip-outputs',
         commandCountLabel(enabledOutputs, 'modul aktywny', 'modulow aktywnych'),
-        `LED ${lightProfile.toUpperCase()} / roslinne ${plantLightProfile.toUpperCase()} / karmnik ${feedEnabled ? 'ON' : 'OFF'}`,
+        `Światło 1 ${lightProfileCycle ? 'AUTO 3 TRYBY' : lightProfile.toUpperCase()} / Światło 2 ${light2ProfileCycle ? 'AUTO 3 TRYBY' : plantLightProfile.toUpperCase()} / karmnik ${feedEnabled ? 'ON' : 'OFF'}`,
         enabledOutputs > 0 ? 'ok' : 'neutral'
     );
 
@@ -325,15 +339,25 @@ async function saveScheduleSettings() {
     const workEnd = normalizeScheduleTimeInput('schedule-work-end');
     const payload = {
         lightMode: scheduleModeToApi(document.getElementById('schedule-light-mode')?.value),
+        light1Mode: scheduleModeToApi(document.getElementById('schedule-light-mode')?.value),
         dayStart: workStart,
         dayEnd: workEnd,
         lightStart: workStart,
         lightEnd: workEnd,
         lightProfile: aquaelProfileToApi(document.getElementById('schedule-light-profile')?.value),
+        light1Profile: aquaelProfileToApi(document.getElementById('schedule-light-profile')?.value),
+        light1ProfileCycle: document.getElementById('schedule-light-profile')?.value === 'cycle',
+        light1Start: workStart,
+        light1End: workEnd,
         plantLightMode: scheduleModeToApi(document.getElementById('schedule-plant-light-mode')?.value),
+        light2Mode: scheduleModeToApi(document.getElementById('schedule-plant-light-mode')?.value),
         plantLightStart: normalizeScheduleTimeInput('schedule-plant-light-start'),
         plantLightEnd: normalizeScheduleTimeInput('schedule-plant-light-end'),
         plantLightProfile: aquaelProfileToApi(document.getElementById('schedule-plant-light-profile')?.value),
+        light2Profile: aquaelProfileToApi(document.getElementById('schedule-plant-light-profile')?.value),
+        light2ProfileCycle: document.getElementById('schedule-plant-light-profile')?.value === 'cycle',
+        light2Start: normalizeScheduleTimeInput('schedule-plant-light-start'),
+        light2End: normalizeScheduleTimeInput('schedule-plant-light-end'),
         aerationMode: scheduleModeToApi(document.getElementById('schedule-air-mode')?.value),
         airOn: normalizeScheduleTimeInput('schedule-air-start'),
         airOff: normalizeScheduleTimeInput('schedule-air-end'),
@@ -402,6 +426,11 @@ function updateRangeScheduleItem(item) {
     const endMinutes = timeToMinutes(endInput.value);
     const wrapsMidnight = mode === 'harmonogram' && endMinutes < startMinutes;
     const baseColor = bar.dataset.barColor || bar.style.background || 'var(--accent-cyan)';
+    const profile = item.querySelector('.schedule-profile-select')?.value;
+    const profileColor = profile === 'night'
+        ? 'var(--accent-blue)'
+        : (profile === 'daybreak' ? 'var(--accent-yellow)' : baseColor);
+    const profileCycle = profile !== undefined ? profile === 'cycle' : item.dataset.profileCycle === '1';
     const lockedToWork = startInput.id === 'schedule-light-start' || startInput.id === 'schedule-heater-start';
 
     startInput.disabled = lockedToWork || mode !== 'harmonogram';
@@ -414,19 +443,21 @@ function updateRangeScheduleItem(item) {
         endPct = 100;
         bar.style.left = '0%';
         bar.style.width = '100%';
-        bar.style.background = baseColor;
+        bar.style.background = profileColor;
     } else if (mode === 'zawsze_wylaczone') {
         bar.style.left = '0%';
         bar.style.width = '0%';
-        bar.style.background = baseColor;
+        bar.style.background = profileColor;
     } else if (wrapsMidnight) {
         bar.style.left = '0%';
         bar.style.width = '100%';
-        bar.style.background = `linear-gradient(90deg, ${baseColor} 0%, ${baseColor} ${endPct}%, transparent ${endPct}%, transparent ${startPct}%, ${baseColor} ${startPct}%, ${baseColor} 100%)`;
+        bar.style.background = `linear-gradient(90deg, ${profileColor} 0%, ${profileColor} ${endPct}%, transparent ${endPct}%, transparent ${startPct}%, ${profileColor} ${startPct}%, ${profileColor} 100%)`;
     } else {
         bar.style.left = `${startPct}%`;
         bar.style.width = `${Math.max(0, endPct - startPct)}%`;
-        bar.style.background = baseColor;
+        bar.style.background = profileCycle
+            ? 'linear-gradient(90deg, #f59e0b 0%, #f59e0b 4.1667%, #facc15 4.1667%, #facc15 83.3333%, #f59e0b 83.3333%, #f59e0b 91.6667%, #3b82f6 91.6667%, #3b82f6 100%)'
+            : profileColor;
     }
 
     setTimelineInputPosition(startInput, startPct);

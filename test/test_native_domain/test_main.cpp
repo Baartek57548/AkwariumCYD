@@ -58,6 +58,8 @@ static void test_factory_light_profile_boundaries() {
 static void test_factory_schedule_outputs() {
     const aquarium::FactoryScheduleState at_1400 = aquarium::factory_schedule_at(14U * 60U, 0U);
     TEST_ASSERT_TRUE(at_1400.lightOn);
+    TEST_ASSERT_TRUE(at_1400.light2On);
+    TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(LightProfile::Day), static_cast<uint8_t>(at_1400.light2Profile));
     TEST_ASSERT_TRUE(at_1400.filterOn);
     TEST_ASSERT_TRUE(at_1400.gasWindowActive);
     TEST_ASSERT_TRUE(at_1400.feedingDue);
@@ -67,6 +69,8 @@ static void test_factory_schedule_outputs() {
 
     const aquarium::FactoryScheduleState at_2030 = aquarium::factory_schedule_at(20U * 60U + 30U, 0U);
     TEST_ASSERT_TRUE(at_2030.lightOn);
+    TEST_ASSERT_TRUE(at_2030.light2On);
+    TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(LightProfile::Daybreak), static_cast<uint8_t>(at_2030.light2Profile));
     TEST_ASSERT_FALSE(at_2030.filterOn);
     TEST_ASSERT_FALSE(at_2030.gasWindowActive);
 }
@@ -101,6 +105,23 @@ static void test_gas_control_is_mutually_exclusive_and_leak_safe() {
     TEST_ASSERT_FALSE(output.aeratorOn);
 }
 
+static void test_ato_requires_low_valid_level_and_obeys_interlocks() {
+    aquarium::AtoControlInput input = {true, true, true, false, false, false};
+    TEST_ASSERT_TRUE(aquarium::evaluate_ato_control(input));
+
+    input.waterLevelHigh = true;
+    TEST_ASSERT_FALSE(aquarium::evaluate_ato_control(input));
+    input.waterLevelHigh = false;
+    input.leakDetected = true;
+    TEST_ASSERT_FALSE(aquarium::evaluate_ato_control(input));
+    input.leakDetected = false;
+    input.timeoutLatched = true;
+    TEST_ASSERT_FALSE(aquarium::evaluate_ato_control(input));
+    input.timeoutLatched = false;
+    input.waterLevelValid = false;
+    TEST_ASSERT_FALSE(aquarium::evaluate_ato_control(input));
+}
+
 static void test_alarm_flags_and_count() {
     const aquarium::AlarmInput input = {
         true, 29.0f,
@@ -128,6 +149,8 @@ static void test_dev_simulator_is_deterministic_and_coherent() {
     TEST_ASSERT_EQUAL_INT(a.ldr, b.ldr);
     TEST_ASSERT_TRUE(a.lightOn);
     TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(LightProfile::Day), static_cast<uint8_t>(a.lightProfile));
+    TEST_ASSERT_TRUE(a.light2On);
+    TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(LightProfile::Day), static_cast<uint8_t>(a.light2Profile));
     TEST_ASSERT_TRUE(a.filterOn);
     TEST_ASSERT_TRUE(a.phRaw > 0);
     TEST_ASSERT_TRUE(a.ecRaw > 0);
@@ -178,6 +201,7 @@ int main(int, char **) {
     RUN_TEST(test_factory_schedule_outputs);
     RUN_TEST(test_thermostat_hysteresis_and_invalid_input);
     RUN_TEST(test_gas_control_is_mutually_exclusive_and_leak_safe);
+    RUN_TEST(test_ato_requires_low_valid_level_and_obeys_interlocks);
     RUN_TEST(test_alarm_flags_and_count);
     RUN_TEST(test_dev_simulator_is_deterministic_and_coherent);
     RUN_TEST(test_web_activity_tracker_capacity_timeout_and_release);

@@ -13,6 +13,20 @@ constexpr uint32_t I2C_MUTEX_TIMEOUT_MS = 50;
 constexpr uint8_t MCP23017_ADDR = 0x20;
 constexpr uint8_t ADS1115_ADDR = 0x48;
 
+namespace UartConsole {
+constexpr uint8_t PORT = 0;
+constexpr int8_t TX_PIN = 1;
+constexpr int8_t RX_PIN = 3;
+constexpr uint32_t BAUD = 115200UL;
+constexpr char FORMAT[] = "8N1";
+}
+
+namespace OneWireBus {
+// GPIO17 is output-capable and unused by the CYD display, touch, SD and I2C buses.
+constexpr uint8_t DATA_PIN = 17;
+constexpr uint32_t MUTEX_TIMEOUT_MS = 250UL;
+}
+
 constexpr int LDR_PIN = 34;
 
 namespace SdCard {

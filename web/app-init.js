@@ -158,6 +158,7 @@ function bindDashboardControls() {
     document.getElementById('relay-plant-toggle')?.addEventListener('click', () => toggleRelayQuickAction('plant'));
     document.getElementById('relay-heater-toggle')?.addEventListener('click', () => toggleRelayQuickAction('heater'));
     document.getElementById('relay-aeration-toggle')?.addEventListener('click', () => toggleRelayQuickAction('aeration'));
+    document.getElementById('bus-scan-refresh')?.addEventListener('click', () => fetchHardwareBusDiagnostics(true));
 }
 
 function bindPinModalEvents() {
@@ -259,7 +260,7 @@ document.addEventListener('DOMContentLoaded', () => {
     startWebSessionHeartbeat();
     startEventStream();
     startPollingFallback();
-    fetchStatus(true);
+    fetchStatus(true, true);
     fetchLogs(true);
     renderLogs();
 });
