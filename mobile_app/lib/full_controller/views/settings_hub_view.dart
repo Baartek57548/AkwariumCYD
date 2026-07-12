@@ -7,6 +7,7 @@ import '../data_access.dart';
 import '../widgets.dart';
 import 'diagnostics_view.dart';
 import 'logs_view.dart';
+import 'profile_settings_view.dart';
 import 'settings_view.dart';
 import 'system_view.dart';
 
@@ -88,10 +89,15 @@ class SettingsHubView extends StatelessWidget {
         const SectionHeader(title: 'Ekran'),
         _SettingsGroup(
           children: [
-            const InfoRow(
+            _SettingsLink(
               icon: Icons.contrast_rounded,
-              label: 'Motyw aplikacji',
-              value: 'Zgodny z telefonem',
+              title: 'Profil i wygląd',
+              subtitle: 'Ustawienia motywu, języka i profilu użytkownika',
+              onTap: () => _open(
+                context,
+                'Profil i wygląd',
+                () => const ProfileSettingsView(),
+              ),
             ),
             InfoRow(
               icon: Icons.brightness_6_rounded,

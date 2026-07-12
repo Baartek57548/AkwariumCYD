@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import 'connection_home_page.dart';
 import 'display_refresh_rate.dart';
+import 'app_settings.dart';
 
 class AquariumApp extends StatefulWidget {
   const AquariumApp({super.key, this.title = 'AquaCYD Control', this.home});
@@ -21,9 +22,15 @@ class _AquariumAppState extends State<AquariumApp> {
     super.initState();
     refreshRateController = DisplayRefreshRateController()
       ..addListener(_onRefreshRateChanged);
+    AppSettings.themeModeNotifier.addListener(_onSettingsChanged);
+    AppSettings.languageNotifier.addListener(_onSettingsChanged);
   }
 
   void _onRefreshRateChanged() {
+    if (mounted) setState(() {});
+  }
+
+  void _onSettingsChanged() {
     if (mounted) setState(() {});
   }
 
@@ -32,6 +39,8 @@ class _AquariumAppState extends State<AquariumApp> {
     refreshRateController
       ..removeListener(_onRefreshRateChanged)
       ..dispose();
+    AppSettings.themeModeNotifier.removeListener(_onSettingsChanged);
+    AppSettings.languageNotifier.removeListener(_onSettingsChanged);
     super.dispose();
   }
 
@@ -46,7 +55,8 @@ class _AquariumAppState extends State<AquariumApp> {
         debugShowCheckedModeBanner: false,
         theme: _theme(seed, Brightness.light),
         darkTheme: _theme(seed, Brightness.dark),
-        themeMode: ThemeMode.system,
+        themeMode: AppSettings.themeModeNotifier.value,
+        locale: AppSettings.languageNotifier.value,
         home: widget.home ?? const ConnectionHomePage(),
       ),
     );
