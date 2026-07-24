@@ -41,6 +41,18 @@ void main() {
     for (final shape in shapes) {
       expect(_maximumRadius(shape), lessThanOrEqualTo(5));
     }
+
+    expect(theme.materialTapTargetSize, MaterialTapTargetSize.padded);
+    final buttonStyles = [
+      theme.filledButtonTheme.style,
+      theme.elevatedButtonTheme.style,
+      theme.outlinedButtonTheme.style,
+      theme.textButtonTheme.style,
+      theme.iconButtonTheme.style,
+    ];
+    for (final style in buttonStyles) {
+      expect(style?.minimumSize?.resolve({})?.height, greaterThanOrEqualTo(48));
+    }
   });
 
   testWidgets('current variant exposes all connection modes', (tester) async {
@@ -51,6 +63,32 @@ void main() {
     expect(find.text('Połącz przez Bluetooth BLE'), findsOneWidget);
     expect(find.text('Uruchom tryb DEV'), findsOneWidget);
     expect(find.text('Oryginalny panel WWW'), findsOneWidget);
+  });
+
+  testWidgets('connection chooser remains usable on a narrow scaled display', (
+    tester,
+  ) async {
+    tester.view.devicePixelRatio = 1;
+    tester.view.physicalSize = const Size(320, 640);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    addTearDown(tester.view.resetPhysicalSize);
+
+    await tester.pumpWidget(
+      MaterialApp(
+        builder: (context, child) => MediaQuery(
+          data: MediaQuery.of(
+            context,
+          ).copyWith(textScaler: const TextScaler.linear(1.8)),
+          child: child!,
+        ),
+        home: const ConnectionHomePage(),
+      ),
+    );
+    await tester.pump();
+
+    expect(find.text('Wybierz sposób połączenia'), findsOneWidget);
+    expect(find.text('Pełna aplikacja przez Wi‑Fi'), findsOneWidget);
+    expect(tester.takeException(), isNull);
   });
 
   testWidgets('full variant contains only production transports', (

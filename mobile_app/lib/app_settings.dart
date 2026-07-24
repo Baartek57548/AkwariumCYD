@@ -17,7 +17,11 @@ class AppSettings {
     usernameNotifier.value = user;
   }
 
-  static Future<void> saveSettings(ThemeMode themeMode, String languageCode, String username) async {
+  static Future<void> saveSettings(
+    ThemeMode themeMode,
+    String languageCode,
+    String username,
+  ) async {
     final prefs = await SharedPreferences.getInstance();
     await prefs.setString('theme_mode', themeMode.name);
     await prefs.setString('selected_language', languageCode);

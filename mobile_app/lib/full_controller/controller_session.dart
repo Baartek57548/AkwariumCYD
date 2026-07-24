@@ -103,6 +103,12 @@ class ControllerSession extends ChangeNotifier {
           );
         }
       }
+    } on ControllerApiException catch (error) {
+      _connected = false;
+      _error = error.message;
+    } on Object catch (error) {
+      _connected = false;
+      _error = 'Nie udało się połączyć ze sterownikiem: $error';
     } finally {
       _busy = false;
       if (!_disposed) notifyListeners();

@@ -2,10 +2,10 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 
-import '../display_refresh_rate.dart';
 import 'controller_api.dart';
 import 'controller_session.dart';
 import 'data_access.dart';
+import 'widgets.dart';
 import 'views/charts_view.dart';
 import 'views/control_hub_view.dart';
 import 'views/dashboard_view.dart';
@@ -149,27 +149,21 @@ class _ControllerShellState extends State<ControllerShell> {
     );
   }
 
-  Widget _currentView() {
-    return switch (_section) {
-      _ControllerSection.dashboard => DashboardView(
-        session: session,
-        onOpenCharts: _openCharts,
-      ),
-      _ControllerSection.control => ControlHubView(
+  List<Widget> _sectionViews() {
+    return [
+      DashboardView(session: session, onOpenCharts: _openCharts),
+      ControlHubView(
         session: session,
         runAction: _runAction,
         ensureAdmin: _ensureAdmin,
       ),
-      _ControllerSection.schedules => SchedulesView(
-        session: session,
-        runAction: _runAction,
-      ),
-      _ControllerSection.settings => SettingsHubView(
+      SchedulesView(session: session, runAction: _runAction),
+      SettingsHubView(
         session: session,
         runAction: _runAction,
         ensureAdmin: _ensureAdmin,
       ),
-    };
+    ];
   }
 
   void _selectSection(int index) {
@@ -201,11 +195,11 @@ class _ControllerShellState extends State<ControllerShell> {
     final width = MediaQuery.sizeOf(context).width;
     final showRail = width >= 760;
     final extendedRail = width >= 1100;
-    final refreshProfile = DisplayRefreshRateScope.of(context);
+    final textScale = MediaQuery.textScalerOf(context).scale(1);
+    final toolbarHeight = (72 + (textScale - 1) * 18).clamp(72, 92).toDouble();
     return Scaffold(
       appBar: AppBar(
-        automaticallyImplyLeading: false,
-        toolbarHeight: 76,
+        toolbarHeight: toolbarHeight,
         titleSpacing: 16,
         title: _ControllerHeader(session: session),
         actions: [
@@ -272,27 +266,29 @@ class _ControllerShellState extends State<ControllerShell> {
           if (showRail) const VerticalDivider(width: 1),
           Expanded(
             child: session.status.isEmpty
-                ? _ConnectionFailure(
+                ? _ConnectionState(
                     message: session.error,
+                    loading: session.error == null,
                     retry: session.connect,
                   )
                 : Stack(
                     children: [
                       Positioned.fill(
-                        child: AnimatedSwitcher(
-                          duration: refreshProfile.transitionDuration,
-                          reverseDuration:
-                              refreshProfile.shortAnimationDuration,
-                          switchInCurve: Curves.easeOutCubic,
-                          switchOutCurve: Curves.easeInCubic,
-                          transitionBuilder: (child, animation) =>
-                              FadeTransition(opacity: animation, child: child),
-                          child: KeyedSubtree(
-                            key: ValueKey(_section),
-                            child: _currentView(),
-                          ),
+                        child: IndexedStack(
+                          index: _section.index,
+                          children: _sectionViews(),
                         ),
                       ),
+                      if (session.busy)
+                        const Positioned(
+                          left: 0,
+                          right: 0,
+                          top: 0,
+                          child: LinearProgressIndicator(
+                            minHeight: 3,
+                            semanticsLabel: 'Aktualizowanie danych',
+                          ),
+                        ),
                       if (!session.connected && session.error != null)
                         Positioned(
                           left: 12,
@@ -340,81 +336,123 @@ class _ControllerHeader extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final status = session.status;
-    final width = MediaQuery.sizeOf(context).width;
     final deviceName = status.text('device', 'cydAkwarium');
     final address =
         session.baseUri?.host ??
         status.section('network').text('ip', 'akwarium.local');
-    final (icon, label) = switch (session.sessionKind) {
+    final (transportIcon, transportLabel) = switch (session.sessionKind) {
       ControllerSessionKind.bluetooth => (Icons.bluetooth_rounded, 'BLE'),
       ControllerSessionKind.development => (Icons.science_outlined, 'DEV'),
       ControllerSessionKind.wifi => (Icons.wifi_rounded, 'Wi‑Fi'),
     };
+    final connecting = status.isEmpty && session.error == null;
+    final connectionIcon = connecting
+        ? Icons.sync_rounded
+        : session.connected
+        ? transportIcon
+        : Icons.cloud_off_rounded;
+    final connectionLabel = connecting
+        ? 'Łączenie'
+        : session.connected
+        ? transportLabel
+        : 'Offline';
     final colors = Theme.of(context).colorScheme;
-    return Row(
-      children: [
-        ClipRRect(
-          borderRadius: BorderRadius.circular(5),
-          child: Image.asset(
-            'assets/branding/aquacyd-control-icon.png',
-            width: 46,
-            height: 46,
-            fit: BoxFit.cover,
-          ),
-        ),
-        const SizedBox(width: 12),
-        Expanded(
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(
-                deviceName,
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: const TextStyle(
-                  fontSize: 18,
-                  fontWeight: FontWeight.w800,
-                ),
-              ),
-              Text(
-                address,
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: Theme.of(
-                  context,
-                ).textTheme.bodySmall?.copyWith(color: colors.onSurfaceVariant),
-              ),
-            ],
-          ),
-        ),
-        DecoratedBox(
-          decoration: BoxDecoration(
-            border: Border.all(color: colors.outlineVariant),
-            borderRadius: BorderRadius.circular(5),
-          ),
-          child: Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-            child: Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Icon(
-                  session.connected ? icon : Icons.cloud_off_rounded,
-                  size: 20,
-                  color: session.connected ? null : colors.error,
-                ),
-                if (width >= 340) ...[
-                  const SizedBox(width: 7),
-                  Text(
-                    session.connected ? label : 'Offline',
-                    style: const TextStyle(fontWeight: FontWeight.w700),
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final textScale = MediaQuery.textScalerOf(context).scale(1);
+        final showLogo = constraints.maxWidth >= 250 && textScale <= 1.6;
+        final showAddress = constraints.maxWidth >= 210 && textScale <= 1.4;
+        final showConnectionLabel =
+            constraints.maxWidth >= 330 && textScale <= 1.2;
+        return Row(
+          children: [
+            if (showLogo) ...[
+              ExcludeSemantics(
+                child: ClipRRect(
+                  borderRadius: BorderRadius.circular(5),
+                  child: Image.asset(
+                    'assets/branding/aquacyd-control-icon.png',
+                    width: 44,
+                    height: 44,
+                    fit: BoxFit.cover,
                   ),
+                ),
+              ),
+              const SizedBox(width: 10),
+            ],
+            Expanded(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    deviceName,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(
+                      fontSize: 18,
+                      fontWeight: FontWeight.w800,
+                    ),
+                  ),
+                  if (showAddress)
+                    Text(
+                      address,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                        color: colors.onSurfaceVariant,
+                      ),
+                    ),
                 ],
-              ],
+              ),
             ),
-          ),
-        ),
-      ],
+            const SizedBox(width: 8),
+            Semantics(
+              label: connecting
+                  ? 'Łączenie ze sterownikiem'
+                  : session.connected
+                  ? 'Połączenie aktywne: $transportLabel'
+                  : 'Sterownik jest offline',
+              liveRegion: true,
+              child: ExcludeSemantics(
+                child: DecoratedBox(
+                  decoration: BoxDecoration(
+                    border: Border.all(color: colors.outlineVariant),
+                    borderRadius: BorderRadius.circular(5),
+                  ),
+                  child: Padding(
+                    padding: EdgeInsets.symmetric(
+                      horizontal: showConnectionLabel ? 10 : 8,
+                      vertical: 8,
+                    ),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Icon(
+                          connectionIcon,
+                          size: 20,
+                          color: connecting
+                              ? colors.primary
+                              : session.connected
+                              ? null
+                              : colors.error,
+                        ),
+                        if (showConnectionLabel) ...[
+                          const SizedBox(width: 7),
+                          Text(
+                            connectionLabel,
+                            style: const TextStyle(fontWeight: FontWeight.w700),
+                          ),
+                        ],
+                      ],
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          ],
+        );
+      },
     );
   }
 }
@@ -488,35 +526,31 @@ class _AdminPinDialogState extends State<_AdminPinDialog> {
   }
 }
 
-class _ConnectionFailure extends StatelessWidget {
-  const _ConnectionFailure({required this.message, required this.retry});
+class _ConnectionState extends StatelessWidget {
+  const _ConnectionState({
+    required this.message,
+    required this.loading,
+    required this.retry,
+  });
 
   final String? message;
+  final bool loading;
   final Future<void> Function() retry;
 
   @override
   Widget build(BuildContext context) {
-    return Center(
-      child: SingleChildScrollView(
-        padding: const EdgeInsets.all(32),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            const Icon(Icons.cloud_off_rounded, size: 72),
-            const SizedBox(height: 16),
-            Text(
-              message ?? 'Łączenie ze sterownikiem…',
-              textAlign: TextAlign.center,
-            ),
-            const SizedBox(height: 18),
-            FilledButton.icon(
-              onPressed: retry,
-              icon: const Icon(Icons.refresh_rounded),
-              label: const Text('Spróbuj ponownie'),
-            ),
-          ],
-        ),
-      ),
+    if (loading) {
+      return const StatePanel.loading(
+        title: 'Łączenie ze sterownikiem',
+        message: 'Pobieramy bieżący stan urządzenia. To może potrwać chwilę.',
+      );
+    }
+    return StatePanel.error(
+      title: 'Nie udało się połączyć',
+      message: message ?? 'Sterownik nie odpowiedział.',
+      icon: Icons.cloud_off_rounded,
+      actionLabel: 'Spróbuj ponownie',
+      onAction: retry,
     );
   }
 }

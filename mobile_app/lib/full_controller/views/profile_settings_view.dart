@@ -18,7 +18,9 @@ class _ProfileSettingsViewState extends State<ProfileSettingsView> {
   @override
   void initState() {
     super.initState();
-    _usernameController = TextEditingController(text: AppSettings.usernameNotifier.value);
+    _usernameController = TextEditingController(
+      text: AppSettings.usernameNotifier.value,
+    );
     _selectedThemeMode = AppSettings.themeModeNotifier.value;
     _selectedLanguage = AppSettings.languageNotifier.value.languageCode;
   }
@@ -66,8 +68,8 @@ class _ProfileSettingsViewState extends State<ProfileSettingsView> {
                       Text(
                         'Nazwa użytkownika',
                         style: Theme.of(context).textTheme.titleSmall?.copyWith(
-                              fontWeight: FontWeight.bold,
-                            ),
+                          fontWeight: FontWeight.bold,
+                        ),
                       ),
                       const SizedBox(height: 8),
                       TextFormField(
@@ -98,8 +100,8 @@ class _ProfileSettingsViewState extends State<ProfileSettingsView> {
                       Text(
                         'Motyw aplikacji',
                         style: Theme.of(context).textTheme.titleSmall?.copyWith(
-                              fontWeight: FontWeight.bold,
-                            ),
+                          fontWeight: FontWeight.bold,
+                        ),
                       ),
                       const SizedBox(height: 12),
                       SegmentedButton<ThemeMode>(
@@ -131,8 +133,8 @@ class _ProfileSettingsViewState extends State<ProfileSettingsView> {
                       Text(
                         'Język aplikacji',
                         style: Theme.of(context).textTheme.titleSmall?.copyWith(
-                              fontWeight: FontWeight.bold,
-                            ),
+                          fontWeight: FontWeight.bold,
+                        ),
                       ),
                       const SizedBox(height: 8),
                       DropdownButtonFormField<String>(
@@ -141,14 +143,8 @@ class _ProfileSettingsViewState extends State<ProfileSettingsView> {
                           prefixIcon: Icon(Icons.language_rounded),
                         ),
                         items: const [
-                          DropdownMenuItem(
-                            value: 'pl',
-                            child: Text('Polski'),
-                          ),
-                          DropdownMenuItem(
-                            value: 'en',
-                            child: Text('English'),
-                          ),
+                          DropdownMenuItem(value: 'pl', child: Text('Polski')),
+                          DropdownMenuItem(value: 'en', child: Text('English')),
                         ],
                         onChanged: (String? newValue) {
                           if (newValue != null) {

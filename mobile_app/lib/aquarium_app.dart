@@ -77,6 +77,7 @@ class _AquariumAppState extends State<AquariumApp> {
           ? const Color(0xFF080909)
           : const Color(0xFFF1F4F4),
       useMaterial3: true,
+      materialTapTargetSize: MaterialTapTargetSize.padded,
       cardTheme: CardThemeData(
         elevation: 0,
         color: dark ? const Color(0xFF151616) : Colors.white,
@@ -119,19 +120,34 @@ class _AquariumAppState extends State<AquariumApp> {
         border: const OutlineInputBorder(borderRadius: borderRadius),
       ),
       filledButtonTheme: const FilledButtonThemeData(
-        style: ButtonStyle(shape: WidgetStatePropertyAll(componentShape)),
+        style: ButtonStyle(
+          minimumSize: WidgetStatePropertyAll(Size(64, 48)),
+          shape: WidgetStatePropertyAll(componentShape),
+        ),
       ),
       elevatedButtonTheme: const ElevatedButtonThemeData(
-        style: ButtonStyle(shape: WidgetStatePropertyAll(componentShape)),
+        style: ButtonStyle(
+          minimumSize: WidgetStatePropertyAll(Size(64, 48)),
+          shape: WidgetStatePropertyAll(componentShape),
+        ),
       ),
       outlinedButtonTheme: const OutlinedButtonThemeData(
-        style: ButtonStyle(shape: WidgetStatePropertyAll(componentShape)),
+        style: ButtonStyle(
+          minimumSize: WidgetStatePropertyAll(Size(64, 48)),
+          shape: WidgetStatePropertyAll(componentShape),
+        ),
       ),
       textButtonTheme: const TextButtonThemeData(
-        style: ButtonStyle(shape: WidgetStatePropertyAll(componentShape)),
+        style: ButtonStyle(
+          minimumSize: WidgetStatePropertyAll(Size(64, 48)),
+          shape: WidgetStatePropertyAll(componentShape),
+        ),
       ),
       iconButtonTheme: const IconButtonThemeData(
-        style: ButtonStyle(shape: WidgetStatePropertyAll(componentShape)),
+        style: ButtonStyle(
+          minimumSize: WidgetStatePropertyAll(Size.square(48)),
+          shape: WidgetStatePropertyAll(componentShape),
+        ),
       ),
       floatingActionButtonTheme: const FloatingActionButtonThemeData(
         shape: componentShape,

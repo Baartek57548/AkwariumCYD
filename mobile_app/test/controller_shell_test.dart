@@ -127,4 +127,49 @@ void main() {
     expect(find.text('Obsługiwane'), findsOneWidget);
     expect(tester.takeException(), isNull);
   });
+
+  testWidgets('section navigation preserves unsaved schedule state', (
+    tester,
+  ) async {
+    tester.view.devicePixelRatio = 1;
+    tester.view.physicalSize = const Size(412, 915);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    addTearDown(tester.view.resetPhysicalSize);
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: ControllerShell(session: ControllerSession.development()),
+      ),
+    );
+    await tester.pumpAndSettle(const Duration(milliseconds: 500));
+
+    await tester.tap(find.text('Harmonogram'));
+    await tester.pumpAndSettle();
+    final dropdownFinder = find.byType(DropdownButtonFormField<int>).first;
+    final initialValue = tester
+        .widget<DropdownButtonFormField<int>>(dropdownFinder)
+        .initialValue;
+    final targetValue = initialValue == 1 ? 2 : 1;
+    final targetLabel = targetValue == 1 ? 'Zawsze ON' : 'Zawsze OFF';
+
+    await tester.tap(dropdownFinder);
+    await tester.pumpAndSettle();
+    await tester.tap(find.text(targetLabel).last);
+    await tester.pumpAndSettle();
+    expect(
+      tester.widget<DropdownButtonFormField<int>>(dropdownFinder).initialValue,
+      targetValue,
+    );
+
+    await tester.tap(find.text('Pulpit'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Harmonogram'));
+    await tester.pumpAndSettle();
+
+    expect(
+      tester.widget<DropdownButtonFormField<int>>(dropdownFinder).initialValue,
+      targetValue,
+    );
+    expect(tester.takeException(), isNull);
+  });
 }

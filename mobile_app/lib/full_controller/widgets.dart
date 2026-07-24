@@ -16,24 +16,29 @@ class ControllerPageBody extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return RefreshIndicator(
-      onRefresh: onRefresh ?? () async {},
-      notificationPredicate: onRefresh == null
-          ? (_) => false
-          : (notification) => notification.depth == 0,
-      child: ListView(
-        padding: padding,
-        children: [
-          Center(
-            child: ConstrainedBox(
-              constraints: BoxConstraints(maxWidth: maxWidth),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: children,
+    return SafeArea(
+      top: false,
+      child: RefreshIndicator(
+        onRefresh: onRefresh ?? () async {},
+        notificationPredicate: onRefresh == null
+            ? (_) => false
+            : (notification) => notification.depth == 0,
+        child: ListView(
+          physics: const AlwaysScrollableScrollPhysics(),
+          keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
+          padding: padding,
+          children: [
+            Center(
+              child: ConstrainedBox(
+                constraints: BoxConstraints(maxWidth: maxWidth),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: children,
+                ),
               ),
             ),
-          ),
-        ],
+          ],
+        ),
       ),
     );
   }
@@ -55,10 +60,10 @@ class SectionHeader extends StatelessWidget {
   Widget build(BuildContext context) {
     return Padding(
       padding: const EdgeInsets.only(top: 10, bottom: 10),
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.end,
-        children: [
-          Expanded(
+      child: LayoutBuilder(
+        builder: (context, constraints) {
+          final titleBlock = Semantics(
+            header: true,
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
@@ -80,9 +85,29 @@ class SectionHeader extends StatelessWidget {
                   ),
               ],
             ),
-          ),
-          ?trailing,
-        ],
+          );
+          if (trailing == null) return titleBlock;
+
+          final textScale = MediaQuery.textScalerOf(context).scale(1);
+          if (constraints.maxWidth < 420 || textScale > 1.3) {
+            return Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                titleBlock,
+                const SizedBox(height: 10),
+                Align(alignment: Alignment.centerRight, child: trailing),
+              ],
+            );
+          }
+          return Row(
+            crossAxisAlignment: CrossAxisAlignment.end,
+            children: [
+              Expanded(child: titleBlock),
+              const SizedBox(width: 12),
+              trailing!,
+            ],
+          );
+        },
       ),
     );
   }
@@ -108,42 +133,44 @@ class MetricTile extends StatelessWidget {
   Widget build(BuildContext context) {
     final colors = Theme.of(context).colorScheme;
     final color = tone ?? colors.primary;
-    return Card(
-      margin: EdgeInsets.zero,
-      child: Padding(
-        padding: const EdgeInsets.all(16),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Row(
-              children: [
-                Icon(icon, color: color, size: 21),
-                const SizedBox(width: 8),
-                Expanded(
-                  child: Text(
-                    label,
-                    style: const TextStyle(fontWeight: FontWeight.w600),
+    return MergeSemantics(
+      child: Card(
+        margin: EdgeInsets.zero,
+        child: Padding(
+          padding: const EdgeInsets.all(16),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                children: [
+                  Icon(icon, color: color, size: 21),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Text(
+                      label,
+                      style: const TextStyle(fontWeight: FontWeight.w600),
+                    ),
                   ),
+                ],
+              ),
+              const SizedBox(height: 12),
+              Text(
+                value,
+                style: Theme.of(context).textTheme.headlineSmall?.copyWith(
+                  fontWeight: FontWeight.w900,
                 ),
-              ],
-            ),
-            const SizedBox(height: 12),
-            Text(
-              value,
-              style: Theme.of(
-                context,
-              ).textTheme.headlineSmall?.copyWith(fontWeight: FontWeight.w900),
-            ),
-            const SizedBox(height: 2),
-            Text(
-              detail,
-              maxLines: 2,
-              overflow: TextOverflow.ellipsis,
-              style: Theme.of(
-                context,
-              ).textTheme.bodySmall?.copyWith(color: colors.onSurfaceVariant),
-            ),
-          ],
+              ),
+              const SizedBox(height: 2),
+              Text(
+                detail,
+                maxLines: 2,
+                overflow: TextOverflow.ellipsis,
+                style: Theme.of(
+                  context,
+                ).textTheme.bodySmall?.copyWith(color: colors.onSurfaceVariant),
+              ),
+            ],
+          ),
         ),
       ),
     );
@@ -166,9 +193,10 @@ class ResponsiveGrid extends StatelessWidget {
   Widget build(BuildContext context) {
     return LayoutBuilder(
       builder: (context, constraints) {
-        final columns = (constraints.maxWidth / minimumChildWidth)
-            .floor()
-            .clamp(1, 4);
+        final columns =
+            ((constraints.maxWidth + spacing) / (minimumChildWidth + spacing))
+                .floor()
+                .clamp(1, 4);
         final width =
             (constraints.maxWidth - spacing * (columns - 1)) / columns;
         return Wrap(
@@ -197,24 +225,45 @@ class InfoRow extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 6),
-      child: Row(
-        children: [
-          if (icon != null) ...[
-            Icon(icon, size: 18, color: Theme.of(context).colorScheme.primary),
-            const SizedBox(width: 8),
-          ],
-          Expanded(child: Text(label)),
-          const SizedBox(width: 12),
-          Flexible(
-            child: Text(
-              value,
-              textAlign: TextAlign.end,
-              style: const TextStyle(fontWeight: FontWeight.w700),
-            ),
-          ),
+    final colors = Theme.of(context).colorScheme;
+    final labelWidget = Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        if (icon != null) ...[
+          Icon(icon, size: 18, color: colors.primary),
+          const SizedBox(width: 8),
         ],
+        Flexible(child: Text(label)),
+      ],
+    );
+    final valueWidget = Text(
+      value,
+      textAlign: TextAlign.end,
+      style: const TextStyle(fontWeight: FontWeight.w700),
+    );
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+      child: LayoutBuilder(
+        builder: (context, constraints) {
+          final textScale = MediaQuery.textScalerOf(context).scale(1);
+          if (constraints.maxWidth < 340 || textScale > 1.4) {
+            return Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                labelWidget,
+                const SizedBox(height: 4),
+                Align(alignment: Alignment.centerRight, child: valueWidget),
+              ],
+            );
+          }
+          return Row(
+            children: [
+              Expanded(child: labelWidget),
+              const SizedBox(width: 12),
+              Flexible(child: valueWidget),
+            ],
+          );
+        },
       ),
     );
   }
@@ -237,29 +286,150 @@ class StatusBanner extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final colors = Theme.of(context).colorScheme;
-    return Container(
-      padding: const EdgeInsets.all(16),
-      decoration: BoxDecoration(
-        color: isError ? colors.errorContainer : colors.primaryContainer,
-        borderRadius: BorderRadius.circular(5),
-      ),
-      child: Row(
-        children: [
-          Icon(icon, size: 30),
-          const SizedBox(width: 12),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  title,
-                  style: const TextStyle(fontWeight: FontWeight.w800),
+    final foreground = isError
+        ? colors.onErrorContainer
+        : colors.onPrimaryContainer;
+    return Semantics(
+      container: true,
+      liveRegion: true,
+      label: '$title. $message',
+      child: ExcludeSemantics(
+        child: Container(
+          padding: const EdgeInsets.all(16),
+          decoration: BoxDecoration(
+            color: isError ? colors.errorContainer : colors.primaryContainer,
+            borderRadius: BorderRadius.circular(5),
+          ),
+          child: Row(
+            children: [
+              Icon(icon, size: 30, color: foreground),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      title,
+                      style: TextStyle(
+                        color: foreground,
+                        fontWeight: FontWeight.w800,
+                      ),
+                    ),
+                    Text(message, style: TextStyle(color: foreground)),
+                  ],
                 ),
-                Text(message),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+enum _StatePanelKind { loading, empty, error }
+
+class StatePanel extends StatelessWidget {
+  const StatePanel.loading({
+    super.key,
+    required this.title,
+    required this.message,
+  }) : _kind = _StatePanelKind.loading,
+       icon = null,
+       actionLabel = null,
+       onAction = null;
+
+  const StatePanel.empty({
+    super.key,
+    required this.title,
+    required this.message,
+    this.icon,
+    this.actionLabel,
+    this.onAction,
+  }) : _kind = _StatePanelKind.empty;
+
+  const StatePanel.error({
+    super.key,
+    required this.title,
+    required this.message,
+    this.icon,
+    this.actionLabel,
+    this.onAction,
+  }) : _kind = _StatePanelKind.error;
+
+  final _StatePanelKind _kind;
+  final String title;
+  final String message;
+  final IconData? icon;
+  final String? actionLabel;
+  final VoidCallback? onAction;
+
+  @override
+  Widget build(BuildContext context) {
+    final colors = Theme.of(context).colorScheme;
+    final isError = _kind == _StatePanelKind.error;
+    final semanticsLabel = '$title. $message';
+    final action = actionLabel;
+    return Semantics(
+      container: true,
+      liveRegion: _kind != _StatePanelKind.empty,
+      child: Center(
+        child: SingleChildScrollView(
+          padding: const EdgeInsets.all(24),
+          child: ConstrainedBox(
+            constraints: const BoxConstraints(maxWidth: 460),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Semantics(
+                  label: semanticsLabel,
+                  child: ExcludeSemantics(
+                    child: Column(
+                      children: [
+                        if (_kind == _StatePanelKind.loading)
+                          const SizedBox.square(
+                            dimension: 48,
+                            child: CircularProgressIndicator(),
+                          )
+                        else
+                          Icon(
+                            icon ??
+                                (isError
+                                    ? Icons.error_outline_rounded
+                                    : Icons.inbox_outlined),
+                            size: 64,
+                            color: isError ? colors.error : colors.primary,
+                          ),
+                        const SizedBox(height: 18),
+                        Text(
+                          title,
+                          textAlign: TextAlign.center,
+                          style: Theme.of(context).textTheme.titleLarge
+                              ?.copyWith(fontWeight: FontWeight.w800),
+                        ),
+                        const SizedBox(height: 8),
+                        Text(
+                          message,
+                          textAlign: TextAlign.center,
+                          style: Theme.of(context).textTheme.bodyMedium
+                              ?.copyWith(color: colors.onSurfaceVariant),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+                if (action != null && onAction != null) ...[
+                  const SizedBox(height: 20),
+                  FilledButton.icon(
+                    onPressed: onAction,
+                    icon: const Icon(Icons.refresh_rounded),
+                    label: Text(action),
+                  ),
+                ],
               ],
             ),
           ),
-        ],
+        ),
       ),
     );
   }

@@ -7,6 +7,7 @@ import 'connectivity/ble_controller_transport.dart';
 import 'full_controller/ble_remote_api.dart';
 import 'full_controller/controller_session.dart';
 import 'full_controller/controller_shell.dart';
+import 'full_controller/widgets.dart';
 
 class BleScannerPage extends StatefulWidget {
   const BleScannerPage({super.key});
@@ -126,91 +127,110 @@ class _BleScannerPageState extends State<BleScannerPage> {
       ),
       body: Column(
         children: [
-          if (_scanning) const LinearProgressIndicator(),
-          if (_error != null)
-            MaterialBanner(
-              content: Text(_error!),
-              leading: const Icon(Icons.bluetooth_disabled_rounded),
-              actions: [
-                TextButton(onPressed: _startScan, child: const Text('PONÓW')),
-              ],
+          if (_scanning)
+            const LinearProgressIndicator(
+              minHeight: 3,
+              semanticsLabel: 'Skanowanie urządzeń Bluetooth',
             ),
           Expanded(
-            child: devices.isEmpty
-                ? _EmptyScannerState(scanning: _scanning, onRetry: _startScan)
-                : ListView.separated(
-                    padding: const EdgeInsets.all(12),
-                    itemCount: devices.length,
-                    separatorBuilder: (_, _) => const SizedBox(height: 8),
-                    itemBuilder: (context, index) {
-                      final device = devices[index];
-                      final name = device.name.trim().isEmpty
-                          ? 'AquaCYD BLE'
-                          : device.name.trim();
-                      return Card(
-                        child: ListTile(
-                          leading: const CircleAvatar(
-                            child: Icon(Icons.bluetooth_rounded),
-                          ),
-                          title: Text(name),
-                          subtitle: Text(
-                            '${device.id}\nSygnał: ${device.rssi} dBm',
-                          ),
-                          isThreeLine: true,
-                          trailing: const Icon(Icons.chevron_right_rounded),
-                          onTap: () => _openDevice(device),
+            child: _error != null
+                ? StatePanel.error(
+                    title: 'Skanowanie nie powiodło się',
+                    message: _error!,
+                    icon: Icons.bluetooth_disabled_rounded,
+                    actionLabel: 'Spróbuj ponownie',
+                    onAction: _startScan,
+                  )
+                : devices.isEmpty
+                ? _scanning
+                      ? const StatePanel.loading(
+                          title: 'Szukanie sterownika',
+                          message:
+                              'Trzymaj telefon blisko włączonego sterownika AquaCYD.',
+                        )
+                      : StatePanel.empty(
+                          title: 'Nie znaleziono sterownika',
+                          message:
+                              'Sprawdź, czy firmware BLE jest aktywne, a Bluetooth w telefonie włączony.',
+                          icon: Icons.bluetooth_disabled_rounded,
+                          actionLabel: 'Skanuj ponownie',
+                          onAction: _startScan,
+                        )
+                : SafeArea(
+                    top: false,
+                    child: Center(
+                      child: ConstrainedBox(
+                        constraints: const BoxConstraints(maxWidth: 720),
+                        child: ListView.separated(
+                          keyboardDismissBehavior:
+                              ScrollViewKeyboardDismissBehavior.onDrag,
+                          padding: const EdgeInsets.fromLTRB(12, 12, 12, 24),
+                          itemCount: devices.length,
+                          separatorBuilder: (_, _) => const SizedBox(height: 8),
+                          itemBuilder: (context, index) {
+                            final device = devices[index];
+                            final name = device.name.trim().isEmpty
+                                ? 'AquaCYD BLE'
+                                : device.name.trim();
+                            return Card(
+                              clipBehavior: Clip.antiAlias,
+                              child: ListTile(
+                                contentPadding: const EdgeInsets.symmetric(
+                                  horizontal: 16,
+                                  vertical: 6,
+                                ),
+                                leading: ExcludeSemantics(
+                                  child: Container(
+                                    width: 48,
+                                    height: 48,
+                                    decoration: BoxDecoration(
+                                      color: Theme.of(
+                                        context,
+                                      ).colorScheme.primaryContainer,
+                                      borderRadius: BorderRadius.circular(5),
+                                    ),
+                                    child: Icon(
+                                      Icons.bluetooth_rounded,
+                                      color: Theme.of(
+                                        context,
+                                      ).colorScheme.primary,
+                                    ),
+                                  ),
+                                ),
+                                title: Text(
+                                  name,
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: const TextStyle(
+                                    fontWeight: FontWeight.w700,
+                                  ),
+                                ),
+                                subtitle: Text(
+                                  '${_signalLabel(device.rssi)} · ${device.rssi} dBm\n${device.id}',
+                                  maxLines: 2,
+                                  overflow: TextOverflow.ellipsis,
+                                ),
+                                isThreeLine: true,
+                                trailing: const Icon(
+                                  Icons.chevron_right_rounded,
+                                ),
+                                onTap: () => _openDevice(device),
+                              ),
+                            );
+                          },
                         ),
-                      );
-                    },
+                      ),
+                    ),
                   ),
           ),
         ],
       ),
     );
   }
-}
 
-class _EmptyScannerState extends StatelessWidget {
-  const _EmptyScannerState({required this.scanning, required this.onRetry});
-
-  final bool scanning;
-  final VoidCallback onRetry;
-
-  @override
-  Widget build(BuildContext context) {
-    return Center(
-      child: Padding(
-        padding: const EdgeInsets.all(28),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Icon(
-              scanning ? Icons.bluetooth_searching : Icons.bluetooth_disabled,
-              size: 70,
-              color: Theme.of(context).colorScheme.primary,
-            ),
-            const SizedBox(height: 18),
-            Text(
-              scanning ? 'Szukanie sterownika…' : 'Nie znaleziono sterownika',
-              style: Theme.of(context).textTheme.titleLarge,
-              textAlign: TextAlign.center,
-            ),
-            const SizedBox(height: 8),
-            const Text(
-              'Włącz sterownik z firmware BLE i trzymaj telefon w jego pobliżu.',
-              textAlign: TextAlign.center,
-            ),
-            if (!scanning) ...[
-              const SizedBox(height: 20),
-              FilledButton.icon(
-                onPressed: onRetry,
-                icon: const Icon(Icons.refresh),
-                label: const Text('Skanuj ponownie'),
-              ),
-            ],
-          ],
-        ),
-      ),
-    );
+  String _signalLabel(int rssi) {
+    if (rssi >= -60) return 'Silny sygnał';
+    if (rssi >= -75) return 'Średni sygnał';
+    return 'Słaby sygnał';
   }
 }
