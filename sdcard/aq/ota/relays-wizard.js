@@ -62,7 +62,124 @@
     }
 
     const FIRMWARE_RELAY_MAP = buildFirmwareDefaultMap();
+    const MAX_RELAY_CONFIG_FILE_BYTES = 32 * 1024;
     relaysConfig.relays = FIRMWARE_RELAY_MAP.map((relay) => ({ ...relay }));
+
+    function normalizeBoolean(value, fallback) {
+        return typeof value === 'boolean' ? value : fallback;
+    }
+
+    function normalizeEnum(value, allowed, fallback) {
+        const normalized = String(value || '').trim();
+        return allowed.has(normalized) ? normalized : fallback;
+    }
+
+    function normalizeRelayLabel(value, fallback) {
+        const normalized = String(value ?? '')
+            .replace(/[\u0000-\u001F\u007F]/g, ' ')
+            .replace(/\s+/g, ' ')
+            .trim()
+            .slice(0, 48);
+        return normalized || fallback;
+    }
+
+    function normalizeRelayConfig(input) {
+        if (!input || typeof input !== 'object' || !Array.isArray(input.relays)) {
+            throw new Error('Profil nie zawiera tablicy przekaźników.');
+        }
+        if (input.relays.length < 1 || input.relays.length > 8) {
+            throw new Error('Profil musi zawierać od 1 do 8 unikalnych kanałów.');
+        }
+
+        const allowedFunctions = new Set(RELAY_FUNCTIONS.map((item) => item.value));
+        const allowedDefaultStates = new Set(['auto', 'on', 'off']);
+        const allowedSafeStates = new Set(['off', 'on', 'keep']);
+        const normalizedByChannel = new Map();
+
+        input.relays.forEach((relay, index) => {
+            if (!relay || typeof relay !== 'object') {
+                throw new Error(`Kanał na pozycji ${index + 1} ma nieprawidłowy format.`);
+            }
+
+            const channel = Number(relay.channel);
+            if (!Number.isInteger(channel) || channel < 1 || channel > 8) {
+                throw new Error(`Kanał na pozycji ${index + 1} musi być liczbą od 1 do 8.`);
+            }
+            if (normalizedByChannel.has(channel)) {
+                throw new Error(`Kanał ${channel} występuje w profilu więcej niż raz.`);
+            }
+
+            const functionName = String(relay.function || 'none').trim();
+            if (!allowedFunctions.has(functionName)) {
+                throw new Error(`Kanał ${channel} zawiera nieobsługiwaną funkcję.`);
+            }
+
+            const firmwareFallback = FIRMWARE_RELAY_MAP[channel - 1];
+            const functionInfo = getFunctionInfo(functionName);
+            normalizedByChannel.set(channel, {
+                channel,
+                function: functionName,
+                label: normalizeRelayLabel(relay.label, functionInfo.label || `Kanał ${channel}`),
+                defaultState: normalizeEnum(
+                    relay.defaultState,
+                    allowedDefaultStates,
+                    firmwareFallback?.defaultState || 'off'
+                ),
+                safeState: normalizeEnum(
+                    relay.safeState,
+                    allowedSafeStates,
+                    firmwareFallback?.safeState || 'off'
+                ),
+                manualAllowed: normalizeBoolean(
+                    relay.manualAllowed,
+                    firmwareFallback?.manualAllowed ?? false
+                ),
+                pinRequired: normalizeBoolean(
+                    relay.pinRequired,
+                    firmwareFallback?.pinRequired ?? true
+                )
+            });
+        });
+
+        const relays = Array.from({ length: 8 }, (_, index) => {
+            const channel = index + 1;
+            return normalizedByChannel.get(channel) || {
+                channel,
+                function: 'none',
+                label: `Kanał ${channel}`,
+                defaultState: 'off',
+                safeState: 'off',
+                manualAllowed: false,
+                pinRequired: true
+            };
+        });
+
+        const board = input.relayBoard && typeof input.relayBoard === 'object'
+            ? input.relayBoard
+            : {};
+        const startDelay = Number(board.startDelay);
+        const atoLimit = Number(input.atoLimit);
+
+        return {
+            relayBoard: {
+                enabled: normalizeBoolean(board.enabled, true),
+                channels: 8,
+                expander: 'MCP23017',
+                i2cAddress: /^0x[0-9a-f]{2}$/i.test(String(board.i2cAddress || ''))
+                    ? String(board.i2cAddress).toLowerCase()
+                    : '0x20',
+                activeLow: normalizeBoolean(board.activeLow, true),
+                storage: board.storage === 'internal' ? 'internal' : 'sd',
+                startDelay: Number.isFinite(startDelay)
+                    ? Math.max(0, Math.min(10000, Math.trunc(startDelay)))
+                    : 500
+            },
+            relays,
+            atoLimit: Number.isFinite(atoLimit)
+                ? Math.max(5, Math.min(300, Math.trunc(atoLimit)))
+                : 30
+        };
+    }
 
     function relayRuntimeState(functionName, status) {
         const relays = status?.relays || {};
@@ -235,13 +352,11 @@
         if (status.relaysConfig) {
             try {
                 const parsed = typeof status.relaysConfig === 'string' ? JSON.parse(status.relaysConfig) : status.relaysConfig;
-                if (parsed && Array.isArray(parsed.relays)) {
-                    relaysConfig = parsed;
-                    // zaktualizuj inputy w Kroku 1
-                    window.setValue("wizard-expander", relaysConfig.relayBoard.expander || "MCP23017");
-                    window.setValue("wizard-active-low", relaysConfig.relayBoard.activeLow ? "1" : "0");
-                    window.setValue("wizard-start-delay", relaysConfig.relayBoard.startDelay ?? 500);
-                }
+                relaysConfig = normalizeRelayConfig(parsed);
+                // zaktualizuj inputy w Kroku 1
+                window.setValue("wizard-expander", relaysConfig.relayBoard.expander || "MCP23017");
+                window.setValue("wizard-active-low", relaysConfig.relayBoard.activeLow ? "1" : "0");
+                window.setValue("wizard-start-delay", relaysConfig.relayBoard.startDelay ?? 500);
             } catch (e) {
                 console.warn("Błąd parsowania relaysConfig ze sterownika", e);
             }
@@ -609,30 +724,30 @@
             const occurrences = relaysConfig.relays.filter(r => r.function === func);
             if (occurrences.length > 1) {
                 const funcName = RELAY_FUNCTIONS.find(f => f.value === func)?.label || func;
-                warnings.push(`Funkcja krytyczna <strong>${funcName}</strong> została przypisana do więcej niż jednego przekaźnika (kanały: ${occurrences.map(o => o.channel).join(", ")}).`);
+                warnings.push(`Funkcja krytyczna ${funcName} została przypisana do więcej niż jednego przekaźnika (kanały: ${occurrences.map(o => o.channel).join(", ")}).`);
             }
         });
 
         // 2. Walidacja braku grzałki lub filtra
         const hasFilter = relaysConfig.relays.some(r => r.function === "filter");
         if (!hasFilter) {
-            warnings.push("Brak przypisanego przekaźnika dla <strong>Filtra</strong>. Czy zbiornik posiada oddzielne zasilanie filtrowania?");
+            warnings.push("Brak przypisanego przekaźnika dla Filtra. Czy zbiornik posiada oddzielne zasilanie filtrowania?");
         }
         const hasHeater = relaysConfig.relays.some(r => r.function === "heater");
         if (!hasHeater) {
-            warnings.push("Brak przypisanego przekaźnika dla <strong>Grzałki</strong>.");
+            warnings.push("Brak przypisanego przekaźnika dla Grzałki.");
         }
 
         // 3. Walidacja bezpieczeństwa grzałki
         const heaterRelay = relaysConfig.relays.find(r => r.function === "heater");
         if (heaterRelay && heaterRelay.safeState !== "off") {
-            warnings.push("Zalecenie: Przekaźnik <strong>Grzałki</strong> powinien mieć Stan awaryjny ustawiony na <strong>OFF</strong>.");
+            warnings.push("Zalecenie: Przekaźnik Grzałki powinien mieć Stan awaryjny ustawiony na OFF.");
         }
 
         // 4. Walidacja bezpieczeństwa CO2
         const co2Relay = relaysConfig.relays.find(r => r.function === "co2");
         if (co2Relay && co2Relay.safeState !== "off") {
-            warnings.push("Zalecenie: Przekaźnik <strong>CO2</strong> powinien mieć Stan awaryjny ustawiony na <strong>OFF</strong>.");
+            warnings.push("Zalecenie: Przekaźnik CO2 powinien mieć Stan awaryjny ustawiony na OFF.");
         }
 
         // Prezentacja
@@ -640,7 +755,7 @@
             warningsBlock.style.display = "block";
             warnings.forEach(w => {
                 const li = document.createElement("li");
-                li.innerHTML = w;
+                li.textContent = w;
                 warningsList.appendChild(li);
             });
         } else {
@@ -661,24 +776,38 @@
     function importConfigJson(e) {
         const file = e.target.files[0];
         if (!file) return;
+        if (file.size > MAX_RELAY_CONFIG_FILE_BYTES) {
+            setModuleMessage("Plik profilu przekracza bezpieczny limit 32 KB.", 'danger');
+            e.target.value = "";
+            return;
+        }
 
         const reader = new FileReader();
         reader.onload = function(evt) {
             try {
-                const parsed = JSON.parse(evt.target.result);
-                if (parsed && Array.isArray(parsed.relays)) {
-                    relaysConfig = parsed;
-                    renderRelayModuleOverview();
-                    setModuleMessage("Zaimportowano profil mapowania. Zweryfikuj kolejne kroki przed zapisem.", 'ok');
-                    goToStep(1);
-                } else {
-                    setModuleMessage("Plik nie zawiera prawidłowej struktury profilu mapowania.", 'danger');
+                if (typeof evt.target.result !== 'string') {
+                    throw new Error('Nie udało się odczytać pliku jako tekst UTF-8.');
                 }
+                const parsed = JSON.parse(evt.target.result);
+                relaysConfig = normalizeRelayConfig(parsed);
+                renderRelayModuleOverview();
+                setModuleMessage("Zaimportowano profil mapowania. Zweryfikuj kolejne kroki przed zapisem.", 'ok');
+                goToStep(1);
             } catch (err) {
                 setModuleMessage(`Błąd odczytu pliku JSON: ${err.message}`, 'danger');
+            } finally {
+                e.target.value = "";
             }
         };
-        reader.readAsText(file);
+        reader.onerror = function() {
+            setModuleMessage("Nie udało się odczytać pliku profilu.", 'danger');
+            e.target.value = "";
+        };
+        reader.onabort = function() {
+            setModuleMessage("Import profilu został anulowany.", 'neutral');
+            e.target.value = "";
+        };
+        reader.readAsText(file, 'UTF-8');
     }
 
     // Przywrócenie domyślnych map przekaźników
@@ -706,6 +835,7 @@
 
         try {
             // Zrzutuj konfigurację do JSON
+            relaysConfig = normalizeRelayConfig(relaysConfig);
             const dataString = JSON.stringify(relaysConfig);
 
             // Wyślij akcję do ESP32

@@ -761,12 +761,17 @@ async function syncBrowserTime() {
             throw error;
         }
 
-        const response = await fetch(API_SETTIME, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-            body: new URLSearchParams({ epoch: String(epoch), pin }).toString()
-        });
-        const message = await response.text();
+        const result = await fetchWithTimeout(
+            API_SETTIME,
+            {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+                body: new URLSearchParams({ epoch: String(epoch), pin }).toString()
+            },
+            API_REQUEST_TIMEOUT_MS,
+            (response) => response.text()
+        );
+        const { response, body: message } = result;
         if (!response.ok) {
             if (response.status === 403) {
                 logoutAdmin();

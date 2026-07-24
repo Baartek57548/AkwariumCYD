@@ -66,6 +66,11 @@ const ONEWIRE_DEVICE_TYPES = Object.freeze({
 
 let busDiagnosticsInFlight = false;
 let busDiagnosticsLastScanAtMs = 0;
+let lastTopbarMarkup = '';
+let lastRelayMarkup = null;
+let lastScheduleSummaryMarkup = '';
+let lastTemperatureChartSignature = '';
+const dynamicRelayActionsInFlight = new Set();
 
 function normalizeI2cDevices(payload) {
     if (!Array.isArray(payload?.devices)) return [];
@@ -217,8 +222,13 @@ async function fetchHardwareBusDiagnostics(force = false) {
 
     try {
         const pin = getAdminPinForRequest();
-        const response = await fetch(`${API_BUS_DIAGNOSTICS}?pin=${encodeURIComponent(pin)}`, { cache: 'no-store' });
-        const payload = await response.json().catch(() => ({}));
+        const result = await fetchWithTimeout(
+            `${API_BUS_DIAGNOSTICS}?pin=${encodeURIComponent(pin)}`,
+            { cache: 'no-store' },
+            API_REQUEST_TIMEOUT_MS,
+            (response) => response.json().catch(() => ({}))
+        );
+        const { response, body: payload } = result;
         if (!response.ok || payload?.ok !== true) {
             if (response.status === 403) logoutAdmin();
             throw new Error(payload?.message || `HTTP ${response.status}`);
@@ -591,12 +601,16 @@ function renderTopbarActiveModules(data) {
         ? buildModuleBadge('fa-wifi', 'STA', true, 'success')
         : (network.apMode ? buildModuleBadge('fa-satellite-dish', 'AP', true, 'success') : buildActiveBadge('fa-wifi', 'Offline', 'muted'));
 
-    container.innerHTML = [
+    const markup = [
         buildBackendConnectionBadge(),
         safetyBadge,
         modeBadge,
         wifiBadge
     ].join('');
+    if (markup !== lastTopbarMarkup) {
+        container.innerHTML = markup;
+        lastTopbarMarkup = markup;
+    }
 }
 
 function renderTemperatureCard(temperature) {
@@ -1010,9 +1024,10 @@ function renderStatusCommandStrips(data) {
     
     if (safetyBar) {
         safetyBar.className = `global-safety-bar status-${safetyInfo.safety}`;
-        if (safetyIcon) {
+        if (safetyIcon && safetyIcon.dataset.icon !== safetyInfo.safetyIcon) {
             const iconMarkup = getLocalIconMarkup ? getLocalIconMarkup(safetyInfo.safetyIcon) : `<i class="fa-solid ${safetyInfo.safetyIcon}"></i>`;
             safetyIcon.innerHTML = iconMarkup;
+            safetyIcon.dataset.icon = safetyInfo.safetyIcon;
         }
         if (safetyTitle) {
             safetyTitle.textContent = `Stan systemu: ${safetyInfo.safetyLabel}`;
@@ -1180,16 +1195,21 @@ const RELAY_FUNCTIONS_INFO = {
     custom: { label: "Własna nazwa", icon: "fa-sliders" }
 };
 
+function normalizeRelayChannel(value) {
+    const channel = Number(value);
+    return Number.isInteger(channel) && channel >= 1 && channel <= 8 ? channel : null;
+}
+
 function getRelayState(relay, data) {
     const relays = data?.relays || {};
-    const channel = relay.channel;
+    const channel = normalizeRelayChannel(relay?.channel);
     const func = relay.function;
 
     // 1. Try channel-based state
-    if (relays[`ch${channel}`] !== undefined) {
+    if (channel !== null && relays[`ch${channel}`] !== undefined) {
         return !!relays[`ch${channel}`];
     }
-    if (relays[String(channel)] !== undefined) {
+    if (channel !== null && relays[String(channel)] !== undefined) {
         return !!relays[String(channel)];
     }
 
@@ -1215,15 +1235,30 @@ function getRelayState(relay, data) {
 }
 
 async function toggleDynamicRelayAction(channel) {
+    const normalizedChannel = normalizeRelayChannel(channel);
+    if (normalizedChannel === null) {
+        showToast('Nieprawidłowy kanał', 'Sterownik przesłał numer kanału spoza zakresu 1–8.', 'error', 5000);
+        return;
+    }
+    if (dynamicRelayActionsInFlight.has(normalizedChannel)) {
+        showToast('Polecenie w toku', `Kanał ${normalizedChannel} czeka na potwierdzenie sterownika.`, 'warning', 2800);
+        return;
+    }
+
     const status = window.lastStatusData || {};
     const config = status.relaysConfig;
     if (!config || !Array.isArray(config.relays)) return;
 
-    const relay = config.relays.find(r => r.channel === channel);
+    const relay = config.relays.find((item) => normalizeRelayChannel(item?.channel) === normalizedChannel);
     if (!relay) return;
 
     if (relay.manualAllowed === false) {
-        alert("Sterowanie ręczne dla tego przekaźnika jest zablokowane ze względów bezpieczeństwa.");
+        showToast(
+            'Sterowanie zablokowane',
+            'Ręczne przełączenie tego kanału jest zablokowane przez konfigurację bezpieczeństwa.',
+            'warning',
+            4800
+        );
         return;
     }
 
@@ -1246,9 +1281,10 @@ async function toggleDynamicRelayAction(channel) {
         return;
     }
 
-    const btn = document.getElementById(`relay-${relay.channel}-toggle`);
+    const btn = document.getElementById(`relay-${normalizedChannel}-toggle`);
+    dynamicRelayActionsInFlight.add(normalizedChannel);
     if (btn) {
-        btn.disabled = true;
+        setElementBusy(btn, true);
         btn.textContent = "Zapis...";
     }
 
@@ -1266,7 +1302,7 @@ async function toggleDynamicRelayAction(channel) {
             await toggleRelayQuickAction(legacyKind);
         } else {
             await sendAction("test_relay", {
-                channel: String(channel),
+                channel: String(normalizedChannel),
                 state: String(nextState),
                 duration: "0"
             }, { requirePin: relay.pinRequired });
@@ -1275,17 +1311,22 @@ async function toggleDynamicRelayAction(channel) {
         }
     } catch (error) {
         console.warn("Błąd przełączania przekaźnika:", error);
-        alert("Nie udało się przełączyć przekaźnika: " + error.message);
     } finally {
-        if (btn) {
-            btn.disabled = false;
+        dynamicRelayActionsInFlight.delete(normalizedChannel);
+        const currentButton = document.getElementById(`relay-${normalizedChannel}-toggle`);
+        if (currentButton) {
+            setElementBusy(currentButton, false);
             // renderRelays will update text/state soon, but set correct text just in case
-            btn.textContent = active ? 'Włącz' : 'Wyłącz';
+            currentButton.textContent = active ? 'Włącz' : 'Wyłącz';
         }
     }
 }
 
 function buildRelayRowHtml(relay, data, isCore) {
+    const channel = normalizeRelayChannel(relay?.channel);
+    if (channel === null) {
+        return '';
+    }
     const active = getRelayState(relay, data);
     const stateClass = active ? 'relay-on' : 'relay-off';
     const stateText = active ? 'ON' : 'OFF';
@@ -1337,20 +1378,21 @@ function buildRelayRowHtml(relay, data, isCore) {
     }
 
     const primaryClass = isCore ? ' relay-primary-item' : '';
+    const busy = dynamicRelayActionsInFlight.has(channel);
 
     return `
-    <div class="relay-row-item${primaryClass} ${stateClass}" id="relay-${relay.channel}">
+    <div class="relay-row-item${primaryClass} ${stateClass}" id="relay-${channel}">
         <div class="relay-row-info">
             <span class="relay-row-icon">${getLocalIconMarkup ? getLocalIconMarkup(icon) : `<i class="fa-solid ${icon}"></i>`}</span>
             <div>
                 <div class="relay-row-name-line">
                     <div class="relay-row-name">${escapeHtml(label)}</div>
-                    <span id="relay-${relay.channel}-state" class="relay-row-state">${stateText}</span>
+                    <span id="relay-${channel}-state" class="relay-row-state">${stateText}</span>
                 </div>
-                <div class="relay-row-meta" id="relay-${relay.channel}-meta">${escapeHtml(metaText)}</div>
+                <div class="relay-row-meta" id="relay-${channel}-meta">${escapeHtml(metaText)}</div>
             </div>
         </div>
-        <button id="relay-${relay.channel}-toggle" class="btn btn-secondary relay-row-btn" type="button" data-admin-only="true">Przełącz</button>
+        <button id="relay-${channel}-toggle" class="btn btn-secondary relay-row-btn" type="button" data-admin-only="true" data-relay-channel="${channel}" aria-pressed="${active ? 'true' : 'false'}" aria-busy="${busy ? 'true' : 'false'}"${busy ? ' disabled' : ''}>Przełącz</button>
     </div>`;
 }
 
@@ -1440,7 +1482,9 @@ function renderRelays(data) {
     const container = document.querySelector('.relays-section');
     if (!container) return;
 
-    const activeRelays = config.relays.filter(r => r.function !== 'none');
+    const activeRelays = config.relays
+        .filter((relay) => normalizeRelayChannel(relay?.channel) !== null && relay.function !== 'none')
+        .slice(0, 8);
     const coreFuncs = ['main_light', 'filter', 'plant_light'];
     const coreRelays = activeRelays.filter(r => coreFuncs.includes(r.function));
     const extendedRelays = activeRelays.filter(r => !coreFuncs.includes(r.function));
@@ -1480,17 +1524,28 @@ function renderRelays(data) {
         </details>`;
     }
 
-    container.innerHTML = html;
+    if (html !== lastRelayMarkup) {
+        const focusedId = container.contains(document.activeElement) ? document.activeElement?.id : '';
+        container.innerHTML = html;
+        lastRelayMarkup = html;
 
-    activeRelays.forEach(r => {
-        const btn = document.getElementById(`relay-${r.channel}-toggle`);
-        if (btn) {
-            btn.addEventListener('click', () => toggleDynamicRelayAction(r.channel));
+        if (focusedId) {
+            document.getElementById(focusedId)?.focus({ preventScroll: true });
         }
-    });
+        if (typeof applyAuthState === 'function') {
+            applyAuthState();
+        }
+    }
 
-    if (typeof applyAuthState === 'function') {
-        applyAuthState();
+    if (container.dataset.relayActionsBound !== '1') {
+        container.dataset.relayActionsBound = '1';
+        container.addEventListener('click', (event) => {
+            const button = event.target.closest('button[data-relay-channel]');
+            if (!button || !container.contains(button)) {
+                return;
+            }
+            toggleDynamicRelayAction(button.dataset.relayChannel);
+        });
     }
 }
 
@@ -1574,11 +1629,15 @@ function renderTodaySchedule(data) {
         }
     ];
 
-    list.innerHTML = items.map((item) => `
+    const markup = items.map((item) => `
         <div class="schedule-summary-item">
             <span>${escapeHtml(item.label)}</span>
             <strong>${escapeHtml(item.value)}</strong>
         </div>`).join('');
+    if (markup !== lastScheduleSummaryMarkup) {
+        list.innerHTML = markup;
+        lastScheduleSummaryMarkup = markup;
+    }
 }
 
 function renderFeederCard(data) {
@@ -2413,6 +2472,22 @@ function renderTemperatureChart(temperature) {
             })
         }));
 
+    const target = toFiniteNumber(temperature?.target);
+    const hysteresis = Math.abs(toFiniteNumber(temperature?.hysteresis) ?? 0);
+    const shellWidth = Math.round(shell?.clientWidth || 0);
+    const chartSignature = [
+        shellWidth,
+        historyCapacity,
+        historyIntervalMinutes,
+        target ?? '',
+        hysteresis,
+        points.map((point) => `${point.epoch ?? ''}:${point.value}`).join('|')
+    ].join(';');
+    if (chartSignature === lastTemperatureChartSignature) {
+        return;
+    }
+    lastTemperatureChartSignature = chartSignature;
+
     svg.innerHTML = '';
     if (summary) summary.innerHTML = '';
     if (note) {
@@ -2442,8 +2517,6 @@ function renderTemperatureChart(temperature) {
 
     empty.hidden = true;
 
-    const target = toFiniteNumber(temperature?.target);
-    const hysteresis = Math.abs(toFiniteNumber(temperature?.hysteresis) ?? 0);
     const snapshotMode = points.length < snapshotThreshold;
     const layout = getTemperatureChartLayout(shell ? shell.clientWidth : 0, snapshotMode);
     const domain = buildTemperatureDomain(points, target, hysteresis, snapshotMode);

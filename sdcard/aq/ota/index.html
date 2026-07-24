@@ -1,26 +1,17 @@
 ﻿<!DOCTYPE html>
-<html lang="pl" data-theme="light">
+<html lang="pl" data-theme="dark">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
-    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; base-uri 'self'; form-action 'self'; object-src 'none'; img-src 'self' data:; connect-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline';">
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; base-uri 'self'; form-action 'self'; object-src 'none'; img-src 'self' data:; connect-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline';">
     <meta http-equiv="X-Content-Type-Options" content="nosniff">
     <meta name="referrer" content="no-referrer">
     <title>cydAkwarium - panel sterownika</title>
     <meta name="color-scheme" content="light dark">
-    <script>
-        (function () {
-            var supportsMediaQueries = typeof window.matchMedia === 'function';
-            var mobile = supportsMediaQueries && window.matchMedia('(max-width: 760px)').matches;
-            var dark = mobile && window.matchMedia('(prefers-color-scheme: dark)').matches;
-            var theme = dark ? 'dark' : 'light';
-            document.documentElement.setAttribute('data-theme', theme);
-            document.documentElement.setAttribute('data-theme-source', mobile ? 'system' : 'device');
-            document.documentElement.style.colorScheme = theme;
-        }());
-    </script>
-    <link rel="stylesheet" href="charts.css?v=20260702buses">
-    <link rel="stylesheet" href="style.css?v=20260702buses">
+    <meta name="theme-color" content="#070b11">
+    <script src="theme-bootstrap.js?v=20260725ux1"></script>
+    <link rel="stylesheet" href="charts.css?v=20260725ux1">
+    <link rel="stylesheet" href="style.css?v=20260725ux1">
 </head>
 <body class="role-guest">
     <a class="skip-link" href="#main-content">Przejdź do głównej treści</a>
@@ -138,6 +129,46 @@
                 </div>
             </header>
 
+            <section id="connection-health" class="connection-health glass" data-state="connecting" aria-labelledby="connection-health-title">
+                <div class="connection-health-summary">
+                    <span class="connection-health-orb" aria-hidden="true"></span>
+                    <div>
+                        <span class="connection-health-kicker">Łączność sterownika</span>
+                        <strong id="connection-health-title">Nawiązywanie połączenia</strong>
+                        <span id="connection-health-detail">Pierwszy odczyt telemetrii jest w toku.</span>
+                    </div>
+                </div>
+                <div class="connection-health-metrics" aria-label="Parametry połączenia">
+                    <div class="connection-health-metric" id="connection-signal" data-level="0">
+                        <span class="signal-bars" aria-hidden="true">
+                            <i></i><i></i><i></i><i></i>
+                        </span>
+                        <span>
+                            <small>Sygnał Wi-Fi</small>
+                            <strong id="connection-signal-label">Brak danych</strong>
+                        </span>
+                    </div>
+                    <div class="connection-health-metric">
+                        <i class="fa-solid fa-gauge-high" aria-hidden="true"></i>
+                        <span>
+                            <small>Opóźnienie HTTP</small>
+                            <strong id="connection-latency">-- ms</strong>
+                        </span>
+                    </div>
+                    <div class="connection-health-metric" id="connection-freshness" data-state="waiting">
+                        <i class="fa-solid fa-clock" aria-hidden="true"></i>
+                        <span>
+                            <small>Ostatni odczyt</small>
+                            <strong id="connection-last-update">Oczekiwanie</strong>
+                        </span>
+                    </div>
+                </div>
+                <button id="connection-refresh-btn" class="connection-refresh-btn" type="button" aria-label="Odśwież dane sterownika">
+                    <i class="fa-solid fa-rotate-right" aria-hidden="true"></i>
+                    <span>Odśwież</span>
+                </button>
+            </section>
+
             <!-- Dashboard View -->
             <section id="dashboard" class="view-section active">
                 <div class="view-header">
@@ -145,7 +176,7 @@
                     <p>Szybki stan zbiornika: telemetria, stany modułów i cykle dobowe.</p>
                 </div>
 
-                <div id="global-safety-bar" class="global-safety-bar status-ok">
+                <div id="global-safety-bar" class="global-safety-bar status-service">
                     <span id="global-safety-icon" class="safety-icon"><i class="fa-solid fa-circle-check"></i></span>
                     <div class="safety-content">
                         <span id="global-safety-title" class="safety-title">Stan systemu: Oczekiwanie na dane</span>
@@ -790,7 +821,7 @@
                     <p>Bieżące zdarzenia sterownika, komendy i wpisy krytyczne.</p>
                     </div>
                     <div class="logs-actions" style="display: flex; gap: 15px;">
-                        <button id="clear-logs-btn" class="btn btn-secondary" style="border-radius: 12px; padding: 10px 24px; font-weight: 500; font-size: 13px; background: rgba(255,255,255,0.03); border: 1px solid rgba(255,255,255,0.1);">Wyczysc widok</button>
+                        <button id="clear-logs-btn" class="btn btn-secondary" type="button" style="border-radius: 12px; padding: 10px 24px; font-weight: 500; font-size: 13px; background: rgba(255,255,255,0.03); border: 1px solid rgba(255,255,255,0.1);">Wyczysc widok</button>
                         <button id="delete-critical-btn" class="btn btn-primary hover-danger-btn" type="button" style="background: rgba(239, 68, 68, 0.15); color: #ef4444; border: 1px solid rgba(239, 68, 68, 0.3); border-radius: 12px; padding: 10px 24px; font-weight: 500; font-size: 13px; transition: 0.2s;">Usun krytyczne</button>
                     </div>
                 </div>
@@ -826,14 +857,15 @@
 
                 <div class="card glass logs-panel" style="padding: 20px; border-radius: 16px; min-height: 500px;">
                     <div class="logs-toolbar" style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px;">
-                        <div class="logs-toolbar-primary" style="display: flex; gap: 10px; align-items: center;">
-                            <button id="logs-current-btn" class="btn btn-secondary active logs-tab-btn" style="padding: 8px 16px; border-radius: 12px; border: 1px solid rgba(6, 182, 212, 0.4); color: var(--accent-cyan); font-size: 13px; font-weight: 600; background: rgba(6, 182, 212, 0.1);">Bieżące</button>
-                            <button id="logs-critical-btn" class="btn btn-secondary logs-tab-btn logs-tab-btn-critical" type="button" style="padding: 8px 16px; border-radius: 12px; border: 1px solid transparent; color: var(--text-main); font-size: 13px; font-weight: 600; transition: 0.2s;">Krytyczne</button>
+                        <div class="logs-toolbar-primary" role="group" aria-label="Rodzaj logów" style="display: flex; gap: 10px; align-items: center;">
+                            <button id="logs-current-btn" class="btn btn-secondary active logs-tab-btn" type="button" aria-pressed="true" style="padding: 8px 16px; border-radius: 12px; border: 1px solid rgba(6, 182, 212, 0.4); color: var(--accent-cyan); font-size: 13px; font-weight: 600; background: rgba(6, 182, 212, 0.1);">Bieżące</button>
+                            <button id="logs-critical-btn" class="btn btn-secondary logs-tab-btn logs-tab-btn-critical" type="button" aria-pressed="false" style="padding: 8px 16px; border-radius: 12px; border: 1px solid transparent; color: var(--text-main); font-size: 13px; font-weight: 600; transition: 0.2s;">Krytyczne</button>
                             <span id="logs-status" class="logs-status" style="font-size: 13px; color: var(--text-muted); margin-left: 10px;">Brak odpowiedzi sterownika.</span>
                         </div>
                         <div class="logs-toolbar-secondary" style="display: flex; gap: 10px; align-items: center;">
+                            <label class="sr-only" for="logs-search">Szukaj w logach</label>
                             <input id="logs-search" class="logs-search-input" type="text" placeholder="Szukaj logów" style="background: rgba(0,0,0,0.3); border: 1px solid var(--glass-border); border-radius: 8px; padding: 10px 16px; color: var(--text-main); font-size: 13px; width: 250px; outline: none;">
-                            <button id="download-logs-btn" class="btn btn-secondary logs-download-btn" style="padding: 10px 14px; border-radius: 8px; border: 1px solid var(--glass-border); background: rgba(255,255,255,0.03);" title="Pobierz logi"><i class="fa-solid fa-download" style="color: var(--accent-cyan);"></i></button>
+                            <button id="download-logs-btn" class="btn btn-secondary logs-download-btn" type="button" aria-label="Pobierz logi" style="padding: 10px 14px; border-radius: 8px; border: 1px solid var(--glass-border); background: rgba(255,255,255,0.03);" title="Pobierz logi"><i class="fa-solid fa-download" style="color: var(--accent-cyan);"></i></button>
                         </div>
                     </div>
 
@@ -1320,26 +1352,26 @@
                                         </div>
                                         <div class="grid-2-col">
                                             <div>
-                                                <label>Typ ekspandera I2C:</label>
+                                                <label for="wizard-expander">Typ ekspandera I2C:</label>
                                                 <select id="wizard-expander" class="form-control">
                                                     <option value="MCP23017" selected>MCP23017 (Zalecany)</option>
                                                 </select>
                                             </div>
                                             <div>
-                                                <label>Liczba kanałów:</label>
+                                                <label for="wizard-channels">Liczba kanałów:</label>
                                                 <input type="number" id="wizard-channels" class="form-control" value="8" disabled>
                                             </div>
                                         </div>
                                         <div class="grid-2-col">
                                             <div>
-                                                <label>Domyślna logika przekaźnika:</label>
+                                                <label for="wizard-active-low">Domyślna logika przekaźnika:</label>
                                                 <select id="wizard-active-low" class="form-control">
                                                     <option value="1" selected>Aktywny stan niski (Standard)</option>
                                                     <option value="0">Aktywny stan wysoki</option>
                                                 </select>
                                             </div>
                                             <div>
-                                                <label>Opóźnienie startu (ms):</label>
+                                                <label for="wizard-start-delay">Opóźnienie startu (ms):</label>
                                                 <input type="number" id="wizard-start-delay" class="form-control" min="0" max="5000" step="100" value="500">
                                             </div>
                                         </div>
@@ -1388,7 +1420,7 @@
                                             <!-- Dynamic configuration cards per assigned relay via JS -->
                                         </div>
                                         <div id="wizard-ato-limit-container" class="form-group" style="display: none; padding: 15px; border-radius: 8px; background: rgba(239, 68, 68, 0.05); border: 1px solid rgba(239, 68, 68, 0.15);">
-                                            <label style="font-weight: 600; color: #fca5a5;">Limit ciągłej pracy pompy dolewki wody ATO (sekundy):</label>
+                                            <label for="wizard-ato-limit" style="font-weight: 600; color: #fca5a5;">Limit ciągłej pracy pompy dolewki wody ATO (sekundy):</label>
                                             <input type="number" id="wizard-ato-limit" class="form-control" min="5" max="300" value="30" style="max-width: 150px;">
                                             <span class="text-muted" style="font-size: 11px; margin-top: 4px; display: block;">Maksymalny czas ciągłego włączenia dolewki. Zapobiega przelaniu w razie usterki sensora poziomu.</span>
                                         </div>
@@ -1510,17 +1542,17 @@
                                     <span style="font-size: 11px; color: var(--text-muted);">Uruchamia grzałkę przy spadku temperatury.</span>
                                 </div>
                                 <label class="switch" title="Włącz automatykę grzałki">
-                                    <input id="settings-temp-enabled" type="checkbox">
+                                    <input id="settings-temp-enabled" type="checkbox" aria-label="Włącz automatykę grzałki">
                                     <span class="slider round"></span>
                                 </label>
                             </div>
                             <div class="grid-2-col">
                                 <div>
-                                    <label>Temperatura docelowa (°C):</label>
+                                    <label for="settings-temp-target">Temperatura docelowa (°C):</label>
                                     <input id="settings-temp-target" type="number" class="form-control" min="18" max="30" step="0.1" value="25.0">
                                 </div>
                                 <div>
-                                    <label>Histereza (°C):</label>
+                                    <label for="settings-temp-hyst">Histereza (°C):</label>
                                     <input id="settings-temp-hyst" type="number" class="form-control" min="0.1" max="5.0" step="0.1" value="0.5">
                                 </div>
                             </div>
@@ -1540,18 +1572,18 @@
                         </div>
                         <div class="card-body form-group" style="padding-top: 10px; gap: 12px;">
                             <div style="display: flex; justify-content: space-between; align-items: center; background: rgba(255,255,255,0.02); padding: 10px; border-radius: 8px; border: 1px solid rgba(255,255,255,0.05);">
-                                <label style="margin: 0; font-size: 12px; color: var(--text-main);">Włącz moduł CO2:</label>
+                                <label for="settings-co2-enabled" style="margin: 0; font-size: 12px; color: var(--text-main);">Włącz moduł CO2:</label>
                                 <label class="switch">
-                                    <input id="settings-co2-enabled" type="checkbox">
+                                    <input id="settings-co2-enabled" type="checkbox" aria-label="Włącz moduł CO2">
                                     <span class="slider round"></span>
                                 </label>
                             </div>
                             <div>
-                                <label>Docelowe pH wody:</label>
+                                <label for="settings-co2-ph-target">Docelowe pH wody:</label>
                                 <input id="settings-co2-ph-target" type="number" class="form-control" min="5.0" max="8.5" step="0.05" value="6.80">
                             </div>
                             <div>
-                                <label>Limit dozowania CO2 (min):</label>
+                                <label for="settings-co2-limit">Limit dozowania CO2 (min):</label>
                                 <input id="settings-co2-limit" type="number" class="form-control" min="1" max="1440" step="1" value="180">
                             </div>
                             <button id="save-co2-btn" class="btn btn-secondary w-100" type="button"><i class="fa-solid fa-floppy-disk"></i> Zapisz CO2</button>
@@ -1570,18 +1602,18 @@
                         </div>
                         <div class="card-body form-group" style="padding-top: 10px; gap: 12px;">
                             <div style="display: flex; justify-content: space-between; align-items: center; background: rgba(255,255,255,0.02); padding: 10px; border-radius: 8px; border: 1px solid rgba(255,255,255,0.05);">
-                                <label style="margin: 0; font-size: 12px; color: var(--text-main);">Włącz moduł ATO:</label>
+                                <label for="settings-water-enabled" style="margin: 0; font-size: 12px; color: var(--text-main);">Włącz moduł ATO:</label>
                                 <label class="switch">
-                                    <input id="settings-water-enabled" type="checkbox">
+                                    <input id="settings-water-enabled" type="checkbox" aria-label="Włącz moduł ATO">
                                     <span class="slider round"></span>
                                 </label>
                             </div>
                             <div>
-                                <label>Status sensora poziomu:</label>
+                                <label for="settings-water-level-label">Status sensora poziomu:</label>
                                 <input id="settings-water-level-label" type="text" class="form-control" value="MODUŁ WYŁĄCZONY" style="font-weight: 600; text-align: center;" disabled>
                             </div>
                             <div>
-                                <label>Limit pompy dolewki (sek):</label>
+                                <label for="settings-water-timeout">Limit pompy dolewki (sek):</label>
                                 <input id="settings-water-timeout" type="number" class="form-control" min="5" max="300" step="1" value="30">
                             </div>
                             <button id="save-water-btn" class="btn btn-secondary w-100" type="button"><i class="fa-solid fa-floppy-disk"></i> Zapisz ATO</button>
@@ -1600,18 +1632,18 @@
                         </div>
                         <div class="card-body form-group" style="padding-top: 10px; gap: 12px;">
                             <div style="display: flex; justify-content: space-between; align-items: center; background: rgba(255,255,255,0.02); padding: 10px; border-radius: 8px; border: 1px solid rgba(255,255,255,0.05);">
-                                <label style="margin: 0; font-size: 12px; color: var(--text-main);">Ochrona przed zalaniem:</label>
+                                <label for="settings-leak-enabled" style="margin: 0; font-size: 12px; color: var(--text-main);">Ochrona przed zalaniem:</label>
                                 <label class="switch">
-                                    <input id="settings-leak-enabled" type="checkbox">
+                                    <input id="settings-leak-enabled" type="checkbox" aria-label="Włącz ochronę przed zalaniem">
                                     <span class="slider round"></span>
                                 </label>
                             </div>
                             <div>
-                                <label>Status sensora zalania:</label>
+                                <label for="settings-leak-sensor-label">Status sensora zalania:</label>
                                 <input id="settings-leak-sensor-label" type="text" class="form-control" value="MODUŁ WYŁĄCZONY" style="font-weight: 600; text-align: center;" disabled>
                             </div>
                             <div>
-                                <label>Akcja po wykryciu zalania:</label>
+                                <label for="settings-leak-action">Akcja po wykryciu zalania:</label>
                                 <select id="settings-leak-action" class="form-control">
                                     <option value="alarm">Tylko wywołaj alarm dźwiękowy</option>
                                     <option value="disable_valves">Zakręć elektrozawory (CO2)</option>
@@ -1811,25 +1843,25 @@
                         <div class="card-body form-group" style="padding-top: 10px; gap: 12px;">
                             <div class="grid-2-col">
                                 <div>
-                                    <label>Aktywne SSID (Station):</label>
+                                    <label for="settings-active-sta-ssid">Aktywne SSID (Station):</label>
                                     <input id="settings-active-sta-ssid" type="text" class="form-control" value="-" disabled>
                                 </div>
                                 <div>
-                                    <label>Przydzielony Adres IP:</label>
+                                    <label for="settings-network-ip">Przydzielony Adres IP:</label>
                                     <input id="settings-network-ip" type="text" class="form-control" value="-" disabled>
                                 </div>
                             </div>
                             <div>
-                                <label>Aktywny SSID (Access Point):</label>
+                                <label for="settings-ap-ssid">Aktywny SSID (Access Point):</label>
                                 <input id="settings-ap-ssid" type="text" class="form-control" value="-" disabled>
                             </div>
                             <div class="grid-2-col">
                                 <div>
-                                    <label>Docelowe SSID STA:</label>
+                                    <label for="settings-sta-ssid">Docelowe SSID STA:</label>
                                     <input id="settings-sta-ssid" type="text" class="form-control" maxlength="32" value="">
                                 </div>
                                 <div>
-                                    <label>Nowe hasło STA:</label>
+                                    <label for="settings-sta-password">Nowe hasło STA:</label>
                                     <input id="settings-sta-password" type="password" class="form-control" maxlength="63" value="" placeholder="Pozostaw puste, aby nie zmieniać">
                                 </div>
                             </div>
@@ -1862,7 +1894,7 @@
                             
                             <div class="grid-2-col">
                                 <div>
-                                    <label>Profil świecenia ekranu:</label>
+                                    <label for="settings-display-profile">Profil świecenia ekranu:</label>
                                     <select id="settings-display-profile" class="form-control">
                                         <option value="always_on">Zawsze włączony (Always ON)</option>
                                         <option value="timeout_60s">Timeout 60 sekund</option>
@@ -1870,7 +1902,7 @@
                                     </select>
                                 </div>
                                 <div>
-                                    <label style="display: flex; justify-content: space-between; align-items: center;">
+                                    <label for="settings-display-brightness" style="display: flex; justify-content: space-between; align-items: center;">
                                         <span>Poziom podświetlenia:</span>
                                         <span id="settings-display-brightness-val" style="font-weight: 700; color: var(--accent-cyan);">100%</span>
                                     </label>
@@ -1886,7 +1918,7 @@
                                     <span style="font-size: 11px; color: var(--text-muted);" id="settings-display-status-note">Jasność automatyczna dostosuje podświetlenie płynnie do otoczenia.</span>
                                 </div>
                                 <label class="switch" title="Włącz automatyczną jasność ekranu">
-                                    <input id="settings-display-auto" type="checkbox" checked>
+                                    <input id="settings-display-auto" type="checkbox" aria-label="Włącz automatyczną jasność ekranu" checked>
                                     <span class="slider round"></span>
                                 </label>
                             </div>
@@ -1909,7 +1941,7 @@
                         </div>
                         <div class="card-body form-group" style="padding-top: 10px; gap: 12px;">
                             <div>
-                                <label>Aktualny czas urządzenia:</label>
+                                <label for="settings-device-datetime">Aktualny czas urządzenia:</label>
                                 <input type="text" id="settings-device-datetime" class="form-control" value="Oczekiwanie na połączenie" disabled>
                             </div>
                             <div class="grid-2-col">
@@ -1977,6 +2009,8 @@
         </div>
     </div>
 
+    <section id="toast-region" class="toast-region" aria-label="Powiadomienia" aria-live="polite" aria-atomic="false"></section>
+
     <!-- PIN Entry Modal -->
     <div class="overlay" id="pin-modal" role="dialog" aria-modal="true" aria-labelledby="pin-modal-title" aria-describedby="pin-modal-desc pin-modal-error" aria-hidden="true">
         <div class="modal glass pin-modal-box">
@@ -2024,17 +2058,17 @@
         <div class="chart-time-axis fullscreen-time-axis" id="fullscreen-time-axis"></div>
     </div>
 
-    <script src="chart-engine.js?v=20260702buses"></script>
-    <script src="charts.js?v=20260702buses"></script>
-    <script src="app-core.js?v=20260702buses"></script>
-    <script src="theme.js?v=20260702buses"></script>
-    <script src="logs.js?v=20260702buses"></script>
-    <script src="settings.js?v=20260702buses"></script>
-    <script src="schedules.js?v=20260702buses"></script>
-    <script src="dashboard.js?v=20260702buses"></script>
-    <script src="ota.js?v=20260702buses"></script>
-    <script src="relays-wizard.js?v=20260702buses"></script>
-    <script src="app-init.js?v=20260702buses"></script>
+    <script src="chart-engine.js?v=20260725ux1"></script>
+    <script src="charts.js?v=20260725ux1"></script>
+    <script src="app-core.js?v=20260725ux1"></script>
+    <script src="theme.js?v=20260725ux1"></script>
+    <script src="logs.js?v=20260725ux1"></script>
+    <script src="settings.js?v=20260725ux1"></script>
+    <script src="schedules.js?v=20260725ux1"></script>
+    <script src="dashboard.js?v=20260725ux1"></script>
+    <script src="ota.js?v=20260725ux1"></script>
+    <script src="relays-wizard.js?v=20260725ux1"></script>
+    <script src="app-init.js?v=20260725ux1"></script>
 </body>
 </html>
 

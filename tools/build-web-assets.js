@@ -10,6 +10,7 @@ const otaRoot = path.join(projectRoot, 'sdcard', 'aq', 'ota');
 const files = [
     'index.html',
     'settings.html',
+    'theme-bootstrap.js',
     'style.css',
     'charts.css',
     'app-core.js',
@@ -22,12 +23,29 @@ const files = [
     'relays-wizard.js',
     'schedules.js',
     'settings.js',
-    'theme.js',
+    'theme.js'
+];
+const obsoleteFiles = [
     'vendor/alpine.min.js',
-    'vendor/tailwind.min.css'
+    'vendor/alpine.min.js.gz',
+    'vendor/tailwind.min.css',
+    'vendor/tailwind.min.css.gz'
 ];
 
 fs.mkdirSync(otaRoot, { recursive: true });
+
+let removedObsoleteFiles = 0;
+for (const relativePath of obsoleteFiles) {
+    const obsoletePath = path.resolve(otaRoot, relativePath);
+    const otaPrefix = `${path.resolve(otaRoot)}${path.sep}`;
+    if (!obsoletePath.startsWith(otaPrefix)) {
+        throw new Error(`Nieprawidlowa sciezka przestarzalego assetu: ${relativePath}`);
+    }
+    if (fs.existsSync(obsoletePath) && fs.statSync(obsoletePath).isFile()) {
+        fs.unlinkSync(obsoletePath);
+        removedObsoleteFiles += 1;
+    }
+}
 
 let sourceBytes = 0;
 let gzipBytes = 0;
@@ -54,3 +72,6 @@ const savingPercent = sourceBytes > 0
     ? Math.round((1 - gzipBytes / sourceBytes) * 100)
     : 0;
 console.log(`Web OTA: ${files.length} plikow, ${sourceBytes} B -> ${gzipBytes} B gzip (${savingPercent}% mniej).`);
+if (removedObsoleteFiles > 0) {
+    console.log(`Web OTA: usunieto ${removedObsoleteFiles} przestarzale assety vendor.`);
+}

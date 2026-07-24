@@ -18,6 +18,7 @@
         ranges: { '1h': 6, '3h': 18, '6h': 36, '12h': 72, '24h': 144 },
         rangeKeys: ['1h', '3h', '6h', '12h', '24h']
     };
+    const MAX_HISTORY_POINTS = 1440;
 
     // ── State ──
     let allData = [];
@@ -28,7 +29,11 @@
     let drawAnimStarted = false;
     let isFullscreen = false;
     let fullscreenHoverIndex = -1;
-    let lastHistoryRef = null;
+    let lastHistorySignature = '';
+    let chartClockTimer = null;
+    let chartRefreshTimer = null;
+    let historyRefreshTimer = null;
+    let appShellObserver = null;
 
     // ── DOM Cache ──
     const dom = {};
@@ -108,8 +113,11 @@
             }
         }
 
-        const nextCapacity = Math.round(Number(temperatureData?.historyCapacity));
-        if (Number.isFinite(nextCapacity) && nextCapacity > 0 && nextCapacity !== CONFIG.maxPoints) {
+        const nextCapacityRaw = Math.round(Number(temperatureData?.historyCapacity));
+        const nextCapacity = Number.isFinite(nextCapacityRaw)
+            ? Math.min(MAX_HISTORY_POINTS, Math.max(1, nextCapacityRaw))
+            : null;
+        if (nextCapacity !== null && nextCapacity !== CONFIG.maxPoints) {
             CONFIG.maxPoints = nextCapacity;
             changed = true;
         }
@@ -158,13 +166,24 @@
             const history = Array.isArray(temperatureData.history) ? temperatureData.history : null;
             let historyChanged = false;
 
-            if (history && history !== lastHistoryRef) {
-                lastHistoryRef = history;
+            const boundedHistory = history
+                ? history.slice(-Math.min(CONFIG.maxPoints, MAX_HISTORY_POINTS))
+                : null;
+            const firstPoint = boundedHistory?.[0];
+            const lastPoint = boundedHistory?.[boundedHistory.length - 1];
+            const historySignature = boundedHistory
+                ? `${boundedHistory.length}|${firstPoint?.epoch ?? ''}|${firstPoint?.value ?? ''}|${lastPoint?.epoch ?? ''}|${lastPoint?.value ?? ''}`
+                : '';
+
+            if (boundedHistory && historySignature !== lastHistorySignature) {
+                lastHistorySignature = historySignature;
                 allData = [];
 
-                for (const item of history) {
-                    if (item && item.value !== undefined && item.value !== null) {
-                        allData.push({ epoch: item.epoch * 1000, value: item.value });
+                for (const item of boundedHistory) {
+                    const epoch = Number(item?.epoch);
+                    const value = Number(item?.value);
+                    if (Number.isFinite(epoch) && epoch > 0 && Number.isFinite(value) && value >= -20 && value <= 120) {
+                        allData.push({ epoch: epoch * 1000, value });
                     }
                 }
 
@@ -619,9 +638,24 @@
     let fishes = [];
     let bubblesAnimId = null;
 
+    function stopBubbles() {
+        if (bubblesAnimId !== null) {
+            cancelAnimationFrame(bubblesAnimId);
+            bubblesAnimId = null;
+        }
+        bubbles = [];
+        fishes = [];
+    }
+
     function initBubbles() {
         const canvas = dom.bubblesCanvas;
-        if (!canvas) return;
+        const reduceMotion = typeof window.matchMedia === 'function' &&
+            window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+        if (!canvas?.isConnected || reduceMotion || getComputedStyle(canvas).display === 'none') {
+            stopBubbles();
+            return;
+        }
+        stopBubbles();
         canvas.width = window.innerWidth;
         canvas.height = window.innerHeight;
 
@@ -653,7 +687,15 @@
         }
 
         function animateBubbles() {
+            if (document.visibilityState !== 'visible' || !canvas.isConnected || getComputedStyle(canvas).display === 'none') {
+                stopBubbles();
+                return;
+            }
             const ctx = canvas.getContext('2d');
+            if (!ctx) {
+                stopBubbles();
+                return;
+            }
             ctx.clearRect(0, 0, canvas.width, canvas.height);
             const now = performance.now();
 
@@ -957,9 +999,14 @@
     // ═══════════════════
     async function exportCSV() {
         try {
-            const response = await fetch('/api/history.csv', { cache: 'no-store' });
+            const result = await fetchWithTimeout(
+                '/api/history.csv',
+                { cache: 'no-store' },
+                API_REQUEST_TIMEOUT_MS,
+                (response) => response.ok ? response.text() : null
+            );
+            const { response, body: csv } = result;
             if (response.ok) {
-                const csv = await response.text();
                 const blob = new Blob(['\uFEFF' + csv], { type: 'text/csv;charset=utf-8;' });
                 const url = URL.createObjectURL(blob);
                 const a = document.createElement('a');
@@ -1063,11 +1110,16 @@
         }
         setArchiveStatus('Odczytuje liste archiwow z karty SD...', 'muted');
         try {
-            const response = await fetch('/api/files?dir=/aq/data/history', { cache: 'no-store' });
+            const result = await fetchWithTimeout(
+                '/api/files?dir=/aq/data/history',
+                { cache: 'no-store' },
+                API_REQUEST_TIMEOUT_MS,
+                (response) => response.ok ? response.json() : null
+            );
+            const { response, body: payload } = result;
             if (!response.ok) {
                 throw new Error(`HTTP ${response.status}`);
             }
-            const payload = await response.json();
             renderArchiveFiles(payload.files || []);
         } catch (error) {
             if (dom.archiveList) {
@@ -1101,6 +1153,63 @@
         startDrawAnimation();
     }
 
+    function stopPeriodicTasks() {
+        if (chartClockTimer !== null) {
+            clearInterval(chartClockTimer);
+            chartClockTimer = null;
+        }
+        if (chartRefreshTimer !== null) {
+            clearInterval(chartRefreshTimer);
+            chartRefreshTimer = null;
+        }
+        if (historyRefreshTimer !== null) {
+            clearInterval(historyRefreshTimer);
+            historyRefreshTimer = null;
+        }
+    }
+
+    function startPeriodicTasks() {
+        if (document.visibilityState !== 'visible') {
+            return;
+        }
+        if (chartClockTimer === null) {
+            chartClockTimer = setInterval(updateClock, 1000);
+        }
+        if (chartRefreshTimer === null) {
+            chartRefreshTimer = setInterval(() => {
+                if (dom.appShell?.classList.contains('active')) {
+                    updateHeatmap();
+                    updateDayComparison();
+                }
+            }, 30000);
+        }
+        if (historyRefreshTimer === null) {
+            historyRefreshTimer = setInterval(() => {
+                if (typeof window.fetchStatus === 'function') {
+                    window.fetchStatus(true, true);
+                }
+            }, 300000);
+        }
+    }
+
+    function suspendChartsRuntime() {
+        stopPeriodicTasks();
+        stopBubbles();
+        appShellObserver?.disconnect();
+        if (animFrameId !== null) {
+            cancelAnimationFrame(animFrameId);
+            animFrameId = null;
+        }
+        if (drawAnimId !== null) {
+            cancelAnimationFrame(drawAnimId);
+            drawAnimId = null;
+        }
+        if (heatmapWaveAnimId !== null) {
+            cancelAnimationFrame(heatmapWaveAnimId);
+            heatmapWaveAnimId = null;
+        }
+    }
+
     // ═══════════════════
     // Init
     // ═══════════════════
@@ -1109,7 +1218,7 @@
         allData = [];
         syncRangeControls();
 
-        const observer = new MutationObserver((mutations) => {
+        appShellObserver = new MutationObserver((mutations) => {
             mutations.forEach((mutation) => {
                 const chartsViewActive = mutation.target.classList.contains('active');
                 document.body.classList.toggle('charts-view-active', chartsViewActive);
@@ -1128,7 +1237,7 @@
                 }
             });
         });
-        if (dom.appShell) observer.observe(dom.appShell, { attributes: true, attributeFilter: ['class'] });
+        if (dom.appShell) appShellObserver.observe(dom.appShell, { attributes: true, attributeFilter: ['class'] });
         document.body.classList.toggle('charts-view-active', dom.appShell?.classList.contains('active'));
 
         // Range selectors (both main and fullscreen)
@@ -1180,7 +1289,7 @@
 
         // Clock
         updateClock();
-        setInterval(updateClock, 1000);
+        startPeriodicTasks();
 
         // Bubbles
         initBubbles();
@@ -1197,14 +1306,28 @@
         // Initial draw-in animation
         startDrawAnimation();
 
-        // Periodic heatmap/comparison refresh
-        setInterval(() => { updateHeatmap(); updateDayComparison(); }, 30000);
         refreshArchiveFiles();
-        setInterval(() => {
-            if (typeof window.fetchStatus === 'function' && document.visibilityState === 'visible') {
-                window.fetchStatus(true, true);
+
+        document.addEventListener('visibilitychange', () => {
+            if (document.visibilityState === 'visible') {
+                startPeriodicTasks();
+                if (dom.appShell && appShellObserver) {
+                    appShellObserver.observe(dom.appShell, { attributes: true, attributeFilter: ['class'] });
+                }
+                if (dom.appShell?.classList.contains('active')) {
+                    requestRender();
+                }
+            } else {
+                suspendChartsRuntime();
             }
-        }, 300000);
+        });
+        window.addEventListener('pagehide', suspendChartsRuntime);
+        window.addEventListener('pageshow', () => {
+            startPeriodicTasks();
+            if (dom.appShell && appShellObserver) {
+                appShellObserver.observe(dom.appShell, { attributes: true, attributeFilter: ['class'] });
+            }
+        });
     }
 
     if (document.readyState === 'loading') {

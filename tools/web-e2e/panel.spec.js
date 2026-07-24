@@ -43,6 +43,121 @@ test('dashboard receives complete DEV telemetry without browser errors', async (
     expect(consoleErrors).toEqual([]);
 });
 
+test('connection rail exposes signal, latency, freshness and manual refresh feedback', async ({ page }) => {
+    await page.goto('/');
+    await waitForTelemetry(page);
+
+    const health = page.locator('#connection-health');
+    await expect(health).toHaveAttribute('data-state', 'online');
+    await expect(page.locator('#connection-health-title')).toHaveText('Sterownik online');
+    await expect(page.locator('#connection-signal-label')).toContainText('dBm');
+    await expect(page.locator('#connection-latency')).toHaveText(/^\d+ ms$/);
+    await expect(page.locator('#connection-last-update')).not.toHaveText('Oczekiwanie');
+
+    await page.locator('#connection-refresh-btn').click();
+    await expect(page.locator('#toast-region .app-toast-success')).toContainText('Dane odświeżone');
+
+    await page.evaluate(() => {
+        for (let index = 0; index < 6; index += 1) {
+            showToast(`Test ${index + 1}`, 'Kontrola limitu stosu.', 'info', 12000);
+        }
+    });
+    await expect(page.locator('#toast-region .app-toast')).toHaveCount(4);
+});
+
+test('theme control cycles dark, light and automatic modes', async ({ page }) => {
+    await page.setViewportSize({ width: 1200, height: 900 });
+    await page.goto('/');
+    await waitForTelemetry(page);
+
+    const toggle = page.locator('#theme-toggle');
+    await toggle.click();
+    await expect(page.locator('html')).toHaveAttribute('data-theme', 'dark');
+    await expect(page.locator('html')).toHaveAttribute('data-theme-source', 'manual');
+
+    await toggle.click();
+    await expect(page.locator('html')).toHaveAttribute('data-theme', 'light');
+    await expect(page.locator('html')).toHaveAttribute('data-theme-source', 'manual');
+
+    await toggle.click();
+    await expect(page.locator('html')).toHaveAttribute('data-theme-source', 'device');
+    expect(await page.evaluate(() => localStorage.getItem('aqPortalThemePreference'))).toBeNull();
+});
+
+test('action transport rejects a duplicate command while the first request is pending', async ({ page }) => {
+    await page.goto('/');
+    await waitForTelemetry(page);
+    await loginAsAdmin(page);
+
+    let commandRequests = 0;
+    await page.route('**/api/action', async (route) => {
+        const body = route.request().postData() || '';
+        if (body.includes('action=set_light')) {
+            commandRequests += 1;
+            await new Promise((resolve) => setTimeout(resolve, 350));
+        }
+        await route.continue();
+    });
+
+    const result = await page.evaluate(async () => {
+        const first = sendAction('set_light', { state: '1' }, { notifySuccess: false, notifyError: false });
+        const second = sendAction('set_light', { state: '0' }, { notifySuccess: false, notifyError: false });
+        const settled = await Promise.allSettled([first, second]);
+        return settled.map((entry) => ({
+            status: entry.status,
+            code: entry.status === 'rejected' ? entry.reason?.code : ''
+        }));
+    });
+
+    expect(result).toEqual([
+        { status: 'fulfilled', code: '' },
+        { status: 'rejected', code: 'action_in_progress' }
+    ]);
+    expect(commandRequests).toBe(1);
+});
+
+test('relay renderer rejects invalid channels and escapes custom labels', async ({ page }) => {
+    await page.goto('/');
+    await waitForTelemetry(page);
+
+    const result = await page.evaluate(() => {
+        window.__relayXss = false;
+        renderRelays({
+            relaysConfig: {
+                relays: [
+                    {
+                        channel: 1,
+                        function: 'custom',
+                        label: '<img src=x onerror="window.__relayXss=true">',
+                        defaultState: 'off',
+                        manualAllowed: true
+                    },
+                    {
+                        channel: '2" onmouseover="window.__relayXss=true',
+                        function: 'custom',
+                        label: 'Nieprawidłowy kanał',
+                        defaultState: 'off',
+                        manualAllowed: true
+                    }
+                ]
+            },
+            relays: {}
+        });
+        const container = document.querySelector('.relays-section');
+        return {
+            injected: window.__relayXss,
+            imageCount: container.querySelectorAll('img').length,
+            buttonCount: container.querySelectorAll('button[data-relay-channel]').length,
+            label: container.querySelector('.relay-row-name')?.textContent || ''
+        };
+    });
+
+    expect(result.injected).toBe(false);
+    expect(result.imageCount).toBe(0);
+    expect(result.buttonCount).toBe(1);
+    expect(result.label).toContain('<img src=x');
+});
+
 test('keyboard PIN login unlocks every administrative section', async ({ page }) => {
     await page.goto('/');
     await waitForTelemetry(page);
@@ -499,6 +614,66 @@ test('relay wizard tests and saves the firmware map without blocking alerts', as
     await page.locator('#wizard-save-btn').click();
     await expect(page.locator('#module-map-warning')).toContainText('zapisano');
     expect(dialogs).toEqual([]);
+});
+
+test('relay wizard validates imported profiles and renders labels as text', async ({ page }) => {
+    await page.goto('/');
+    await waitForTelemetry(page);
+    await loginAsAdmin(page);
+    await page.locator('.nav-item[data-target="przekazniki"] > a').click();
+    await page.locator('#module-open-wizard').click();
+
+    const importInput = page.locator('#wizard-import-file');
+    await importInput.setInputFiles({
+        name: 'invalid-relays.json',
+        mimeType: 'application/json',
+        buffer: Buffer.from(JSON.stringify({
+            relays: [{
+                channel: '<img src=x onerror=alert(1)>',
+                function: 'custom',
+                label: 'Niebezpieczny kanał'
+            }]
+        }), 'utf8')
+    });
+    await expect(page.locator('#module-map-warning')).toContainText('musi być liczbą od 1 do 8');
+    await expect(page.locator('#relays-wizard-card img')).toHaveCount(0);
+
+    await importInput.setInputFiles({
+        name: 'oversized-relays.json',
+        mimeType: 'application/json',
+        buffer: Buffer.alloc((32 * 1024) + 1, 0x20)
+    });
+    await expect(page.locator('#module-map-warning')).toContainText('limit 32 KB');
+
+    const injectedLabel = '<img src=x onerror=alert(1)> Pompa';
+    await importInput.setInputFiles({
+        name: 'valid-relays.json',
+        mimeType: 'application/json',
+        buffer: Buffer.from(JSON.stringify({
+            relayBoard: {
+                enabled: true,
+                channels: 8,
+                expander: 'MCP23017',
+                i2cAddress: '0x20',
+                activeLow: true,
+                storage: 'sd'
+            },
+            relays: [{
+                channel: 1,
+                function: 'custom',
+                label: injectedLabel,
+                defaultState: 'off',
+                safeState: 'off',
+                manualAllowed: true,
+                pinRequired: true
+            }]
+        }), 'utf8')
+    });
+    await expect(page.locator('#module-map-warning')).toContainText('Zaimportowano profil');
+    await page.locator('#wizard-next-btn').click();
+    await expect(page.locator('#wizard-step-2')).toBeVisible();
+    await expect(page.locator('#wizard-label-ch1')).toHaveValue(injectedLabel);
+    await expect(page.locator('#wizard-relays-table-body img')).toHaveCount(0);
 });
 
 test('temperature chart keeps values outside the plotted data area', async ({ page }) => {

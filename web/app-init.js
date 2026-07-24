@@ -51,16 +51,19 @@ function bindLogsControls() {
             if (!pin) {
                 throw new Error('Wymagane logowanie admina.');
             }
-            const response = await fetch(`${API_LOGS}?format=text&type=${encodeURIComponent(activeLogType)}&pin=${encodeURIComponent(pin)}`, {
-                cache: 'no-store'
-            });
+            const result = await fetchWithTimeout(
+                `${API_LOGS}?format=text&type=${encodeURIComponent(activeLogType)}&pin=${encodeURIComponent(pin)}`,
+                { cache: 'no-store' },
+                API_REQUEST_TIMEOUT_MS,
+                (response) => response.ok ? response.text() : null
+            );
+            const { response, body: lines } = result;
             if (!response.ok) {
                 if (response.status === 403) {
                     logoutAdmin();
                 }
                 throw new Error('Nie udalo sie pobrac logow z urzadzenia.');
             }
-            const lines = await response.text();
             const blob = new Blob([lines], { type: 'text/plain;charset=utf-8' });
             const url = URL.createObjectURL(blob);
             const a = document.createElement('a');
@@ -165,15 +168,17 @@ function bindAuthControls() {
     document.getElementById('admin-login-btn')?.addEventListener('click', async () => {
         try {
             await loginAsAdmin();
+            showToast('Zalogowano', 'Dostęp administracyjny jest aktywny w tej karcie.', 'success', 3000);
         } catch (error) {
             if (error?.code !== 'admin_login_cancelled' && error?.code !== 'pin_replaced') {
-                alert(error?.message || 'Nie udało się zalogować admina.');
+                showToast('Nie udało się zalogować', error?.message || 'Sterownik odrzucił próbę logowania.', 'error', 5000);
             }
         }
     });
 
     document.getElementById('admin-logout-btn')?.addEventListener('click', () => {
         logoutAdmin();
+        showToast('Wylogowano', 'Panel wrócił do bezpiecznego trybu podglądu.', 'info', 2800);
     });
 }
 
@@ -237,6 +242,27 @@ function bindPinModalEvents() {
     });
 }
 
+function bindConnectionControls() {
+    const refreshButton = document.getElementById('connection-refresh-btn');
+    refreshButton?.addEventListener('click', async () => {
+        if (refreshButton.dataset.busy === '1') {
+            return;
+        }
+
+        setElementBusy(refreshButton, true);
+        try {
+            const refreshed = await fetchStatus(true);
+            if (refreshed) {
+                showToast('Dane odświeżone', 'Sterownik przesłał aktualną telemetrię.', 'success', 2800);
+            } else {
+                showToast('Brak odpowiedzi', 'Automatyczne ponawianie połączenia pozostaje aktywne.', 'warning', 4200);
+            }
+        } finally {
+            setElementBusy(refreshButton, false);
+        }
+    });
+}
+
 function initDirtyTracking() {
     ['settings-sta-ssid', 'settings-sta-password'].forEach((id) => {
         const el = document.getElementById(id);
@@ -295,6 +321,7 @@ document.addEventListener('DOMContentLoaded', () => {
     bindAuthControls();
     bindDashboardControls();
     bindPinModalEvents();
+    bindConnectionControls();
     initDisplaySettingsListeners();
     applyAuthState();
     document.getElementById('upload-btn')?.addEventListener('click', uploadFirmwarePackage);
@@ -303,6 +330,7 @@ document.addEventListener('DOMContentLoaded', () => {
     setTemperatureStatus('Sterowanie grzałką jest synchronizowane ze sterownikiem.', 'muted');
     setDeviceActionStatus('Akcje administracyjne wymagają potwierdzenia.', 'muted');
 
+    initConnectionMonitoring();
     startWebSessionHeartbeat();
     startEventStream();
     startPollingFallback();

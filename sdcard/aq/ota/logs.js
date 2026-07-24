@@ -6,6 +6,8 @@ function syncLogTabButtons() {
 
     currentBtn?.classList.toggle('active', currentActive);
     criticalBtn?.classList.toggle('active', criticalActive);
+    currentBtn?.setAttribute('aria-pressed', currentActive ? 'true' : 'false');
+    criticalBtn?.setAttribute('aria-pressed', criticalActive ? 'true' : 'false');
 
     if (currentBtn) {
         currentBtn.style.background = currentActive ? 'var(--log-tab-info-bg)' : 'transparent';
@@ -144,8 +146,8 @@ function renderLogs() {
 }
 
 function applyLogsPayload(logs) {
-    cachedLogs.normal = Array.isArray(logs?.normal) ? logs.normal : [];
-    cachedLogs.critical = Array.isArray(logs?.critical) ? logs.critical : [];
+    cachedLogs.normal = Array.isArray(logs?.normal) ? logs.normal.slice(-500) : [];
+    cachedLogs.critical = Array.isArray(logs?.critical) ? logs.critical.slice(-500) : [];
     cachedLogs.counts = {
         normal: Math.trunc(Number(logs?.counts?.normal) || cachedLogs.normal.length),
         critical: Math.trunc(Number(logs?.counts?.critical) || cachedLogs.critical.length)
