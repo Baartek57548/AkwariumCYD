@@ -52,7 +52,7 @@ class _ProfileSettingsViewState extends State<ProfileSettingsView> {
 
   @override
   Widget build(BuildContext context) {
-    final updateController = AppUpdateScope.maybeOf(context);
+    final updateController = AppUpdateScope.maybeOf(context, listen: false);
     return ControllerPageBody(
       children: [
         Form(

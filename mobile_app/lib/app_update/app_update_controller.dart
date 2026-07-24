@@ -15,6 +15,7 @@ enum AppUpdatePhase {
   available,
   downloading,
   verifying,
+  readyToInstall,
   awaitingInstallPermission,
   installerOpened,
   failed,
@@ -79,6 +80,7 @@ class AppUpdateController extends ChangeNotifier {
   Future<void>? _installOperation;
   bool _disposed = false;
   bool _cancelDownload = false;
+  bool _isForeground = true;
   int _eventId = 0;
   String? _downloadedApkPath;
 
@@ -151,8 +153,8 @@ class AppUpdateController extends ChangeNotifier {
 
     _emit(AppUpdatePhase.checking, isManual: manual);
     try {
-      await _preferences!.recordCheck(now);
       final release = await _service.fetchLatestMobileRelease();
+      await _preferences!.recordCheck(now);
       final installedVersion = _installedApp!.semanticVersion!;
       if (release == null || release.version <= installedVersion) {
         _emit(AppUpdatePhase.upToDate, isManual: manual);
@@ -224,22 +226,44 @@ class AppUpdateController extends ChangeNotifier {
     if (release == null || _isInstallFlowActive) return;
     _cancelDownload = false;
     try {
-      final updateDirectory = await _platform.getUpdateDirectory();
       _emit(AppUpdatePhase.downloading, release: release, progress: 0);
+      final updateDirectory = await _platform.getUpdateDirectory();
+      final progressStopwatch = Stopwatch()..start();
+      var lastProgress = 0.0;
+      var lastProgressAt = 0;
       final apkPath = await _service.downloadApk(
         release: release,
         updateDirectory: updateDirectory,
         onProgress: (progress) {
           if (_disposed) return;
+          final normalized = progress.clamp(0.0, 1.0);
+          final elapsed = progressStopwatch.elapsedMilliseconds;
+          if (normalized < 1 &&
+              normalized - lastProgress < 0.01 &&
+              elapsed - lastProgressAt < 100) {
+            return;
+          }
+          lastProgress = normalized;
+          lastProgressAt = elapsed;
           _emit(
             AppUpdatePhase.downloading,
             release: release,
-            progress: progress.clamp(0, 1),
+            progress: normalized,
           );
         },
         isCanceled: () => _cancelDownload || _disposed,
       );
       _downloadedApkPath = apkPath;
+      if (!_isForeground) {
+        _emit(
+          AppUpdatePhase.readyToInstall,
+          release: release,
+          progress: 1,
+          message:
+              'Aktualizacja została pobrana. Instalator otworzy się po powrocie do aplikacji.',
+        );
+        return;
+      }
       await _launchInstaller(release);
     } on AppUpdateCanceledException {
       _emit(AppUpdatePhase.available, release: release);
@@ -304,7 +328,22 @@ class AppUpdateController extends ChangeNotifier {
   }
 
   Future<void> onAppResumed() async {
+    _isForeground = true;
     await initialize();
+    if (_state.phase == AppUpdatePhase.readyToInstall &&
+        _state.release != null &&
+        _downloadedApkPath != null) {
+      try {
+        await _launchInstaller(_state.release!);
+      } on AppUpdateException catch (error) {
+        _emit(
+          AppUpdatePhase.failed,
+          release: _state.release,
+          message: error.userMessage,
+        );
+      }
+      return;
+    }
     if (_state.phase == AppUpdatePhase.awaitingInstallPermission &&
         _state.release != null &&
         _downloadedApkPath != null) {
@@ -331,6 +370,10 @@ class AppUpdateController extends ChangeNotifier {
       return;
     }
     await checkForUpdates();
+  }
+
+  void onAppBackgrounded() {
+    _isForeground = false;
   }
 
   Future<void> reopenInstallPermissionSettings() async {
@@ -385,6 +428,7 @@ class AppUpdateController extends ChangeNotifier {
   bool get _isInstallFlowActive {
     return _state.phase == AppUpdatePhase.downloading ||
         _state.phase == AppUpdatePhase.verifying ||
+        _state.phase == AppUpdatePhase.readyToInstall ||
         _state.phase == AppUpdatePhase.awaitingInstallPermission;
   }
 

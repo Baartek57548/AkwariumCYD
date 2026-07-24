@@ -220,6 +220,7 @@ class GitHubUpdateService implements AppUpdateRepository {
   }) async {
     final directory = Directory(updateDirectory);
     await directory.create(recursive: true);
+    await _removeOldUpdateFiles(directory);
     final baseName = 'aquacyd-${release.version}';
     final partialFile = File(
       '${directory.path}${Platform.pathSeparator}$baseName.part',
@@ -379,6 +380,17 @@ class GitHubUpdateService implements AppUpdateRepository {
 
   static Future<void> _deleteIfExists(File file) async {
     if (await file.exists()) await file.delete();
+  }
+
+  static Future<void> _removeOldUpdateFiles(Directory directory) async {
+    final updateFilePattern = RegExp(
+      r'^aquacyd-(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)\.(apk|part)$',
+    );
+    await for (final entity in directory.list(followLinks: false)) {
+      if (entity is! File) continue;
+      final name = entity.uri.pathSegments.last;
+      if (updateFilePattern.hasMatch(name)) await entity.delete();
+    }
   }
 
   @override

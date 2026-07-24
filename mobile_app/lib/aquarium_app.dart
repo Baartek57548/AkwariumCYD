@@ -79,6 +79,8 @@ class _AquariumAppState extends State<AquariumApp> with WidgetsBindingObserver {
     if (state == AppLifecycleState.resumed) {
       final controller = _appUpdateController;
       if (controller != null) unawaited(controller.onAppResumed());
+    } else {
+      _appUpdateController?.onAppBackgrounded();
     }
   }
 
@@ -87,6 +89,10 @@ class _AquariumAppState extends State<AquariumApp> with WidgetsBindingObserver {
     final controller = _appUpdateController;
     if (controller == null) return;
     final state = controller.state;
+
+    if (state.phase == AppUpdatePhase.idle && state.release != null) {
+      _lastPromptedVersion = null;
+    }
 
     if (state.phase == AppUpdatePhase.available && state.release != null) {
       final version = state.release!.version.toString();

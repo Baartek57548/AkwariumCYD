@@ -12,10 +12,14 @@ class AppUpdateScope extends InheritedNotifier<AppUpdateController> {
     required super.child,
   }) : super(notifier: controller);
 
-  static AppUpdateController? maybeOf(BuildContext context) {
-    return context
-        .dependOnInheritedWidgetOfExactType<AppUpdateScope>()
-        ?.notifier;
+  static AppUpdateController? maybeOf(
+    BuildContext context, {
+    bool listen = true,
+  }) {
+    final scope = listen
+        ? context.dependOnInheritedWidgetOfExactType<AppUpdateScope>()
+        : context.getInheritedWidgetOfExactType<AppUpdateScope>();
+    return scope?.notifier;
   }
 }
 
@@ -28,57 +32,60 @@ class AppUpdatePromptDialog extends StatelessWidget {
   Widget build(BuildContext context) {
     final colors = Theme.of(context).colorScheme;
     final notes = _shortReleaseNotes(release.notes);
-    return AlertDialog(
-      scrollable: true,
-      icon: Icon(
-        Icons.system_update_rounded,
-        size: 40,
-        color: colors.primary,
-        semanticLabel: 'Dostępna aktualizacja',
-      ),
-      title: Text('AquaCYD ${release.version} jest dostępna'),
-      content: ConstrainedBox(
-        constraints: const BoxConstraints(maxWidth: 460),
-        child: SingleChildScrollView(
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(
-                'Nowa wersja ma ${release.formattedSize}. Po pobraniu Android poprosi o potwierdzenie instalacji.',
-              ),
-              if (notes.isNotEmpty) ...[
-                const SizedBox(height: 16),
+    return PopScope(
+      canPop: false,
+      child: AlertDialog(
+        scrollable: true,
+        icon: Icon(
+          Icons.system_update_rounded,
+          size: 40,
+          color: colors.primary,
+          semanticLabel: 'Dostępna aktualizacja',
+        ),
+        title: Text('AquaCYD ${release.version} jest dostępna'),
+        content: ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 460),
+          child: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
                 Text(
-                  'Co nowego',
-                  style: Theme.of(
-                    context,
-                  ).textTheme.titleSmall?.copyWith(fontWeight: FontWeight.w800),
+                  'Nowa wersja ma ${release.formattedSize}. Po pobraniu Android poprosi o potwierdzenie instalacji.',
                 ),
-                const SizedBox(height: 6),
-                Text(notes),
+                if (notes.isNotEmpty) ...[
+                  const SizedBox(height: 16),
+                  Text(
+                    'Co nowego',
+                    style: Theme.of(context).textTheme.titleSmall?.copyWith(
+                      fontWeight: FontWeight.w800,
+                    ),
+                  ),
+                  const SizedBox(height: 6),
+                  Text(notes),
+                ],
               ],
-            ],
+            ),
           ),
         ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, AppUpdatePromptAction.skip),
+            child: const Text('Pomiń tę wersję'),
+          ),
+          TextButton(
+            onPressed: () =>
+                Navigator.pop(context, AppUpdatePromptAction.remindLater),
+            child: const Text('Później'),
+          ),
+          FilledButton.icon(
+            onPressed: () =>
+                Navigator.pop(context, AppUpdatePromptAction.install),
+            icon: const Icon(Icons.download_rounded),
+            label: const Text('Pobierz i zainstaluj'),
+          ),
+        ],
       ),
-      actions: [
-        TextButton(
-          onPressed: () => Navigator.pop(context, AppUpdatePromptAction.skip),
-          child: const Text('Pomiń tę wersję'),
-        ),
-        TextButton(
-          onPressed: () =>
-              Navigator.pop(context, AppUpdatePromptAction.remindLater),
-          child: const Text('Później'),
-        ),
-        FilledButton.icon(
-          onPressed: () =>
-              Navigator.pop(context, AppUpdatePromptAction.install),
-          icon: const Icon(Icons.download_rounded),
-          label: const Text('Pobierz i zainstaluj'),
-        ),
-      ],
     );
   }
 
@@ -167,6 +174,10 @@ class AppUpdateProgressDialog extends StatelessWidget {
         Icons.admin_panel_settings_outlined,
         size: 40,
       ),
+      AppUpdatePhase.readyToInstall => const Icon(
+        Icons.download_done_rounded,
+        size: 40,
+      ),
       _ => const Icon(Icons.system_update_rounded, size: 40),
     };
   }
@@ -176,6 +187,7 @@ class AppUpdateProgressDialog extends StatelessWidget {
       AppUpdatePhase.downloading =>
         'Pobieranie AquaCYD ${release?.version ?? ''}',
       AppUpdatePhase.verifying => 'Weryfikacja aktualizacji',
+      AppUpdatePhase.readyToInstall => 'Aktualizacja została pobrana',
       AppUpdatePhase.awaitingInstallPermission => 'Potrzebna zgoda Androida',
       AppUpdatePhase.installerOpened => 'Aktualizacja jest gotowa',
       AppUpdatePhase.failed => 'Nie udało się zaktualizować',
@@ -189,6 +201,8 @@ class AppUpdateProgressDialog extends StatelessWidget {
       AppUpdatePhase.available => 'Plik aktualizacji nie został zainstalowany.',
       AppUpdatePhase.installerOpened =>
         'Potwierdź instalację w systemowym oknie Androida.',
+      AppUpdatePhase.readyToInstall =>
+        'Instalator otworzy się po powrocie do aplikacji.',
       _ => 'Przygotowywanie aktualizacji…',
     };
   }
@@ -331,7 +345,7 @@ class AppUpdateFooter extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final controller = AppUpdateScope.maybeOf(context);
+    final controller = AppUpdateScope.maybeOf(context, listen: false);
     if (controller == null) return const SizedBox.shrink();
     return AnimatedBuilder(
       animation: controller,
