@@ -792,14 +792,52 @@ function updateClock() {
     }
 }
 
+function updateBackendConnectionIndicator(isConnected, stateChanged) {
+    const indicator = document.getElementById('backend-connection-status');
+    const label = document.getElementById('backend-connection-label');
+    const announcer = document.getElementById('backend-connection-announcer');
+    const connected = Boolean(isConnected);
+    const state = connected ? 'online' : 'offline';
+    const text = connected ? 'Sterownik online' : 'Sterownik offline';
+
+    if (indicator) {
+        indicator.dataset.state = state;
+        indicator.classList.remove('status-badge-success', 'status-badge-muted', 'status-badge-danger');
+        indicator.classList.add(connected ? 'status-badge-success' : 'status-badge-danger');
+        indicator.setAttribute('aria-label', connected
+            ? 'Stan połączenia: sterownik odpowiada'
+            : 'Stan połączenia: brak odpowiedzi sterownika, trwa ponawianie');
+        indicator.title = connected
+            ? `Ostatnia odpowiedź: ${new Date().toLocaleTimeString('pl-PL')}`
+            : 'Panel zachowuje ostatnie dane i ponawia połączenie automatycznie.';
+    }
+    if (label) {
+        label.textContent = text;
+    }
+    if (stateChanged && announcer) {
+        announcer.textContent = connected
+            ? 'Połączenie ze sterownikiem zostało przywrócone.'
+            : 'Utracono połączenie ze sterownikiem. Panel ponawia próbę automatycznie.';
+    }
+}
+
 function setBackendState(isConnected) {
-    backendConnected = isConnected;
-    window.backendConnected = isConnected;
+    const connected = Boolean(isConnected);
+    const currentIndicatorState = document.getElementById('backend-connection-status')?.dataset.state || '';
+    const stateChanged = backendConnected !== connected ||
+        (connected && currentIndicatorState !== 'online') ||
+        (!connected && currentIndicatorState !== 'offline');
+
+    backendConnected = connected;
+    window.backendConnected = connected;
+    document.body.dataset.backendState = connected ? 'online' : 'offline';
+    updateBackendConnectionIndicator(connected, stateChanged);
+
     const statusEl = document.getElementById('logs-status');
     if (statusEl) {
-        statusEl.textContent = isConnected ? 'Polaczono z backendem ESP32.' : 'Brak odpowiedzi sterownika.';
+        statusEl.textContent = connected ? 'Połączono ze sterownikiem ESP32.' : 'Brak odpowiedzi sterownika.';
     }
-    if (!isConnected) {
+    if (!connected) {
         setCommandStatus('dashboard-strip-state', 'Offline', 'Brak odpowiedzi sterownika', 'danger');
         setCommandStatus('ota-strip-link', 'Offline', 'Brak aktywnej odpowiedzi HTTP', 'warn');
         setCommandStatus('diag-strip-bus', 'Offline', 'Status zostanie odswiezony po powrocie ESP32', 'warn');
@@ -836,12 +874,12 @@ function applyStatusPayload(data) {
     lastStatusData = mergedData;
     window.lastStatusData = mergedData;
 
-    setBackendState(true);
     if (typeof window.applyPortalThemeFromStatus === 'function') {
         window.applyPortalThemeFromStatus(mergedData);
     }
     syncClockFromController(mergedData.clock);
     renderDashboard(mergedData);
+    setBackendState(true);
 
     if (window.ChartsApp && typeof window.ChartsApp.updateData === 'function' && mergedData.temperature) {
         window.ChartsApp.updateData(mergedData.temperature);
@@ -1101,6 +1139,7 @@ function hideOledSaveAnimation() {
 
 let pinPromiseResolve = null;
 let pinPromiseReject = null;
+let pinModalReturnFocus = null;
 let adminSessionPin = '';
 let adminSessionStartedAtMs = 0;
 let currentUserRole = 'guest';
@@ -1112,13 +1151,12 @@ function normalizePinValue(value) {
 
 function setPinModalError(message) {
     const errorEl = document.getElementById('pin-modal-error');
+    const input = document.getElementById('pin-modal-input');
     if (!errorEl) return;
-    if (message) {
-        errorEl.textContent = message;
-        errorEl.style.display = 'block';
-    } else {
-        errorEl.style.display = 'none';
-    }
+    const hasError = Boolean(message);
+    errorEl.textContent = hasError ? message : '';
+    errorEl.hidden = !hasError;
+    input?.setAttribute('aria-invalid', hasError ? 'true' : 'false');
 }
 
 function setPinModalBusy(isBusy) {
@@ -1166,12 +1204,35 @@ function getAdminPinForRequest() {
     return isAdminAuthenticated() ? adminSessionPin : '';
 }
 
+function restorePinModalFocus() {
+    const target = pinModalReturnFocus;
+    pinModalReturnFocus = null;
+    if (!(target instanceof HTMLElement) || !target.isConnected || target.disabled || target.offsetParent === null) {
+        return;
+    }
+    requestAnimationFrame(() => target.focus());
+}
+
+function hidePinModal() {
+    const modal = document.getElementById('pin-modal');
+    if (modal) {
+        modal.style.display = 'none';
+        modal.setAttribute('aria-hidden', 'true');
+    }
+    restorePinModalFocus();
+}
+
 function promptForPin(errorMessage = '') {
     const modal = document.getElementById('pin-modal');
     const input = document.getElementById('pin-modal-input');
 
     if (!modal || !input) {
         return Promise.reject(new Error('PIN modal HTML elements not found'));
+    }
+
+    const wasOpen = modal.style.display === 'flex';
+    if (!wasOpen && document.activeElement instanceof HTMLElement) {
+        pinModalReturnFocus = document.activeElement;
     }
 
     if (pinPromiseReject) {
@@ -1184,6 +1245,7 @@ function promptForPin(errorMessage = '') {
     setPinModalBusy(false);
     setPinModalError(errorMessage);
     modal.style.display = 'flex';
+    modal.setAttribute('aria-hidden', 'false');
     input.focus();
     input.select();
 
@@ -1194,8 +1256,7 @@ function promptForPin(errorMessage = '') {
 }
 
 function handlePinCancel() {
-    const modal = document.getElementById('pin-modal');
-    if (modal) modal.style.display = 'none';
+    hidePinModal();
     if (pinPromiseReject) {
         pinPromiseReject(new Error('pin_cancelled'));
         pinPromiseReject = null;
@@ -1306,8 +1367,7 @@ async function loginAsAdmin() {
             setPinModalBusy(true);
             await verifyAdminPin(pin);
             setAdminSession(pin);
-            const modal = document.getElementById('pin-modal');
-            if (modal) modal.style.display = 'none';
+            hidePinModal();
             return true;
         } catch (error) {
             clearAdminSession();
@@ -1416,6 +1476,7 @@ function setMobileNavOpen(isOpen) {
         return;
     }
 
+    const wasOpen = sidebar.classList.contains('mobile-open');
     sidebar.classList.toggle('mobile-open', open);
     backdrop.classList.toggle('visible', open);
     backdrop.setAttribute('aria-hidden', open ? 'false' : 'true');
@@ -1430,6 +1491,17 @@ function setMobileNavOpen(isOpen) {
     if (toggleIcon) {
         toggleIcon.className = open ? 'fa-solid fa-xmark' : 'fa-solid fa-bars';
         renderLocalIcon(toggleIcon);
+    }
+
+    if (window.innerWidth <= 960 && open && !wasOpen) {
+        requestAnimationFrame(() => {
+            const activeLink = sidebar.querySelector('.nav-item.active a');
+            const firstVisibleControl = Array.from(sidebar.querySelectorAll('a[href], button:not([disabled])'))
+                .find((element) => element.offsetParent !== null);
+            (activeLink || firstVisibleControl)?.focus();
+        });
+    } else if (window.innerWidth <= 960 && !open && wasOpen) {
+        toggle.focus();
     }
 }
 
@@ -1470,6 +1542,28 @@ function initMobileNavigation() {
     document.addEventListener('keydown', (event) => {
         if (event.key === 'Escape') {
             setMobileNavOpen(false);
+            return;
+        }
+
+        if (event.key === 'Tab' && window.innerWidth <= 960 && sidebar.classList.contains('mobile-open')) {
+            const focusable = Array.from(sidebar.querySelectorAll(
+                'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), [tabindex]:not([tabindex="-1"])'
+            )).filter((element) => element.offsetParent !== null);
+            if (focusable.length === 0) {
+                event.preventDefault();
+                toggle.focus();
+                return;
+            }
+
+            const first = focusable[0];
+            const last = focusable[focusable.length - 1];
+            if (event.shiftKey && document.activeElement === first) {
+                event.preventDefault();
+                last.focus();
+            } else if (!event.shiftKey && document.activeElement === last) {
+                event.preventDefault();
+                first.focus();
+            }
         }
     });
 
@@ -1525,23 +1619,38 @@ function switchTab(tabId, updateHash = true) {
         return;
     }
 
+    const previousTabId = document.querySelector('.view-section.active')?.id || '';
     const navItems = document.querySelectorAll('.nav-item');
-    navItems.forEach((nav) => nav.classList.remove('active'));
+    navItems.forEach((nav) => {
+        nav.classList.remove('active');
+        nav.querySelector('a')?.removeAttribute('aria-current');
+    });
 
     const activeNav = Array.from(navItems).find((nav) => nav.getAttribute('data-target') === tabId);
     if (activeNav) {
         activeNav.classList.add('active');
+        activeNav.querySelector('a')?.setAttribute('aria-current', 'page');
     }
 
     const sections = document.querySelectorAll('.view-section');
-    sections.forEach((section) => section.classList.remove('active'));
+    sections.forEach((section) => {
+        const isActive = section.id === tabId;
+        section.classList.toggle('active', isActive);
+        section.setAttribute('aria-hidden', isActive ? 'false' : 'true');
+    });
 
     if (targetSection) {
-        targetSection.classList.add('active');
         document.body.dataset.activeView = tabId;
         updateMobileCurrentView(tabId);
         if (updateHash) {
             updateLocationHash(tabId);
+        }
+        if (previousTabId && previousTabId !== tabId) {
+            const label = activeNav?.querySelector('a')?.textContent?.trim() || tabId;
+            const announcer = document.getElementById('view-announcer');
+            if (announcer) {
+                announcer.textContent = `Otwarty widok: ${label}.`;
+            }
         }
     }
 

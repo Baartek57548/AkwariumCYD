@@ -66,3 +66,28 @@ Klucz oraz hasła muszą pozostać poza repozytorium. Konfiguracja
 `keyPassword`, `keyAlias` oraz `storeFile`. Gradle celowo przerywa build release,
 jeśli konfiguracja podpisu jest niekompletna, aby nie opublikować ponownie
 nieinstalowalnego APK.
+
+## Aktualizacje aplikacji z GitHub Releases
+
+Wariant `current` sprawdza aktualizacje po uruchomieniu, po powrocie do aplikacji
+i nie częściej niż raz na 12 godzin. Użytkownik może też uruchomić sprawdzanie
+ręcznie na ekranie połączenia albo w ustawieniach profilu. Po wyrażeniu zgody
+APK jest pobierany strumieniowo, a Android przed otwarciem instalatora sprawdza:
+
+- sumę SHA-256 zwróconą przez GitHub Releases,
+- identyfikator pakietu `pl.cydakwarium.cyd_aquarium_mobile`,
+- kod wersji wyższy od zainstalowanego,
+- certyfikat podpisu zgodny z bieżącą aplikacją.
+
+Każde stabilne wydanie mobilne musi spełniać cały kontrakt:
+
+- tag: `mobile-vX.Y.Z`,
+- nazwa assetu: `AquaCYD-Control-X.Y.Z-current.apk`,
+- wydanie nie może być draftem ani prerelease,
+- `version` w `pubspec.yaml` musi mieć wyższy `versionCode`,
+- APK musi być podpisany tym samym prywatnym kluczem co poprzednie wersje.
+
+Pierwsza aktualizacja wymaga jednorazowego zezwolenia Androida „Zezwalaj z tego
+źródła”. Każda instalacja nadal kończy się systemowym potwierdzeniem użytkownika;
+aplikacja nie omija zabezpieczeń Androida. Warianty `full` oraz `dev` mają inne
+identyfikatory pakietów i celowo nie używają kanału aktualizacji `current`.

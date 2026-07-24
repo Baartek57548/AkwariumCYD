@@ -61,6 +61,38 @@ test('keyboard PIN login unlocks every administrative section', async ({ page })
     await expect(page.locator('#dashboard')).toHaveClass(/active/);
 });
 
+test('PIN dialog traps focus, announces validation and restores the trigger', async ({ page }) => {
+    await page.goto('/');
+    await waitForTelemetry(page);
+
+    const loginButton = page.locator('#admin-login-btn');
+    const modal = page.locator('#pin-modal');
+    const input = page.locator('#pin-modal-input');
+    const submit = page.locator('#pin-modal-submit');
+    const error = page.locator('#pin-modal-error');
+
+    await loginButton.click();
+    await expect(modal).toHaveAttribute('role', 'dialog');
+    await expect(modal).toHaveAttribute('aria-modal', 'true');
+    await expect(modal).toHaveAttribute('aria-hidden', 'false');
+    await expect(input).toBeFocused();
+
+    await page.keyboard.press('Shift+Tab');
+    await expect(submit).toBeFocused();
+    await page.keyboard.press('Tab');
+    await expect(input).toBeFocused();
+
+    await input.fill('12');
+    await page.keyboard.press('Enter');
+    await expect(error).toBeVisible();
+    await expect(input).toHaveAttribute('aria-invalid', 'true');
+
+    await page.keyboard.press('Escape');
+    await expect(modal).toBeHidden();
+    await expect(modal).toHaveAttribute('aria-hidden', 'true');
+    await expect(loginButton).toBeFocused();
+});
+
 test('diagnostics presents I2C, UART and OneWire hardware buses', async ({ page }) => {
     await page.goto('/');
     await waitForTelemetry(page);
@@ -268,6 +300,122 @@ test('mobile follows the system color scheme while desktop follows the controlle
     await expect(page.locator('html')).toHaveAttribute('data-theme-source', 'device');
     await expect(page.locator('html')).toHaveAttribute('data-theme', 'light');
     await expect(page.locator('#theme-toggle-label')).toHaveText('Jasny');
+});
+
+test('keyboard navigation exposes a skip link and the current view', async ({ page }) => {
+    await page.goto('/');
+    await waitForTelemetry(page);
+
+    const skipLink = page.locator('.skip-link');
+    await page.keyboard.press('Tab');
+    await expect(skipLink).toBeFocused();
+
+    const focusAppearance = await skipLink.evaluate((element) => {
+        const style = getComputedStyle(element);
+        return {
+            outlineWidth: Number.parseFloat(style.outlineWidth)
+        };
+    });
+    expect(focusAppearance.outlineWidth).toBeGreaterThanOrEqual(2);
+    await expect.poll(async () => skipLink.evaluate((element) =>
+        Math.round(element.getBoundingClientRect().top))).toBeGreaterThanOrEqual(0);
+
+    await page.keyboard.press('Enter');
+    await expect(page.locator('#main-content')).toBeFocused();
+
+    const dashboardLink = page.locator('.nav-item[data-target="dashboard"] > a');
+    const chartsLink = page.locator('.nav-item[data-target="wykresy"] > a');
+    await expect(dashboardLink).toHaveAttribute('href', '#dashboard');
+    await expect(dashboardLink).toHaveAttribute('aria-current', 'page');
+
+    await chartsLink.click();
+    await expect(chartsLink).toHaveAttribute('aria-current', 'page');
+    await expect(dashboardLink).not.toHaveAttribute('aria-current', 'page');
+    await expect(page.locator('#wykresy')).toHaveAttribute('aria-hidden', 'false');
+    await expect(page.locator('#dashboard')).toHaveAttribute('aria-hidden', 'true');
+    await expect(page.locator('#view-announcer')).toHaveText('Otwarty widok: Pomiary.');
+});
+
+test('settings tabs support roving keyboard focus and semantic panels', async ({ page }) => {
+    await page.goto('/');
+    await loginAsAdmin(page);
+    await page.locator('.nav-item[data-target="ustawienia"] > a').click();
+
+    const tablist = page.locator('.settings-nav-panel');
+    const networkTab = page.locator('#settings-network-tab');
+    const displayTab = page.locator('#settings-display-tab');
+    const networkPanel = page.locator('#settings-network-panel');
+    const displayPanel = page.locator('#settings-display-panel');
+
+    await expect(tablist).toHaveAttribute('role', 'tablist');
+    await networkTab.focus();
+    await page.keyboard.press('ArrowRight');
+
+    await expect(displayTab).toBeFocused();
+    await expect(displayTab).toHaveAttribute('aria-selected', 'true');
+    await expect(displayTab).toHaveAttribute('tabindex', '0');
+    await expect(networkTab).toHaveAttribute('aria-selected', 'false');
+    await expect(networkTab).toHaveAttribute('tabindex', '-1');
+    await expect(displayPanel).toBeVisible();
+    await expect(networkPanel).toBeHidden();
+
+    await page.keyboard.press('End');
+    await expect(page.locator('#settings-admin-tab')).toBeFocused();
+    await expect(page.locator('#settings-admin-panel')).toBeVisible();
+});
+
+test('mobile drawer traps focus, restores it on close and keeps touch targets large', async ({ page }) => {
+    await page.setViewportSize({ width: 390, height: 844 });
+    await page.goto('/');
+    await waitForTelemetry(page);
+
+    const toggle = page.locator('#mobile-nav-toggle');
+    const firstLink = page.locator('.nav-item[data-target="dashboard"] > a');
+    const loginButton = page.locator('#admin-login-btn');
+
+    await toggle.click();
+    await expect(firstLink).toBeFocused();
+
+    const targetSizes = await page.locator(
+        '#mobile-nav-toggle, #app-sidebar.mobile-open .nav-item a, #app-sidebar.mobile-open .role-auth-btn'
+    ).evaluateAll((elements) => elements
+        .filter((element) => element.offsetParent !== null)
+        .map((element) => {
+            const box = element.getBoundingClientRect();
+            return { width: Math.round(box.width), height: Math.round(box.height) };
+        }));
+    expect(targetSizes.length).toBeGreaterThan(3);
+    expect(targetSizes.every((target) => target.width >= 44 && target.height >= 44)).toBe(true);
+
+    await page.keyboard.press('Shift+Tab');
+    await expect(loginButton).toBeFocused();
+    await page.keyboard.press('Tab');
+    await expect(firstLink).toBeFocused();
+    await page.keyboard.press('Escape');
+    await expect(toggle).toBeFocused();
+    await expect(page.locator('#app-sidebar')).not.toHaveClass(/mobile-open/);
+
+    await toggle.click();
+    await page.mouse.click(378, 420);
+    await expect(toggle).toBeFocused();
+    await expect(page.locator('#app-sidebar')).not.toHaveClass(/mobile-open/);
+});
+
+test('connection feedback announces loss and recovery without replacing panel data', async ({ page }) => {
+    await page.route('**/api/status*', (route) => route.abort('failed'));
+    await page.goto('/');
+
+    const indicator = page.locator('#backend-connection-status');
+    const announcer = page.locator('#backend-connection-announcer');
+    await expect(indicator).toHaveAttribute('data-state', 'offline');
+    await expect(indicator).toContainText('Sterownik offline');
+    await expect(announcer).toContainText('Utracono połączenie');
+
+    await page.unroute('**/api/status*');
+    await page.evaluate(() => fetchStatus(true));
+    await expect(indicator).toHaveAttribute('data-state', 'online');
+    await expect(indicator).toContainText('Sterownik online');
+    await expect(announcer).toContainText('zostało przywrócone');
 });
 
 test('factory schedule remains readable and exposes execution priorities', async ({ page }) => {

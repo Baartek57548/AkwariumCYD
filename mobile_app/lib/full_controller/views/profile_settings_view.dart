@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import '../../../app_settings.dart';
+import '../../../app_update/app_update_ui.dart';
 import '../widgets.dart';
 
 class ProfileSettingsView extends StatefulWidget {
@@ -51,6 +52,7 @@ class _ProfileSettingsViewState extends State<ProfileSettingsView> {
 
   @override
   Widget build(BuildContext context) {
+    final updateController = AppUpdateScope.maybeOf(context);
     return ControllerPageBody(
       children: [
         Form(
@@ -158,6 +160,11 @@ class _ProfileSettingsViewState extends State<ProfileSettingsView> {
                   ),
                 ),
               ),
+              if (updateController != null) ...[
+                const SizedBox(height: 16),
+                const SectionHeader(title: 'Aplikacja'),
+                AppUpdateSettingsCard(controller: updateController),
+              ],
               const SizedBox(height: 24),
               FilledButton.icon(
                 onPressed: _save,

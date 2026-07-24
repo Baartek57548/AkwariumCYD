@@ -1,29 +1,55 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 
+import 'app_update/app_update_controller.dart';
+import 'app_update/app_update_models.dart';
+import 'app_update/app_update_ui.dart';
 import 'connection_home_page.dart';
 import 'display_refresh_rate.dart';
 import 'app_settings.dart';
 
 class AquariumApp extends StatefulWidget {
-  const AquariumApp({super.key, this.title = 'AquaCYD Control', this.home});
+  const AquariumApp({
+    super.key,
+    this.title = 'AquaCYD Control',
+    this.home,
+    this.enableAppUpdates = false,
+  });
 
   final String title;
   final Widget? home;
+  final bool enableAppUpdates;
 
   @override
   State<AquariumApp> createState() => _AquariumAppState();
 }
 
-class _AquariumAppState extends State<AquariumApp> {
+class _AquariumAppState extends State<AquariumApp> with WidgetsBindingObserver {
   late final DisplayRefreshRateController refreshRateController;
+  final _navigatorKey = GlobalKey<NavigatorState>();
+  final _scaffoldMessengerKey = GlobalKey<ScaffoldMessengerState>();
+  AppUpdateController? _appUpdateController;
+  String? _lastPromptedVersion;
+  int _lastFeedbackEventId = -1;
+  bool _promptOpen = false;
+  bool _progressDialogOpen = false;
 
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     refreshRateController = DisplayRefreshRateController()
       ..addListener(_onRefreshRateChanged);
     AppSettings.themeModeNotifier.addListener(_onSettingsChanged);
     AppSettings.languageNotifier.addListener(_onSettingsChanged);
+    if (widget.enableAppUpdates) {
+      _appUpdateController = AppUpdateController()
+        ..addListener(_onAppUpdateChanged);
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) unawaited(_appUpdateController!.start());
+      });
+    }
   }
 
   void _onRefreshRateChanged() {
@@ -36,12 +62,110 @@ class _AquariumAppState extends State<AquariumApp> {
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     refreshRateController
       ..removeListener(_onRefreshRateChanged)
       ..dispose();
     AppSettings.themeModeNotifier.removeListener(_onSettingsChanged);
     AppSettings.languageNotifier.removeListener(_onSettingsChanged);
+    _appUpdateController
+      ?..removeListener(_onAppUpdateChanged)
+      ..dispose();
     super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) {
+      final controller = _appUpdateController;
+      if (controller != null) unawaited(controller.onAppResumed());
+    }
+  }
+
+  void _onAppUpdateChanged() {
+    if (!mounted) return;
+    final controller = _appUpdateController;
+    if (controller == null) return;
+    final state = controller.state;
+
+    if (state.phase == AppUpdatePhase.available && state.release != null) {
+      final version = state.release!.version.toString();
+      if (!_promptOpen && (state.isManual || _lastPromptedVersion != version)) {
+        _lastPromptedVersion = version;
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (mounted) unawaited(_showUpdatePrompt(state.release!));
+        });
+      }
+      return;
+    }
+
+    if (state.eventId == _lastFeedbackEventId || !state.isManual) return;
+    if (state.phase == AppUpdatePhase.upToDate) {
+      _lastFeedbackEventId = state.eventId;
+      _showSnackBar('Masz najnowszą wersję AquaCYD.');
+    } else if (state.phase == AppUpdatePhase.failed && !_progressDialogOpen) {
+      _lastFeedbackEventId = state.eventId;
+      _showSnackBar(
+        state.message ?? 'Nie udało się sprawdzić aktualizacji.',
+        isError: true,
+      );
+    }
+  }
+
+  Future<void> _showUpdatePrompt(AppRelease release) async {
+    if (_promptOpen || !mounted) return;
+    final context = _navigatorKey.currentContext;
+    if (context == null) return;
+    _promptOpen = true;
+    final action = await showDialog<AppUpdatePromptAction>(
+      context: context,
+      barrierDismissible: false,
+      builder: (_) => AppUpdatePromptDialog(release: release),
+    );
+    _promptOpen = false;
+    if (!mounted || action == null) return;
+    final controller = _appUpdateController;
+    if (controller == null) return;
+    switch (action) {
+      case AppUpdatePromptAction.install:
+        await _showProgressDialogAndStart(controller);
+      case AppUpdatePromptAction.remindLater:
+        await controller.remindLater();
+      case AppUpdatePromptAction.skip:
+        await controller.skipCurrentVersion();
+    }
+  }
+
+  Future<void> _showProgressDialogAndStart(
+    AppUpdateController controller,
+  ) async {
+    if (_progressDialogOpen || !mounted) return;
+    final context = _navigatorKey.currentContext;
+    if (context == null) return;
+    _progressDialogOpen = true;
+    final dialog = showDialog<void>(
+      context: context,
+      barrierDismissible: false,
+      builder: (_) => AppUpdateProgressDialog(controller: controller),
+    ).whenComplete(() => _progressDialogOpen = false);
+    unawaited(controller.downloadAndInstall());
+    await dialog;
+  }
+
+  void _showSnackBar(String message, {bool isError = false}) {
+    final messenger = _scaffoldMessengerKey.currentState;
+    final navigatorContext = _navigatorKey.currentContext;
+    if (messenger == null || navigatorContext == null) return;
+    final colors = Theme.of(navigatorContext).colorScheme;
+    messenger
+      ..hideCurrentSnackBar()
+      ..showSnackBar(
+        SnackBar(
+          content: Text(message),
+          backgroundColor: isError ? colors.error : null,
+          behavior: SnackBarBehavior.floating,
+        ),
+      );
   }
 
   @override
@@ -51,12 +175,22 @@ class _AquariumAppState extends State<AquariumApp> {
       profile: refreshRateController.profile,
       state: refreshRateController.state,
       child: MaterialApp(
+        navigatorKey: _navigatorKey,
+        scaffoldMessengerKey: _scaffoldMessengerKey,
         title: widget.title,
         debugShowCheckedModeBanner: false,
         theme: _theme(seed, Brightness.light),
         darkTheme: _theme(seed, Brightness.dark),
         themeMode: AppSettings.themeModeNotifier.value,
         locale: AppSettings.languageNotifier.value,
+        builder: (context, child) {
+          final controller = _appUpdateController;
+          if (controller == null) return child ?? const SizedBox.shrink();
+          return AppUpdateScope(
+            controller: controller,
+            child: child ?? const SizedBox.shrink(),
+          );
+        },
         home: widget.home ?? const ConnectionHomePage(),
       ),
     );

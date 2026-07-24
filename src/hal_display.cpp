@@ -88,8 +88,13 @@ static LGFX lcd;
 constexpr uint8_t DISPLAY_BACKLIGHT_PIN = 21U;
 constexpr uint8_t DISPLAY_BACKLIGHT_LEDC_CHANNEL = 7U;
 constexpr uint32_t DISPLAY_BACKLIGHT_PWM_HZ = 5000U;
+constexpr bool TOUCH_DEBUG_LOGGING = false;
+constexpr uint32_t TOUCH_WAKE_RELEASE_DEBOUNCE_MS = 75U;
 static uint8_t display_brightness_percent = 100U;
 static uint32_t display_last_touch_ms = 0U;
+static bool display_consume_touch_until_release = false;
+static bool display_touch_release_pending = false;
+static uint32_t display_touch_release_started_ms = 0U;
 
 // Zmienne sterowników LVGL
 static lv_disp_draw_buf_t draw_buf;
@@ -115,12 +120,39 @@ static void my_disp_flush(lv_disp_drv_t *disp, const lv_area_t *area, lv_color_t
 static void my_touchpad_read(lv_indev_drv_t *indev_driver, lv_indev_data_t *data) {
     uint16_t touchX, touchY;
     bool touched = lcd.getTouch(&touchX, &touchY);
-    
+    const uint32_t now_ms = millis();
+
+    // Treat the entire first contact on a sleeping display as a wake gesture.
+    // A stable release window filters XPT2046 contact bounce, so the same
+    // physical touch cannot become PRESSED immediately after the screen wakes.
+    if (display_consume_touch_until_release) {
+        if (touched) {
+            display_last_touch_ms = now_ms;
+            display_touch_release_pending = false;
+        } else if (!display_touch_release_pending) {
+            display_touch_release_pending = true;
+            display_touch_release_started_ms = now_ms;
+        } else if (static_cast<uint32_t>(now_ms - display_touch_release_started_ms) >=
+                   TOUCH_WAKE_RELEASE_DEBOUNCE_MS) {
+            display_consume_touch_until_release = false;
+            display_touch_release_pending = false;
+        }
+        data->state = LV_INDEV_STATE_REL;
+        return;
+    }
+
     if (!touched) {
         data->state = LV_INDEV_STATE_REL;
     } else {
+        display_last_touch_ms = now_ms;
+        if (display_brightness_percent == 0U) {
+            display_consume_touch_until_release = true;
+            display_touch_release_pending = false;
+            data->state = LV_INDEV_STATE_REL;
+            return;
+        }
+
         data->state = LV_INDEV_STATE_PR;
-        display_last_touch_ms = millis();
         
         // LovyanGFX automatycznie skaluje i rotuje współrzędne, ale oś Y jest odwrócona fizycznie
         int16_t mappedX = touchX;
@@ -136,11 +168,13 @@ static void my_touchpad_read(lv_indev_drv_t *indev_driver, lv_indev_data_t *data
         data->point.y = mappedY;
 
         // Diagnostyczny log szeregowy (nie częściej niż co 100ms)
-        static unsigned long last_log = 0;
-        if (millis() - last_log > 100) {
-            Serial.printf("TOUCH: RawX=%d, RawY=%d | MappedX=%d, MappedY=%d\n", 
-                          touchX, touchY, data->point.x, data->point.y);
-            last_log = millis();
+        if (TOUCH_DEBUG_LOGGING) {
+            static uint32_t last_log_ms = 0U;
+            if (static_cast<uint32_t>(now_ms - last_log_ms) > 100U) {
+                Serial.printf("TOUCH: RawX=%d, RawY=%d | MappedX=%d, MappedY=%d\n",
+                              touchX, touchY, data->point.x, data->point.y);
+                last_log_ms = now_ms;
+            }
         }
     }
 }

@@ -290,6 +290,7 @@ function hideFeedModal() {
     }
     if (modal) {
         modal.style.display = 'none';
+        modal.setAttribute('aria-hidden', 'true');
     }
 }
 
@@ -309,6 +310,8 @@ function showFeedModalState(kind, title, message, autoHideMs = 0) {
     }
 
     modal.style.display = 'flex';
+    modal.setAttribute('aria-hidden', 'false');
+    modal.setAttribute('aria-live', kind === 'error' ? 'assertive' : 'polite');
     text.textContent = title;
     subtext.textContent = message;
 
@@ -357,6 +360,21 @@ function buildActiveBadge(iconClass, label, tone, tier = '') {
         <div class="status-badge status-badge-${tone}${tierClass}"${tierAttr}>
             ${getLocalIconMarkup(iconClass)}
             <span>${escapeHtml(label)}</span>
+        </div>`;
+}
+
+function buildBackendConnectionBadge() {
+    const connected = Boolean(window.backendConnected);
+    const state = connected ? 'online' : 'offline';
+    const tone = connected ? 'success' : 'danger';
+    const label = connected ? 'Sterownik online' : 'Sterownik offline';
+    const ariaLabel = connected
+        ? 'Stan połączenia: sterownik odpowiada'
+        : 'Stan połączenia: brak odpowiedzi sterownika, trwa ponawianie';
+
+    return `
+        <div id="backend-connection-status" class="status-badge status-badge-${tone} backend-connection-status" data-state="${state}" aria-label="${ariaLabel}">
+            <span id="backend-connection-label">${label}</span>
         </div>`;
 }
 
@@ -574,6 +592,7 @@ function renderTopbarActiveModules(data) {
         : (network.apMode ? buildModuleBadge('fa-satellite-dish', 'AP', true, 'success') : buildActiveBadge('fa-wifi', 'Offline', 'muted'));
 
     container.innerHTML = [
+        buildBackendConnectionBadge(),
         safetyBadge,
         modeBadge,
         wifiBadge

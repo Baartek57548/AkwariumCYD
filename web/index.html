@@ -23,11 +23,12 @@
     <link rel="stylesheet" href="style.css?v=20260702buses">
 </head>
 <body class="role-guest">
+    <a class="skip-link" href="#main-content">Przejdź do głównej treści</a>
     <canvas id="bubbles-canvas" class="bubbles-canvas"></canvas>
 
     <div class="app-container">
         <!-- Sidebar Navigation -->
-        <nav class="sidebar" id="app-sidebar">
+        <nav class="sidebar" id="app-sidebar" aria-label="Główna nawigacja panelu">
             <div class="brand">
                 <i class="fa-solid fa-water fa-bounce" style="--fa-animation-duration: 3s; color: var(--accent-cyan);"></i>
                 <div class="brand-text">
@@ -40,42 +41,42 @@
                 <div class="nav-section-title" style="font-size: 11px; text-transform: uppercase; letter-spacing: 1px; color: var(--text-muted); font-weight: 700; padding: 0 16px; margin-top: 10px;">Nadzór</div>
                 <ul class="nav-menu">
                     <li class="nav-item active" data-target="dashboard">
-                        <a href="#"><i class="fa-solid fa-gauge-high"></i> Pulpit</a>
+                        <a href="#dashboard" aria-current="page"><i class="fa-solid fa-gauge-high"></i> Pulpit</a>
                     </li>
                     <li class="nav-item" data-target="wykresy">
-                        <a href="#"><i class="fa-solid fa-chart-line"></i> Pomiary</a>
+                        <a href="#wykresy"><i class="fa-solid fa-chart-line"></i> Pomiary</a>
                     </li>
                 </ul>
 
                 <div class="nav-section-title" data-admin-only="true" style="font-size: 11px; text-transform: uppercase; letter-spacing: 1px; color: var(--text-muted); font-weight: 700; padding: 0 16px; margin-top: 10px;">Automatyka</div>
                 <ul class="nav-menu" data-admin-only="true">
                     <li class="nav-item" data-target="przekazniki">
-                        <a href="#"><i class="fa-solid fa-puzzle-piece"></i> Moduły</a>
+                        <a href="#przekazniki"><i class="fa-solid fa-puzzle-piece"></i> Moduły</a>
                     </li>
                     <li class="nav-item" data-target="automatyka">
-                        <a href="#"><i class="fa-solid fa-sliders"></i> Automatyka modułów</a>
+                        <a href="#automatyka"><i class="fa-solid fa-sliders"></i> Automatyka modułów</a>
                     </li>
                     <li class="nav-item" data-target="harmonogramy">
-                        <a href="#"><i class="fa-solid fa-calendar-days"></i> Harmonogramy</a>
+                        <a href="#harmonogramy"><i class="fa-solid fa-calendar-days"></i> Harmonogramy</a>
                     </li>
                 </ul>
 
                 <div class="nav-section-title" data-admin-only="true" style="font-size: 11px; text-transform: uppercase; letter-spacing: 1px; color: var(--text-muted); font-weight: 700; padding: 0 16px; margin-top: 10px;">Administracja</div>
                 <ul class="nav-menu" data-admin-only="true">
                     <li class="nav-item" data-target="zasilanie">
-                        <a href="#"><i class="fa-solid fa-plug"></i> Zasilanie</a>
+                        <a href="#zasilanie"><i class="fa-solid fa-plug"></i> Zasilanie</a>
                     </li>
                     <li class="nav-item" data-target="logi">
-                        <a href="#"><i class="fa-solid fa-terminal"></i> Logi</a>
+                        <a href="#logi"><i class="fa-solid fa-terminal"></i> Logi</a>
                     </li>
                     <li class="nav-item" data-target="diag">
-                        <a href="#"><i class="fa-solid fa-circle-info"></i> Diagnostyka</a>
+                        <a href="#diag"><i class="fa-solid fa-circle-info"></i> Diagnostyka</a>
                     </li>
                     <li class="nav-item" data-target="ustawienia">
-                        <a href="#"><i class="fa-solid fa-gear"></i> Ustawienia</a>
+                        <a href="#ustawienia"><i class="fa-solid fa-gear"></i> Ustawienia</a>
                     </li>
                     <li class="nav-item" data-target="ota">
-                        <a href="#"><i class="fa-solid fa-cloud-arrow-up"></i> OTA</a>
+                        <a href="#ota"><i class="fa-solid fa-cloud-arrow-up"></i> OTA</a>
                     </li>
                 </ul>
             </div>
@@ -95,7 +96,7 @@
         <div class="sidebar-backdrop" id="sidebar-backdrop" aria-hidden="true"></div>
 
         <!-- Main Content -->
-        <main class="main-content">
+        <main class="main-content" id="main-content" tabindex="-1">
             <button class="mobile-nav-toggle glass" id="mobile-nav-toggle" type="button" aria-controls="app-sidebar" aria-expanded="false" aria-label="Otwórz menu">
                 <span class="mobile-nav-icon" aria-hidden="true">
                     <i id="mobile-nav-toggle-icon" class="fa-solid fa-bars"></i>
@@ -106,17 +107,19 @@
                 </span>
                 <span id="mobile-nav-toggle-label" class="mobile-nav-action">Menu</span>
             </button>
+            <span id="view-announcer" class="sr-only" role="status" aria-live="polite" aria-atomic="true"></span>
 
             <!-- Topbar -->
             <header class="topbar" aria-label="Stan sterownika">
                 <div class="topbar-activity">
                     <span class="topbar-label"><i class="fa-solid fa-gauge-high" aria-hidden="true"></i> Stan systemu</span>
-                    <div id="topbar-active-list" class="topbar-active-list">
-                        <div class="status-badge status-badge-muted">
+                    <div id="topbar-active-list" class="topbar-active-list" aria-label="Bieżący stan sterownika">
+                        <div id="backend-connection-status" class="status-badge status-badge-muted backend-connection-status" data-state="connecting" aria-label="Stan połączenia: łączenie ze sterownikiem">
                             <span class="pulse-dot pulse-dot-muted"></span>
-                            Oczekiwanie na dane sterownika
+                            <span id="backend-connection-label">Łączenie ze sterownikiem</span>
                         </div>
                     </div>
+                    <span id="backend-connection-announcer" class="sr-only" role="status" aria-live="polite" aria-atomic="true"></span>
                 </div>
 
                 <div class="topbar-widgets">
@@ -770,7 +773,7 @@
                     <div class="schedule-save-row">
                         <div>
                             <strong>Zmiany wymagają zapisu w sterowniku</strong>
-                            <div id="schedule-save-status" class="text-muted">Harmonogramy zostaną wysłane do ESP32 po kliknięciu przycisku.</div>
+                            <div id="schedule-save-status" class="text-muted" role="status" aria-live="polite" aria-atomic="true">Harmonogramy zostaną wysłane do ESP32 po kliknięciu przycisku.</div>
                         </div>
                         <button id="save-schedule-btn" class="btn btn-primary" type="button">
                             <i class="fa-solid fa-floppy-disk"></i> Zapisz harmonogramy
@@ -1013,7 +1016,7 @@
                                     </div>
                                 </section>
                             </div>
-                            <div id="bus-scan-status" class="bus-scan-status">Diagnostyka magistral uruchomi się po otwarciu zakładki.</div>
+                            <div id="bus-scan-status" class="bus-scan-status" role="status" aria-live="polite" aria-atomic="true">Diagnostyka magistral uruchomi się po otwarciu zakładki.</div>
                         </div>
 
                         <!-- Column 3: Actuator edge health -->
@@ -1215,7 +1218,7 @@
                         <div class="history-header">
                             <div>
                                 <h2 class="chart-title">Archiwa miesieczne</h2>
-                                <p class="archive-status" id="archive-status">Pliki .aqbin sa zapisywane na karcie SD co 60 sekund.</p>
+                                <p class="archive-status" id="archive-status" role="status" aria-live="polite" aria-atomic="true">Pliki .aqbin sa zapisywane na karcie SD co 60 sekund.</p>
                             </div>
                             <button class="btn-export" id="archive-refresh-btn" type="button"><i class="fa-solid fa-rotate-right"></i> Odśwież</button>
                         </div>
@@ -1428,7 +1431,7 @@
                                             <small class="text-muted" id="wizard-storage-desc">Zapiszemy plik na karcie SD.</small>
                                         </div>
 
-                                        <div id="wizard-validation-warnings" style="display: none; padding: 15px; border-radius: 8px; background: rgba(239, 68, 68, 0.1); border: 1px solid rgba(239, 68, 68, 0.25); color: #fca5a5; font-size: 13px;">
+                                        <div id="wizard-validation-warnings" role="alert" aria-live="assertive" aria-atomic="true" style="display: none; padding: 15px; border-radius: 8px; background: rgba(239, 68, 68, 0.1); border: 1px solid rgba(239, 68, 68, 0.25); color: #fca5a5; font-size: 13px;">
                                             <div style="font-weight: 700; margin-bottom: 8px;"><i class="fa-solid fa-triangle-exclamation"></i> Wykryto konflikty / ostrzeżenia walidacji:</div>
                                             <ul id="wizard-warnings-list" style="padding-left: 20px; display: flex; flex-direction: column; gap: 4px;">
                                                 <!-- Validation errors listed dynamically via JS -->
@@ -1522,7 +1525,7 @@
                                 </div>
                             </div>
                             <button id="save-temperature-btn" class="btn btn-primary w-100" type="button"><i class="fa-solid fa-floppy-disk"></i> Zapisz profil termostatu</button>
-                            <div id="settings-temp-status" class="text-muted" style="font-size: 11px;">Sterowanie grzałką jest synchronizowane ze sterownikiem.</div>
+                            <div id="settings-temp-status" class="text-muted" role="status" aria-live="polite" aria-atomic="true" style="font-size: 11px;">Sterowanie grzałką jest synchronizowane ze sterownikiem.</div>
                         </div>
                     </div>
 
@@ -1552,7 +1555,7 @@
                                 <input id="settings-co2-limit" type="number" class="form-control" min="1" max="1440" step="1" value="180">
                             </div>
                             <button id="save-co2-btn" class="btn btn-secondary w-100" type="button"><i class="fa-solid fa-floppy-disk"></i> Zapisz CO2</button>
-                            <div id="settings-co2-status" class="text-muted" style="font-size: 11px;">Automatyka zaworu pH.</div>
+                            <div id="settings-co2-status" class="text-muted" role="status" aria-live="polite" aria-atomic="true" style="font-size: 11px;">Automatyka zaworu pH.</div>
                         </div>
                     </div>
 
@@ -1582,7 +1585,7 @@
                                 <input id="settings-water-timeout" type="number" class="form-control" min="5" max="300" step="1" value="30">
                             </div>
                             <button id="save-water-btn" class="btn btn-secondary w-100" type="button"><i class="fa-solid fa-floppy-disk"></i> Zapisz ATO</button>
-                            <div id="settings-water-status" class="text-muted" style="font-size: 11px;">Limit ciągłego dolewania chroni zbiornik przed przelaniem.</div>
+                            <div id="settings-water-status" class="text-muted" role="status" aria-live="polite" aria-atomic="true" style="font-size: 11px;">Limit ciągłego dolewania chroni zbiornik przed przelaniem.</div>
                         </div>
                     </div>
 
@@ -1616,7 +1619,7 @@
                                 </select>
                             </div>
                             <button id="save-leak-btn" class="btn btn-secondary w-100" type="button"><i class="fa-solid fa-floppy-disk"></i> Zapisz Zabezpieczenia</button>
-                            <div id="settings-leak-status" class="text-muted" style="font-size: 11px;">Reakcja awaryjna na wyciek.</div>
+                            <div id="settings-leak-status" class="text-muted" role="status" aria-live="polite" aria-atomic="true" style="font-size: 11px;">Reakcja awaryjna na wyciek.</div>
                         </div>
                     </div>
                 </div>
@@ -1746,7 +1749,7 @@
                             <div id="firmware-file-name" style="margin-top: 10px; font-size: 12px; color: var(--accent-cyan); font-family: monospace;">Nie wybrano pliku .bin</div>
                         </div>
 
-                        <div id="ota-progress" class="ota-progress-card" style="display: none; width: 100%; text-align: left; background: rgba(0,0,0,0.2); padding: 20px; border-radius: 16px; border: 1px solid rgba(255,255,255,0.05); margin-bottom: 24px;">
+                        <div id="ota-progress" class="ota-progress-card" role="progressbar" aria-label="Postęp aktualizacji OTA" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0" style="display: none; width: 100%; text-align: left; background: rgba(0,0,0,0.2); padding: 20px; border-radius: 16px; border: 1px solid rgba(255,255,255,0.05); margin-bottom: 24px;">
                             <div class="progress-label mb-2 ota-progress-label" style="display: flex; justify-content: space-between; font-size: 14px; font-weight: 500;">
                                 <span style="color: var(--accent-cyan);">Wgrywanie aktualizacji <i class="fa-solid fa-circle-notch fa-spin ml-2"></i></span>
                                 <span id="ota-percent" style="color: var(--text-main);">0%</span>
@@ -1772,23 +1775,23 @@
                 </div>
 
                 <div class="settings-workspace">
-                    <aside class="settings-nav-panel" aria-label="Kategorie ustawień">
-                        <button class="settings-nav-item active" type="button" data-settings-target="settings-network-panel">
+                    <aside class="settings-nav-panel" role="tablist" aria-label="Kategorie ustawień">
+                        <button class="settings-nav-item active" id="settings-network-tab" type="button" role="tab" aria-controls="settings-network-panel" aria-selected="true" tabindex="0" data-settings-target="settings-network-panel">
                             <i class="fa-solid fa-wifi"></i>
                             <span>Sieć WiFi</span>
                             <small>STA, AP i tryb serwisowy</small>
                         </button>
-                        <button class="settings-nav-item" type="button" data-settings-target="settings-display-panel">
+                        <button class="settings-nav-item" id="settings-display-tab" type="button" role="tab" aria-controls="settings-display-panel" aria-selected="false" tabindex="-1" data-settings-target="settings-display-panel">
                             <i class="fa-solid fa-sun"></i>
                             <span>Ekran CYD</span>
                             <small>Profil, jasność i LDR</small>
                         </button>
-                        <button class="settings-nav-item" type="button" data-settings-target="settings-clock-panel">
+                        <button class="settings-nav-item" id="settings-clock-tab" type="button" role="tab" aria-controls="settings-clock-panel" aria-selected="false" tabindex="-1" data-settings-target="settings-clock-panel">
                             <i class="fa-solid fa-clock"></i>
                             <span>Zegar RTC</span>
                             <small>Czas lokalny i NTP</small>
                         </button>
-                        <button class="settings-nav-item settings-nav-item-danger" type="button" data-settings-target="settings-admin-panel">
+                        <button class="settings-nav-item settings-nav-item-danger" id="settings-admin-tab" type="button" role="tab" aria-controls="settings-admin-panel" aria-selected="false" tabindex="-1" data-settings-target="settings-admin-panel">
                             <i class="fa-solid fa-screwdriver-wrench"></i>
                             <span>System i serwis</span>
                             <small>Restart i reset awaryjny</small>
@@ -1797,7 +1800,7 @@
 
                     <div class="settings-panel-stage">
                     <!-- Panel 1: WiFi & Connectivity -->
-                    <div class="card glass settings-panel settings-network-card active" id="settings-network-panel">
+                    <div class="card glass settings-panel settings-network-card active" id="settings-network-panel" role="tabpanel" aria-labelledby="settings-network-tab" tabindex="0">
                         <div class="card-header">
                             <div class="card-title">
                                 <i class="fa-solid fa-wifi" style="color: var(--success-color);"></i>
@@ -1835,7 +1838,7 @@
                                 <button id="save-network-btn" class="btn btn-secondary w-100" type="button"><i class="fa-solid fa-floppy-disk"></i> Zapisz profil STA</button>
                                 <div style="display: flex; flex-direction: column; gap: 2px;">
                                     <span id="settings-network-session-status" style="font-size: 11px; color: var(--text-muted); line-height: 1.4;">Włączanie WiFi próbuje STA, a potem awaryjnie uruchamia AP.</span>
-                                    <div id="settings-network-status" class="text-muted" style="font-size: 11px;">Zmiany SSID i haseł są stosowane przy kolejnym uruchomieniu WiFi.</div>
+                                    <div id="settings-network-status" class="text-muted" role="status" aria-live="polite" aria-atomic="true" style="font-size: 11px;">Zmiany SSID i haseł są stosowane przy kolejnym uruchomieniu WiFi.</div>
                                 </div>
                                 <div style="display: flex; gap: 8px;">
                                     <button id="start-wifi-session-btn" class="btn btn-primary btn-sm w-100" type="button" style="padding: 8px 14px; font-size: 12px;">Włącz WiFi</button>
@@ -1846,7 +1849,7 @@
                     </div>
 
                     <!-- Panel 3: Display & Screen Settings -->
-                    <div class="card glass settings-panel settings-display-card" id="settings-display-panel">
+                    <div class="card glass settings-panel settings-display-card" id="settings-display-panel" role="tabpanel" aria-labelledby="settings-display-tab" tabindex="0" hidden>
                         <div class="card-header">
                             <div class="card-title">
                                 <i class="fa-solid fa-sun" style="color: var(--accent-cyan);"></i>
@@ -1889,14 +1892,14 @@
                             </div>
 
                             <button id="save-display-btn" class="btn btn-primary w-100" type="button"><i class="fa-solid fa-floppy-disk"></i> Zapisz ustawienia ekranu</button>
-                            <div id="settings-display-status" class="text-muted" style="font-size: 11px;">Płynne sterowanie podświetleniem.</div>
+                            <div id="settings-display-status" class="text-muted" role="status" aria-live="polite" aria-atomic="true" style="font-size: 11px;">Płynne sterowanie podświetleniem.</div>
                         </div>
                     </div>
 
 
 
                     <!-- Zegar RTC -->
-                    <div class="card glass settings-panel settings-clock-card" id="settings-clock-panel">
+                    <div class="card glass settings-panel settings-clock-card" id="settings-clock-panel" role="tabpanel" aria-labelledby="settings-clock-tab" tabindex="0" hidden>
                         <div class="card-header">
                             <div class="card-title">
                                 <i class="fa-solid fa-clock" style="color: var(--accent-cyan);"></i>
@@ -1913,12 +1916,12 @@
                                 <button id="sync-browser-time-btn" class="btn btn-secondary btn-sm" type="button" style="font-size: 12px; padding: 8px 10px;"><i class="fa-solid fa-desktop"></i> Czas przeglądarki</button>
                                 <button id="sync-ntp-btn" class="btn btn-secondary btn-sm" type="button" style="font-size: 12px; padding: 8px 10px;"><i class="fa-solid fa-network-wired"></i> Synchronizuj NTP</button>
                             </div>
-                            <div id="settings-clock-status" class="text-muted" style="font-size: 11px;">RTC podtrzymuje czas przy braku zasilania.</div>
+                            <div id="settings-clock-status" class="text-muted" role="status" aria-live="polite" aria-atomic="true" style="font-size: 11px;">RTC podtrzymuje czas przy braku zasilania.</div>
                         </div>
                     </div>
 
                     <!-- Administracja Systemem -->
-                    <div class="card glass settings-panel settings-admin-card" id="settings-admin-panel">
+                    <div class="card glass settings-panel settings-admin-card" id="settings-admin-panel" role="tabpanel" aria-labelledby="settings-admin-tab" tabindex="0" hidden>
                         <div class="card-header">
                             <div class="card-title">
                                 <i class="fa-solid fa-terminal" style="color: var(--danger-color);"></i>
@@ -1937,7 +1940,7 @@
                                 <button id="restart-device-btn" class="btn btn-secondary w-100" type="button" style="padding: 10px; font-size: 12px; border-color: rgba(255,255,255,0.1);"><i class="fa-solid fa-rotate-right"></i> Restart ESP32</button>
                                 <button id="factory-reset-btn" class="btn btn-primary outline w-100" type="button" style="color: #ef4444; border-color: rgba(239, 68, 68, 0.4); padding: 10px; background: rgba(239, 68, 68, 0.05); font-size: 12px;"><i class="fa-solid fa-triangle-exclamation"></i> Reset fabryczny</button>
                             </div>
-                            <div id="device-actions-status" class="text-muted" style="font-size: 11px;">Akcje administracyjne wymagają potwierdzenia.</div>
+                            <div id="device-actions-status" class="text-muted" role="status" aria-live="polite" aria-atomic="true" style="font-size: 11px;">Akcje administracyjne wymagają potwierdzenia.</div>
                         </div>
                     </div>
                     </div>
@@ -1950,7 +1953,7 @@
 
 
     <!-- Feedback Modal -->
-    <div class="overlay" id="feed-modal">
+    <div class="overlay" id="feed-modal" role="status" aria-live="polite" aria-atomic="true" aria-hidden="true">
         <div class="modal glass">
             <div class="modal-content">
                 <i class="fa-solid fa-spinner fa-spin fa-2xl" id="modal-icon" style="color: var(--accent-cyan); margin-bottom: 20px;"></i>
@@ -1975,7 +1978,7 @@
     </div>
 
     <!-- PIN Entry Modal -->
-    <div class="overlay" id="pin-modal">
+    <div class="overlay" id="pin-modal" role="dialog" aria-modal="true" aria-labelledby="pin-modal-title" aria-describedby="pin-modal-desc pin-modal-error" aria-hidden="true">
         <div class="modal glass pin-modal-box">
             <form id="pin-modal-form" class="pin-modal-content" autocomplete="off">
                 <i class="fa-solid fa-lock fa-2xl" id="pin-modal-icon"></i>
@@ -1984,10 +1987,10 @@
 
                 <label class="pin-display-wrapper" for="pin-modal-input">
                     <span>PIN serwisowy</span>
-                    <input type="password" id="pin-modal-input" class="form-control" placeholder="••••" maxlength="8" inputmode="numeric" pattern="[0-9]*" autocomplete="one-time-code" autofocus>
+                    <input type="password" id="pin-modal-input" class="form-control" placeholder="••••" maxlength="8" inputmode="numeric" pattern="[0-9]*" autocomplete="one-time-code" aria-describedby="pin-modal-desc pin-modal-error" autofocus>
                 </label>
 
-                <div id="pin-modal-error" class="pin-modal-error">Błędny PIN. Spróbuj ponownie.</div>
+                <div id="pin-modal-error" class="pin-modal-error" role="alert" aria-live="assertive" aria-atomic="true" hidden>Błędny PIN. Spróbuj ponownie.</div>
 
                 <div class="pin-modal-actions">
                     <button id="pin-modal-cancel" class="btn btn-secondary w-100" type="button">Anuluj</button>

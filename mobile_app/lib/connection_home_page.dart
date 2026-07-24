@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import 'app_update/app_update_ui.dart';
 import 'ble_scanner_page.dart';
 import 'controller_page.dart';
 import 'full_controller/controller_session.dart';
@@ -172,6 +173,8 @@ class ConnectionHomePage extends StatelessWidget {
                         ),
                       ],
                     ],
+                    const SizedBox(height: 20),
+                    const AppUpdateFooter(),
                   ],
                 ),
               ),

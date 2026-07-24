@@ -20,6 +20,7 @@ class MainActivity : FlutterActivity(), DisplayManager.DisplayListener {
     private val mainHandler = Handler(Looper.getMainLooper())
     private lateinit var displayManager: DisplayManager
     private var methodChannel: MethodChannel? = null
+    private var appUpdateChannel: AppUpdateChannel? = null
     private var requestedMode: Display.Mode? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -31,6 +32,10 @@ class MainActivity : FlutterActivity(), DisplayManager.DisplayListener {
 
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
+        appUpdateChannel = AppUpdateChannel(
+            this,
+            flutterEngine.dartExecutor.binaryMessenger,
+        )
         methodChannel = MethodChannel(
             flutterEngine.dartExecutor.binaryMessenger,
             CHANNEL_NAME,
@@ -54,6 +59,8 @@ class MainActivity : FlutterActivity(), DisplayManager.DisplayListener {
         displayManager.unregisterDisplayListener(this)
         methodChannel?.setMethodCallHandler(null)
         methodChannel = null
+        appUpdateChannel?.dispose()
+        appUpdateChannel = null
         mainHandler.removeCallbacksAndMessages(null)
         super.onDestroy()
     }

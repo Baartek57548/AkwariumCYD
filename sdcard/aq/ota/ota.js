@@ -136,6 +136,8 @@ async function uploadFirmwarePackage() {
     formData.append('firmware', selectedFile, selectedFileName || 'firmware.bin');
 
     progressContainer.style.display = 'block';
+    progressContainer.setAttribute('aria-valuenow', '0');
+    progressContainer.setAttribute('aria-valuetext', 'Rozpoczynanie wysyłania firmware');
     btn.disabled = true;
 
     const xhr = new XMLHttpRequest();
@@ -147,18 +149,24 @@ async function uploadFirmwarePackage() {
         const progress = Math.min(100, Math.round((event.loaded / event.total) * 100));
         fill.style.width = `${progress}%`;
         percentTxt.textContent = `${progress}%`;
+        progressContainer.setAttribute('aria-valuenow', String(progress));
+        progressContainer.setAttribute('aria-valuetext', `Wysłano ${progress}% pakietu firmware`);
     };
 
     xhr.onload = function () {
         if (xhr.status >= 200 && xhr.status < 300) {
             btn.textContent = 'Wgrano pakiet OTA';
             btn.style.backgroundColor = 'var(--success-color)';
+            progressContainer.setAttribute('aria-valuenow', '100');
+            progressContainer.setAttribute('aria-valuetext', 'Pakiet firmware został wgrany');
 
             setTimeout(() => {
                 alert('Aktualizacja zakończona pomyślnie. Urządzenie zrestartuje się za chwilę.');
                 progressContainer.style.display = 'none';
                 fill.style.width = '0%';
                 percentTxt.textContent = '0%';
+                progressContainer.setAttribute('aria-valuenow', '0');
+                progressContainer.removeAttribute('aria-valuetext');
                 btn.style.backgroundColor = '';
                 if (firmwareFile) {
                     firmwareFile.value = '';
@@ -168,6 +176,7 @@ async function uploadFirmwarePackage() {
         } else {
             btn.textContent = 'Blad OTA';
             btn.style.backgroundColor = 'var(--danger-color)';
+            progressContainer.setAttribute('aria-valuetext', 'Aktualizacja OTA nie powiodła się');
             alert(xhr.responseText || 'Aktualizacja OTA nie powiodła się.');
         }
     };
@@ -175,12 +184,14 @@ async function uploadFirmwarePackage() {
     xhr.onerror = function () {
         btn.textContent = 'Blad sieci OTA';
         btn.style.backgroundColor = 'var(--danger-color)';
+        progressContainer.setAttribute('aria-valuetext', 'Błąd połączenia podczas aktualizacji OTA');
         alert('Blad polaczenia podczas OTA.');
     };
 
     xhr.ontimeout = function () {
         btn.textContent = 'Timeout OTA';
         btn.style.backgroundColor = 'var(--danger-color)';
+        progressContainer.setAttribute('aria-valuetext', 'Przekroczono czas wysyłania firmware');
         alert('Przekroczono limit czasu uploadu OTA.');
     };
 

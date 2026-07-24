@@ -93,20 +93,46 @@ function showSettingsPanel(targetId) {
     }
 
     document.querySelectorAll('.settings-panel').forEach((panel) => {
-        panel.classList.toggle('active', panel.id === targetId);
+        const isActive = panel.id === targetId;
+        panel.classList.toggle('active', isActive);
+        panel.hidden = !isActive;
     });
 
     document.querySelectorAll('.settings-nav-item').forEach((button) => {
         const isActive = button.dataset.settingsTarget === targetId;
         button.classList.toggle('active', isActive);
         button.setAttribute('aria-selected', isActive ? 'true' : 'false');
+        button.tabIndex = isActive ? 0 : -1;
     });
 }
 
 function bindSettingsControls() {
-    document.querySelectorAll('.settings-nav-item[data-settings-target]').forEach((button) => {
+    const buttons = Array.from(document.querySelectorAll('.settings-nav-item[data-settings-target]'));
+
+    buttons.forEach((button, index) => {
         button.setAttribute('aria-selected', button.classList.contains('active') ? 'true' : 'false');
+        button.tabIndex = button.classList.contains('active') ? 0 : -1;
         button.addEventListener('click', () => showSettingsPanel(button.dataset.settingsTarget));
+        button.addEventListener('keydown', (event) => {
+            let nextIndex = index;
+            if (event.key === 'ArrowRight' || event.key === 'ArrowDown') {
+                nextIndex = (index + 1) % buttons.length;
+            } else if (event.key === 'ArrowLeft' || event.key === 'ArrowUp') {
+                nextIndex = (index - 1 + buttons.length) % buttons.length;
+            } else if (event.key === 'Home') {
+                nextIndex = 0;
+            } else if (event.key === 'End') {
+                nextIndex = buttons.length - 1;
+            } else {
+                return;
+            }
+
+            event.preventDefault();
+            const nextButton = buttons[nextIndex];
+            showSettingsPanel(nextButton.dataset.settingsTarget);
+            nextButton.focus();
+            nextButton.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+        });
     });
 
     document.getElementById('save-network-btn')?.addEventListener('click', saveNetworkSettings);
@@ -187,6 +213,26 @@ function bindPinModalEvents() {
         if (event.key === 'Escape') {
             window.handlePinCancel();
             event.preventDefault();
+            return;
+        }
+        if (event.key !== 'Tab') return;
+
+        const focusable = Array.from(modal.querySelectorAll(
+            'button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])'
+        )).filter((element) => element.offsetParent !== null);
+        if (focusable.length === 0) {
+            event.preventDefault();
+            return;
+        }
+
+        const first = focusable[0];
+        const last = focusable[focusable.length - 1];
+        if (event.shiftKey && document.activeElement === first) {
+            event.preventDefault();
+            last.focus();
+        } else if (!event.shiftKey && document.activeElement === last) {
+            event.preventDefault();
+            first.focus();
         }
     });
 }

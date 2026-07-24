@@ -1479,12 +1479,19 @@ static lv_color_t resolve_bg_color(lv_color_t color) {
 
 static lv_color_t resolve_text_color(lv_color_t color) {
     if (!ui_light_theme) {
+        if (same_color(color, 71, 85, 105) ||
+            same_color(color, 100, 116, 139) ||
+            same_color(color, 148, 163, 184)) {
+            return theme_text_muted();
+        }
         return color;
     }
     if (same_color(color, 255, 255, 255) || same_color(color, 226, 232, 240)) {
         return theme_text_main();
     }
-    if (same_color(color, 148, 163, 184) || same_color(color, 100, 116, 139)) {
+    if (same_color(color, 71, 85, 105) ||
+        same_color(color, 100, 116, 139) ||
+        same_color(color, 148, 163, 184)) {
         return theme_text_muted();
     }
     if (same_color(color, 6, 182, 212)) {
@@ -9079,6 +9086,10 @@ static void make_home_card_clickable(lv_obj_t *card, lv_event_cb_t cb, void *use
         return;
     }
     lv_obj_add_flag(card, LV_OBJ_FLAG_CLICKABLE);
+    // A pressed card must look interactive immediately; relying on color alone
+    // gives poor feedback on a small resistive touch panel.
+    lv_obj_set_style_bg_color(card, theme_matrix_pressed_bg(), LV_STATE_PRESSED);
+    lv_obj_set_style_translate_y(card, -1, LV_STATE_PRESSED);
     lv_obj_add_event_cb(card, cb, LV_EVENT_CLICKED, user_data);
 }
 
@@ -9154,9 +9165,9 @@ static lv_obj_t *create_home_device_card(lv_obj_t *parent, lv_coord_t x, lv_coor
                                          lv_event_cb_t cb, void *user_data,
                                          lv_obj_t **state_label,
                                          lv_obj_t **detail_label) {
-    lv_obj_t *card = create_card(parent, w, 39, x, y);
+    lv_obj_t *card = create_card(parent, w, 42, x, y);
     lv_obj_set_style_pad_all(card, 4, 0);
-    create_accent_bar(card, accent, 22);
+    create_accent_bar(card, accent, 26);
     make_home_card_clickable(card, cb, user_data);
 
     lv_obj_t *icon_lbl = create_label(card, icon, accent, &lv_font_montserrat_14);
@@ -9224,7 +9235,7 @@ static void build_home_page() {
     lv_obj_align(home_temp_trend_lbl, LV_ALIGN_BOTTOM_LEFT, 7, 1);
 
     if (cfg.showPhSensor) {
-        lv_obj_t *ph_card = create_home_action_card(pages[0], 160, 4, 74, 40, "pH", "--",
+        lv_obj_t *ph_card = create_home_action_card(pages[0], 160, 4, 74, 41, "pH", "--",
                                                     lv_color_make(16, 185, 129), open_ph_subpage_cb,
                                                     nullptr, &home_ph_current);
         lv_obj_t *ph_lbl = lv_obj_get_child(ph_card, 2);
@@ -9232,51 +9243,51 @@ static void build_home_page() {
             lv_obj_set_style_text_font(ph_lbl, &lv_font_montserrat_14, 0);
         }
 
-        create_home_feed_button(pages[0], 240, 4, 76, 40, "FEED", "--:--",
+        create_home_feed_button(pages[0], 240, 4, 76, 41, "KARMIJ", "--:--",
                                 feed_now_event_handler, nullptr, &home_feed_time_lbl);
     } else {
-        create_home_feed_button(pages[0], 160, 4, 156, 40, "KARMIENIE", "--:--",
+        create_home_feed_button(pages[0], 160, 4, 156, 41, "KARMIJ TERAZ", "--:--",
                                 feed_now_event_handler, nullptr, &home_feed_time_lbl);
     }
 
-    create_home_action_card(pages[0], 160, 50, 156, 40, "SERWIS", "Otworz tryb",
+    create_home_action_card(pages[0], 160, 49, 156, 41, "SERWIS", "Sterowanie reczne",
                             lv_color_make(239, 68, 68), service_tile_cb, nullptr, nullptr);
 
     const bool show_air = cfg.enableAerator;
     if (show_air) {
-        create_home_device_card(pages[0], 4, 96, 100, LV_SYMBOL_IMAGE, "Lampa 1",
+        create_home_device_card(pages[0], 4, 94, 100, LV_SYMBOL_IMAGE, "Lampa 1",
                                 lv_color_make(14, 165, 233), open_sched_editor_cb,
                                 reinterpret_cast<void *>(static_cast<intptr_t>(ScheduleDevice::Light)),
                                 &home_light_state_lbl, &home_light_mode_lbl);
-        create_home_device_card(pages[0], 110, 96, 100, LV_SYMBOL_IMAGE, "Lampa 2",
+        create_home_device_card(pages[0], 110, 94, 100, LV_SYMBOL_IMAGE, "Lampa 2",
                                 lv_color_make(34, 197, 94), open_sched_editor_cb,
                                 reinterpret_cast<void *>(static_cast<intptr_t>(ScheduleDevice::PlantLight)),
                                 &home_plant_state_lbl, &home_plant_mode_lbl);
-        create_home_device_card(pages[0], 216, 96, 100, LV_SYMBOL_LOOP, "Filtr",
+        create_home_device_card(pages[0], 216, 94, 100, LV_SYMBOL_LOOP, "Filtr",
                                 lv_color_make(6, 182, 212), open_sched_editor_cb,
                                 reinterpret_cast<void *>(static_cast<intptr_t>(ScheduleDevice::Filter)),
                                 &home_filter_state_lbl, &home_filter_mode_lbl);
-        create_home_device_card(pages[0], 4, 140, 153, LV_SYMBOL_CHARGE, "Grzalka",
+        create_home_device_card(pages[0], 4, 138, 153, LV_SYMBOL_CHARGE, "Grzalka",
                                 lv_color_make(249, 115, 22), open_heater_subpage_cb,
                                 nullptr, &home_heater_state_lbl, &home_heater_mode_lbl);
-        create_home_device_card(pages[0], 163, 140, 153, LV_SYMBOL_REFRESH, "Powietrze",
+        create_home_device_card(pages[0], 163, 138, 153, LV_SYMBOL_REFRESH, "Powietrze",
                                 lv_color_make(168, 85, 247), open_sched_editor_cb,
                                 reinterpret_cast<void *>(static_cast<intptr_t>(ScheduleDevice::Air)),
                                 &home_air_state_lbl, &home_air_mode_lbl);
     } else {
-        create_home_device_card(pages[0], 4, 96, 153, LV_SYMBOL_IMAGE, "Lampa 1",
+        create_home_device_card(pages[0], 4, 94, 153, LV_SYMBOL_IMAGE, "Lampa 1",
                                 lv_color_make(14, 165, 233), open_sched_editor_cb,
                                 reinterpret_cast<void *>(static_cast<intptr_t>(ScheduleDevice::Light)),
                                 &home_light_state_lbl, &home_light_mode_lbl);
-        create_home_device_card(pages[0], 163, 96, 153, LV_SYMBOL_IMAGE, "Lampa 2",
+        create_home_device_card(pages[0], 163, 94, 153, LV_SYMBOL_IMAGE, "Lampa 2",
                                 lv_color_make(34, 197, 94), open_sched_editor_cb,
                                 reinterpret_cast<void *>(static_cast<intptr_t>(ScheduleDevice::PlantLight)),
                                 &home_plant_state_lbl, &home_plant_mode_lbl);
-        create_home_device_card(pages[0], 4, 140, 153, LV_SYMBOL_LOOP, "Filtr",
+        create_home_device_card(pages[0], 4, 138, 153, LV_SYMBOL_LOOP, "Filtr",
                                 lv_color_make(6, 182, 212), open_sched_editor_cb,
                                 reinterpret_cast<void *>(static_cast<intptr_t>(ScheduleDevice::Filter)),
                                 &home_filter_state_lbl, &home_filter_mode_lbl);
-        create_home_device_card(pages[0], 163, 140, 153, LV_SYMBOL_CHARGE, "Grzalka",
+        create_home_device_card(pages[0], 163, 138, 153, LV_SYMBOL_CHARGE, "Grzalka",
                                 lv_color_make(249, 115, 22), open_heater_subpage_cb,
                                 nullptr, &home_heater_state_lbl, &home_heater_mode_lbl);
     }
@@ -9466,6 +9477,11 @@ static void build_schedules_page() {
 }
 
 static void build_optional_page() {
+    // The optional module list can grow to nine cards. Keep every module
+    // reachable instead of clipping rows below the 180 px page viewport.
+    lv_obj_add_flag(pages[2], LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_set_scroll_dir(pages[2], LV_DIR_VER);
+    lv_obj_set_scrollbar_mode(pages[2], LV_SCROLLBAR_MODE_AUTO);
     lv_obj_set_flex_flow(pages[2], LV_FLEX_FLOW_ROW_WRAP);
     lv_obj_set_style_pad_all(pages[2], 8, 0);
     lv_obj_set_style_pad_row(pages[2], 8, 0);
@@ -10003,16 +10019,16 @@ static void build_nav_bar() {
     const char *captions[PAGE_COUNT] = {
         "Start",
         "Plan",
-        "Mod",
-        "Hist",
-        "Sys"
+        "Moduly",
+        "Wykres",
+        "System"
     };
 
     for (uint8_t i = 0; i < PAGE_COUNT; ++i) {
         const lv_coord_t btn_w = 64;
         nav_btns[i] = lv_btn_create(nav);
-        lv_obj_set_size(nav_btns[i], 60, 31);
-        lv_obj_set_pos(nav_btns[i], static_cast<lv_coord_t>(2 + i * btn_w), 2);
+        lv_obj_set_size(nav_btns[i], 62, 33);
+        lv_obj_set_pos(nav_btns[i], static_cast<lv_coord_t>(1 + i * btn_w), 1);
         lv_obj_set_style_bg_opa(nav_btns[i], LV_OPA_TRANSP, 0);
         lv_obj_set_style_radius(nav_btns[i], 7, 0);
         lv_obj_set_style_border_width(nav_btns[i], 0, 0);
