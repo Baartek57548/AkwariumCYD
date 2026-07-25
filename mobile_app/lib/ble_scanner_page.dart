@@ -9,8 +9,21 @@ import 'full_controller/controller_session.dart';
 import 'full_controller/controller_shell.dart';
 import 'full_controller/widgets.dart';
 
+typedef BlePermissionRequester = Future<void> Function();
+typedef BleScanStarter = Stream<DiscoveredDevice> Function();
+typedef BleDevicePageBuilder = Widget Function(DiscoveredDevice device);
+
 class BleScannerPage extends StatefulWidget {
-  const BleScannerPage({super.key});
+  const BleScannerPage({
+    super.key,
+    this.permissionRequester,
+    this.scanStarter,
+    this.devicePageBuilder,
+  });
+
+  final BlePermissionRequester? permissionRequester;
+  final BleScanStarter? scanStarter;
+  final BleDevicePageBuilder? devicePageBuilder;
 
   @override
   State<BleScannerPage> createState() => _BleScannerPageState();
@@ -18,95 +31,199 @@ class BleScannerPage extends StatefulWidget {
 
 class _BleScannerPageState extends State<BleScannerPage> {
   final Map<String, DiscoveredDevice> _devices = {};
+  final Map<String, DiscoveredDevice> _pendingDevices = {};
   StreamSubscription<DiscoveredDevice>? _scanSubscription;
   Timer? _scanTimeout;
+  Timer? _scanRenderTimer;
   bool _scanning = false;
+  bool _scanStarting = false;
+  String? _openingDeviceId;
   String? _error;
 
   @override
   void initState() {
     super.initState();
-    WidgetsBinding.instance.addPostFrameCallback((_) => _startScan());
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) {
+        unawaited(_startScan());
+      }
+    });
   }
 
   Future<void> _startScan() async {
-    await _stopScan();
-    if (!mounted) {
+    if (_scanStarting || _scanning || _openingDeviceId != null) {
       return;
     }
-    setState(() {
-      _devices.clear();
-      _error = null;
-      _scanning = true;
-    });
+    _scanStarting = true;
     try {
-      await BleControllerEnvironment.instance.ensurePermissions();
-      _scanSubscription = BleControllerEnvironment.instance
-          .scanForControllers()
-          .listen(
-            (device) {
-              if (!mounted) {
-                return;
-              }
-              setState(() => _devices[device.id] = device);
-            },
-            onError: (Object error) {
-              if (mounted) {
-                setState(() {
-                  _error = 'Skanowanie BLE nie powiodło się: $error';
-                  _scanning = false;
-                });
-              }
-            },
-          );
-      _scanTimeout = Timer(const Duration(seconds: 12), _stopScan);
+      await _stopScan(flushPending: false);
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _devices.clear();
+        _pendingDevices.clear();
+        _error = null;
+        _scanning = true;
+      });
+
+      final requestPermissions =
+          widget.permissionRequester ??
+          BleControllerEnvironment.instance.ensurePermissions;
+      final startScan =
+          widget.scanStarter ??
+          BleControllerEnvironment.instance.scanForControllers;
+      await requestPermissions();
+      if (!mounted) {
+        return;
+      }
+      _scanSubscription = startScan().listen(
+        (device) {
+          if (!mounted) {
+            return;
+          }
+          _pendingDevices[device.id] = device;
+          _scheduleDeviceRender();
+        },
+        onError: (Object error) {
+          if (!mounted) {
+            return;
+          }
+          _cancelPendingRender(clearPending: true);
+          _scanTimeout?.cancel();
+          _scanTimeout = null;
+          setState(() {
+            _error = 'Skanowanie BLE nie powiodło się: $error';
+            _scanning = false;
+          });
+        },
+      );
+      _scanTimeout = Timer(
+        const Duration(seconds: 12),
+        () => unawaited(_stopScan()),
+      );
     } catch (error) {
       if (mounted) {
+        _cancelPendingRender(clearPending: true);
         setState(() {
           _error = error.toString();
           _scanning = false;
         });
       }
+    } finally {
+      if (mounted) {
+        setState(() => _scanStarting = false);
+      } else {
+        _scanStarting = false;
+      }
     }
   }
 
-  Future<void> _stopScan() async {
+  void _scheduleDeviceRender() {
+    if (_scanRenderTimer != null) {
+      return;
+    }
+    _scanRenderTimer = Timer(
+      const Duration(milliseconds: 300),
+      _flushPendingDevices,
+    );
+  }
+
+  void _flushPendingDevices() {
+    _scanRenderTimer = null;
+    if (!mounted || _pendingDevices.isEmpty) {
+      return;
+    }
+    final updates = Map<String, DiscoveredDevice>.of(_pendingDevices);
+    _pendingDevices.clear();
+    setState(() => _devices.addAll(updates));
+  }
+
+  void _cancelPendingRender({required bool clearPending}) {
+    _scanRenderTimer?.cancel();
+    _scanRenderTimer = null;
+    if (clearPending) {
+      _pendingDevices.clear();
+    }
+  }
+
+  Future<void> _stopScan({bool flushPending = true}) async {
     _scanTimeout?.cancel();
     _scanTimeout = null;
-    await _scanSubscription?.cancel();
+    final subscription = _scanSubscription;
     _scanSubscription = null;
+    if (subscription != null) {
+      try {
+        await subscription.cancel();
+      } on Object {
+        // Zatrzymanie skanowania pozostaje idempotentne po błędzie platformy.
+      }
+    }
+    _scanRenderTimer?.cancel();
+    _scanRenderTimer = null;
+    if (flushPending) {
+      _flushPendingDevices();
+    } else {
+      _pendingDevices.clear();
+    }
     if (mounted && _scanning) {
       setState(() => _scanning = false);
     }
   }
 
   Future<void> _openDevice(DiscoveredDevice device) async {
-    await _stopScan();
-    if (!mounted) {
+    if (_openingDeviceId != null || !mounted) {
       return;
     }
-    final name = device.name.trim().isEmpty
-        ? 'AquaCYD BLE'
-        : device.name.trim();
-    await Navigator.of(context).push(
-      MaterialPageRoute<void>(
-        builder: (_) {
-          final transport = BleControllerTransport(
-            deviceId: device.id,
-            deviceName: name,
-          );
-          return ControllerShell(
-            session: ControllerSession.bluetooth(BleRemoteApi(transport)),
-          );
-        },
-      ),
-    );
+    setState(() => _openingDeviceId = device.id);
+    try {
+      await _stopScan();
+      if (!mounted) {
+        return;
+      }
+      final name = device.name.trim().isEmpty
+          ? 'AquaCYD BLE'
+          : device.name.trim();
+      await Navigator.of(context).push(
+        MaterialPageRoute<void>(
+          builder: (_) {
+            final pageBuilder = widget.devicePageBuilder;
+            if (pageBuilder != null) {
+              return pageBuilder(device);
+            }
+            final transport = BleControllerTransport(
+              deviceId: device.id,
+              deviceName: name,
+            );
+            return ControllerShell(
+              session: ControllerSession.bluetooth(BleRemoteApi(transport)),
+            );
+          },
+        ),
+      );
+    } catch (error) {
+      if (mounted) {
+        setState(() {
+          _error = 'Nie udało się otworzyć sterownika BLE: $error';
+        });
+      }
+    } finally {
+      if (mounted) {
+        setState(() => _openingDeviceId = null);
+      }
+    }
   }
 
   @override
   void dispose() {
     _scanTimeout?.cancel();
-    _scanSubscription?.cancel();
+    _scanRenderTimer?.cancel();
+    _pendingDevices.clear();
+    final subscription = _scanSubscription;
+    _scanSubscription = null;
+    if (subscription != null) {
+      unawaited(subscription.cancel().catchError((Object _) {}));
+    }
     super.dispose();
   }
 
@@ -119,7 +236,9 @@ class _BleScannerPageState extends State<BleScannerPage> {
         title: const Text('Sterowniki BLE'),
         actions: [
           IconButton(
-            onPressed: _scanning ? null : _startScan,
+            onPressed: _scanning || _scanStarting || _openingDeviceId != null
+                ? null
+                : _startScan,
             icon: const Icon(Icons.refresh),
             tooltip: 'Skanuj ponownie',
           ),
@@ -211,10 +330,17 @@ class _BleScannerPageState extends State<BleScannerPage> {
                                   overflow: TextOverflow.ellipsis,
                                 ),
                                 isThreeLine: true,
-                                trailing: const Icon(
-                                  Icons.chevron_right_rounded,
-                                ),
-                                onTap: () => _openDevice(device),
+                                trailing: _openingDeviceId == device.id
+                                    ? const SizedBox.square(
+                                        dimension: 20,
+                                        child: CircularProgressIndicator(
+                                          strokeWidth: 2,
+                                        ),
+                                      )
+                                    : const Icon(Icons.chevron_right_rounded),
+                                onTap: _openingDeviceId == null
+                                    ? () => _openDevice(device)
+                                    : null,
                               ),
                             );
                           },

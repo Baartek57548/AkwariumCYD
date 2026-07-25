@@ -193,8 +193,15 @@ class ResponsiveGrid extends StatelessWidget {
   Widget build(BuildContext context) {
     return LayoutBuilder(
       builder: (context, constraints) {
+        final textScale = MediaQuery.textScalerOf(context).scale(1);
+        final accessibilityGrowth = (textScale - 1).clamp(0.0, 2.0);
+        // Większa efektywna szerokość kafelka zapobiega ściskaniu treści,
+        // gdy użytkownik korzysta z systemowego powiększenia tekstu.
+        final effectiveMinimumWidth =
+            minimumChildWidth * (1 + accessibilityGrowth * 0.25);
         final columns =
-            ((constraints.maxWidth + spacing) / (minimumChildWidth + spacing))
+            ((constraints.maxWidth + spacing) /
+                    (effectiveMinimumWidth + spacing))
                 .floor()
                 .clamp(1, 4);
         final width =
@@ -456,7 +463,10 @@ class SaveButton extends StatelessWidget {
       icon: busy
           ? const SizedBox.square(
               dimension: 18,
-              child: CircularProgressIndicator(strokeWidth: 2),
+              child: CircularProgressIndicator(
+                strokeWidth: 2,
+                semanticsLabel: 'Zapisywanie zmian',
+              ),
             )
           : Icon(icon),
       label: Text(label),

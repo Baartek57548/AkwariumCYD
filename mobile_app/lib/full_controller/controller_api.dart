@@ -4,6 +4,7 @@ import 'dart:io';
 import 'dart:typed_data';
 
 import '../controller_address.dart';
+import 'status_decoder.dart';
 
 class ControllerApiException implements Exception {
   const ControllerApiException({
@@ -78,7 +79,7 @@ abstract interface class ControllerRemoteApi {
   Future<Uint8List> download(
     String path, {
     Map<String, String>? queryParameters,
-    int maximumBytes = 64 * 1024 * 1024,
+    int maximumBytes = 16 * 1024 * 1024,
   });
   Future<ControllerActionResult> uploadFirmware(
     Uint8List firmware,
@@ -90,14 +91,33 @@ abstract interface class ControllerRemoteApi {
 }
 
 class ControllerApi implements ControllerRemoteApi {
-  ControllerApi(Uri baseUri)
-    : baseUri = ControllerAddress.parse(baseUri.toString());
+  ControllerApi(
+    Uri baseUri, {
+    Duration requestDeadline = const Duration(seconds: 12),
+    Duration readRetryDelay = const Duration(milliseconds: 250),
+    int maximumReadAttempts = 2,
+  }) : baseUri = ControllerAddress.parse(baseUri.toString()),
+       _requestDeadline = _requirePositiveDuration(
+         requestDeadline,
+         'requestDeadline',
+       ),
+       _readRetryDelay = _requireNonNegativeDuration(
+         readRetryDelay,
+         'readRetryDelay',
+       ),
+       _maximumReadAttempts = _requireReadAttempts(maximumReadAttempts);
 
-  static const int maximumResponseBytes = 8 * 1024 * 1024;
+  static const int maximumResponseBytes = 2 * 1024 * 1024;
+  static const int maximumDownloadBytes = 16 * 1024 * 1024;
   static const int maximumFirmwareBytes = 8 * 1024 * 1024;
+  static const int maximumHistoryFileEntries = 1024;
+  static const Duration firmwareUploadDeadline = Duration(minutes: 3);
 
   @override
   final Uri baseUri;
+  final Duration _requestDeadline;
+  final Duration _readRetryDelay;
+  final int _maximumReadAttempts;
 
   @override
   bool get supportsFirmwareUpload => true;
@@ -126,11 +146,19 @@ class ControllerApi implements ControllerRemoteApi {
   }
 
   @override
-  Future<Map<String, dynamic>> status({bool includeHistory = false}) {
-    return getJson(
+  Future<Map<String, dynamic>> status({bool includeHistory = false}) async {
+    final value = await getJsonValue(
       '/api/status',
       queryParameters: includeHistory ? const {'history': '1'} : null,
     );
+    try {
+      return decodeControllerStatus(value, requireHistory: includeHistory);
+    } on FormatException catch (error) {
+      throw ControllerApiException(
+        code: 'invalid_status',
+        message: 'Sterownik zwrócił niepełny status: ${error.message}',
+      );
+    }
   }
 
   @override
@@ -148,6 +176,7 @@ class ControllerApi implements ControllerRemoteApi {
     await getJson(
       '/api/web-session',
       queryParameters: {'sid': sessionId, 'state': state},
+      allowRetry: false,
     );
   }
 
@@ -157,16 +186,25 @@ class ControllerApi implements ControllerRemoteApi {
       '/api/files',
       queryParameters: const {'dir': '/aq/data/history'},
     );
-    if (value is List<dynamic>) {
-      return value;
+    final files = switch (value) {
+      List<dynamic>() => value,
+      Map<String, dynamic>() when value['files'] is List<dynamic> =>
+        value['files'] as List<dynamic>,
+      _ => null,
+    };
+    if (files == null) {
+      throw const ControllerApiException(
+        code: 'invalid_files_response',
+        message: 'Sterownik zwrócił nieprawidłową listę archiwów.',
+      );
     }
-    if (value is Map<String, dynamic> && value['files'] is List<dynamic>) {
-      return value['files'] as List<dynamic>;
+    if (files.length > maximumHistoryFileEntries) {
+      throw const ControllerApiException(
+        code: 'history_files_too_large',
+        message: 'Lista archiwów przekracza bezpieczny limit 1024 wpisów.',
+      );
     }
-    throw const ControllerApiException(
-      code: 'invalid_files_response',
-      message: 'Sterownik zwrócił nieprawidłową listę archiwów.',
-    );
+    return List<dynamic>.unmodifiable(files);
   }
 
   @override
@@ -243,8 +281,14 @@ class ControllerApi implements ControllerRemoteApi {
   Future<Uint8List> download(
     String path, {
     Map<String, String>? queryParameters,
-    int maximumBytes = 64 * 1024 * 1024,
+    int maximumBytes = maximumDownloadBytes,
   }) async {
+    if (maximumBytes <= 0 || maximumBytes > maximumDownloadBytes) {
+      throw const ControllerApiException(
+        code: 'invalid_download_limit',
+        message: 'Limit pobierania musi mieścić się w zakresie 1 B–16 MB.',
+      );
+    }
     final response = await _request(
       'GET',
       resolve(path, queryParameters),
@@ -280,6 +324,54 @@ class ControllerApi implements ControllerRemoteApi {
       );
     }
 
+    final client = _newClient();
+    try {
+      return await _performFirmwareUpload(
+        client,
+        firmware,
+        fileName,
+        pin,
+        onProgress,
+      ).timeout(firmwareUploadDeadline);
+    } on ControllerApiException {
+      rethrow;
+    } on TimeoutException {
+      throw const ControllerApiException(
+        code: 'ota_timeout',
+        message: 'Sterownik nie zakończył aktualizacji OTA w ciągu 3 minut.',
+      );
+    } on HandshakeException catch (error) {
+      throw ControllerApiException(
+        code: 'tls_error',
+        message: 'Nie udało się zabezpieczyć połączenia OTA: $error',
+      );
+    } on SocketException catch (error) {
+      throw ControllerApiException(
+        code: 'network_error',
+        message: 'Błąd sieci podczas OTA: ${error.message}',
+      );
+    } on HttpException catch (error) {
+      throw ControllerApiException(
+        code: 'http_protocol_error',
+        message: 'Błąd protokołu HTTP podczas OTA: ${error.message}',
+      );
+    } on IOException catch (error) {
+      throw ControllerApiException(
+        code: 'io_error',
+        message: 'Błąd wejścia/wyjścia podczas OTA: $error',
+      );
+    } finally {
+      client.close(force: true);
+    }
+  }
+
+  Future<ControllerActionResult> _performFirmwareUpload(
+    HttpClient client,
+    Uint8List firmware,
+    String fileName,
+    String pin,
+    void Function(int sent, int total)? onProgress,
+  ) async {
     final boundary = '----cydAkwarium${DateTime.now().microsecondsSinceEpoch}';
     final safeName = fileName.replaceAll(RegExp(r'[^a-zA-Z0-9._-]'), '_');
     final prefix = utf8.encode(
@@ -289,75 +381,63 @@ class ControllerApi implements ControllerRemoteApi {
     );
     final suffix = utf8.encode('\r\n--$boundary--\r\n');
     final totalLength = prefix.length + firmware.length + suffix.length;
-    final client = _newClient();
-    try {
-      final request = await client.postUrl(resolve('/update', {'pin': pin}));
-      request.headers.contentType = ContentType(
-        'multipart',
-        'form-data',
-        parameters: {'boundary': boundary},
-      );
-      request.contentLength = totalLength;
-      var sent = 0;
-      request.add(prefix);
-      sent += prefix.length;
+    final request = await client.postUrl(resolve('/update', {'pin': pin}));
+    request.headers.contentType = ContentType(
+      'multipart',
+      'form-data',
+      parameters: {'boundary': boundary},
+    );
+    request.contentLength = totalLength;
+    var sent = 0;
+    request.add(prefix);
+    sent += prefix.length;
+    onProgress?.call(sent, totalLength);
+    const chunkSize = 32 * 1024;
+    for (var offset = 0; offset < firmware.length; offset += chunkSize) {
+      final end = (offset + chunkSize).clamp(0, firmware.length);
+      request.add(firmware.sublist(offset, end));
+      sent += end - offset;
       onProgress?.call(sent, totalLength);
-      const chunkSize = 32 * 1024;
-      for (var offset = 0; offset < firmware.length; offset += chunkSize) {
-        final end = (offset + chunkSize).clamp(0, firmware.length);
-        request.add(firmware.sublist(offset, end));
-        sent += end - offset;
-        onProgress?.call(sent, totalLength);
-        await Future<void>.delayed(Duration.zero);
-      }
-      request.add(suffix);
-      sent += suffix.length;
-      onProgress?.call(sent, totalLength);
-      final response = await request.close().timeout(
-        const Duration(minutes: 3),
-      );
-      final responseBytes = await _readLimited(response, maximumResponseBytes);
-      final responseText = utf8
-          .decode(responseBytes, allowMalformed: true)
-          .trim();
-      if (response.statusCode < 200 || response.statusCode >= 300) {
-        throw ControllerApiException(
-          message: responseText.isEmpty
-              ? 'Aktualizacja OTA nie powiodła się.'
-              : responseText,
-          code: response.statusCode == HttpStatus.forbidden
-              ? 'invalid_pin'
-              : 'ota_failed',
-          statusCode: response.statusCode,
-        );
-      }
-      return ControllerActionResult(
-        success: true,
-        code: 'ok',
-        message: responseText.isEmpty
-            ? 'Firmware został przyjęty. Sterownik uruchomi się ponownie.'
-            : responseText,
-      );
-    } on TimeoutException {
-      throw const ControllerApiException(
-        code: 'ota_timeout',
-        message: 'Sterownik nie zakończył aktualizacji OTA w ciągu 3 minut.',
-      );
-    } on SocketException catch (error) {
-      throw ControllerApiException(
-        code: 'network_error',
-        message: 'Błąd sieci podczas OTA: ${error.message}',
-      );
-    } finally {
-      client.close(force: true);
+      await Future<void>.delayed(Duration.zero);
     }
+    request.add(suffix);
+    sent += suffix.length;
+    onProgress?.call(sent, totalLength);
+    final response = await request.close();
+    final responseBytes = await _readLimited(response, maximumResponseBytes);
+    final responseText = utf8
+        .decode(responseBytes, allowMalformed: true)
+        .trim();
+    if (response.statusCode < 200 || response.statusCode >= 300) {
+      throw ControllerApiException(
+        message: responseText.isEmpty
+            ? 'Aktualizacja OTA nie powiodła się.'
+            : responseText,
+        code: response.statusCode == HttpStatus.forbidden
+            ? 'invalid_pin'
+            : 'ota_failed',
+        statusCode: response.statusCode,
+      );
+    }
+    return ControllerActionResult(
+      success: true,
+      code: 'ok',
+      message: responseText.isEmpty
+          ? 'Firmware został przyjęty. Sterownik uruchomi się ponownie.'
+          : responseText,
+    );
   }
 
   Future<Map<String, dynamic>> getJson(
     String path, {
     Map<String, String>? queryParameters,
+    bool allowRetry = true,
   }) async {
-    final value = await getJsonValue(path, queryParameters: queryParameters);
+    final value = await getJsonValue(
+      path,
+      queryParameters: queryParameters,
+      allowRetry: allowRetry,
+    );
     if (value is! Map<String, dynamic>) {
       throw const ControllerApiException(
         code: 'invalid_json',
@@ -370,8 +450,13 @@ class ControllerApi implements ControllerRemoteApi {
   Future<dynamic> getJsonValue(
     String path, {
     Map<String, String>? queryParameters,
+    bool allowRetry = true,
   }) async {
-    final response = await _request('GET', resolve(path, queryParameters));
+    final response = await _request(
+      'GET',
+      resolve(path, queryParameters),
+      allowRetry: allowRetry,
+    );
     if (!response.isSuccess) {
       final payload = _tryDecodeJsonObject(response.body);
       throw ControllerApiException(
@@ -398,38 +483,118 @@ class ControllerApi implements ControllerRemoteApi {
     Map<String, String> headers = const {},
     List<int>? body,
     int maximumBytes = maximumResponseBytes,
+    bool allowRetry = true,
+  }) async {
+    if (maximumBytes <= 0) {
+      throw const ControllerApiException(
+        code: 'invalid_response_limit',
+        message: 'Limit odpowiedzi musi być większy od zera.',
+      );
+    }
+    final normalizedMethod = method.toUpperCase();
+    final attempts = allowRetry && normalizedMethod == 'GET'
+        ? _maximumReadAttempts
+        : 1;
+    for (var attempt = 1; attempt <= attempts; attempt++) {
+      try {
+        return await _requestOnce(
+          normalizedMethod,
+          uri,
+          headers: headers,
+          body: body,
+          maximumBytes: maximumBytes,
+        );
+      } on ControllerApiException catch (error) {
+        if (attempt >= attempts || !_isTransientReadError(error)) {
+          rethrow;
+        }
+        if (_readRetryDelay > Duration.zero) {
+          await Future<void>.delayed(_readRetryDelay);
+        }
+      }
+    }
+    throw StateError('Nieosiągalny stan ponawiania żądania HTTP.');
+  }
+
+  Future<_HttpResponse> _requestOnce(
+    String method,
+    Uri uri, {
+    required Map<String, String> headers,
+    required List<int>? body,
+    required int maximumBytes,
   }) async {
     final client = _newClient();
     try {
-      final request = await client.openUrl(method, uri);
-      request.headers.set(HttpHeaders.acceptHeader, 'application/json, */*');
-      headers.forEach(request.headers.set);
-      if (body != null) {
-        request.contentLength = body.length;
-        request.add(body);
-      }
-      final response = await request.close().timeout(
-        const Duration(seconds: 12),
-      );
-      final bytes = await _readLimited(response, maximumBytes);
-      return _HttpResponse(response.statusCode, bytes);
+      return await _performRequest(
+        client,
+        method,
+        uri,
+        headers,
+        body,
+        maximumBytes,
+      ).timeout(_requestDeadline);
+    } on ControllerApiException {
+      rethrow;
     } on TimeoutException {
       throw ControllerApiException(
         code: 'timeout',
         message: 'Sterownik ${uri.host} nie odpowiedział w wymaganym czasie.',
+      );
+    } on HandshakeException catch (error) {
+      throw ControllerApiException(
+        code: 'tls_error',
+        message: 'Nie udało się zabezpieczyć połączenia: $error',
       );
     } on SocketException catch (error) {
       throw ControllerApiException(
         code: 'network_error',
         message: 'Brak połączenia ze sterownikiem: ${error.message}',
       );
+    } on HttpException catch (error) {
+      throw ControllerApiException(
+        code: 'http_protocol_error',
+        message: 'Sterownik zwrócił błąd protokołu HTTP: ${error.message}',
+      );
+    } on IOException catch (error) {
+      throw ControllerApiException(
+        code: 'io_error',
+        message: 'Błąd wejścia/wyjścia podczas komunikacji: $error',
+      );
     } finally {
       client.close(force: true);
     }
   }
 
+  Future<_HttpResponse> _performRequest(
+    HttpClient client,
+    String method,
+    Uri uri,
+    Map<String, String> headers,
+    List<int>? body,
+    int maximumBytes,
+  ) async {
+    final request = await client.openUrl(method, uri);
+    request.headers.set(HttpHeaders.acceptHeader, 'application/json, */*');
+    headers.forEach(request.headers.set);
+    if (body != null) {
+      request.contentLength = body.length;
+      request.add(body);
+    }
+    final response = await request.close();
+    final bytes = await _readLimited(response, maximumBytes);
+    return _HttpResponse(response.statusCode, bytes);
+  }
+
+  static bool _isTransientReadError(ControllerApiException error) => const {
+    'timeout',
+    'network_error',
+    'tls_error',
+    'http_protocol_error',
+    'io_error',
+  }.contains(error.code);
+
   HttpClient _newClient() => HttpClient()
-    ..connectionTimeout = const Duration(seconds: 8)
+    ..connectionTimeout = _requestDeadline
     ..idleTimeout = const Duration(seconds: 15);
 
   static Future<List<int>> _readLimited(
@@ -489,4 +654,29 @@ class _HttpResponse {
   final List<int> body;
 
   bool get isSuccess => statusCode >= 200 && statusCode < 300;
+}
+
+Duration _requirePositiveDuration(Duration value, String name) {
+  if (value <= Duration.zero) {
+    throw ArgumentError.value(value, name, 'Czas musi być większy od zera.');
+  }
+  return value;
+}
+
+Duration _requireNonNegativeDuration(Duration value, String name) {
+  if (value.isNegative) {
+    throw ArgumentError.value(value, name, 'Czas nie może być ujemny.');
+  }
+  return value;
+}
+
+int _requireReadAttempts(int value) {
+  if (value < 1 || value > 3) {
+    throw ArgumentError.value(
+      value,
+      'maximumReadAttempts',
+      'Liczba prób odczytu musi mieścić się w zakresie 1..3.',
+    );
+  }
+  return value;
 }

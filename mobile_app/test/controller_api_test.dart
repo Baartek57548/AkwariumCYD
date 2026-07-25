@@ -14,12 +14,7 @@ void main() {
       requests.add(_RecordedRequest(request.method, request.uri, body));
       request.response.headers.contentType = ContentType.json;
       if (request.uri.path == '/api/status') {
-        request.response.write(
-          jsonEncode({
-            'device': 'cydAkwarium',
-            'temperature': {'history': <dynamic>[]},
-          }),
-        );
+        request.response.write(jsonEncode(_validStatus(includeHistory: true)));
       } else {
         request.response.write(
           jsonEncode({'success': true, 'code': 'ok', 'message': 'Zapisano.'}),
@@ -89,6 +84,254 @@ void main() {
       }
     },
   );
+
+  test('deadline covers response headers and complete body', () async {
+    final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+    addTearDown(() => server.close(force: true));
+    final subscription = server.listen((request) async {
+      request.response.headers.contentType = ContentType.json;
+      request.response.write('{"ok":');
+      await request.response.flush();
+      await Future<void>.delayed(const Duration(milliseconds: 150));
+      try {
+        request.response.write('true}');
+        await request.response.close();
+      } on Object {
+        // The client correctly aborts the socket when the deadline expires.
+      }
+    });
+    addTearDown(subscription.cancel);
+    final api = ControllerApi(
+      Uri.parse('http://${server.address.address}:${server.port}'),
+      requestDeadline: const Duration(milliseconds: 40),
+      maximumReadAttempts: 1,
+    );
+
+    await expectLater(
+      api.getJson('/slow'),
+      throwsA(
+        isA<ControllerApiException>().having(
+          (error) => error.code,
+          'code',
+          'timeout',
+        ),
+      ),
+    );
+  });
+
+  test('idempotent GET is retried after a transient timeout', () async {
+    final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+    addTearDown(() => server.close(force: true));
+    var requests = 0;
+    final subscription = server.listen((request) async {
+      requests++;
+      if (requests == 1) {
+        await Future<void>.delayed(const Duration(milliseconds: 120));
+      }
+      try {
+        request.response.headers.contentType = ContentType.json;
+        request.response.write(jsonEncode({'ok': true}));
+        await request.response.close();
+      } on Object {
+        // The first request is expected to be cancelled by the deadline.
+      }
+    });
+    addTearDown(subscription.cancel);
+    final api = ControllerApi(
+      Uri.parse('http://${server.address.address}:${server.port}'),
+      requestDeadline: const Duration(milliseconds: 40),
+      readRetryDelay: Duration.zero,
+      maximumReadAttempts: 2,
+    );
+
+    final result = await api.getJson('/retry');
+
+    expect(result['ok'], isTrue);
+    expect(requests, 2);
+  });
+
+  test('mutating POST is never retried after a timeout', () async {
+    final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+    addTearDown(() => server.close(force: true));
+    var requests = 0;
+    final subscription = server.listen((request) async {
+      requests++;
+      await request.drain<void>();
+      await Future<void>.delayed(const Duration(milliseconds: 120));
+      try {
+        request.response.headers.contentType = ContentType.json;
+        request.response.write(
+          jsonEncode({'success': true, 'code': 'ok', 'message': 'Zapisano.'}),
+        );
+        await request.response.close();
+      } on Object {
+        // The sole POST is expected to be cancelled by the deadline.
+      }
+    });
+    addTearDown(subscription.cancel);
+    final api = ControllerApi(
+      Uri.parse('http://${server.address.address}:${server.port}'),
+      requestDeadline: const Duration(milliseconds: 40),
+      readRetryDelay: Duration.zero,
+      maximumReadAttempts: 3,
+    );
+
+    await expectLater(
+      api.action('relay', payload: const {'channel': 1}),
+      throwsA(
+        isA<ControllerApiException>().having(
+          (error) => error.code,
+          'code',
+          'timeout',
+        ),
+      ),
+    );
+    expect(requests, 1);
+  });
+
+  test('mutating web-session GET is never retried', () async {
+    final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+    addTearDown(() => server.close(force: true));
+    var requests = 0;
+    final subscription = server.listen((request) async {
+      requests++;
+      await Future<void>.delayed(const Duration(milliseconds: 120));
+      try {
+        request.response.headers.contentType = ContentType.json;
+        request.response.write(jsonEncode({'ok': true}));
+        await request.response.close();
+      } on Object {
+        // The state-changing heartbeat must not be replayed.
+      }
+    });
+    addTearDown(subscription.cancel);
+    final api = ControllerApi(
+      Uri.parse('http://${server.address.address}:${server.port}'),
+      requestDeadline: const Duration(milliseconds: 40),
+      readRetryDelay: Duration.zero,
+      maximumReadAttempts: 3,
+    );
+
+    await expectLater(
+      api.webSession('mobile-test', 'active'),
+      throwsA(
+        isA<ControllerApiException>().having(
+          (error) => error.code,
+          'code',
+          'timeout',
+        ),
+      ),
+    );
+    expect(requests, 1);
+  });
+
+  test('download rejects an excessive byte limit before network access', () {
+    final api = ControllerApi(Uri.parse('http://127.0.0.1:1'));
+
+    expect(
+      () => api.download(
+        '/download',
+        maximumBytes: ControllerApi.maximumDownloadBytes + 1,
+      ),
+      throwsA(
+        isA<ControllerApiException>().having(
+          (error) => error.code,
+          'code',
+          'invalid_download_limit',
+        ),
+      ),
+    );
+  });
+
+  test('status maps a partial payload to invalid_status', () async {
+    final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+    addTearDown(() => server.close(force: true));
+    final subscription = server.listen((request) async {
+      await request.drain<void>();
+      request.response.headers.contentType = ContentType.json;
+      request.response.write(jsonEncode({'device': 'cydAkwarium'}));
+      await request.response.close();
+    });
+    addTearDown(subscription.cancel);
+    final api = ControllerApi(
+      Uri.parse('http://${server.address.address}:${server.port}'),
+    );
+
+    await expectLater(
+      api.status(),
+      throwsA(
+        isA<ControllerApiException>().having(
+          (error) => error.code,
+          'code',
+          'invalid_status',
+        ),
+      ),
+    );
+  });
+
+  test('history file list is bounded', () async {
+    final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+    addTearDown(() => server.close(force: true));
+    final subscription = server.listen((request) async {
+      await request.drain<void>();
+      request.response.headers.contentType = ContentType.json;
+      request.response.write(
+        jsonEncode(
+          List<String>.generate(
+            ControllerApi.maximumHistoryFileEntries + 1,
+            (index) => '/aq/data/history/$index.csv',
+          ),
+        ),
+      );
+      await request.response.close();
+    });
+    addTearDown(subscription.cancel);
+    final api = ControllerApi(
+      Uri.parse('http://${server.address.address}:${server.port}'),
+    );
+
+    await expectLater(
+      api.historyFiles(),
+      throwsA(
+        isA<ControllerApiException>().having(
+          (error) => error.code,
+          'code',
+          'history_files_too_large',
+        ),
+      ),
+    );
+  });
+}
+
+Map<String, dynamic> _validStatus({bool includeHistory = false}) {
+  return {
+    'device': 'cydAkwarium',
+    'sensors': {'temp_c': 24.6, 'temp_valid': true},
+    'alarms': {'flags': 0},
+    'config': {'target_temp': 25.0},
+    'display': {'brightness': 80},
+    'water': {'active': false},
+    'leak': {'action': 'disable_all'},
+    'modules': {'heater_on': false},
+    'schedules': {'light': 'day'},
+    'eco': {'safe_active': false},
+    'clock': {'valid': true},
+    'temperature': {
+      'current': 24.6,
+      'target': 25.0,
+      'hysteresis': 0.5,
+      'historyCapacity': 144,
+      if (includeHistory) 'history': <dynamic>[],
+    },
+    'battery': {'voltage': null},
+    'firmware': {'version': 'test'},
+    'network': {'rssi': -52},
+    'web': {'focus': false},
+    'system': {'uptime': 120, 'freeHeap': 180000},
+    'relays': {'heater': false},
+    'schedule': {'heaterMode': 0},
+    'feeding': {'active': false},
+  };
 }
 
 class _RecordedRequest {

@@ -30,6 +30,7 @@ class _ControllerPageState extends State<ControllerPage> {
   String? _startupError;
   String? _pageError;
   int _loadingProgress = 0;
+  Brightness? _themeBrightness;
 
   bool get _isLoading => _loadingProgress < 100 && _pageError == null;
 
@@ -38,6 +39,18 @@ class _ControllerPageState extends State<ControllerPage> {
     super.initState();
     _preferences = widget.preferences ?? ControllerPreferences();
     _initialize();
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    final brightness = Theme.of(context).brightness;
+    if (_themeBrightness == brightness) return;
+    _themeBrightness = brightness;
+    final controller = _webViewController;
+    if (controller != null) {
+      unawaited(controller.setBackgroundColor(_webBackground(brightness)));
+    }
   }
 
   Future<void> _initialize() async {
@@ -64,10 +77,13 @@ class _ControllerPageState extends State<ControllerPage> {
   }
 
   WebViewController _createWebViewController(Uri address) {
+    final brightness =
+        _themeBrightness ??
+        WidgetsBinding.instance.platformDispatcher.platformBrightness;
     final controller = WebViewController();
     controller
       ..setJavaScriptMode(JavaScriptMode.unrestricted)
-      ..setBackgroundColor(const Color(0xFFF4FAFC))
+      ..setBackgroundColor(_webBackground(brightness))
       ..enableZoom(true)
       ..addJavaScriptChannel(
         'MobileDownloads',
@@ -132,6 +148,10 @@ class _ControllerPageState extends State<ControllerPage> {
     }
     return controller;
   }
+
+  Color _webBackground(Brightness brightness) => brightness == Brightness.dark
+      ? const Color(0xFF080909)
+      : const Color(0xFFF1F4F4);
 
   bool _isBlobFromController(Uri target, Uri controller) {
     if (target.scheme != 'blob') {

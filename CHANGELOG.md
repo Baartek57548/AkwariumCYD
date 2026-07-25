@@ -1,5 +1,24 @@
 # Changelog
 
+## mobile-v3.7.0 - 2026-07-25
+
+Produkcyjne wydanie aplikacji AquaCYD Control `3.7.0+13`.
+
+### What is included
+
+- Material 3 UI przystosowane do ekranów 320 px i systemowej skali tekstu 300%.
+- Pasek kondycji sterownika: Online/Offline/Connecting, RSSI, ping i wiek danych.
+- Automatyczny reconnect z backoffem oraz zatrzymywanie odpytywania w tle.
+- Serializacja komend REST/BLE, odporne parsowanie statusu i limity odpowiedzi.
+- Bezpieczny cykl życia BLE, batchowanie skanowania i obsługa uszkodzonych ramek.
+- Przewijalny, dostępny interfejs aktualizacji APK po zgodzie użytkownika.
+
+### Verification
+
+- `flutter analyze` zakończone bez problemów.
+- 86 testów Flutter zakończonych powodzeniem.
+- Podpisany wariant `current` zweryfikowany jako `3.7.0` (`versionCode 13`).
+
 ## v20260626release - 2026-06-26
 
 Release panelu web, OTA i firmware po reorganizacji sekcji oraz stabilizacji

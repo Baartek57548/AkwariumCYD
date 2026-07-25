@@ -39,11 +39,11 @@ void main() {
     expect(selected, AppUpdatePromptAction.remindLater);
   });
 
-  testWidgets('update prompt remains usable with 200 percent text', (
+  testWidgets('update prompt remains usable at 320 px with 300 percent text', (
     tester,
   ) async {
     tester.view.devicePixelRatio = 1;
-    tester.view.physicalSize = const Size(420, 760);
+    tester.view.physicalSize = const Size(320, 640);
     addTearDown(tester.view.resetDevicePixelRatio);
     addTearDown(tester.view.resetPhysicalSize);
 
@@ -52,7 +52,7 @@ void main() {
         builder: (context, child) => MediaQuery(
           data: MediaQuery.of(
             context,
-          ).copyWith(textScaler: const TextScaler.linear(2)),
+          ).copyWith(textScaler: const TextScaler.linear(3)),
           child: child!,
         ),
         home: Scaffold(body: AppUpdatePromptDialog(release: _release())),

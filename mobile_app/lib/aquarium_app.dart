@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:flutter_localizations/flutter_localizations.dart';
 
 import 'app_update/app_update_controller.dart';
 import 'app_update/app_update_models.dart';
@@ -42,7 +43,6 @@ class _AquariumAppState extends State<AquariumApp> with WidgetsBindingObserver {
     refreshRateController = DisplayRefreshRateController()
       ..addListener(_onRefreshRateChanged);
     AppSettings.themeModeNotifier.addListener(_onSettingsChanged);
-    AppSettings.languageNotifier.addListener(_onSettingsChanged);
     if (widget.enableAppUpdates) {
       _appUpdateController = AppUpdateController()
         ..addListener(_onAppUpdateChanged);
@@ -67,7 +67,6 @@ class _AquariumAppState extends State<AquariumApp> with WidgetsBindingObserver {
       ..removeListener(_onRefreshRateChanged)
       ..dispose();
     AppSettings.themeModeNotifier.removeListener(_onSettingsChanged);
-    AppSettings.languageNotifier.removeListener(_onSettingsChanged);
     _appUpdateController
       ?..removeListener(_onAppUpdateChanged)
       ..dispose();
@@ -167,9 +166,14 @@ class _AquariumAppState extends State<AquariumApp> with WidgetsBindingObserver {
       ..hideCurrentSnackBar()
       ..showSnackBar(
         SnackBar(
-          content: Text(message),
+          content: Text(
+            message,
+            style: isError ? TextStyle(color: colors.onError) : null,
+          ),
           backgroundColor: isError ? colors.error : null,
           behavior: SnackBarBehavior.floating,
+          showCloseIcon: true,
+          closeIconColor: isError ? colors.onError : null,
         ),
       );
   }
@@ -188,14 +192,34 @@ class _AquariumAppState extends State<AquariumApp> with WidgetsBindingObserver {
         theme: _theme(seed, Brightness.light),
         darkTheme: _theme(seed, Brightness.dark),
         themeMode: AppSettings.themeModeNotifier.value,
-        locale: AppSettings.languageNotifier.value,
+        locale: const Locale('pl'),
+        supportedLocales: const [Locale('pl')],
+        localizationsDelegates: const [
+          GlobalMaterialLocalizations.delegate,
+          GlobalWidgetsLocalizations.delegate,
+          GlobalCupertinoLocalizations.delegate,
+        ],
         builder: (context, child) {
-          final controller = _appUpdateController;
-          if (controller == null) return child ?? const SizedBox.shrink();
-          return AppUpdateScope(
-            controller: controller,
+          final theme = Theme.of(context);
+          final textScale = MediaQuery.textScalerOf(context).scale(1);
+          final accessibilityGrowth = (textScale - 1).clamp(0.0, 2.0);
+          final navigationBarHeight = (72 + accessibilityGrowth * 12).clamp(
+            72.0,
+            96.0,
+          );
+          Widget content = Theme(
+            data: theme.copyWith(
+              navigationBarTheme: theme.navigationBarTheme.copyWith(
+                height: navigationBarHeight,
+              ),
+            ),
             child: child ?? const SizedBox.shrink(),
           );
+          final controller = _appUpdateController;
+          if (controller != null) {
+            content = AppUpdateScope(controller: controller, child: content);
+          }
+          return content;
         },
         home: widget.home ?? const ConnectionHomePage(),
       ),

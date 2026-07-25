@@ -21,6 +21,65 @@ abstract final class AquariumBleProtocol {
   );
 }
 
+/// Minimalna granica nad biblioteką BLE ułatwia testowanie cyklu połączenia
+/// bez uruchamiania natywnego stosu Bluetooth.
+abstract interface class BleCentral {
+  Stream<ConnectionStateUpdate> connect({
+    required String deviceId,
+    required List<Uuid> services,
+    required Duration prescanDuration,
+    required Duration connectionTimeout,
+  });
+
+  Future<int> requestMtu({required String deviceId, required int mtu});
+
+  Stream<List<int>> subscribe(QualifiedCharacteristic characteristic);
+
+  Future<void> writeWithResponse(
+    QualifiedCharacteristic characteristic, {
+    required List<int> value,
+  });
+}
+
+class ReactiveBleCentral implements BleCentral {
+  ReactiveBleCentral(this._ble);
+
+  final FlutterReactiveBle _ble;
+
+  @override
+  Stream<ConnectionStateUpdate> connect({
+    required String deviceId,
+    required List<Uuid> services,
+    required Duration prescanDuration,
+    required Duration connectionTimeout,
+  }) {
+    return _ble.connectToAdvertisingDevice(
+      id: deviceId,
+      withServices: services,
+      prescanDuration: prescanDuration,
+      connectionTimeout: connectionTimeout,
+    );
+  }
+
+  @override
+  Future<int> requestMtu({required String deviceId, required int mtu}) {
+    return _ble.requestMtu(deviceId: deviceId, mtu: mtu);
+  }
+
+  @override
+  Stream<List<int>> subscribe(QualifiedCharacteristic characteristic) {
+    return _ble.subscribeToCharacteristic(characteristic);
+  }
+
+  @override
+  Future<void> writeWithResponse(
+    QualifiedCharacteristic characteristic, {
+    required List<int> value,
+  }) {
+    return _ble.writeCharacteristicWithResponse(characteristic, value: value);
+  }
+}
+
 class BleControllerEnvironment {
   BleControllerEnvironment._();
 
@@ -70,12 +129,32 @@ class BleControllerEnvironment {
   }
 }
 
-class BleControllerTransport implements ControllerTransport {
-  BleControllerTransport({required this.deviceId, required this.deviceName});
+abstract interface class BleCommandTransport implements ControllerTransport {
+  Stream<Map<String, dynamic>> get messages;
+
+  Future<ControllerCommandResult> sendCommand(Map<String, dynamic> command);
+}
+
+class BleControllerTransport implements BleCommandTransport {
+  BleControllerTransport({
+    required this.deviceId,
+    required this.deviceName,
+    BleCentral? central,
+    Future<void> Function()? permissionRequester,
+    this.connectionReadyDelay = const Duration(milliseconds: 250),
+    this.commandTimeout = const Duration(seconds: 15),
+  }) : _central =
+           central ?? ReactiveBleCentral(BleControllerEnvironment.instance.ble),
+       _permissionRequester =
+           permissionRequester ??
+           BleControllerEnvironment.instance.ensurePermissions;
 
   final String deviceId;
   final String deviceName;
-  final FlutterReactiveBle _ble = BleControllerEnvironment.instance.ble;
+  final Duration connectionReadyDelay;
+  final Duration commandTimeout;
+  final BleCentral _central;
+  final Future<void> Function() _permissionRequester;
   final BleFrameAssembler _assembler = BleFrameAssembler();
   final StreamController<ControllerTransportState> _stateController =
       StreamController.broadcast();
@@ -89,8 +168,13 @@ class BleControllerTransport implements ControllerTransport {
   StreamSubscription<List<int>>? _notificationSubscription;
   QualifiedCharacteristic? _commandCharacteristic;
   QualifiedCharacteristic? _eventCharacteristic;
+  Future<void>? _connectOperation;
+  Future<void> _writeTail = Future<void>.value();
+  Completer<void>? _connectionAttempt;
   ControllerTransportState _state = ControllerTransportState.disconnected;
   int _nextCommandId = 1;
+  int _linkGeneration = 0;
+  int _protocolErrorCount = 0;
   bool _disposed = false;
 
   @override
@@ -102,33 +186,70 @@ class BleControllerTransport implements ControllerTransport {
   @override
   ControllerTransportState get currentState => _state;
 
+  int get protocolErrorCount => _protocolErrorCount;
+
   @override
   Stream<ControllerTransportState> get stateChanges => _stateController.stream;
 
   @override
   Stream<ControllerSnapshot> get snapshots => _snapshotController.stream;
 
+  @override
   Stream<Map<String, dynamic>> get messages => _messageController.stream;
 
   @override
-  Future<void> connect() async {
+  Future<void> connect() {
+    if (_disposed) {
+      return Future<void>.error(StateError('Transport BLE został zamknięty.'));
+    }
+    if (_state == ControllerTransportState.connected) {
+      return Future<void>.value();
+    }
+    final running = _connectOperation;
+    if (running != null) {
+      return running;
+    }
+
+    late final Future<void> operation;
+    operation = _connectInternal().whenComplete(() {
+      if (identical(_connectOperation, operation)) {
+        _connectOperation = null;
+      }
+    });
+    _connectOperation = operation;
+    return operation;
+  }
+
+  Future<void> _connectInternal() async {
+    final requestedGeneration = _linkGeneration;
+    await _permissionRequester();
     if (_disposed) {
       throw StateError('Transport BLE został zamknięty.');
     }
-    if (_state == ControllerTransportState.connected) {
-      return;
+    if (requestedGeneration != _linkGeneration) {
+      throw StateError('Próba połączenia BLE została anulowana.');
     }
-    await BleControllerEnvironment.instance.ensurePermissions();
+
+    await _clearLink(
+      pendingMessage: 'Rozpoczęto ponowne łączenie BLE.',
+      emitDisconnected: false,
+    );
+    final generation = _linkGeneration;
     _setState(ControllerTransportState.connecting);
     final connected = Completer<void>();
-    final connectionStream = _ble.connectToAdvertisingDevice(
-      id: deviceId,
-      withServices: [AquariumBleProtocol.service],
+    _connectionAttempt = connected;
+    final connectionStream = _central.connect(
+      deviceId: deviceId,
+      services: [AquariumBleProtocol.service],
       prescanDuration: const Duration(seconds: 3),
       connectionTimeout: const Duration(seconds: 12),
     );
-    _connectionSubscription = connectionStream.listen(
+    late final StreamSubscription<ConnectionStateUpdate> connectionSubscription;
+    connectionSubscription = connectionStream.listen(
       (update) {
+        if (!_isCurrentLink(generation, connectionSubscription)) {
+          return;
+        }
         switch (update.connectionState) {
           case DeviceConnectionState.connecting:
             _setState(ControllerTransportState.connecting);
@@ -138,34 +259,53 @@ class BleControllerTransport implements ControllerTransport {
               connected.complete();
             }
           case DeviceConnectionState.disconnecting:
-            _setState(ControllerTransportState.disconnected);
+            _handleUnexpectedDisconnect(
+              generation,
+              connected,
+              'Sterownik BLE rozpoczął rozłączanie.',
+            );
           case DeviceConnectionState.disconnected:
-            _setState(ControllerTransportState.disconnected);
-            if (!connected.isCompleted) {
-              connected.completeError(
-                StateError('Sterownik BLE rozłączył się podczas łączenia.'),
-              );
-            }
+            _handleUnexpectedDisconnect(
+              generation,
+              connected,
+              'Sterownik BLE rozłączył się.',
+            );
         }
       },
       onError: (Object error, StackTrace stackTrace) {
-        _setState(ControllerTransportState.error);
+        if (!_isCurrentLink(generation, connectionSubscription)) {
+          return;
+        }
+        _invalidateLink(
+          generation,
+          'Połączenie BLE zakończyło się błędem: $error',
+          ControllerTransportState.error,
+        );
         if (!connected.isCompleted) {
           connected.completeError(error, stackTrace);
         }
       },
     );
+    _connectionSubscription = connectionSubscription;
 
     try {
       await connected.future.timeout(const Duration(seconds: 16));
+      if (!_isCurrentLink(generation, connectionSubscription) ||
+          _state != ControllerTransportState.connected) {
+        throw StateError('Połączenie BLE zostało przerwane.');
+      }
       if (Platform.isAndroid) {
         try {
-          await _ble.requestMtu(deviceId: deviceId, mtu: 185);
+          await _central.requestMtu(deviceId: deviceId, mtu: 185);
         } on Exception {
-          // MTU negotiation is an optimization; framed messages also work at
-          // the MTU selected by the operating system.
+          // Negocjacja MTU jest optymalizacją; ramkowanie działa również dla
+          // wartości wybranej automatycznie przez system.
         }
       }
+      if (_disposed || generation != _linkGeneration) {
+        throw StateError('Połączenie BLE zostało przerwane.');
+      }
+
       _commandCharacteristic = QualifiedCharacteristic(
         serviceId: AquariumBleProtocol.service,
         characteristicId: AquariumBleProtocol.command,
@@ -176,24 +316,110 @@ class BleControllerTransport implements ControllerTransport {
         characteristicId: AquariumBleProtocol.events,
         deviceId: deviceId,
       );
-      _notificationSubscription = _ble
-          .subscribeToCharacteristic(_eventCharacteristic!)
+      late final StreamSubscription<List<int>> notificationSubscription;
+      notificationSubscription = _central
+          .subscribe(_eventCharacteristic!)
           .listen(
-            _handleNotification,
+            (frame) {
+              if (_isCurrentNotification(
+                generation,
+                notificationSubscription,
+              )) {
+                _handleNotification(frame);
+              }
+            },
             onError: (Object error) {
-              _failPending('Błąd powiadomień BLE: $error');
-              _setState(ControllerTransportState.error);
+              if (!_isCurrentNotification(
+                generation,
+                notificationSubscription,
+              )) {
+                return;
+              }
+              _invalidateLink(
+                generation,
+                'Błąd powiadomień BLE: $error',
+                ControllerTransportState.error,
+              );
             },
           );
-      await Future<void>.delayed(const Duration(milliseconds: 250));
+      _notificationSubscription = notificationSubscription;
+      if (connectionReadyDelay > Duration.zero) {
+        await Future<void>.delayed(connectionReadyDelay);
+      }
       final result = await sendCommand({'op': 'status'});
       if (!result.success) {
         throw StateError(result.message);
       }
     } catch (_) {
-      await disconnect();
+      if (generation == _linkGeneration) {
+        await _clearLink(
+          pendingMessage: 'Nie udało się zakończyć łączenia BLE.',
+        );
+      }
       rethrow;
+    } finally {
+      if (identical(_connectionAttempt, connected)) {
+        _connectionAttempt = null;
+      }
     }
+  }
+
+  bool _isCurrentLink(
+    int generation,
+    StreamSubscription<ConnectionStateUpdate> subscription,
+  ) {
+    return !_disposed &&
+        generation == _linkGeneration &&
+        identical(_connectionSubscription, subscription);
+  }
+
+  bool _isCurrentNotification(
+    int generation,
+    StreamSubscription<List<int>> subscription,
+  ) {
+    return !_disposed &&
+        generation == _linkGeneration &&
+        identical(_notificationSubscription, subscription);
+  }
+
+  void _handleUnexpectedDisconnect(
+    int generation,
+    Completer<void> connected,
+    String message,
+  ) {
+    if (generation != _linkGeneration) {
+      return;
+    }
+    _invalidateLink(generation, message, ControllerTransportState.disconnected);
+    if (!connected.isCompleted) {
+      connected.completeError(StateError(message));
+    }
+  }
+
+  void _invalidateLink(
+    int generation,
+    String message,
+    ControllerTransportState nextState,
+  ) {
+    if (generation != _linkGeneration) {
+      return;
+    }
+    _linkGeneration += 1;
+    _failPending(message);
+    _assembler.clear();
+    _commandCharacteristic = null;
+    _eventCharacteristic = null;
+    final notificationSubscription = _notificationSubscription;
+    _notificationSubscription = null;
+    final connectionSubscription = _connectionSubscription;
+    _connectionSubscription = null;
+    if (notificationSubscription != null) {
+      unawaited(_cancelSubscription(notificationSubscription));
+    }
+    if (connectionSubscription != null) {
+      unawaited(_cancelSubscription(connectionSubscription));
+    }
+    _setState(nextState);
   }
 
   void _handleNotification(List<int> frame) {
@@ -239,26 +465,30 @@ class BleControllerTransport implements ControllerTransport {
           );
         }
       }
-    } catch (error) {
-      _failPending('Nieprawidłowa wiadomość BLE: $error');
-      _setState(ControllerTransportState.error);
+    } on FormatException {
+      // Pojedyncza uszkodzona ramka nie może zrywać zdrowego linku ani kończyć
+      // niezależnych komend. Telemetria błędów umożliwia diagnostykę.
+      _protocolErrorCount += 1;
+    } on Object {
+      _protocolErrorCount += 1;
     }
   }
 
+  @override
   Future<ControllerCommandResult> sendCommand(
     Map<String, dynamic> command,
   ) async {
     final characteristic = _commandCharacteristic;
     if (_state != ControllerTransportState.connected ||
-        characteristic == null) {
+        characteristic == null ||
+        _disposed) {
       return const ControllerCommandResult(
         success: false,
         code: 'not_connected',
         message: 'Brak połączenia ze sterownikiem BLE.',
       );
     }
-    final id = _nextCommandId;
-    _nextCommandId = _nextCommandId >= 65535 ? 1 : _nextCommandId + 1;
+    final id = _allocateCommandId();
     final payload = <String, dynamic>{'id': id, ...command};
     final bytes = utf8.encode(jsonEncode(payload));
     if (bytes.length > 4096) {
@@ -272,28 +502,9 @@ class BleControllerTransport implements ControllerTransport {
     final completer = Completer<ControllerCommandResult>();
     _pendingCommands[id] = completer;
     try {
-      if (bytes.length <= 160) {
-        await _ble.writeCharacteristicWithResponse(
-          characteristic,
-          value: bytes,
-        );
-      } else {
-        final frames = encodeBleFrames(
-          bytes,
-          messageId: id,
-          maximumPayloadBytes: 156,
-          maximumPartCount: 32,
-        );
-        for (final frame in frames) {
-          await _ble.writeCharacteristicWithResponse(
-            characteristic,
-            value: frame,
-          );
-          await Future<void>.delayed(const Duration(milliseconds: 12));
-        }
-      }
+      await _writeSerialized(characteristic, id, bytes);
       return await completer.future.timeout(
-        const Duration(seconds: 15),
+        commandTimeout,
         onTimeout: () {
           _pendingCommands.remove(id);
           return const ControllerCommandResult(
@@ -310,6 +521,56 @@ class BleControllerTransport implements ControllerTransport {
         code: 'write_failed',
         message: 'Nie udało się wysłać komendy BLE: $error',
       );
+    }
+  }
+
+  int _allocateCommandId() {
+    for (var attempts = 0; attempts < 65535; attempts++) {
+      final candidate = _nextCommandId;
+      _nextCommandId = candidate >= 65535 ? 1 : candidate + 1;
+      if (!_pendingCommands.containsKey(candidate)) {
+        return candidate;
+      }
+    }
+    throw StateError('Brak wolnych identyfikatorów komend BLE.');
+  }
+
+  Future<void> _writeSerialized(
+    QualifiedCharacteristic characteristic,
+    int id,
+    List<int> bytes,
+  ) async {
+    final previous = _writeTail;
+    final release = Completer<void>();
+    _writeTail = release.future;
+    await previous;
+    try {
+      if (_disposed ||
+          _state != ControllerTransportState.connected ||
+          !identical(_commandCharacteristic, characteristic)) {
+        throw StateError('Połączenie BLE zostało zamknięte.');
+      }
+      if (bytes.length <= 160) {
+        await _central.writeWithResponse(characteristic, value: bytes);
+        return;
+      }
+      final frames = encodeBleFrames(
+        bytes,
+        messageId: id,
+        maximumPayloadBytes: 156,
+        maximumPartCount: 32,
+      );
+      for (final frame in frames) {
+        if (_disposed ||
+            _state != ControllerTransportState.connected ||
+            !identical(_commandCharacteristic, characteristic)) {
+          throw StateError('Połączenie BLE zostało zamknięte.');
+        }
+        await _central.writeWithResponse(characteristic, value: frame);
+        await Future<void>.delayed(const Duration(milliseconds: 12));
+      }
+    } finally {
+      release.complete();
     }
   }
 
@@ -348,6 +609,9 @@ class BleControllerTransport implements ControllerTransport {
   }
 
   void _setState(ControllerTransportState state) {
+    if (_state == state) {
+      return;
+    }
     _state = state;
     if (!_stateController.isClosed) {
       _stateController.add(state);
@@ -355,16 +619,50 @@ class BleControllerTransport implements ControllerTransport {
   }
 
   @override
-  Future<void> disconnect() async {
-    _failPending('Połączenie BLE zostało zamknięte.');
+  Future<void> disconnect() {
+    return _clearLink(pendingMessage: 'Połączenie BLE zostało zamknięte.');
+  }
+
+  Future<void> _clearLink({
+    required String pendingMessage,
+    bool emitDisconnected = true,
+  }) async {
+    _linkGeneration += 1;
+    _failPending(pendingMessage);
     _assembler.clear();
-    await _notificationSubscription?.cancel();
+    final connectionAttempt = _connectionAttempt;
+    _connectionAttempt = null;
+    if (connectionAttempt != null && !connectionAttempt.isCompleted) {
+      connectionAttempt.completeError(StateError(pendingMessage));
+    }
+
+    final notificationSubscription = _notificationSubscription;
     _notificationSubscription = null;
-    await _connectionSubscription?.cancel();
+    final connectionSubscription = _connectionSubscription;
     _connectionSubscription = null;
     _commandCharacteristic = null;
     _eventCharacteristic = null;
-    _setState(ControllerTransportState.disconnected);
+
+    await _cancelSubscription(notificationSubscription);
+    await _cancelSubscription(connectionSubscription);
+    if (emitDisconnected && !_disposed) {
+      _setState(ControllerTransportState.disconnected);
+    } else {
+      _state = ControllerTransportState.disconnected;
+    }
+  }
+
+  static Future<void> _cancelSubscription<T>(
+    StreamSubscription<T>? subscription,
+  ) async {
+    if (subscription == null) {
+      return;
+    }
+    try {
+      await subscription.cancel();
+    } on Object {
+      // Czyszczenie musi być idempotentne także po awarii natywnego kanału.
+    }
   }
 
   @override
@@ -373,7 +671,10 @@ class BleControllerTransport implements ControllerTransport {
       return;
     }
     _disposed = true;
-    await disconnect();
+    await _clearLink(
+      pendingMessage: 'Transport BLE został zamknięty.',
+      emitDisconnected: false,
+    );
     await _stateController.close();
     await _snapshotController.close();
     await _messageController.close();

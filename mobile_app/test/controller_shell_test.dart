@@ -146,6 +146,8 @@ void main() {
     await tester.tap(find.text('Harmonogram'));
     await tester.pumpAndSettle();
     final dropdownFinder = find.byType(DropdownButtonFormField<int>).first;
+    await tester.ensureVisible(dropdownFinder);
+    await tester.pumpAndSettle();
     final initialValue = tester
         .widget<DropdownButtonFormField<int>>(dropdownFinder)
         .initialValue;

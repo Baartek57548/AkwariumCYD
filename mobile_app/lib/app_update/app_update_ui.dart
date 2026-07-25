@@ -32,6 +32,24 @@ class AppUpdatePromptDialog extends StatelessWidget {
   Widget build(BuildContext context) {
     final colors = Theme.of(context).colorScheme;
     final notes = _shortReleaseNotes(release.notes);
+    final textScale = MediaQuery.textScalerOf(context).scale(1);
+    final stackActions =
+        MediaQuery.sizeOf(context).width < 380 || textScale > 1.5;
+    final actions = <Widget>[
+      TextButton(
+        onPressed: () => Navigator.pop(context, AppUpdatePromptAction.skip),
+        child: const Text('Pomiń tę wersję'),
+      ),
+      TextButton(
+        onPressed: () =>
+            Navigator.pop(context, AppUpdatePromptAction.remindLater),
+        child: const Text('Później'),
+      ),
+      FilledButton(
+        onPressed: () => Navigator.pop(context, AppUpdatePromptAction.install),
+        child: const Text('Pobierz i zainstaluj'),
+      ),
+    ];
     return PopScope(
       canPop: false,
       child: AlertDialog(
@@ -45,46 +63,41 @@ class AppUpdatePromptDialog extends StatelessWidget {
         title: Text('AquaCYD ${release.version} jest dostępna'),
         content: ConstrainedBox(
           constraints: const BoxConstraints(maxWidth: 460),
-          child: SingleChildScrollView(
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                'Nowa wersja ma ${release.formattedSize}. Po pobraniu Android poprosi o potwierdzenie instalacji.',
+              ),
+              if (notes.isNotEmpty) ...[
+                const SizedBox(height: 16),
                 Text(
-                  'Nowa wersja ma ${release.formattedSize}. Po pobraniu Android poprosi o potwierdzenie instalacji.',
+                  'Co nowego',
+                  style: Theme.of(
+                    context,
+                  ).textTheme.titleSmall?.copyWith(fontWeight: FontWeight.w800),
                 ),
-                if (notes.isNotEmpty) ...[
-                  const SizedBox(height: 16),
-                  Text(
-                    'Co nowego',
-                    style: Theme.of(context).textTheme.titleSmall?.copyWith(
-                      fontWeight: FontWeight.w800,
+                const SizedBox(height: 6),
+                Text(notes),
+              ],
+              if (stackActions) ...[
+                const SizedBox(height: 20),
+                for (var index = 0; index < actions.length; index++)
+                  Padding(
+                    padding: EdgeInsets.only(
+                      bottom: index == actions.length - 1 ? 0 : 8,
+                    ),
+                    child: SizedBox(
+                      width: double.infinity,
+                      child: actions[index],
                     ),
                   ),
-                  const SizedBox(height: 6),
-                  Text(notes),
-                ],
               ],
-            ),
+            ],
           ),
         ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context, AppUpdatePromptAction.skip),
-            child: const Text('Pomiń tę wersję'),
-          ),
-          TextButton(
-            onPressed: () =>
-                Navigator.pop(context, AppUpdatePromptAction.remindLater),
-            child: const Text('Później'),
-          ),
-          FilledButton.icon(
-            onPressed: () =>
-                Navigator.pop(context, AppUpdatePromptAction.install),
-            icon: const Icon(Icons.download_rounded),
-            label: const Text('Pobierz i zainstaluj'),
-          ),
-        ],
+        actions: stackActions ? const [] : actions,
       ),
     );
   }
@@ -114,8 +127,13 @@ class AppUpdateProgressDialog extends StatelessWidget {
           final state = controller.state;
           final release = state.release;
           final percent = (state.progress * 100).round().clamp(0, 100);
+          final textScale = MediaQuery.textScalerOf(context).scale(1);
+          final stackActions =
+              MediaQuery.sizeOf(context).width < 380 || textScale > 1.5;
+          final actions = _actionsFor(context, state);
           return AlertDialog(
-            icon: _iconFor(state.phase),
+            scrollable: true,
+            icon: _iconFor(context, state.phase),
             title: Text(_titleFor(state.phase, release)),
             content: ConstrainedBox(
               constraints: const BoxConstraints(maxWidth: 420),
@@ -137,7 +155,11 @@ class AppUpdateProgressDialog extends StatelessWidget {
                       textAlign: TextAlign.center,
                     ),
                   ] else if (state.phase == AppUpdatePhase.verifying) ...[
-                    const Center(child: CircularProgressIndicator()),
+                    const Center(
+                      child: CircularProgressIndicator(
+                        semanticsLabel: 'Weryfikowanie aktualizacji',
+                      ),
+                    ),
                     const SizedBox(height: 14),
                     const Text(
                       'Sprawdzamy sumę SHA-256, pakiet, wersję i podpis aplikacji.',
@@ -148,37 +170,62 @@ class AppUpdateProgressDialog extends StatelessWidget {
                       state.message ?? _messageFor(state.phase),
                       textAlign: TextAlign.center,
                     ),
+                  if (stackActions && actions.isNotEmpty) ...[
+                    const SizedBox(height: 20),
+                    for (var index = 0; index < actions.length; index++)
+                      Padding(
+                        padding: EdgeInsets.only(
+                          bottom: index == actions.length - 1 ? 0 : 8,
+                        ),
+                        child: SizedBox(
+                          width: double.infinity,
+                          child: actions[index],
+                        ),
+                      ),
+                  ],
                 ],
               ),
             ),
-            actions: _actionsFor(context, state),
+            actions: stackActions ? const [] : actions,
           );
         },
       ),
     );
   }
 
-  Widget _iconFor(AppUpdatePhase phase) {
+  Widget _iconFor(BuildContext context, AppUpdatePhase phase) {
+    final colors = Theme.of(context).colorScheme;
     return switch (phase) {
-      AppUpdatePhase.failed => const Icon(
+      AppUpdatePhase.failed => Icon(
         Icons.error_outline_rounded,
-        color: Colors.red,
+        color: colors.error,
         size: 40,
+        semanticLabel: 'Błąd aktualizacji',
       ),
-      AppUpdatePhase.installerOpened => const Icon(
+      AppUpdatePhase.installerOpened => Icon(
         Icons.verified_rounded,
-        color: Colors.green,
+        color: colors.primary,
         size: 40,
+        semanticLabel: 'Aktualizacja zweryfikowana',
       ),
-      AppUpdatePhase.awaitingInstallPermission => const Icon(
+      AppUpdatePhase.awaitingInstallPermission => Icon(
         Icons.admin_panel_settings_outlined,
+        color: colors.tertiary,
         size: 40,
+        semanticLabel: 'Wymagana zgoda systemowa',
       ),
-      AppUpdatePhase.readyToInstall => const Icon(
+      AppUpdatePhase.readyToInstall => Icon(
         Icons.download_done_rounded,
+        color: colors.primary,
         size: 40,
+        semanticLabel: 'Aktualizacja gotowa do instalacji',
       ),
-      _ => const Icon(Icons.system_update_rounded, size: 40),
+      _ => Icon(
+        Icons.system_update_rounded,
+        color: colors.primary,
+        size: 40,
+        semanticLabel: 'Aktualizacja aplikacji',
+      ),
     };
   }
 

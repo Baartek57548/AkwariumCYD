@@ -1,7 +1,10 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 
+import 'connection_health.dart';
+import 'connection_health_bar.dart';
 import 'controller_api.dart';
 import 'controller_session.dart';
 import 'data_access.dart';
@@ -29,7 +32,8 @@ class ControllerShell extends StatefulWidget {
   State<ControllerShell> createState() => _ControllerShellState();
 }
 
-class _ControllerShellState extends State<ControllerShell> {
+class _ControllerShellState extends State<ControllerShell>
+    with WidgetsBindingObserver {
   _ControllerSection _section = _ControllerSection.dashboard;
 
   ControllerSession get session => widget.session;
@@ -37,17 +41,18 @@ class _ControllerShellState extends State<ControllerShell> {
   @override
   void initState() {
     super.initState();
-    session.addListener(_onSessionChanged);
+    WidgetsBinding.instance.addObserver(this);
     unawaited(session.connect());
   }
 
-  void _onSessionChanged() {
-    if (mounted) setState(() {});
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    session.setAppActive(state == AppLifecycleState.resumed);
   }
 
   @override
   void dispose() {
-    session.removeListener(_onSessionChanged);
+    WidgetsBinding.instance.removeObserver(this);
     session.dispose();
     super.dispose();
   }
@@ -125,14 +130,44 @@ class _ControllerShellState extends State<ControllerShell> {
 
   void _showMessage(String message, {required bool success}) {
     final colors = Theme.of(context).colorScheme;
+    unawaited(_performHapticFeedback(success));
     ScaffoldMessenger.of(context)
       ..hideCurrentSnackBar()
       ..showSnackBar(
         SnackBar(
           backgroundColor: success ? colors.primary : colors.error,
-          content: Text(message),
+          behavior: SnackBarBehavior.floating,
+          content: Row(
+            children: [
+              Icon(
+                success ? Icons.check_circle_rounded : Icons.error_rounded,
+                color: success ? colors.onPrimary : colors.onError,
+              ),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Text(
+                  message,
+                  style: TextStyle(
+                    color: success ? colors.onPrimary : colors.onError,
+                  ),
+                ),
+              ),
+            ],
+          ),
         ),
       );
+  }
+
+  Future<void> _performHapticFeedback(bool success) async {
+    try {
+      await (success
+          ? HapticFeedback.lightImpact()
+          : HapticFeedback.mediumImpact());
+    } on MissingPluginException {
+      // Haptyka nie jest dostępna na każdej platformie uruchomieniowej.
+    } on PlatformException {
+      // Brak haptyki nie może zmienić wyniku operacji sterownika.
+    }
   }
 
   void _openCharts() {
@@ -151,17 +186,39 @@ class _ControllerShellState extends State<ControllerShell> {
 
   List<Widget> _sectionViews() {
     return [
-      DashboardView(session: session, onOpenCharts: _openCharts),
-      ControlHubView(
+      _ActiveSessionView(
+        key: const ValueKey(_ControllerSection.dashboard),
         session: session,
-        runAction: _runAction,
-        ensureAdmin: _ensureAdmin,
+        active: _section == _ControllerSection.dashboard,
+        builder: (context, session) =>
+            DashboardView(session: session, onOpenCharts: _openCharts),
       ),
-      SchedulesView(session: session, runAction: _runAction),
-      SettingsHubView(
+      _ActiveSessionView(
+        key: const ValueKey(_ControllerSection.control),
         session: session,
-        runAction: _runAction,
-        ensureAdmin: _ensureAdmin,
+        active: _section == _ControllerSection.control,
+        builder: (context, session) => ControlHubView(
+          session: session,
+          runAction: _runAction,
+          ensureAdmin: _ensureAdmin,
+        ),
+      ),
+      _ActiveSessionView(
+        key: const ValueKey(_ControllerSection.schedules),
+        session: session,
+        active: _section == _ControllerSection.schedules,
+        builder: (context, session) =>
+            SchedulesView(session: session, runAction: _runAction),
+      ),
+      _ActiveSessionView(
+        key: const ValueKey(_ControllerSection.settings),
+        session: session,
+        active: _section == _ControllerSection.settings,
+        builder: (context, session) => SettingsHubView(
+          session: session,
+          runAction: _runAction,
+          ensureAdmin: _ensureAdmin,
+        ),
       ),
     ];
   }
@@ -196,123 +253,148 @@ class _ControllerShellState extends State<ControllerShell> {
     final showRail = width >= 760;
     final extendedRail = width >= 1100;
     final textScale = MediaQuery.textScalerOf(context).scale(1);
-    final toolbarHeight = (72 + (textScale - 1) * 18).clamp(72, 92).toDouble();
+    final toolbarHeight = (72 + (textScale - 1) * 18).clamp(72, 108).toDouble();
+    final navigationHeight = (72 + (textScale - 1) * 18)
+        .clamp(72, 110)
+        .toDouble();
     return Scaffold(
       appBar: AppBar(
         toolbarHeight: toolbarHeight,
         titleSpacing: 16,
-        title: _ControllerHeader(session: session),
+        title: ListenableBuilder(
+          listenable: session,
+          builder: (context, _) => _ControllerHeader(session: session),
+        ),
         actions: [
-          PopupMenuButton<_HeaderAction>(
-            tooltip: 'Menu urządzenia',
-            onSelected: (value) => unawaited(_handleMenu(value)),
-            itemBuilder: (context) => [
-              const PopupMenuItem(
-                value: _HeaderAction.refresh,
-                child: ListTile(
-                  leading: Icon(Icons.refresh_rounded),
-                  title: Text('Odśwież dane'),
-                  contentPadding: EdgeInsets.zero,
-                ),
-              ),
-              PopupMenuItem(
-                value: _HeaderAction.admin,
-                child: ListTile(
-                  leading: Icon(
-                    session.isAdmin
-                        ? Icons.lock_open_rounded
-                        : Icons.lock_outline_rounded,
+          ListenableBuilder(
+            listenable: session,
+            builder: (context, _) => PopupMenuButton<_HeaderAction>(
+              tooltip: 'Menu urządzenia',
+              onSelected: (value) => unawaited(_handleMenu(value)),
+              itemBuilder: (context) => [
+                const PopupMenuItem(
+                  value: _HeaderAction.refresh,
+                  child: ListTile(
+                    leading: Icon(Icons.refresh_rounded),
+                    title: Text('Odśwież dane'),
+                    contentPadding: EdgeInsets.zero,
                   ),
-                  title: Text(
-                    session.isAdmin
-                        ? 'Wyloguj administratora'
-                        : 'Zaloguj administratora',
+                ),
+                PopupMenuItem(
+                  value: _HeaderAction.admin,
+                  child: ListTile(
+                    leading: Icon(
+                      session.isAdmin
+                          ? Icons.lock_open_rounded
+                          : Icons.lock_outline_rounded,
+                    ),
+                    title: Text(
+                      session.isAdmin
+                          ? 'Wyloguj administratora'
+                          : 'Zaloguj administratora',
+                    ),
+                    contentPadding: EdgeInsets.zero,
                   ),
-                  contentPadding: EdgeInsets.zero,
                 ),
-              ),
-              const PopupMenuItem(
-                value: _HeaderAction.connection,
-                child: ListTile(
-                  leading: Icon(Icons.swap_horiz_rounded),
-                  title: Text('Zmień połączenie'),
-                  contentPadding: EdgeInsets.zero,
+                const PopupMenuItem(
+                  value: _HeaderAction.connection,
+                  child: ListTile(
+                    leading: Icon(Icons.swap_horiz_rounded),
+                    title: Text('Zmień połączenie'),
+                    contentPadding: EdgeInsets.zero,
+                  ),
                 ),
-              ),
-            ],
+              ],
+            ),
           ),
           const SizedBox(width: 4),
         ],
       ),
-      body: Row(
+      body: Column(
         children: [
-          if (showRail)
-            NavigationRail(
-              extended: extendedRail,
-              selectedIndex: _section.index,
-              onDestinationSelected: _selectSection,
-              labelType: extendedRail
-                  ? NavigationRailLabelType.none
-                  : NavigationRailLabelType.selected,
-              destinations: [
-                for (final item in _ControllerSection.values)
-                  NavigationRailDestination(
-                    icon: Icon(item.icon),
-                    selectedIcon: Icon(item.selectedIcon),
-                    label: Text(item.label),
-                  ),
-              ],
-            ),
-          if (showRail) const VerticalDivider(width: 1),
+          ControllerConnectionHealthBar(session: session),
           Expanded(
-            child: session.status.isEmpty
-                ? _ConnectionState(
-                    message: session.error,
-                    loading: session.error == null,
-                    retry: session.connect,
-                  )
-                : Stack(
-                    children: [
-                      Positioned.fill(
-                        child: IndexedStack(
-                          index: _section.index,
-                          children: _sectionViews(),
-                        ),
-                      ),
-                      if (session.busy)
-                        const Positioned(
-                          left: 0,
-                          right: 0,
-                          top: 0,
-                          child: LinearProgressIndicator(
-                            minHeight: 3,
-                            semanticsLabel: 'Aktualizowanie danych',
-                          ),
-                        ),
-                      if (!session.connected && session.error != null)
-                        Positioned(
-                          left: 12,
-                          right: 12,
-                          bottom: 12,
-                          child: MaterialBanner(
-                            content: Text(session.error!),
-                            leading: const Icon(Icons.cloud_off_rounded),
-                            actions: [
-                              TextButton(
-                                onPressed: session.connect,
-                                child: const Text('Połącz ponownie'),
-                              ),
-                            ],
-                          ),
+            child: Row(
+              children: [
+                if (showRail)
+                  NavigationRail(
+                    extended: extendedRail,
+                    selectedIndex: _section.index,
+                    onDestinationSelected: _selectSection,
+                    labelType: extendedRail
+                        ? NavigationRailLabelType.none
+                        : NavigationRailLabelType.selected,
+                    destinations: [
+                      for (final item in _ControllerSection.values)
+                        NavigationRailDestination(
+                          icon: Icon(item.icon),
+                          selectedIcon: Icon(item.selectedIcon),
+                          label: Text(item.label),
                         ),
                     ],
                   ),
+                if (showRail) const VerticalDivider(width: 1),
+                Expanded(
+                  child: ListenableBuilder(
+                    listenable: session,
+                    child: IndexedStack(
+                      index: _section.index,
+                      children: _sectionViews(),
+                    ),
+                    builder: (context, child) {
+                      final health = session.connectionHealth;
+                      if (!health.hasTelemetry && session.status.isEmpty) {
+                        return _ConnectionState(
+                          message: session.error,
+                          phase: health.phase,
+                          retry: session.connect,
+                        );
+                      }
+                      return Stack(
+                        children: [
+                          Positioned.fill(child: child!),
+                          if (session.busy)
+                            const Positioned(
+                              left: 0,
+                              right: 0,
+                              top: 0,
+                              child: LinearProgressIndicator(
+                                minHeight: 3,
+                                semanticsLabel: 'Aktualizowanie danych',
+                              ),
+                            ),
+                          if (!health.isOnline && session.error != null)
+                            Positioned(
+                              left: 12,
+                              right: 12,
+                              bottom: 12,
+                              child: MaterialBanner(
+                                content: Text(session.error!),
+                                leading: const Icon(Icons.cloud_off_rounded),
+                                actions: [
+                                  TextButton(
+                                    onPressed: session.busy
+                                        ? null
+                                        : () => unawaited(session.connect()),
+                                    child: const Text('Połącz ponownie'),
+                                  ),
+                                ],
+                              ),
+                            ),
+                        ],
+                      );
+                    },
+                  ),
+                ),
+              ],
+            ),
           ),
         ],
       ),
       bottomNavigationBar: showRail
           ? null
           : NavigationBar(
+              height: navigationHeight,
               selectedIndex: _section.index,
               onDestinationSelected: _selectSection,
               destinations: [
@@ -326,6 +408,57 @@ class _ControllerShellState extends State<ControllerShell> {
             ),
     );
   }
+}
+
+typedef _SessionViewBuilder =
+    Widget Function(BuildContext context, ControllerSession session);
+
+class _ActiveSessionView extends StatefulWidget {
+  const _ActiveSessionView({
+    super.key,
+    required this.session,
+    required this.active,
+    required this.builder,
+  });
+
+  final ControllerSession session;
+  final bool active;
+  final _SessionViewBuilder builder;
+
+  @override
+  State<_ActiveSessionView> createState() => _ActiveSessionViewState();
+}
+
+class _ActiveSessionViewState extends State<_ActiveSessionView> {
+  @override
+  void initState() {
+    super.initState();
+    if (widget.active) widget.session.addListener(_onSessionChanged);
+  }
+
+  @override
+  void didUpdateWidget(_ActiveSessionView oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.active) {
+      oldWidget.session.removeListener(_onSessionChanged);
+    }
+    if (widget.active) {
+      widget.session.addListener(_onSessionChanged);
+    }
+  }
+
+  void _onSessionChanged() {
+    if (mounted && widget.active) setState(() {});
+  }
+
+  @override
+  void dispose() {
+    if (widget.active) widget.session.removeListener(_onSessionChanged);
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) => widget.builder(context, widget.session);
 }
 
 class _ControllerHeader extends StatelessWidget {
@@ -345,18 +478,27 @@ class _ControllerHeader extends StatelessWidget {
       ControllerSessionKind.development => (Icons.science_outlined, 'DEV'),
       ControllerSessionKind.wifi => (Icons.wifi_rounded, 'Wi‑Fi'),
     };
-    final connecting = status.isEmpty && session.error == null;
-    final connectionIcon = connecting
-        ? Icons.sync_rounded
-        : session.connected
-        ? transportIcon
-        : Icons.cloud_off_rounded;
-    final connectionLabel = connecting
-        ? 'Łączenie'
-        : session.connected
-        ? transportLabel
-        : 'Offline';
     final colors = Theme.of(context).colorScheme;
+    final phase = session.connectionPhase;
+    final connectionIcon = switch (phase) {
+      ControllerConnectionPhase.connecting => Icons.sync_rounded,
+      ControllerConnectionPhase.online => transportIcon,
+      ControllerConnectionPhase.reconnecting =>
+        Icons.wifi_protected_setup_rounded,
+      ControllerConnectionPhase.offline => Icons.cloud_off_rounded,
+    };
+    final connectionLabel = switch (phase) {
+      ControllerConnectionPhase.connecting => 'Łączenie',
+      ControllerConnectionPhase.online => transportLabel,
+      ControllerConnectionPhase.reconnecting => 'Ponawianie',
+      ControllerConnectionPhase.offline => 'Offline',
+    };
+    final connectionTone = switch (phase) {
+      ControllerConnectionPhase.connecting => colors.tertiary,
+      ControllerConnectionPhase.online => colors.primary,
+      ControllerConnectionPhase.reconnecting => colors.tertiary,
+      ControllerConnectionPhase.offline => colors.error,
+    };
     return LayoutBuilder(
       builder: (context, constraints) {
         final textScale = MediaQuery.textScalerOf(context).scale(1);
@@ -408,11 +550,15 @@ class _ControllerHeader extends StatelessWidget {
             ),
             const SizedBox(width: 8),
             Semantics(
-              label: connecting
-                  ? 'Łączenie ze sterownikiem'
-                  : session.connected
-                  ? 'Połączenie aktywne: $transportLabel'
-                  : 'Sterownik jest offline',
+              label: switch (phase) {
+                ControllerConnectionPhase.connecting =>
+                  'Łączenie ze sterownikiem',
+                ControllerConnectionPhase.online =>
+                  'Połączenie aktywne: $transportLabel',
+                ControllerConnectionPhase.reconnecting =>
+                  'Trwa ponawianie połączenia',
+                ControllerConnectionPhase.offline => 'Sterownik jest offline',
+              },
               liveRegion: true,
               child: ExcludeSemantics(
                 child: DecoratedBox(
@@ -428,15 +574,7 @@ class _ControllerHeader extends StatelessWidget {
                     child: Row(
                       mainAxisSize: MainAxisSize.min,
                       children: [
-                        Icon(
-                          connectionIcon,
-                          size: 20,
-                          color: connecting
-                              ? colors.primary
-                              : session.connected
-                              ? null
-                              : colors.error,
-                        ),
+                        Icon(connectionIcon, size: 20, color: connectionTone),
                         if (showConnectionLabel) ...[
                           const SizedBox(width: 7),
                           Text(
@@ -529,20 +667,22 @@ class _AdminPinDialogState extends State<_AdminPinDialog> {
 class _ConnectionState extends StatelessWidget {
   const _ConnectionState({
     required this.message,
-    required this.loading,
+    required this.phase,
     required this.retry,
   });
 
   final String? message;
-  final bool loading;
+  final ControllerConnectionPhase phase;
   final Future<void> Function() retry;
 
   @override
   Widget build(BuildContext context) {
-    if (loading) {
+    if (phase == ControllerConnectionPhase.connecting ||
+        phase == ControllerConnectionPhase.reconnecting) {
       return const StatePanel.loading(
         title: 'Łączenie ze sterownikiem',
-        message: 'Pobieramy bieżący stan urządzenia. To może potrwać chwilę.',
+        message:
+            'Pobieramy bieżący stan urządzenia. W razie utraty sieci połączenie zostanie ponowione automatycznie.',
       );
     }
     return StatePanel.error(

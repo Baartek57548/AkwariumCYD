@@ -1,4 +1,6 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
+
 import '../../../app_settings.dart';
 import '../../../app_update/app_update_ui.dart';
 import '../widgets.dart';
@@ -14,7 +16,7 @@ class _ProfileSettingsViewState extends State<ProfileSettingsView> {
   final _formKey = GlobalKey<FormState>();
   late final TextEditingController _usernameController;
   late ThemeMode _selectedThemeMode;
-  late String _selectedLanguage;
+  bool _saving = false;
 
   @override
   void initState() {
@@ -23,7 +25,6 @@ class _ProfileSettingsViewState extends State<ProfileSettingsView> {
       text: AppSettings.usernameNotifier.value,
     );
     _selectedThemeMode = AppSettings.themeModeNotifier.value;
-    _selectedLanguage = AppSettings.languageNotifier.value.languageCode;
   }
 
   @override
@@ -33,20 +34,49 @@ class _ProfileSettingsViewState extends State<ProfileSettingsView> {
   }
 
   Future<void> _save() async {
-    if (_formKey.currentState!.validate()) {
+    if (_saving || _formKey.currentState?.validate() != true) return;
+    setState(() => _saving = true);
+    try {
       await AppSettings.saveSettings(
         _selectedThemeMode,
-        _selectedLanguage,
+        'pl',
         _usernameController.text.trim(),
       );
       if (mounted) {
+        try {
+          await HapticFeedback.lightImpact();
+        } on MissingPluginException {
+          // Haptyka jest dodatkiem; jej brak nie może zmienić wyniku zapisu.
+        } on PlatformException {
+          // Niektóre urządzenia nie udostępniają wybranego efektu haptycznego.
+        }
+        if (!mounted) return;
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
             content: Text('Ustawienia profilu zostały zapisane!'),
             behavior: SnackBarBehavior.floating,
+            showCloseIcon: true,
           ),
         );
       }
+    } on Object {
+      if (mounted) {
+        final colors = Theme.of(context).colorScheme;
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              'Nie udało się zapisać ustawień profilu.',
+              style: TextStyle(color: colors.onError),
+            ),
+            backgroundColor: colors.error,
+            behavior: SnackBarBehavior.floating,
+            showCloseIcon: true,
+            closeIconColor: colors.onError,
+          ),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _saving = false);
     }
   }
 
@@ -106,29 +136,65 @@ class _ProfileSettingsViewState extends State<ProfileSettingsView> {
                         ),
                       ),
                       const SizedBox(height: 12),
-                      SegmentedButton<ThemeMode>(
-                        segments: const [
-                          ButtonSegment<ThemeMode>(
-                            value: ThemeMode.system,
-                            icon: Icon(Icons.phone_android_rounded),
-                            label: Text('System'),
-                          ),
-                          ButtonSegment<ThemeMode>(
-                            value: ThemeMode.light,
-                            icon: Icon(Icons.wb_sunny_rounded),
-                            label: Text('Jasny'),
-                          ),
-                          ButtonSegment<ThemeMode>(
-                            value: ThemeMode.dark,
-                            icon: Icon(Icons.nightlight_round),
-                            label: Text('Ciemny'),
-                          ),
-                        ],
-                        selected: {_selectedThemeMode},
-                        onSelectionChanged: (Set<ThemeMode> newSelection) {
-                          setState(() {
-                            _selectedThemeMode = newSelection.first;
-                          });
+                      LayoutBuilder(
+                        builder: (context, constraints) {
+                          final textScale = MediaQuery.textScalerOf(
+                            context,
+                          ).scale(1);
+                          if (constraints.maxWidth < 390 || textScale > 1.3) {
+                            return DropdownButtonFormField<ThemeMode>(
+                              initialValue: _selectedThemeMode,
+                              isExpanded: true,
+                              decoration: const InputDecoration(
+                                labelText: 'Motyw',
+                                prefixIcon: Icon(Icons.contrast_rounded),
+                              ),
+                              items: const [
+                                DropdownMenuItem(
+                                  value: ThemeMode.system,
+                                  child: Text('Zgodny z systemem'),
+                                ),
+                                DropdownMenuItem(
+                                  value: ThemeMode.light,
+                                  child: Text('Jasny'),
+                                ),
+                                DropdownMenuItem(
+                                  value: ThemeMode.dark,
+                                  child: Text('Ciemny'),
+                                ),
+                              ],
+                              onChanged: (value) {
+                                if (value != null) {
+                                  setState(() => _selectedThemeMode = value);
+                                }
+                              },
+                            );
+                          }
+                          return SegmentedButton<ThemeMode>(
+                            segments: const [
+                              ButtonSegment<ThemeMode>(
+                                value: ThemeMode.system,
+                                icon: Icon(Icons.phone_android_rounded),
+                                label: Text('System'),
+                              ),
+                              ButtonSegment<ThemeMode>(
+                                value: ThemeMode.light,
+                                icon: Icon(Icons.wb_sunny_rounded),
+                                label: Text('Jasny'),
+                              ),
+                              ButtonSegment<ThemeMode>(
+                                value: ThemeMode.dark,
+                                icon: Icon(Icons.nightlight_round),
+                                label: Text('Ciemny'),
+                              ),
+                            ],
+                            selected: {_selectedThemeMode},
+                            onSelectionChanged: (Set<ThemeMode> newSelection) {
+                              setState(
+                                () => _selectedThemeMode = newSelection.first,
+                              );
+                            },
+                          );
                         },
                       ),
                       const SizedBox(height: 20),
@@ -139,22 +205,19 @@ class _ProfileSettingsViewState extends State<ProfileSettingsView> {
                         ),
                       ),
                       const SizedBox(height: 8),
-                      DropdownButtonFormField<String>(
-                        initialValue: _selectedLanguage,
-                        decoration: const InputDecoration(
-                          prefixIcon: Icon(Icons.language_rounded),
+                      Semantics(
+                        label: 'Język aplikacji: polski',
+                        readOnly: true,
+                        child: const ExcludeSemantics(
+                          child: ListTile(
+                            contentPadding: EdgeInsets.zero,
+                            leading: Icon(Icons.language_rounded),
+                            title: Text('Polski'),
+                            subtitle: Text(
+                              'Interfejs i systemowe okna aplikacji',
+                            ),
+                          ),
                         ),
-                        items: const [
-                          DropdownMenuItem(value: 'pl', child: Text('Polski')),
-                          DropdownMenuItem(value: 'en', child: Text('English')),
-                        ],
-                        onChanged: (String? newValue) {
-                          if (newValue != null) {
-                            setState(() {
-                              _selectedLanguage = newValue;
-                            });
-                          }
-                        },
                       ),
                     ],
                   ),
@@ -167,9 +230,17 @@ class _ProfileSettingsViewState extends State<ProfileSettingsView> {
               ],
               const SizedBox(height: 24),
               FilledButton.icon(
-                onPressed: _save,
-                icon: const Icon(Icons.save_rounded),
-                label: const Text('Zapisz ustawienia'),
+                onPressed: _saving ? null : _save,
+                icon: _saving
+                    ? const SizedBox.square(
+                        dimension: 18,
+                        child: CircularProgressIndicator(
+                          strokeWidth: 2,
+                          semanticsLabel: 'Zapisywanie ustawień profilu',
+                        ),
+                      )
+                    : const Icon(Icons.save_rounded),
+                label: Text(_saving ? 'Zapisywanie…' : 'Zapisz ustawienia'),
                 style: FilledButton.styleFrom(
                   padding: const EdgeInsets.symmetric(vertical: 16),
                 ),

@@ -4,12 +4,20 @@ import 'dart:math';
 import 'package:flutter/foundation.dart';
 
 import 'controller_api.dart';
+import 'connection_health.dart';
 import 'data_access.dart';
 import 'history_data.dart';
 
 enum ControllerSessionKind { wifi, bluetooth, development }
 
 class ControllerSession extends ChangeNotifier {
+  static const Duration _onlinePollInterval = Duration(seconds: 3);
+  static const Duration _maximumReconnectDelay = Duration(seconds: 30);
+  static const Duration _heartbeatInterval = Duration(seconds: 5);
+  static const int _offlineFailureThreshold = 3;
+  static const int _maximumCachedArchives = 2;
+  static const int _maximumArchiveBytes = 8 * 1024 * 1024;
+
   ControllerSession.wifi(ControllerRemoteApi api)
     : kind = ControllerSessionKind.wifi,
       _api = api,
@@ -38,26 +46,37 @@ class ControllerSession extends ChangeNotifier {
   Timer? _pollTimer;
   Timer? _developmentTimer;
   Timer? _webSessionTimer;
+  Future<void>? _connectOperation;
+  Future<void>? _refreshOperation;
+  Future<void>? _heartbeatOperation;
   final String _webSessionId =
       'm${DateTime.now().microsecondsSinceEpoch.toRadixString(36)}';
   String? _adminPin;
   String? _error;
+  String? _activeAction;
   bool _connected = false;
-  bool _busy = false;
-  bool _refreshing = false;
+  bool _appActive = true;
   bool _disposed = false;
+  int _busyOperations = 0;
   int _failedPolls = 0;
   DateTime? _lastUpdate;
+  Duration? _lastRoundTrip;
+  ControllerConnectionPhase _connectionPhase =
+      ControllerConnectionPhase.connecting;
   final Random _random = Random(7357);
 
   ControllerSessionKind get sessionKind => kind;
   bool get isDevelopment => kind == ControllerSessionKind.development;
   bool get isBluetooth => kind == ControllerSessionKind.bluetooth;
   bool get connected => _connected;
-  bool get busy => _busy;
+  bool get busy => _busyOperations > 0;
   bool get isAdmin => _adminPin != null;
   String? get error => _error;
   DateTime? get lastUpdate => _lastUpdate;
+  Duration? get roundTrip => _lastRoundTrip;
+  ControllerConnectionPhase get connectionPhase => _connectionPhase;
+  String? get activeAction => _activeAction;
+  bool isActionPending(String name) => _activeAction == name;
   JsonMap get status => _status;
   JsonMap get logsData => _logs;
   JsonMap get diagnostics => _diagnostics;
@@ -68,86 +87,263 @@ class ControllerSession extends ChangeNotifier {
     ControllerSessionKind.wifi => 'AquaCYD Wi-Fi',
   };
   Uri? get baseUri => _api?.baseUri;
+  ControllerConnectionHealth get connectionHealth => ControllerConnectionHealth(
+    phase: _connectionPhase,
+    failedAttempts: _failedPolls,
+    rssi: _readRssi(),
+    roundTrip: _lastRoundTrip,
+    lastSync: _lastUpdate,
+  );
   bool get supportsFirmwareUpload =>
       isDevelopment || (_api?.supportsFirmwareUpload ?? false);
   bool get supportsFileDownload =>
       isDevelopment || (_api?.supportsFileDownload ?? false);
 
-  Future<void> connect() async {
-    if (_disposed) return;
+  Future<void> connect({bool reportBusy = true}) {
+    if (_disposed) return Future<void>.value();
+    final pending = _connectOperation;
+    if (pending != null) return pending;
+
+    late final Future<void> operation;
+    operation = _performConnect(reportBusy: reportBusy).whenComplete(() {
+      if (identical(_connectOperation, operation)) {
+        _connectOperation = null;
+      }
+    });
+    _connectOperation = operation;
+    return operation;
+  }
+
+  Future<void> _performConnect({required bool reportBusy}) async {
     _error = null;
-    _busy = true;
-    notifyListeners();
+    _connectionPhase = _lastUpdate == null
+        ? ControllerConnectionPhase.connecting
+        : ControllerConnectionPhase.reconnecting;
+    if (reportBusy) _beginBusy();
+    _notifySafely();
+
     try {
       if (isDevelopment) {
         _connected = true;
+        _failedPolls = 0;
         _lastUpdate = DateTime.now();
-        _developmentTimer ??= Timer.periodic(
-          const Duration(seconds: 2),
-          (_) => _tickDevelopment(),
-        );
-      } else {
-        await _api!.connect();
-        await refresh(includeHistory: true, reportBusy: false);
-        if (_api.supportsWebSession) {
-          await _sendWebSessionHeartbeat();
-        }
-        _pollTimer ??= Timer.periodic(
-          const Duration(seconds: 3),
-          (_) => unawaited(refresh(reportBusy: false)),
-        );
-        if (_api.supportsWebSession) {
-          _webSessionTimer ??= Timer.periodic(
-            const Duration(seconds: 5),
-            (_) => unawaited(_sendWebSessionHeartbeat()),
-          );
-        }
+        _lastRoundTrip = Duration.zero;
+        _connectionPhase = ControllerConnectionPhase.online;
+        _startDevelopmentTicker();
+        return;
+      }
+
+      await _api!.connect();
+      await refresh(includeHistory: _status.isEmpty, reportBusy: false);
+      if (!_connected) return;
+
+      if (_api.supportsWebSession) {
+        await _sendWebSessionHeartbeat();
+        _scheduleHeartbeat();
       }
     } on ControllerApiException catch (error) {
-      _connected = false;
-      _error = error.message;
+      _recordConnectionFailure(error.message);
     } on Object catch (error) {
-      _connected = false;
-      _error = 'Nie udało się połączyć ze sterownikiem: $error';
+      _recordConnectionFailure(
+        'Nie udało się połączyć ze sterownikiem: $error',
+      );
     } finally {
-      _busy = false;
-      if (!_disposed) notifyListeners();
+      if (reportBusy) _endBusy();
+      _notifySafely();
+      _schedulePoll();
     }
   }
 
-  Future<void> refresh({
-    bool includeHistory = false,
-    bool reportBusy = true,
-  }) async {
-    if (_disposed || _refreshing) return;
+  Future<void> refresh({bool includeHistory = false, bool reportBusy = true}) {
+    if (_disposed) return Future<void>.value();
     if (isDevelopment) {
       _lastUpdate = DateTime.now();
-      notifyListeners();
-      return;
+      _lastRoundTrip = Duration.zero;
+      _connected = true;
+      _failedPolls = 0;
+      _connectionPhase = ControllerConnectionPhase.online;
+      _notifySafely();
+      return Future<void>.value();
     }
-    _refreshing = true;
+
+    final pending = _refreshOperation;
+    if (pending != null) {
+      if (!reportBusy) return pending;
+      _beginBusy();
+      _notifySafely();
+      return pending.whenComplete(() {
+        _endBusy();
+        _notifySafely();
+      });
+    }
+
+    late final Future<void> operation;
+    operation =
+        _performRefresh(
+          includeHistory: includeHistory,
+          reportBusy: reportBusy,
+        ).whenComplete(() {
+          if (identical(_refreshOperation, operation)) {
+            _refreshOperation = null;
+          }
+        });
+    _refreshOperation = operation;
+    return operation;
+  }
+
+  Future<void> _performRefresh({
+    required bool includeHistory,
+    required bool reportBusy,
+  }) async {
     if (reportBusy) {
-      _busy = true;
-      notifyListeners();
+      _beginBusy();
+      _notifySafely();
     }
+    final stopwatch = Stopwatch()..start();
     try {
       final next = await _api!.status(includeHistory: includeHistory);
+      if (_disposed) return;
       _status = next;
       _connected = true;
       _failedPolls = 0;
       _error = null;
       _lastUpdate = DateTime.now();
+      _lastRoundTrip = stopwatch.elapsed;
+      _connectionPhase = ControllerConnectionPhase.online;
     } on ControllerApiException catch (error) {
-      _failedPolls += 1;
-      if (_failedPolls >= 2 || !_connected) {
-        _connected = false;
-        _error = error.message;
-      }
+      _recordConnectionFailure(error.message);
+    } on Object catch (error) {
+      _recordConnectionFailure('Błąd komunikacji ze sterownikiem: $error');
     } finally {
-      _refreshing = false;
-      if (reportBusy) _busy = false;
-      if (!_disposed) notifyListeners();
+      stopwatch.stop();
+      if (reportBusy) _endBusy();
+      _notifySafely();
     }
+  }
+
+  Future<void> _refreshAfterMutation({bool includeHistory = true}) async {
+    final inFlight = _refreshOperation;
+    if (inFlight != null) {
+      await inFlight;
+    }
+    if (!_disposed) {
+      await refresh(includeHistory: includeHistory, reportBusy: false);
+    }
+  }
+
+  void setAppActive(bool active) {
+    if (_disposed || _appActive == active) return;
+    _appActive = active;
+    if (!active) {
+      _pollTimer?.cancel();
+      _pollTimer = null;
+      _webSessionTimer?.cancel();
+      _webSessionTimer = null;
+      _developmentTimer?.cancel();
+      _developmentTimer = null;
+      return;
+    }
+
+    if (isDevelopment) {
+      _startDevelopmentTicker();
+      _tickDevelopment();
+      return;
+    }
+
+    unawaited(
+      (_connectionPhase == ControllerConnectionPhase.online
+              ? refresh(reportBusy: false)
+              : connect(reportBusy: false))
+          .whenComplete(_schedulePoll),
+    );
+    if (_api!.supportsWebSession) {
+      unawaited(_sendWebSessionHeartbeat());
+      _scheduleHeartbeat();
+    }
+  }
+
+  void _startDevelopmentTicker() {
+    if (!_appActive || _disposed || _developmentTimer != null) return;
+    _developmentTimer = Timer.periodic(
+      const Duration(seconds: 2),
+      (_) => _tickDevelopment(),
+    );
+  }
+
+  void _schedulePoll([Duration? delay]) {
+    _pollTimer?.cancel();
+    _pollTimer = null;
+    if (_disposed || !_appActive || isDevelopment) return;
+
+    _pollTimer = Timer(delay ?? _nextPollDelay(), () async {
+      _pollTimer = null;
+      if (_disposed || !_appActive) return;
+      if (_connectionPhase == ControllerConnectionPhase.online) {
+        await refresh(reportBusy: false);
+      } else {
+        await connect(reportBusy: false);
+      }
+      _schedulePoll();
+    });
+  }
+
+  Duration _nextPollDelay() {
+    if (_failedPolls <= 0) return _onlinePollInterval;
+    final exponent = min(_failedPolls - 1, 4);
+    final baseMilliseconds = 2000 * (1 << exponent);
+    final jitter = 0.85 + (_random.nextDouble() * 0.3);
+    final bounded = min(
+      _maximumReconnectDelay.inMilliseconds,
+      (baseMilliseconds * jitter).round(),
+    );
+    return Duration(milliseconds: bounded);
+  }
+
+  void _scheduleHeartbeat() {
+    _webSessionTimer?.cancel();
+    _webSessionTimer = null;
+    if (_disposed ||
+        !_appActive ||
+        isDevelopment ||
+        !_api!.supportsWebSession) {
+      return;
+    }
+    _webSessionTimer = Timer(_heartbeatInterval, () async {
+      _webSessionTimer = null;
+      await _sendWebSessionHeartbeat();
+      _scheduleHeartbeat();
+    });
+  }
+
+  void _recordConnectionFailure(String message) {
+    if (_disposed) return;
+    _failedPolls += 1;
+    _connected = false;
+    _error = message;
+    _connectionPhase =
+        _lastUpdate != null && _failedPolls < _offlineFailureThreshold
+        ? ControllerConnectionPhase.reconnecting
+        : ControllerConnectionPhase.offline;
+  }
+
+  void _beginBusy() {
+    _busyOperations += 1;
+  }
+
+  void _endBusy() {
+    _busyOperations = max(0, _busyOperations - 1);
+  }
+
+  int? _readRssi() {
+    final value = _status.section('network').nullableNumber('rssi');
+    if (value == null || !value.isFinite || value > 0 || value < -130) {
+      return null;
+    }
+    return value.round();
+  }
+
+  void _notifySafely() {
+    if (!_disposed) notifyListeners();
   }
 
   Future<ControllerActionResult> login(String pin) async {
@@ -192,6 +388,13 @@ class ControllerSession extends ChangeNotifier {
     Map<String, Object?> payload = const {},
     bool refreshAfter = true,
   }) async {
+    final normalizedName = name.trim();
+    if (!RegExp(r'^[a-z][a-z0-9_]{1,47}$').hasMatch(normalizedName)) {
+      throw const ControllerApiException(
+        code: 'invalid_action',
+        message: 'Nieprawidłowa nazwa polecenia.',
+      );
+    }
     final pin = _adminPin;
     if (pin == null) {
       throw const ControllerApiException(
@@ -199,17 +402,25 @@ class ControllerSession extends ChangeNotifier {
         message: 'Ta operacja wymaga zalogowania administratora.',
       );
     }
-    _busy = true;
-    notifyListeners();
+    if (_activeAction != null) {
+      throw ControllerApiException(
+        code: 'action_in_progress',
+        message: 'Polecenie $_activeAction jest już wykonywane.',
+      );
+    }
+
+    _activeAction = normalizedName;
+    _beginBusy();
+    _notifySafely();
     try {
       final result = isDevelopment
-          ? _performDevelopmentAction(name, payload, pin)
-          : await _api!.action(name, payload: payload, pin: pin);
+          ? _performDevelopmentAction(normalizedName, payload, pin)
+          : await _api!.action(normalizedName, payload: payload, pin: pin);
       if (refreshAfter) {
         if (isDevelopment) {
           _lastUpdate = DateTime.now();
         } else {
-          await refresh(includeHistory: true, reportBusy: false);
+          await _refreshAfterMutation();
         }
       }
       return result;
@@ -219,30 +430,31 @@ class ControllerSession extends ChangeNotifier {
       }
       rethrow;
     } finally {
-      _busy = false;
-      if (!_disposed) notifyListeners();
+      _activeAction = null;
+      _endBusy();
+      _notifySafely();
     }
   }
 
   Future<void> loadLogs() async {
     final pin = _requirePin();
-    _busy = true;
-    notifyListeners();
+    _beginBusy();
+    _notifySafely();
     try {
       _logs = isDevelopment ? _logs : await _api!.logs(pin);
     } on ControllerApiException catch (error) {
       if (error.isAuthenticationError) _adminPin = null;
       rethrow;
     } finally {
-      _busy = false;
-      if (!_disposed) notifyListeners();
+      _endBusy();
+      _notifySafely();
     }
   }
 
   Future<void> scanBuses() async {
     final pin = _requirePin();
-    _busy = true;
-    notifyListeners();
+    _beginBusy();
+    _notifySafely();
     try {
       _diagnostics = isDevelopment
           ? _createDevelopmentDiagnostics()
@@ -251,8 +463,8 @@ class ControllerSession extends ChangeNotifier {
       if (error.isAuthenticationError) _adminPin = null;
       rethrow;
     } finally {
-      _busy = false;
-      if (!_disposed) notifyListeners();
+      _endBusy();
+      _notifySafely();
     }
   }
 
@@ -270,13 +482,13 @@ class ControllerSession extends ChangeNotifier {
       notifyListeners();
       return;
     }
-    _busy = true;
-    notifyListeners();
+    _beginBusy();
+    _notifySafely();
     try {
       _historyFiles = await _api.historyFiles();
     } finally {
-      _busy = false;
-      if (!_disposed) notifyListeners();
+      _endBusy();
+      _notifySafely();
     }
   }
 
@@ -301,8 +513,8 @@ class ControllerSession extends ChangeNotifier {
     var usedArchive = false;
     String? warning;
     if (_api?.supportsFileDownload == true) {
-      _busy = true;
-      notifyListeners();
+      _beginBusy();
+      _notifySafely();
       try {
         _historyFiles = await _api!.historyFiles();
         final relevant = _relevantHistoryFiles(_historyFiles, cutoff);
@@ -316,9 +528,13 @@ class ControllerSession extends ChangeNotifier {
                   await _api.download(
                     '/download',
                     queryParameters: {'path': path},
+                    maximumBytes: _maximumArchiveBytes,
                   ),
                 );
             _historyArchiveCache[path] = samples;
+            while (_historyArchiveCache.length > _maximumCachedArchives) {
+              _historyArchiveCache.remove(_historyArchiveCache.keys.first);
+            }
             for (final sample in samples) {
               if (sample.epoch >= cutoff) merged[sample.epoch] = sample;
             }
@@ -331,8 +547,8 @@ class ControllerSession extends ChangeNotifier {
       } on ControllerApiException catch (error) {
         warning = 'Archiwum SD jest niedostępne: ${error.message}';
       } finally {
-        _busy = false;
-        if (!_disposed) notifyListeners();
+        _endBusy();
+        _notifySafely();
       }
     } else if (isBluetooth) {
       warning = 'BLE udostępnia tylko bieżący bufor historii sterownika.';
@@ -480,13 +696,34 @@ class ControllerSession extends ChangeNotifier {
     return pin;
   }
 
-  Future<void> _sendWebSessionHeartbeat() async {
-    if (_disposed || isDevelopment || !_api!.supportsWebSession) return;
+  Future<void> _sendWebSessionHeartbeat() {
+    if (_disposed ||
+        !_appActive ||
+        isDevelopment ||
+        !_api!.supportsWebSession) {
+      return Future<void>.value();
+    }
+    final pending = _heartbeatOperation;
+    if (pending != null) return pending;
+
+    late final Future<void> operation;
+    operation = _performWebSessionHeartbeat().whenComplete(() {
+      if (identical(_heartbeatOperation, operation)) {
+        _heartbeatOperation = null;
+      }
+    });
+    _heartbeatOperation = operation;
+    return operation;
+  }
+
+  Future<void> _performWebSessionHeartbeat() async {
     try {
-      await _api.webSession(_webSessionId, 'active');
+      await _api!.webSession(_webSessionId, 'active');
     } on ControllerApiException {
-      // Status polling reports connectivity; heartbeat failure alone must not
-      // interrupt a control operation already in progress.
+      // Status polling is authoritative. A heartbeat failure must not mark an
+      // otherwise responsive local controller as offline.
+    } on Object {
+      // Platform I/O errors are intentionally isolated from control actions.
     }
   }
 
@@ -1266,16 +1503,23 @@ class ControllerSession extends ChangeNotifier {
 
   @override
   void dispose() {
-    if (!isDevelopment && _api!.supportsWebSession) {
-      unawaited(_api.webSession(_webSessionId, 'close').catchError((_) {}));
-    }
-    if (!isDevelopment) {
-      unawaited(_api!.disconnect().catchError((_) {}));
-    }
+    if (_disposed) return;
     _disposed = true;
     _pollTimer?.cancel();
+    _pollTimer = null;
     _developmentTimer?.cancel();
+    _developmentTimer = null;
     _webSessionTimer?.cancel();
+    _webSessionTimer = null;
+    _historyArchiveCache.clear();
+
+    final api = _api;
+    if (!isDevelopment && api != null && api.supportsWebSession) {
+      unawaited(api.webSession(_webSessionId, 'close').catchError((_) {}));
+    }
+    if (!isDevelopment && api != null) {
+      unawaited(api.disconnect().catchError((_) {}));
+    }
     super.dispose();
   }
 }

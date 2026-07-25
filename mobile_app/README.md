@@ -20,6 +20,10 @@ walidacja oraz zachowanie firmware pozostają wspólne dla strony i telefonu.
 - tryb DEV z pełną symulacją wszystkich powyższych operacji w pamięci RAM,
 - podstawowe sterowanie BLE bez dostępu do sieci,
 - oryginalny panel WWW w WebView jako tryb zgodności.
+- nagłówek kondycji połączenia z RSSI, pingiem, czasem synchronizacji i
+  automatycznym ponawianiem połączenia,
+- bezpieczne kolejowanie komend, walidacja odpowiedzi sterownika oraz limity
+  rozmiaru odpowiedzi i archiwów.
 
 Operacje zmieniające konfigurację wymagają sesji administratora. Domyślny PIN
 firmware i symulatora DEV to `1234`.
@@ -57,8 +61,24 @@ Specyfikacja istniejącego transportu BLE znajduje się w
 ```powershell
 flutter analyze
 flutter test
-flutter build apk --debug --split-per-abi
+flutter build apk --release --flavor current --target lib/main.dart
 ```
+
+Podpisany plik produkcyjny powstaje jako
+`build/app/outputs/flutter-apk/app-current-release.apk`. Wersja `3.7.0+13`
+jest publikowana jako `AquaCYD-Control-3.7.0-current.apk`.
+
+## Architektura aplikacji
+
+- `full_controller/views/` zawiera wyłącznie ekrany i formularze,
+- `ControllerSession` przechowuje niezmienny dla UI stan połączenia, serializuje
+  komendy i zarządza cyklem odpytywania,
+- `ControllerApi` i `BleRemoteApi` izolują transport REST oraz BLE,
+- `status_decoder.dart` waliduje kompletność, typy i limity pakietu przed
+  przekazaniem danych do interfejsu.
+
+Odpytywanie zatrzymuje się w tle, po błędzie stosuje opóźnienie wykładnicze z
+jitterem, a ostatni poprawny odczyt pozostaje widoczny jako dane archiwalne.
 
 Wydanie produkcyjne Androida wymaga podpisania kluczem właściciela aplikacji.
 Klucz oraz hasła muszą pozostać poza repozytorium. Konfiguracja

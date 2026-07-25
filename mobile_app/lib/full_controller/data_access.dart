@@ -36,21 +36,28 @@ extension JsonMapAccess on JsonMap {
   int integer(String key, [int fallback = 0]) {
     final value = this[key];
     if (value is int) return value;
-    if (value is num) return value.toInt();
+    if (value is num) {
+      final parsed = value.toDouble();
+      return parsed.isFinite ? parsed.toInt() : fallback;
+    }
     return int.tryParse(value?.toString() ?? '') ?? fallback;
   }
 
   double number(String key, [double fallback = 0]) {
     final value = this[key];
-    if (value is num) return value.toDouble();
-    return double.tryParse(value?.toString() ?? '') ?? fallback;
+    final parsed = value is num
+        ? value.toDouble()
+        : double.tryParse(value?.toString() ?? '');
+    return parsed != null && parsed.isFinite ? parsed : fallback;
   }
 
   double? nullableNumber(String key) {
     final value = this[key];
     if (value == null) return null;
-    if (value is num) return value.toDouble();
-    return double.tryParse(value.toString());
+    final parsed = value is num
+        ? value.toDouble()
+        : double.tryParse(value.toString());
+    return parsed != null && parsed.isFinite ? parsed : null;
   }
 }
 

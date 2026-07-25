@@ -9,11 +9,13 @@ import 'data_access.dart';
 class BleRemoteApi implements ControllerRemoteApi {
   BleRemoteApi(this.transport);
 
-  final BleControllerTransport transport;
+  final BleCommandTransport transport;
   ControllerSnapshot? _latestSnapshot;
   StreamSubscription<ControllerSnapshot>? _snapshotSubscription;
-  bool _connected = false;
+  Future<void>? _connectOperation;
+  Future<void> _dataRequestTail = Future<void>.value();
   bool _protocolV2 = true;
+  bool _disposed = false;
 
   @override
   Uri? get baseUri => null;
@@ -28,18 +30,37 @@ class BleRemoteApi implements ControllerRemoteApi {
   bool get supportsWebSession => false;
 
   @override
-  Future<void> connect() async {
-    if (_connected) return;
+  Future<void> connect() {
+    if (_disposed) {
+      return Future<void>.error(StateError('Interfejs BLE został zamknięty.'));
+    }
     _snapshotSubscription ??= transport.snapshots.listen((snapshot) {
       _latestSnapshot = snapshot;
     });
-    await transport.connect();
-    _connected = true;
+    if (transport.currentState == ControllerTransportState.connected) {
+      return Future<void>.value();
+    }
+    final running = _connectOperation;
+    if (running != null) {
+      return running;
+    }
+
+    late final Future<void> operation;
+    operation = transport.connect().whenComplete(() {
+      if (identical(_connectOperation, operation)) {
+        _connectOperation = null;
+      }
+    });
+    _connectOperation = operation;
+    return operation;
   }
 
   @override
   Future<void> disconnect() async {
-    _connected = false;
+    if (_disposed) {
+      return;
+    }
+    _disposed = true;
     await _snapshotSubscription?.cancel();
     _snapshotSubscription = null;
     await transport.dispose();
@@ -177,18 +198,69 @@ class BleRemoteApi implements ControllerRemoteApi {
     required Map<String, dynamic> command,
     Duration timeout = const Duration(seconds: 15),
   }) async {
-    final dataFuture = transport.messages
-        .firstWhere((message) => message['type'] == expectedType)
-        .timeout(timeout);
-    final result = await transport.sendCommand(command);
-    _ensureSuccess(result);
+    final previous = _dataRequestTail;
+    final release = Completer<void>();
+    _dataRequestTail = release.future;
+    await previous;
     try {
-      return await dataFuture;
-    } on TimeoutException {
-      throw ControllerApiException(
-        code: 'ble_data_timeout',
-        message: 'Sterownik nie przesłał danych $expectedType przez BLE.',
+      return await _requestDataUnlocked(
+        expectedType: expectedType,
+        command: command,
+        timeout: timeout,
       );
+    } finally {
+      release.complete();
+    }
+  }
+
+  Future<JsonMap> _requestDataUnlocked({
+    required String expectedType,
+    required Map<String, dynamic> command,
+    required Duration timeout,
+  }) async {
+    final data = Completer<JsonMap>();
+    late final StreamSubscription<Map<String, dynamic>> subscription;
+    subscription = transport.messages.listen(
+      (message) {
+        if (message['type'] == expectedType && !data.isCompleted) {
+          data.complete(message);
+        }
+      },
+      onError: (Object error, StackTrace stackTrace) {
+        if (!data.isCompleted) {
+          data.completeError(error, stackTrace);
+        }
+      },
+      onDone: () {
+        if (!data.isCompleted) {
+          data.completeError(
+            StateError('Strumień wiadomości BLE został zamknięty.'),
+          );
+        }
+      },
+    );
+    try {
+      try {
+        final result = await transport.sendCommand(command);
+        _ensureSuccess(result);
+        try {
+          return await data.future.timeout(timeout);
+        } on TimeoutException {
+          throw ControllerApiException(
+            code: 'ble_data_timeout',
+            message: 'Sterownik nie przesłał danych $expectedType przez BLE.',
+          );
+        }
+      } on ControllerApiException {
+        rethrow;
+      } on Object catch (error) {
+        throw ControllerApiException(
+          code: 'ble_stream_error',
+          message: 'Połączenie BLE przerwało odbiór danych: $error',
+        );
+      }
+    } finally {
+      await subscription.cancel();
     }
   }
 

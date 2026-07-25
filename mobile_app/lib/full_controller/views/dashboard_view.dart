@@ -269,52 +269,77 @@ class _TemperatureCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final colors = Theme.of(context).colorScheme;
+    final thermostatLabel = thermostatEnabled
+        ? heaterOn
+              ? 'Grzanie'
+              : 'Termostat'
+        : 'Wyłączona';
+    final thermostatChip = Semantics(
+      label: 'Stan termostatu: $thermostatLabel',
+      child: ExcludeSemantics(
+        child: DecoratedBox(
+          decoration: BoxDecoration(
+            color: colors.surfaceContainerHighest,
+            borderRadius: BorderRadius.circular(5),
+          ),
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 7),
+            child: Text(
+              thermostatLabel,
+              style: const TextStyle(fontWeight: FontWeight.w700),
+            ),
+          ),
+        ),
+      ),
+    );
     return Card(
       child: Padding(
         padding: const EdgeInsets.fromLTRB(20, 20, 20, 22),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Row(
-              children: [
-                Icon(
-                  Icons.thermostat_rounded,
-                  color: alarm ? colors.error : colors.onSurface,
-                ),
-                const SizedBox(width: 10),
-                const Expanded(
-                  child: Text(
-                    'Temperatura wody',
-                    style: TextStyle(fontSize: 19, fontWeight: FontWeight.w700),
-                  ),
-                ),
-                ConstrainedBox(
-                  constraints: const BoxConstraints(maxWidth: 110),
-                  child: FittedBox(
-                    fit: BoxFit.scaleDown,
-                    child: DecoratedBox(
-                      decoration: BoxDecoration(
-                        color: colors.surfaceContainerHighest,
-                        borderRadius: BorderRadius.circular(5),
-                      ),
-                      child: Padding(
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: 12,
-                          vertical: 7,
-                        ),
-                        child: Text(
-                          thermostatEnabled
-                              ? heaterOn
-                                    ? 'Grzanie'
-                                    : 'Termostat'
-                              : 'Wyłączona',
-                          style: const TextStyle(fontWeight: FontWeight.w700),
+            LayoutBuilder(
+              builder: (context, constraints) {
+                final textScale = MediaQuery.textScalerOf(context).scale(1);
+                final title = Row(
+                  children: [
+                    Icon(
+                      Icons.thermostat_rounded,
+                      color: alarm ? colors.error : colors.onSurface,
+                    ),
+                    const SizedBox(width: 10),
+                    const Expanded(
+                      child: Text(
+                        'Temperatura wody',
+                        style: TextStyle(
+                          fontSize: 19,
+                          fontWeight: FontWeight.w700,
                         ),
                       ),
                     ),
-                  ),
-                ),
-              ],
+                  ],
+                );
+                if (constraints.maxWidth < 360 || textScale > 1.35) {
+                  return Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      title,
+                      const SizedBox(height: 10),
+                      Align(
+                        alignment: Alignment.centerLeft,
+                        child: thermostatChip,
+                      ),
+                    ],
+                  );
+                }
+                return Row(
+                  children: [
+                    Expanded(child: title),
+                    const SizedBox(width: 12),
+                    thermostatChip,
+                  ],
+                );
+              },
             ),
             const SizedBox(height: 18),
             Wrap(
@@ -371,9 +396,9 @@ class _CompactMetricCard extends StatelessWidget {
   Widget build(BuildContext context) {
     final colors = Theme.of(context).colorScheme;
     final foreground = tone ?? colors.onSurface;
-    final textScale = MediaQuery.textScalerOf(context).scale(1).clamp(1.0, 1.5);
-    return SizedBox(
-      height: 142 * textScale,
+    final textScale = MediaQuery.textScalerOf(context).scale(1);
+    final accessibilityLayout = textScale > 1.4;
+    return MergeSemantics(
       child: Card(
         child: Padding(
           padding: const EdgeInsets.all(16),
@@ -387,40 +412,41 @@ class _CompactMetricCard extends StatelessWidget {
                   Expanded(
                     child: Text(
                       label,
-                      maxLines: 2,
-                      overflow: TextOverflow.ellipsis,
+                      maxLines: accessibilityLayout ? null : 2,
+                      overflow: accessibilityLayout
+                          ? TextOverflow.visible
+                          : TextOverflow.ellipsis,
                       style: TextStyle(color: colors.onSurfaceVariant),
                     ),
                   ),
                 ],
               ),
-              const Spacer(),
-              FittedBox(
-                fit: BoxFit.scaleDown,
-                alignment: Alignment.centerLeft,
-                child: RichText(
-                  text: TextSpan(
-                    style: Theme.of(context).textTheme.headlineMedium?.copyWith(
-                      color: foreground,
-                      fontWeight: FontWeight.w500,
-                    ),
-                    children: [
-                      TextSpan(text: value),
-                      if (unit != null)
-                        TextSpan(
-                          text: ' $unit',
-                          style: Theme.of(context).textTheme.bodyMedium
-                              ?.copyWith(color: colors.onSurfaceVariant),
-                        ),
-                    ],
+              const SizedBox(height: 16),
+              Text.rich(
+                TextSpan(
+                  style: Theme.of(context).textTheme.headlineMedium?.copyWith(
+                    color: foreground,
+                    fontWeight: FontWeight.w500,
                   ),
+                  children: [
+                    TextSpan(text: value),
+                    if (unit != null)
+                      TextSpan(
+                        text: ' $unit',
+                        style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                          color: colors.onSurfaceVariant,
+                        ),
+                      ),
+                  ],
                 ),
               ),
               const SizedBox(height: 3),
               Text(
                 detail,
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
+                maxLines: accessibilityLayout ? null : 2,
+                overflow: accessibilityLayout
+                    ? TextOverflow.visible
+                    : TextOverflow.ellipsis,
                 style: Theme.of(
                   context,
                 ).textTheme.bodySmall?.copyWith(color: colors.onSurfaceVariant),
@@ -443,7 +469,9 @@ class _DeviceGrid extends StatelessWidget {
     final colors = Theme.of(context).colorScheme;
     return LayoutBuilder(
       builder: (context, constraints) {
-        final width = (constraints.maxWidth - 16) / 2;
+        final textScale = MediaQuery.textScalerOf(context).scale(1);
+        final columns = constraints.maxWidth >= 480 && textScale <= 1.3 ? 2 : 1;
+        final width = (constraints.maxWidth - 16 * (columns - 1)) / columns;
         return Wrap(
           spacing: 16,
           runSpacing: 12,
@@ -451,21 +479,25 @@ class _DeviceGrid extends StatelessWidget {
             for (final entry in entries)
               SizedBox(
                 width: width,
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      entry.$1,
-                      style: TextStyle(color: colors.onSurfaceVariant),
-                    ),
-                    const SizedBox(height: 2),
-                    Text(
-                      entry.$2,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(fontWeight: FontWeight.w700),
-                    ),
-                  ],
+                child: MergeSemantics(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        entry.$1,
+                        style: TextStyle(color: colors.onSurfaceVariant),
+                      ),
+                      const SizedBox(height: 2),
+                      Text(
+                        entry.$2,
+                        maxLines: columns == 1 ? null : 1,
+                        overflow: columns == 1
+                            ? TextOverflow.visible
+                            : TextOverflow.ellipsis,
+                        style: const TextStyle(fontWeight: FontWeight.w700),
+                      ),
+                    ],
+                  ),
                 ),
               ),
           ],
