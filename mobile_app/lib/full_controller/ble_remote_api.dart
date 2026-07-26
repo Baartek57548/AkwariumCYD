@@ -6,7 +6,7 @@ import '../connectivity/controller_transport.dart';
 import 'controller_api.dart';
 import 'data_access.dart';
 
-class BleRemoteApi implements ControllerRemoteApi {
+class BleRemoteApi implements ControllerRemoteApi, ControllerProtocolV2Api {
   BleRemoteApi(this.transport);
 
   final BleCommandTransport transport;
@@ -100,6 +100,17 @@ class BleRemoteApi implements ControllerRemoteApi {
   }
 
   @override
+  Future<JsonMap> capabilities() async {
+    _requireV2('Odczyt możliwości sterownika przez BLE');
+    final message = await _requestData(
+      expectedType: 'capabilities',
+      command: const {'v': 2, 'op': 'capabilities'},
+    );
+    final data = jsonMap(message['data']);
+    return data.isNotEmpty ? data : message;
+  }
+
+  @override
   Future<JsonMap> logs(String pin) async {
     _requireV2('Logi przez BLE');
     final message = await _requestData(
@@ -131,6 +142,26 @@ class BleRemoteApi implements ControllerRemoteApi {
   }
 
   @override
+  Future<ControllerAdminSession> authenticateSession(String pin) async {
+    _requireV2('Bezpieczna sesja administratora przez BLE');
+    final message = await _requestData(
+      expectedType: 'auth',
+      command: {'v': 2, 'op': 'auth', 'pin': pin},
+    );
+    final ok = message['ok'];
+    if (ok == false) {
+      throw ControllerApiException(
+        code: message['code']?.toString() ?? 'authentication_failed',
+        message:
+            message['message']?.toString() ??
+            'Sterownik odrzucił sesję administratora.',
+      );
+    }
+    final data = jsonMap(message['data']);
+    return ControllerAdminSession.fromJson(data);
+  }
+
+  @override
   Future<ControllerActionResult> action(
     String action, {
     Map<String, Object?> payload = const {},
@@ -149,6 +180,37 @@ class BleRemoteApi implements ControllerRemoteApi {
       'name': action,
       'args': payload,
       'pin': ?effectivePin,
+    });
+    return _actionResult(result);
+  }
+
+  @override
+  Future<ControllerActionResult> actionV2(
+    String action, {
+    required String commandId,
+    required String token,
+    Map<String, Object?> payload = const {},
+  }) async {
+    _requireV2('Akcja $action przez BLE');
+    if (!RegExp(r'^[a-zA-Z0-9_-]{8,48}$').hasMatch(commandId)) {
+      throw const ControllerApiException(
+        code: 'invalid_command_id',
+        message: 'Identyfikator polecenia ma nieprawidłowy format.',
+      );
+    }
+    if (!RegExp(r'^[a-fA-F0-9]{32}$').hasMatch(token)) {
+      throw const ControllerApiException(
+        code: 'invalid_session_token',
+        message: 'Token sesji administratora ma nieprawidłowy format.',
+      );
+    }
+    final result = await transport.sendCommand({
+      'v': 2,
+      'op': 'action',
+      'name': action,
+      'commandId': commandId,
+      'token': token.toLowerCase(),
+      'args': payload,
     });
     return _actionResult(result);
   }

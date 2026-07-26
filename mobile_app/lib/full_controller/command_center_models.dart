@@ -760,14 +760,14 @@ CommandCenterScheduleEvent? _projectNextScheduleEvent(
 
   addOutputSchedule(
     kind: CommandCenterOutputKind.light1,
-    label: 'Światło 1',
+    label: 'Świetlówka przednia',
     scheduleKeys: const ['light1', 'light'],
     legacyStartPrefix: 'dayStart',
     legacyEndPrefix: 'dayEnd',
   );
   addOutputSchedule(
     kind: CommandCenterOutputKind.light2,
-    label: 'Światło 2',
+    label: 'Świetlówka tylna',
     scheduleKeys: const ['light2', 'plant_light'],
     legacyStartPrefix: 'plantStart',
     legacyEndPrefix: 'plantEnd',
@@ -1118,7 +1118,7 @@ final class _OutputDefinition {
 const List<_OutputDefinition> _outputDefinitions = [
   _OutputDefinition(
     kind: CommandCenterOutputKind.light1,
-    label: 'Światło 1',
+    label: 'Świetlówka przednia',
     relayKeys: ['light1', 'light'],
     moduleStateKeys: ['light1_on', 'light_on'],
     scheduleKeys: ['light1', 'light'],
@@ -1126,7 +1126,7 @@ const List<_OutputDefinition> _outputDefinitions = [
   ),
   _OutputDefinition(
     kind: CommandCenterOutputKind.light2,
-    label: 'Światło 2',
+    label: 'Świetlówka tylna',
     relayKeys: ['light2', 'plantLight'],
     moduleStateKeys: ['light2_on', 'plant_light_on'],
     scheduleKeys: ['light2', 'plant_light'],

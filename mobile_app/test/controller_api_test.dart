@@ -4,6 +4,9 @@ import 'dart:io';
 import 'package:cyd_aquarium_mobile/full_controller/controller_api.dart';
 import 'package:flutter_test/flutter_test.dart';
 
+const _networkTestDeadline = Duration(milliseconds: 250);
+const _slowNetworkResponse = Duration(milliseconds: 750);
+
 void main() {
   test('ControllerApi preserves web API paths and form fields', () async {
     final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
@@ -85,6 +88,85 @@ void main() {
     },
   );
 
+  test(
+    'protocol v2 discovers capabilities and uses a tokenized command',
+    () async {
+      final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+      addTearDown(() => server.close(force: true));
+      final requests = <_RecordedRequest>[];
+      const token = '0123456789abcdef0123456789abcdef';
+      final subscription = server.listen((request) async {
+        final body = await utf8.decoder.bind(request).join();
+        requests.add(_RecordedRequest(request.method, request.uri, body));
+        request.response.headers.contentType = ContentType.json;
+        switch (request.uri.path) {
+          case '/api/v2/capabilities':
+            request.response.write(
+              jsonEncode({
+                'ok': true,
+                'data': {
+                  'apiVersions': [1, 2],
+                  'features': {'idempotency': true},
+                },
+              }),
+            );
+            break;
+          case '/api/v2/auth':
+            request.response.write(
+              jsonEncode({
+                'type': 'auth',
+                'v': 2,
+                'ok': true,
+                'code': 'authenticated',
+                'data': {'sessionToken': token, 'expiresInSec': 300},
+              }),
+            );
+            break;
+          default:
+            request.response.write(
+              jsonEncode({
+                'ok': true,
+                'code': 'ok',
+                'message': 'Polecenie przyjęte.',
+              }),
+            );
+        }
+        await request.response.close();
+      });
+      addTearDown(subscription.cancel);
+      final api = ControllerApi(
+        Uri.parse('http://${server.address.address}:${server.port}'),
+      );
+
+      final capabilities = await api.capabilities();
+      final session = await api.authenticateSession('1234');
+      final result = await api.actionV2(
+        'start_service_mode',
+        commandId: 'mobile_command_0001',
+        token: session.token,
+        payload: const {'durationSec': 1800},
+      );
+
+      expect(capabilities['apiVersions'], [1, 2]);
+      expect(session.token, token);
+      expect(session.isValid, isTrue);
+      expect(result.success, isTrue);
+      expect(requests.map((request) => request.uri.path), [
+        '/api/v2/capabilities',
+        '/api/v2/auth',
+        '/api/action',
+      ]);
+      expect(jsonDecode(requests[1].body), {'v': 2, 'pin': '1234'});
+      final actionFields = Uri.splitQueryString(requests[2].body);
+      expect(actionFields['action'], 'start_service_mode');
+      expect(actionFields['v'], '2');
+      expect(actionFields['commandId'], 'mobile_command_0001');
+      expect(actionFields['token'], token);
+      expect(actionFields['durationSec'], '1800');
+      expect(actionFields, isNot(contains('pin')));
+    },
+  );
+
   test('deadline covers response headers and complete body', () async {
     final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
     addTearDown(() => server.close(force: true));
@@ -92,7 +174,7 @@ void main() {
       request.response.headers.contentType = ContentType.json;
       request.response.write('{"ok":');
       await request.response.flush();
-      await Future<void>.delayed(const Duration(milliseconds: 150));
+      await Future<void>.delayed(_slowNetworkResponse);
       try {
         request.response.write('true}');
         await request.response.close();
@@ -103,7 +185,7 @@ void main() {
     addTearDown(subscription.cancel);
     final api = ControllerApi(
       Uri.parse('http://${server.address.address}:${server.port}'),
-      requestDeadline: const Duration(milliseconds: 40),
+      requestDeadline: _networkTestDeadline,
       maximumReadAttempts: 1,
     );
 
@@ -126,7 +208,7 @@ void main() {
     final subscription = server.listen((request) async {
       requests++;
       if (requests == 1) {
-        await Future<void>.delayed(const Duration(milliseconds: 120));
+        await Future<void>.delayed(_slowNetworkResponse);
       }
       try {
         request.response.headers.contentType = ContentType.json;
@@ -139,7 +221,7 @@ void main() {
     addTearDown(subscription.cancel);
     final api = ControllerApi(
       Uri.parse('http://${server.address.address}:${server.port}'),
-      requestDeadline: const Duration(milliseconds: 40),
+      requestDeadline: _networkTestDeadline,
       readRetryDelay: Duration.zero,
       maximumReadAttempts: 2,
     );
@@ -157,7 +239,7 @@ void main() {
     final subscription = server.listen((request) async {
       requests++;
       await request.drain<void>();
-      await Future<void>.delayed(const Duration(milliseconds: 120));
+      await Future<void>.delayed(_slowNetworkResponse);
       try {
         request.response.headers.contentType = ContentType.json;
         request.response.write(
@@ -171,7 +253,7 @@ void main() {
     addTearDown(subscription.cancel);
     final api = ControllerApi(
       Uri.parse('http://${server.address.address}:${server.port}'),
-      requestDeadline: const Duration(milliseconds: 40),
+      requestDeadline: _networkTestDeadline,
       readRetryDelay: Duration.zero,
       maximumReadAttempts: 3,
     );
@@ -195,7 +277,7 @@ void main() {
     var requests = 0;
     final subscription = server.listen((request) async {
       requests++;
-      await Future<void>.delayed(const Duration(milliseconds: 120));
+      await Future<void>.delayed(_slowNetworkResponse);
       try {
         request.response.headers.contentType = ContentType.json;
         request.response.write(jsonEncode({'ok': true}));
@@ -207,7 +289,7 @@ void main() {
     addTearDown(subscription.cancel);
     final api = ControllerApi(
       Uri.parse('http://${server.address.address}:${server.port}'),
-      requestDeadline: const Duration(milliseconds: 40),
+      requestDeadline: _networkTestDeadline,
       readRetryDelay: Duration.zero,
       maximumReadAttempts: 3,
     );

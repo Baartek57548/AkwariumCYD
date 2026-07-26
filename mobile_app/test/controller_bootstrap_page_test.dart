@@ -291,6 +291,38 @@ void main() {
       expect(tester.takeException(), isNull);
     },
   );
+
+  test('tylko pełny status spoza BLE v1 może rozwiązywać alarmy', () {
+    final development = ControllerSession.development();
+    addTearDown(development.dispose);
+    final complete = Map<String, dynamic>.from(development.status);
+
+    expect(
+      isCompleteControllerRuntimeStatus(
+        complete,
+        ControllerSessionKind.development,
+      ),
+      isTrue,
+    );
+
+    final legacyBle = Map<String, dynamic>.from(complete)..['mode'] = 'BLE_V1';
+    expect(
+      isCompleteControllerRuntimeStatus(
+        legacyBle,
+        ControllerSessionKind.bluetooth,
+      ),
+      isFalse,
+    );
+
+    expect(
+      isCompleteControllerRuntimeStatus(<String, dynamic>{
+        'device': 'CYD',
+        'mode': 'BLE_V2',
+        'alarms': <String, dynamic>{'flags': 0},
+      }, ControllerSessionKind.bluetooth),
+      isFalse,
+    );
+  });
 }
 
 void _configurePhoneViewport(WidgetTester tester) {

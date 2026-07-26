@@ -10,6 +10,7 @@
 #include "gui_app.h"
 #include "hal_display.h"
 #include "hal_sd.h"
+#include "ota_guard.h"
 #include "runtime_controller.h"
 
 bool wifi_connected = false;
@@ -185,6 +186,7 @@ void setup() {
     Serial.begin(HwConfig::UartConsole::BAUD);
     Serial.println();
     Serial.println("--- ESP32 CYD AQUARIUM / PRODUKCYJNY RUNTIME ---");
+    ota_guard_initialize(millis());
 
     if (!gui_app_sync_init()) {
         Serial.println("FATAL: nie można utworzyć blokady GUI.");

@@ -149,19 +149,19 @@ enum AdcChannel : uint8_t {
     ADC_SPARE = 3
 };
 
-namespace Lights {
-constexpr uint32_t RESET_POWER_OFF_MS = 10000UL;
-constexpr uint32_t ADVANCE_PULSE_ON_MS = 250UL;
-constexpr uint32_t ADVANCE_PULSE_GAP_MS = 350UL;
-constexpr uint8_t MODE_COUNT = 3;
-}
-
 namespace Debounce {
 constexpr uint32_t DIGITAL_INPUT_MS = 30UL;
 constexpr uint32_t FEEDER_PULSE_MS = 500UL;
 }
 
 } // namespace HwConfig
+
+namespace FirmwareInfo {
+
+constexpr char VERSION[] = "5.0.0";
+constexpr uint8_t API_VERSION = 2U;
+
+} // namespace FirmwareInfo
 
 namespace Secrets {
 

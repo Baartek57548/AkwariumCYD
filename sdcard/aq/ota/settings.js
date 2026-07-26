@@ -149,16 +149,16 @@ function renderModuleEdgeCases(data) {
 
     const lightMode = Number(schedule.lightMode);
     if (lightMode === 2) {
-        items.push(buildModuleHealthItem('Światło 1', 'OFF', 'idle', 'Tryb ręcznie wyłączony'));
+        items.push(buildModuleHealthItem('Świetlówka przednia', 'OFF', 'idle', 'Tryb ręcznie wyłączony'));
     } else {
-        items.push(buildModuleHealthItem('Światło 1', (relays.light1 ?? relays.light) ? 'AKTYWNE' : 'OK', (relays.light1 ?? relays.light) ? 'ok' : 'idle', lightMode === 1 ? 'Tryb zawsze włączony' : 'Sterowane profilem Aquael D&N'));
+        items.push(buildModuleHealthItem('Świetlówka przednia', (relays.light1 ?? relays.light) ? 'AKTYWNE' : 'OK', (relays.light1 ?? relays.light) ? 'ok' : 'idle', lightMode === 1 ? 'Tryb zawsze włączony' : 'Sterowane profilem Aquael D&N'));
     }
 
     const plantScheduleMode = data.schedules?.plant_light?.mode || 'schedule';
     if (plantScheduleMode === 'always_off') {
-        items.push(buildModuleHealthItem('Światło 2', 'OFF', 'idle', 'Tryb ręcznie wyłączony'));
+        items.push(buildModuleHealthItem('Świetlówka tylna', 'OFF', 'idle', 'Tryb ręcznie wyłączony'));
     } else {
-        items.push(buildModuleHealthItem('Światło 2', (relays.light2 ?? relays.plantLight) ? 'AKTYWNE' : 'OK', (relays.light2 ?? relays.plantLight) ? 'ok' : 'idle', plantScheduleMode === 'always_on' ? 'Tryb zawsze włączony' : 'Sterowane profilem Aquael D&N'));
+        items.push(buildModuleHealthItem('Świetlówka tylna', (relays.light2 ?? relays.plantLight) ? 'AKTYWNE' : 'OK', (relays.light2 ?? relays.plantLight) ? 'ok' : 'idle', plantScheduleMode === 'always_on' ? 'Tryb zawsze włączony' : 'Sterowane profilem Aquael D&N'));
     }
 
     const pumpMode = Number(schedule.filterMode);

@@ -549,8 +549,8 @@ test('factory schedule remains readable and exposes execution priorities', async
 
     const lightRows = page.locator('.factory-row-light');
     await expect(lightRows).toHaveCount(2);
-    await expect(lightRows.nth(0)).toContainText('Światło 1');
-    await expect(lightRows.nth(1)).toContainText('Światło 2');
+    await expect(lightRows.nth(0)).toContainText('Świetlówka przednia');
+    await expect(lightRows.nth(1)).toContainText('Świetlówka tylna');
     for (let rowIndex = 0; rowIndex < 2; rowIndex += 1) {
         const lightSegments = lightRows.nth(rowIndex).locator('.factory-segment');
         await expect(lightSegments).toHaveCount(4);

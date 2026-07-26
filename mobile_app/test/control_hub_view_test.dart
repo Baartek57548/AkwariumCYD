@@ -47,7 +47,8 @@ void main() {
     expect(lightSelector, findsNothing);
     expect(find.text('Sterowane przez automatykę'), findsNothing);
 
-    await tester.ensureVisible(light);
+    await Scrollable.ensureVisible(tester.element(light), alignment: 0.2);
+    await tester.pumpAndSettle();
     await tester.tap(light);
     await tester.pumpAndSettle();
 
@@ -72,6 +73,117 @@ void main() {
 
     expect(actions.lastName, 'set_light1');
     expect(actions.lastPayload, <String, Object?>{'state': false});
+  });
+
+  testWidgets('sets the front Aquael lamp directly to the night profile', (
+    tester,
+  ) async {
+    tester.view.devicePixelRatio = 1;
+    tester.view.physicalSize = const Size(412, 915);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    addTearDown(tester.view.resetPhysicalSize);
+
+    final session = ControllerSession.development();
+    addTearDown(session.dispose);
+    final actions = _ActionRecorder();
+
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: AquaTheme.dark(),
+        home: Scaffold(
+          body: ControlHubView(
+            session: session,
+            runAction: actions.run,
+            ensureAdmin: _allowAdmin,
+          ),
+        ),
+      ),
+    );
+    await tester.pump();
+
+    final frontLamp = find.byKey(
+      const PageStorageKey<String>('output-card-light1'),
+    );
+    await Scrollable.ensureVisible(tester.element(frontLamp), alignment: 0.2);
+    await tester.pumpAndSettle();
+    await tester.tap(frontLamp);
+    await tester.pumpAndSettle();
+
+    final profileSelector = find.byKey(
+      const ValueKey<String>('aquael-profile-front'),
+    );
+    expect(profileSelector, findsOneWidget);
+    await Scrollable.ensureVisible(
+      tester.element(profileSelector),
+      alignment: 0.5,
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(profileSelector);
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('NIGHT — światło nocne').last);
+    await tester.pumpAndSettle();
+
+    expect(actions.lastName, 'set_light_profile');
+    expect(actions.lastPayload, <String, Object?>{
+      'target': 'front',
+      'profile': 'night',
+    });
+  });
+
+  testWidgets('creates a 15 minute timed override for the filter', (
+    tester,
+  ) async {
+    tester.view.devicePixelRatio = 1;
+    tester.view.physicalSize = const Size(412, 915);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    addTearDown(tester.view.resetPhysicalSize);
+
+    final session = ControllerSession.development();
+    addTearDown(session.dispose);
+    final actions = _ActionRecorder();
+
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: AquaTheme.dark(),
+        home: Scaffold(
+          body: ControlHubView(
+            session: session,
+            runAction: actions.run,
+            ensureAdmin: _allowAdmin,
+          ),
+        ),
+      ),
+    );
+    await tester.pump();
+
+    final filterCard = find.byKey(
+      const PageStorageKey<String>('output-card-filter'),
+    );
+    await Scrollable.ensureVisible(tester.element(filterCard), alignment: 0.2);
+    await tester.pumpAndSettle();
+    await tester.tap(filterCard);
+    await tester.pumpAndSettle();
+
+    final timedOverrideButton = find.byKey(
+      const ValueKey<String>('timed-override-button-filter'),
+    );
+    expect(timedOverrideButton, findsOneWidget);
+    await Scrollable.ensureVisible(
+      tester.element(timedOverrideButton),
+      alignment: 0.7,
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(timedOverrideButton);
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('confirm-timed-override-button')));
+    await tester.pumpAndSettle();
+
+    expect(actions.lastName, 'set_timed_override');
+    expect(actions.lastPayload, <String, Object?>{
+      'target': 'filter',
+      'state': false,
+      'durationSec': 900,
+    });
   });
 }
 

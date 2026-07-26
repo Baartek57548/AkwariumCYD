@@ -9,8 +9,8 @@ enum ControllerTransportState {
 }
 
 enum OutputChannel {
-  light('light', 'Światło 1'),
-  plantLight('plant', 'Światło 2'),
+  light('light', 'Świetlówka przednia'),
+  plantLight('plant', 'Świetlówka tylna'),
   filter('filter', 'Filtr'),
   heater('heater', 'Grzałka'),
   aeration('aeration', 'Napowietrzanie');

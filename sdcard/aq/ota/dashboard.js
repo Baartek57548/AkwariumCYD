@@ -1183,8 +1183,8 @@ const RELAY_FUNCTIONS_INFO = {
     none: { label: "Brak / nieużywany", icon: "fa-xmark" },
     filter: { label: "Filtr", icon: "fa-filter" },
     heater: { label: "Grzałka", icon: "fa-temperature-half" },
-    main_light: { label: "Światło 1", icon: "fa-lightbulb" },
-    plant_light: { label: "Światło 2", icon: "fa-lightbulb" },
+    main_light: { label: "Świetlówka przednia", icon: "fa-lightbulb" },
+    plant_light: { label: "Świetlówka tylna", icon: "fa-lightbulb" },
     aeration: { label: "Napowietrzanie", icon: "fa-wind" },
     co2: { label: "CO2", icon: "fa-cloud" },
     water_dosing: { label: "Dolewka wody (ATO)", icon: "fa-droplet" },
@@ -1587,7 +1587,7 @@ function renderTodaySchedule(data) {
             })
         },
         {
-            label: 'Światło 1',
+            label: 'Świetlówka przednia',
             value: modeValue(schedule.lightMode) === 1
                 ? 'Zawsze włączone'
                 : (modeValue(schedule.lightMode) === 2
@@ -1595,7 +1595,7 @@ function renderTodaySchedule(data) {
                     : workRange.label)
         },
         {
-            label: 'Światło 2',
+            label: 'Świetlówka tylna',
             value: describeDashboardRange(plantRange, {
                 on: 'Zawsze włączone',
                 off: 'Wyłączone'

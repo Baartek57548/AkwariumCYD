@@ -129,8 +129,8 @@ void main() {
     expect(find.text('12'), findsOneWidget);
     expect(find.text('18'), findsOneWidget);
     expect(find.text('24'), findsOneWidget);
-    expect(find.text('Światło 1'), findsWidgets);
-    expect(find.text('Światło 2'), findsWidgets);
+    expect(find.text('Świetlówka przednia'), findsWidgets);
+    expect(find.text('Świetlówka tylna'), findsWidgets);
     expect(find.text('DAYBREAK'), findsOneWidget);
     expect(find.text('DAY'), findsOneWidget);
     expect(find.text('NIGHT'), findsOneWidget);

@@ -216,6 +216,50 @@ void main() {
     expect(session.activeAction, isNull);
     expect(api.statusCalls, 2);
   });
+
+  test('protocol v2 uses capabilities, short session and command id', () async {
+    final api = _FakeV2RemoteApi();
+    final session = ControllerSession.wifi(api);
+    addTearDown(session.dispose);
+
+    await session.connect();
+    expect(session.protocolVersion, 2);
+    expect(session.supportsFeature('timedOverrides'), isTrue);
+
+    await session.login('1234');
+    await session.action(
+      'set_timed_override',
+      payload: const {'target': 'filter', 'state': false, 'durationSec': 900},
+      refreshAfter: false,
+    );
+
+    expect(api.authCalls, 1);
+    expect(api.legacyActionCalls, 0);
+    expect(api.v2ActionCalls, 1);
+    expect(api.lastAction, 'set_timed_override');
+    expect(api.lastToken, '0123456789abcdef0123456789abcdef');
+    expect(api.lastCommandId, matches(r'^[a-zA-Z0-9_-]{8,48}$'));
+  });
+
+  test(
+    'protocol v2 keeps legacy relay actions on the legacy endpoint',
+    () async {
+      final api = _FakeV2RemoteApi();
+      final session = ControllerSession.wifi(api);
+      addTearDown(session.dispose);
+
+      await session.connect();
+      await session.login('1234');
+      await session.action(
+        'set_light1',
+        payload: const {'state': true},
+        refreshAfter: false,
+      );
+
+      expect(api.legacyActionCalls, 1);
+      expect(api.v2ActionCalls, 0);
+    },
+  );
 }
 
 class _FakeRemoteApi implements ControllerRemoteApi {
@@ -336,5 +380,69 @@ class _FakeRemoteApi implements ControllerRemoteApi {
   @override
   Future<void> webSession(String sessionId, String state) async {
     if (state == 'active') heartbeatCalls += 1;
+  }
+}
+
+class _FakeV2RemoteApi extends _FakeRemoteApi
+    implements ControllerProtocolV2Api {
+  int authCalls = 0;
+  int legacyActionCalls = 0;
+  int v2ActionCalls = 0;
+  String? lastAction;
+  String? lastCommandId;
+  String? lastToken;
+
+  @override
+  Future<Map<String, dynamic>> capabilities() async => {
+    'apiVersions': [1, 2],
+    'features': {
+      'timedOverrides': true,
+      'feedingMode': true,
+      'serviceMode': true,
+      'idempotency': true,
+    },
+  };
+
+  @override
+  Future<ControllerAdminSession> authenticateSession(String pin) async {
+    authCalls += 1;
+    return ControllerAdminSession(
+      token: '0123456789abcdef0123456789abcdef',
+      expiresAt: DateTime.now().add(const Duration(minutes: 5)),
+    );
+  }
+
+  @override
+  Future<ControllerActionResult> action(
+    String action, {
+    Map<String, Object?> payload = const {},
+    String? pin,
+    bool includePin = true,
+  }) async {
+    legacyActionCalls += 1;
+    return super.action(
+      action,
+      payload: payload,
+      pin: pin,
+      includePin: includePin,
+    );
+  }
+
+  @override
+  Future<ControllerActionResult> actionV2(
+    String action, {
+    required String commandId,
+    required String token,
+    Map<String, Object?> payload = const {},
+  }) async {
+    v2ActionCalls += 1;
+    lastAction = action;
+    lastCommandId = commandId;
+    lastToken = token;
+    return const ControllerActionResult(
+      success: true,
+      code: 'ok',
+      message: 'Wykonano bezpiecznie.',
+    );
   }
 }

@@ -4,6 +4,7 @@
 #include <freertos/queue.h>
 #include <freertos/task.h>
 
+#include "config.h"
 #include "gui_app.h"
 
 namespace {
@@ -54,6 +55,18 @@ BleQueuedCommand processing_command = {};
 BleQueuedCommand callback_command = {};
 char outgoing_json[BLE_MESSAGE_BUFFER_BYTES] = {};
 
+bool json_scalar_terminated(const char *cursor) {
+    if (cursor == nullptr) {
+        return false;
+    }
+    while (*cursor == ' ' || *cursor == '\t' ||
+           *cursor == '\r' || *cursor == '\n') {
+        ++cursor;
+    }
+    return *cursor == '\0' || *cursor == ',' ||
+           *cursor == '}' || *cursor == ']';
+}
+
 void reset_incoming() {
     incoming.active = false;
     incoming.message_id = 0U;
@@ -80,7 +93,8 @@ bool extract_json_int(const char *json, const char *key, int *out) {
     value += pattern_length;
     char *end = nullptr;
     const long parsed = strtol(value, &end, 10);
-    if (end == value || parsed < 0L || parsed > 65535L) {
+    if (end == value || parsed < 0L || parsed > 65535L ||
+        !json_scalar_terminated(end)) {
         return false;
     }
     *out = static_cast<int>(parsed);
@@ -130,11 +144,13 @@ bool extract_json_bool(const char *json, const char *key, bool *out) {
         return false;
     }
     value += pattern_length;
-    if (strncmp(value, "true", 4U) == 0) {
+    if (strncmp(value, "true", 4U) == 0 &&
+        json_scalar_terminated(value + 4U)) {
         *out = true;
         return true;
     }
-    if (strncmp(value, "false", 5U) == 0) {
+    if (strncmp(value, "false", 5U) == 0 &&
+        json_scalar_terminated(value + 5U)) {
         *out = false;
         return true;
     }
@@ -204,6 +220,71 @@ void send_response(int id, const GuiBleCommandResult &result) {
     }
 }
 
+void send_v2_response(int id,
+                      const char *command_id,
+                      const GuiBleCommandResult &result,
+                      bool duplicate) {
+    char response[512];
+    const int length = snprintf(
+        response,
+        sizeof(response),
+        "{\"type\":\"response\",\"v\":2,\"id\":%d,\"commandId\":\"%s\","
+        "\"ok\":%s,\"code\":\"%s\",\"message\":\"%s\","
+        "\"ts\":%lu,\"tsSource\":\"uptime\",\"duplicate\":%s}",
+        id,
+        command_id != nullptr ? command_id : "",
+        result.success ? "true" : "false",
+        result.code != nullptr ? result.code : "internal_error",
+        result.message != nullptr ? result.message : "Brak opisu odpowiedzi.",
+        static_cast<unsigned long>(millis() / 1000UL),
+        duplicate ? "true" : "false");
+    if (length > 0 && static_cast<size_t>(length) < sizeof(response)) {
+        send_json(response);
+    }
+}
+
+void send_v2_auth_response(int id,
+                           const GuiV2AuthResult &result,
+                           const char *token) {
+    char response[640];
+    int length = 0;
+    if (result.success) {
+        length = snprintf(
+            response,
+            sizeof(response),
+            "{\"type\":\"auth\",\"v\":2,\"id\":%d,\"ok\":true,"
+            "\"code\":\"authenticated\",\"ts\":%lu,\"tsSource\":\"uptime\","
+            "\"data\":{\"sessionToken\":\"%s\",\"expiresInSec\":%lu}}",
+            id,
+            static_cast<unsigned long>(millis() / 1000UL),
+            token != nullptr ? token : "",
+            static_cast<unsigned long>(result.expires_in_seconds));
+    } else {
+        length = snprintf(
+            response,
+            sizeof(response),
+            "{\"type\":\"auth\",\"v\":2,\"id\":%d,\"ok\":false,"
+            "\"code\":\"%s\",\"message\":\"%s\",\"ts\":%lu,"
+            "\"tsSource\":\"uptime\",\"retryAfterSec\":%lu}",
+            id,
+            result.code != nullptr ? result.code : "authentication_failed",
+            result.message != nullptr ? result.message : "",
+            static_cast<unsigned long>(millis() / 1000UL),
+            static_cast<unsigned long>(result.retry_after_seconds));
+    }
+    if (length > 0 && static_cast<size_t>(length) < sizeof(response)) {
+        send_json(response);
+    }
+}
+
+bool send_capabilities() {
+    if (!gui_app_v2_capabilities_json(outgoing_json, sizeof(outgoing_json))) {
+        return false;
+    }
+    send_json(outgoing_json);
+    return true;
+}
+
 bool send_legacy_status() {
     GuiBleSnapshot snapshot = {};
     if (!gui_app_ble_snapshot(&snapshot)) {
@@ -265,6 +346,20 @@ void process_command(const BleQueuedCommand &queued) {
         send_response(id, {false, "invalid_operation", "Brak poprawnej operacji BLE."});
         return;
     }
+    if (strcmp(operation, "capabilities") == 0) {
+        if (!send_capabilities()) {
+            send_response(
+                id,
+                {false, "capabilities_unavailable", "Nie mozna zbudowac capabilities."});
+            return;
+        }
+        send_v2_response(
+            id,
+            "",
+            {true, "ok", "Capabilities protokolu v2 wyslane."},
+            false);
+        return;
+    }
     if (strcmp(operation, "status") == 0) {
         if (!send_legacy_status()) {
             send_response(id, {false, "not_ready", "Telemetria nie jest jeszcze gotowa."});
@@ -282,13 +377,20 @@ void process_command(const BleQueuedCommand &queued) {
         return;
     }
 
-    char pin[16];
-    if (!extract_json_string(queued.json, "pin", pin, sizeof(pin))) {
-        send_response(id, {false, "pin_invalid", "Brak poprawnego PIN-u."});
-        return;
-    }
+    char pin[16] = {};
+    extract_json_string(queued.json, "pin", pin, sizeof(pin));
     if (strcmp(operation, "auth") == 0) {
-        send_response(id, gui_app_ble_action("auth_check", queued.json, pin));
+        char token[33] = {};
+        const GuiV2AuthResult result =
+            gui_app_v2_auth(pin, token, sizeof(token));
+        send_v2_auth_response(id, result, token);
+        // The typed auth event carries the token, while the generic response
+        // completes the transport-level command future used by Flutter.
+        send_v2_response(
+            id,
+            "",
+            {result.success, result.code, result.message},
+            false);
         return;
     }
     if (strcmp(operation, "logs") == 0) {
@@ -325,6 +427,36 @@ void process_command(const BleQueuedCommand &queued) {
             send_response(id, {false, "invalid_action", "Brak nazwy akcji BLE."});
             return;
         }
+        char command_id[49] = {};
+        char token[33] = {};
+        extract_json_string(
+            queued.json, "commandId", command_id, sizeof(command_id));
+        extract_json_string(queued.json, "token", token, sizeof(token));
+        if (command_id[0] != '\0' || token[0] != '\0') {
+            bool duplicate = false;
+            char replay_code[40] = {};
+            char replay_message[128] = {};
+            const GuiBleCommandResult result = gui_app_v2_action(
+                action,
+                queued.json,
+                pin,
+                token,
+                command_id,
+                &duplicate,
+                replay_code,
+                sizeof(replay_code),
+                replay_message,
+                sizeof(replay_message));
+            send_v2_response(id, command_id, result, duplicate);
+            if (result.success) {
+                send_full_status();
+            }
+            return;
+        }
+        if (pin[0] == '\0') {
+            send_response(id, {false, "pin_invalid", "Brak poprawnego PIN-u."});
+            return;
+        }
         const GuiBleCommandResult result = gui_app_ble_action(action, queued.json, pin);
         send_response(id, result);
         if (result.success) {
@@ -335,11 +467,19 @@ void process_command(const BleQueuedCommand &queued) {
 
     // Operacje v1 pozostaja aktywne, aby starsze wydania aplikacji nadal dzialaly.
     if (strcmp(operation, "feed") == 0) {
+        if (pin[0] == '\0') {
+            send_response(id, {false, "pin_invalid", "Brak poprawnego PIN-u."});
+            return;
+        }
         send_response(id, gui_app_ble_feed(pin));
         send_legacy_status();
         return;
     }
     if (strcmp(operation, "set") == 0) {
+        if (pin[0] == '\0') {
+            send_response(id, {false, "pin_invalid", "Brak poprawnego PIN-u."});
+            return;
+        }
         char target[20];
         bool state = false;
         if (!extract_json_string(queued.json, "target", target, sizeof(target)) ||
@@ -380,8 +520,8 @@ public:
             return;
         }
 
-        const bool unframed_json = value.size() >= 5U &&
-                                   memcmp(value.data(), "{\"id\"", 5U) == 0;
+        const bool unframed_json =
+            value.size() >= 2U && value.front() == '{' && value.back() == '}';
         if (unframed_json) {
             reset_incoming();
             pending_callback_error = enqueue_command(value.data(), value.size())
@@ -466,7 +606,18 @@ void controller_ble_task(void *) {
         BLE_EVENTS_UUID, NIMBLE_PROPERTY::READ | NIMBLE_PROPERTY::NOTIFY);
     NimBLECharacteristic *info = service->createCharacteristic(
         BLE_INFO_UUID, NIMBLE_PROPERTY::READ);
-    info->setValue("{\"name\":\"cydAkwarium\",\"protocol\":2,\"maxCommand\":4096,\"maxParts\":32}");
+    char info_json[384];
+    snprintf(
+        info_json,
+        sizeof(info_json),
+        "{\"name\":\"cydAkwarium\",\"firmwareVersion\":\"%s\","
+        "\"protocol\":2,\"apiVersions\":[1,2],"
+        "\"maxCommand\":4096,\"maxParts\":32,"
+        "\"capabilitiesOp\":\"capabilities\",\"auth\":\"short_lived_token\","
+        "\"security\":{\"linkEncryption\":false,\"bonding\":false,"
+        "\"mitmProtection\":false}}",
+        FirmwareInfo::VERSION);
+    info->setValue(info_json);
 
     NimBLEAdvertising *advertising = NimBLEDevice::getAdvertising();
     advertising->setName(BLE_DEVICE_NAME);

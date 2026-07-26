@@ -2,6 +2,43 @@
 
 Wersjonowanie aplikacji jest zgodne z [Semantic Versioning](https://semver.org/).
 
+## 5.0.0 — 2026-07-26
+
+### Nowe
+
+- dodano centrum alarmów z cyklem `nowy → potwierdzony → rozwiązany`, deduplikacją, histerezą, cooldownem i powiadomieniami lokalnymi,
+- dodano trwałą historię SQLite pomiarów, poleceń i zdarzeń oraz lokalne przypomnienia serwisowe dostępne bez sterownika,
+- dodano opcjonalną synchronizację w tle przez zapisany sterownik w lokalnej sieci Wi‑Fi, z kontrolą kompletności danych i wykładniczym backoffem,
+- dodano przewodnik pierwszego uruchomienia oraz prosty i ekspercki poziom interfejsu,
+- dodano protokół v2 z krótkotrwałą sesją administratora, unikalnym `commandId` i idempotentnym wykonaniem poleceń,
+- dodano bezpiecznie wygasające override, tryb karmienia i tryb serwisowy,
+- dodano niezależne sterowanie świetlówką przednią i tylną Aquael w trybach `DAY`, `DAYBREAK` i `NIGHT`.
+
+### Zmienione
+
+- aplikacja pozostaje kompletnym centrum dowodzenia offline i automatycznie wraca do zapisanego sterownika Wi‑Fi,
+- informacje techniczne, diagnostyka i narzędzia administracyjne są ukryte w trybie eksperckim,
+- sterowanie Aquael wykorzystuje nieblokujące sekwencje zasilania: impuls OFF 1 s oraz kalibrację DAY po 6 s,
+- nazwy lamp są spójne w aplikacji, firmware i panelu WWW: „Świetlówka przednia” oraz „Świetlówka tylna”.
+
+### Bezpieczeństwo i jakość
+
+- alarmy powstają wyłącznie z kompletnych, aktualnych odczytów live; cache offline nigdy nie generuje nowego alarmu,
+- sekret opcjonalnego webhooka jest przechowywany w systemowym magazynie, a synchronizacja w tle akceptuje wyłącznie adres sterownika lokalnego,
+- dodano testy HIL kontraktu v2, timeoutów, idempotencji, rollbacku OTA i obu lamp Aquael,
+- pełny pakiet Flutter, Android, web, native firmware i oba warianty wyświetlacza jest weryfikowany w GitHub Actions.
+
+### Znane ograniczenia
+
+- firmware 5.0.0 jawnie raportuje brak szyfrowania łącza BLE, bondingu i ochrony MITM; Bluetooth wymaga fizycznie kontrolowanego dostępu do czasu wdrożenia bezpiecznego parowania i zaliczenia HIL na realnym telefonie,
+- podpis obrazu firmware jest publikowany i sprawdzany w CI, ale ESP32 nie weryfikuje go jeszcze względem provisionowanego klucza; zdalne automatyczne OTA firmware pozostaje wyłączone.
+
+### Dystrybucja
+
+- wersja aplikacji: `5.0.0+17`,
+- tag wydania: `mobile-v5.0.0`,
+- produkcyjny asset Androida: `AquaCYD-Control-5.0.0-current.apk`.
+
 ## 4.1.0 — 2026-07-26
 
 ### Nowe

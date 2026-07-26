@@ -180,7 +180,7 @@ function createDevServer(options = {}) {
         case 'set_light2':
             simulator.manualRelays.plantLight = params.get('state') === '1';
             simulator.config.plantLightMode = simulator.manualRelays.plantLight ? 1 : 2;
-            simulator.addLog(`Światło 2 ustawiono ${simulator.manualRelays.plantLight ? 'ON' : 'OFF'} z panelu.`);
+            simulator.addLog(`Świetlówkę tylną ustawiono ${simulator.manualRelays.plantLight ? 'ON' : 'OFF'} z panelu.`);
             sendJson(response, 200, { success: true, code: 'ok' });
             break;
         case 'set_heater':

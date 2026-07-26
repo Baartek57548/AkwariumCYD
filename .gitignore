@@ -7,3 +7,6 @@ node_modules/
 playwright-report/
 test-results/
 artifacts/
+__pycache__/
+*.py[cod]
+flutter_*.log

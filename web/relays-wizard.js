@@ -19,8 +19,8 @@
         relays: [
             { channel: 1, function: "filter", label: "Filtr główny", defaultState: "auto", safeState: "on", manualAllowed: true, pinRequired: false },
             { channel: 2, function: "heater", label: "Grzałka", defaultState: "auto", safeState: "off", manualAllowed: true, pinRequired: true },
-            { channel: 3, function: "main_light", label: "Światło 1", defaultState: "auto", safeState: "off", manualAllowed: true, pinRequired: false },
-            { channel: 4, function: "plant_light", label: "Światło 2", defaultState: "auto", safeState: "off", manualAllowed: true, pinRequired: false },
+            { channel: 3, function: "main_light", label: "Świetlówka przednia", defaultState: "auto", safeState: "off", manualAllowed: true, pinRequired: false },
+            { channel: 4, function: "plant_light", label: "Świetlówka tylna", defaultState: "auto", safeState: "off", manualAllowed: true, pinRequired: false },
             { channel: 5, function: "aeration", label: "Napowietrzanie", defaultState: "auto", safeState: "off", manualAllowed: true, pinRequired: false },
             { channel: 6, function: "co2", label: "Elektrozawór CO2", defaultState: "auto", safeState: "off", manualAllowed: true, pinRequired: true },
             { channel: 7, function: "water_dosing", label: "Dolewka wody ATO", defaultState: "auto", safeState: "off", manualAllowed: true, pinRequired: false },
@@ -32,8 +32,8 @@
         { value: "none", label: "Brak / nieużywany", icon: "fa-xmark", critical: false },
         { value: "filter", label: "Filtr", icon: "fa-filter", critical: true },
         { value: "heater", label: "Grzałka", icon: "fa-temperature-half", critical: true },
-        { value: "main_light", label: "Światło 1", icon: "fa-lightbulb", critical: false },
-        { value: "plant_light", label: "Światło 2", icon: "fa-lightbulb", critical: false },
+        { value: "main_light", label: "Świetlówka przednia", icon: "fa-lightbulb", critical: false },
+        { value: "plant_light", label: "Świetlówka tylna", icon: "fa-lightbulb", critical: false },
         { value: "aeration", label: "Napowietrzanie", icon: "fa-wind", critical: false },
         { value: "co2", label: "CO2", icon: "fa-cloud", critical: true },
         { value: "water_dosing", label: "Dolewka wody (ATO)", icon: "fa-droplet", critical: true },
@@ -50,8 +50,8 @@
 
     function buildFirmwareDefaultMap() {
         return [
-            { channel: 1, function: "main_light", label: "Światło 1", defaultState: "auto", safeState: "off", manualAllowed: true, pinRequired: false },
-            { channel: 2, function: "plant_light", label: "Światło 2", defaultState: "auto", safeState: "off", manualAllowed: true, pinRequired: false },
+            { channel: 1, function: "main_light", label: "Świetlówka przednia", defaultState: "auto", safeState: "off", manualAllowed: true, pinRequired: false },
+            { channel: 2, function: "plant_light", label: "Świetlówka tylna", defaultState: "auto", safeState: "off", manualAllowed: true, pinRequired: false },
             { channel: 3, function: "filter", label: "Filtr", defaultState: "auto", safeState: "on", manualAllowed: true, pinRequired: false },
             { channel: 4, function: "aeration", label: "Napowietrzanie", defaultState: "auto", safeState: "off", manualAllowed: true, pinRequired: false },
             { channel: 5, function: "heater", label: "Grzałka", defaultState: "auto", safeState: "off", manualAllowed: true, pinRequired: true },

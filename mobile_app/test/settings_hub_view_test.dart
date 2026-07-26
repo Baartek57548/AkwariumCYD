@@ -1,13 +1,24 @@
 import 'package:cyd_aquarium_mobile/aquarium_app.dart';
+import 'package:cyd_aquarium_mobile/app_settings.dart';
 import 'package:cyd_aquarium_mobile/full_controller/controller_api.dart';
 import 'package:cyd_aquarium_mobile/full_controller/controller_session.dart';
 import 'package:cyd_aquarium_mobile/full_controller/views/settings_hub_view.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 void main() {
+  setUp(() {
+    SharedPreferences.setMockInitialValues(<String, Object>{});
+    AppSettings.expertModeNotifier.value = false;
+  });
+
+  tearDown(() {
+    AppSettings.expertModeNotifier.value = false;
+  });
+
   testWidgets(
-    'hub pokazuje ustawienia codzienne i domyślnie ukrywa narzędzia serwisowe',
+    'hub ukrywa serwis w trybie prostym i odblokowuje go po autoryzacji',
     (tester) async {
       _configurePhoneViewport(tester);
       final session = ControllerSession.development();
@@ -49,6 +60,22 @@ void main() {
       await tester.tap(serviceTools);
       await tester.pumpAndSettle();
 
+      expect(
+        find.text('Tryb prosty chroni ustawienia serwisowe'),
+        findsOneWidget,
+      );
+      expect(find.text('Diagnostyka sprzętu'), findsNothing);
+
+      final enableExpert = find.byKey(const Key('enable-expert-mode-button'));
+      await Scrollable.ensureVisible(
+        tester.element(enableExpert),
+        alignment: 0.5,
+      );
+      await tester.pumpAndSettle();
+      await tester.tap(enableExpert);
+      await tester.pumpAndSettle();
+
+      expect(AppSettings.expertModeNotifier.value, isTrue);
       expect(find.text('Diagnostyka sprzętu'), findsOneWidget);
       expect(find.text('Kanały przekaźników'), findsOneWidget);
       expect(find.text('Aktualizacje i zasilanie'), findsOneWidget);
@@ -59,6 +86,7 @@ void main() {
 
   testWidgets('widoczne i serwisowe karty zachowują routing', (tester) async {
     _configurePhoneViewport(tester);
+    AppSettings.expertModeNotifier.value = true;
     final session = ControllerSession.development();
     addTearDown(session.dispose);
 

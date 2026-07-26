@@ -35,6 +35,7 @@ class ControlHubView extends StatefulWidget {
 
 class _ControlHubViewState extends State<ControlHubView> {
   final Set<String> _busyOutputs = {};
+  final Set<String> _busyModes = {};
   bool _feeding = false;
 
   Future<void> _setOutputMode(
@@ -99,12 +100,139 @@ class _ControlHubViewState extends State<ControlHubView> {
     }
   }
 
+  Future<void> _setTimedOverride(
+    _OutputDefinition output,
+    bool physicalOn,
+  ) async {
+    if (_busyOutputs.contains(output.id)) return;
+    final selection = await showModalBottomSheet<_TimedOverrideChoice>(
+      context: context,
+      showDragHandle: true,
+      isScrollControlled: true,
+      builder: (context) => _TimedOverrideSheet(
+        outputLabel: output.label,
+        initialState: !physicalOn,
+      ),
+    );
+    if (selection == null || !mounted) return;
+    setState(() => _busyOutputs.add(output.id));
+    try {
+      await widget.runAction(
+        'set_timed_override',
+        payload: {
+          'target': output.protocolTarget,
+          'state': selection.enabled,
+          'durationSec': selection.duration.inSeconds,
+        },
+        confirmation:
+            'Ustawić „${output.label}” na '
+            '${selection.enabled ? "ON" : "OFF"} przez '
+            '${_formatDuration(selection.duration)}? Po tym czasie sterownik '
+            'automatycznie wróci do wcześniejszego trybu.',
+      );
+    } on ControllerApiException {
+      // Powłoka prezentuje błąd i nie zmienia lokalnie stanu potwierdzonego.
+    } finally {
+      if (mounted) setState(() => _busyOutputs.remove(output.id));
+    }
+  }
+
+  Future<void> _clearTimedOverride(_OutputDefinition output) async {
+    if (_busyOutputs.contains(output.id)) return;
+    setState(() => _busyOutputs.add(output.id));
+    try {
+      await widget.runAction(
+        'clear_timed_override',
+        payload: {'target': output.protocolTarget},
+        confirmation:
+            'Zakończyć sterowanie czasowe dla „${output.label}” i natychmiast '
+            'przywrócić wcześniejszy tryb?',
+      );
+    } on ControllerApiException {
+      // Powłoka prezentuje błąd i zachowuje stan potwierdzony przez sterownik.
+    } finally {
+      if (mounted) setState(() => _busyOutputs.remove(output.id));
+    }
+  }
+
+  Future<void> _setLightProfile(
+    _OutputDefinition output,
+    String profile,
+  ) async {
+    final target = output.aquaelProfileTarget;
+    if (target == null || _busyOutputs.contains(output.id)) return;
+    setState(() => _busyOutputs.add(output.id));
+    try {
+      await widget.runAction(
+        'set_light_profile',
+        payload: {'target': target, 'profile': profile},
+        confirmation:
+            'Ustawić świetlówkę ${target == "front" ? "przednią" : "tylną"} '
+            'w tryb ${profile.toUpperCase()}? Sterownik wykona bezpieczną '
+            'sekwencję zasilania Aquael; podczas zmiany światło na chwilę '
+            'zgaśnie.',
+      );
+    } on ControllerApiException {
+      // Powłoka prezentuje wynik sekwencji potwierdzony przez sterownik.
+    } finally {
+      if (mounted) setState(() => _busyOutputs.remove(output.id));
+    }
+  }
+
+  Future<void> _toggleProcessMode({
+    required String id,
+    required bool active,
+  }) async {
+    if (_busyModes.contains(id)) return;
+    setState(() => _busyModes.add(id));
+    final feedingMode = id == 'feeding';
+    final action = active
+        ? feedingMode
+              ? 'stop_feeding_mode'
+              : 'stop_service_mode'
+        : feedingMode
+        ? 'start_feeding_mode'
+        : 'start_service_mode';
+    final duration = feedingMode
+        ? const Duration(minutes: 10)
+        : const Duration(minutes: 30);
+    try {
+      await widget.runAction(
+        action,
+        payload: active
+            ? const {}
+            : {
+                'durationSec': duration.inSeconds,
+                if (feedingMode) 'dispense': false,
+              },
+        confirmation: active
+            ? 'Zakończyć ${feedingMode ? "tryb karmienia" : "tryb serwisowy"} '
+                  'przed upływem ustawionego czasu?'
+            : feedingMode
+            ? 'Włączyć tryb karmienia na 10 minut? Sterownik bezpiecznie '
+                  'wstrzyma skonfigurowane urządzenia; pokarm podasz osobnym '
+                  'przyciskiem.'
+            : 'Włączyć tryb serwisowy na 30 minut? Sterownik zastosuje '
+                  'bezpieczną sekwencję wyjść i wróci automatycznie do pracy.',
+      );
+    } on ControllerApiException {
+      // Powłoka pokazuje komunikat zwrócony przez warstwę komunikacyjną.
+    } finally {
+      if (mounted) setState(() => _busyModes.remove(id));
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final status = widget.session.status;
     final modules = status.section('modules');
     final sensors = status.section('sensors');
     final feeding = status.section('feeding');
+    final controlState = status.section('controlState');
+    final lights = status.section('lights');
+    final feedingMode = controlState.section('feedingMode');
+    final serviceMode = controlState.section('serviceMode');
+    final timedOverrides = controlState.list('overrides');
     final hasStoredData = widget.session.hasStatusData;
     final hardwareReady =
         widget.session.isDevelopment ||
@@ -122,16 +250,18 @@ class _ControlHubViewState extends State<ControlHubView> {
         scheduleChannel: 'light1',
         action: 'set_light1',
         moduleKey: 'light_on',
-        label: 'Światło główne',
+        label: 'Świetlówka przednia',
         icon: Icons.lightbulb_rounded,
+        aquaelProfileTarget: 'front',
       ),
       _OutputDefinition(
         id: 'light2',
         scheduleChannel: 'light2',
         action: 'set_light2',
         moduleKey: 'plant_light_on',
-        label: 'Światło roślinne',
+        label: 'Świetlówka tylna',
         icon: Icons.wb_twilight_rounded,
+        aquaelProfileTarget: 'rear',
       ),
       _OutputDefinition(
         id: 'filter',
@@ -148,6 +278,7 @@ class _ControlHubViewState extends State<ControlHubView> {
         moduleKey: 'air_on',
         label: 'Napowietrzanie',
         icon: Icons.air_rounded,
+        protocolTarget: 'aeration',
       ),
       _OutputDefinition(
         id: 'heater',
@@ -193,6 +324,57 @@ class _ControlHubViewState extends State<ControlHubView> {
             ),
           ],
         ),
+        if (widget.session.supportsFeature('feedingMode') ||
+            widget.session.supportsFeature('serviceMode')) ...[
+          const SizedBox(height: AquaSpacing.lg),
+          const SectionHeader(
+            title: 'Tryby czasowe',
+            description:
+                'Bezpieczne procedury, które zakończą się automatycznie.',
+          ),
+          ResponsiveGrid(
+            minimumChildWidth: 300,
+            spacing: AquaSpacing.sm,
+            children: [
+              if (widget.session.supportsFeature('feedingMode'))
+                _TimedProcessCard(
+                  key: const Key('feeding-mode-card'),
+                  icon: Icons.restaurant_rounded,
+                  title: 'Tryb karmienia',
+                  description:
+                      'Wstrzymuje skonfigurowane urządzenia na 10 minut.',
+                  active: feedingMode.flag('active'),
+                  remainingSeconds: feedingMode.integer('remainingSec'),
+                  busy: _busyModes.contains('feeding'),
+                  enabled: commandReady,
+                  onToggle: () => unawaited(
+                    _toggleProcessMode(
+                      id: 'feeding',
+                      active: feedingMode.flag('active'),
+                    ),
+                  ),
+                ),
+              if (widget.session.supportsFeature('serviceMode'))
+                _TimedProcessCard(
+                  key: const Key('service-mode-card'),
+                  icon: Icons.handyman_rounded,
+                  title: 'Tryb serwisowy',
+                  description:
+                      'Bezpieczny stan wyjść podczas prac przy akwarium.',
+                  active: serviceMode.flag('active'),
+                  remainingSeconds: serviceMode.integer('remainingSec'),
+                  busy: _busyModes.contains('service'),
+                  enabled: commandReady,
+                  onToggle: () => unawaited(
+                    _toggleProcessMode(
+                      id: 'service',
+                      active: serviceMode.flag('active'),
+                    ),
+                  ),
+                ),
+            ],
+          ),
+        ],
         const SizedBox(height: AquaSpacing.lg),
         const SectionHeader(
           title: 'Urządzenia',
@@ -219,8 +401,30 @@ class _ControlHubViewState extends State<ControlHubView> {
                 enabled: commandReady,
                 dataAvailable: hasStoredData,
                 legacyBluetooth: widget.session.isLegacyBluetooth,
+                timedOverrideSupported: widget.session.supportsFeature(
+                  'timedOverrides',
+                ),
+                timedOverride: _findTimedOverride(
+                  timedOverrides,
+                  output.protocolTarget,
+                ),
+                aquaelProfileSupported:
+                    output.aquaelProfileTarget != null &&
+                    widget.session.supportsFeature('aquaelLightProfiles'),
+                lightState: _readLightState(
+                  lights,
+                  output.aquaelProfileTarget,
+                  output.id,
+                ),
                 onChanged: (current, selected) =>
                     unawaited(_setOutputMode(output, current, selected)),
+                onSetTimedOverride: () => unawaited(
+                  _setTimedOverride(output, modules.flag(output.moduleKey)),
+                ),
+                onClearTimedOverride: () =>
+                    unawaited(_clearTimedOverride(output)),
+                onLightProfileChanged: (profile) =>
+                    unawaited(_setLightProfile(output, profile)),
               ),
           ],
         ),
@@ -282,7 +486,14 @@ class _OutputModeCard extends StatelessWidget {
     required this.enabled,
     required this.dataAvailable,
     required this.legacyBluetooth,
+    required this.timedOverrideSupported,
+    required this.timedOverride,
+    required this.aquaelProfileSupported,
+    required this.lightState,
     required this.onChanged,
+    required this.onSetTimedOverride,
+    required this.onClearTimedOverride,
+    required this.onLightProfileChanged,
   });
 
   final _OutputDefinition definition;
@@ -292,8 +503,15 @@ class _OutputModeCard extends StatelessWidget {
   final bool enabled;
   final bool dataAvailable;
   final bool legacyBluetooth;
+  final bool timedOverrideSupported;
+  final JsonMap? timedOverride;
+  final bool aquaelProfileSupported;
+  final _LightState? lightState;
   final void Function(OutputControlMode current, OutputControlMode selected)
   onChanged;
+  final VoidCallback onSetTimedOverride;
+  final VoidCallback onClearTimedOverride;
+  final ValueChanged<String> onLightProfileChanged;
 
   @override
   Widget build(BuildContext context) {
@@ -419,6 +637,121 @@ class _OutputModeCard extends StatelessWidget {
             dataAvailable: dataAvailable,
             onSelected: (selected) => onChanged(schedule.mode, selected),
           ),
+          if (aquaelProfileSupported) ...[
+            const SizedBox(height: AquaSpacing.md),
+            Divider(height: 1, color: colors.outlineVariant),
+            const SizedBox(height: AquaSpacing.md),
+            DropdownButtonFormField<String>(
+              key: ValueKey<String>(
+                'aquael-profile-${definition.aquaelProfileTarget}',
+              ),
+              isExpanded: true,
+              initialValue:
+                  lightState?.known == true &&
+                      const {
+                        'day',
+                        'daybreak',
+                        'night',
+                      }.contains(lightState?.profile)
+                  ? lightState?.profile
+                  : null,
+              decoration: InputDecoration(
+                labelText: 'Tryb Aquael Day & Night',
+                prefixIcon: lightState?.transitioning == true
+                    ? const Padding(
+                        padding: EdgeInsets.all(14),
+                        child: SizedBox.square(
+                          dimension: 18,
+                          child: CircularProgressIndicator(strokeWidth: 2),
+                        ),
+                      )
+                    : const Icon(Icons.light_mode_outlined),
+                helperText: lightState?.transitioning == true
+                    ? 'Trwa bezpieczna sekwencja wyłączenie–włączenie.'
+                    : lightState?.known == false
+                    ? 'Pierwsza zmiana rozpocznie się kalibracją do trybu DAY.'
+                    : 'Krótka przerwa ≤5 s zmienia tryb; przerwa >5 s '
+                          'resetuje lampę do DAY.',
+              ),
+              items: const [
+                DropdownMenuItem(
+                  value: 'day',
+                  child: Text('DAY — pełne światło'),
+                ),
+                DropdownMenuItem(
+                  value: 'daybreak',
+                  child: Text('DAYBREAK — 50% + niebieskie'),
+                ),
+                DropdownMenuItem(
+                  value: 'night',
+                  child: Text('NIGHT — światło nocne'),
+                ),
+              ],
+              selectedItemBuilder: (context) => const [
+                Text('DAY', overflow: TextOverflow.ellipsis),
+                Text('DAYBREAK', overflow: TextOverflow.ellipsis),
+                Text('NIGHT', overflow: TextOverflow.ellipsis),
+              ],
+              onChanged: selectable && lightState?.transitioning != true
+                  ? (value) {
+                      if (value != null && value != lightState?.profile) {
+                        onLightProfileChanged(value);
+                      }
+                    }
+                  : null,
+            ),
+          ],
+          if (timedOverrideSupported) ...[
+            const SizedBox(height: AquaSpacing.md),
+            Divider(height: 1, color: colors.outlineVariant),
+            const SizedBox(height: AquaSpacing.md),
+            if (timedOverride case final override?)
+              Container(
+                key: ValueKey<String>('timed-override-active-${definition.id}'),
+                padding: const EdgeInsets.all(AquaSpacing.sm),
+                decoration: BoxDecoration(
+                  color: colors.tertiaryContainer.withValues(alpha: 0.6),
+                  borderRadius: BorderRadius.circular(AquaRadius.control),
+                ),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    Row(
+                      children: [
+                        Icon(
+                          Icons.timer_rounded,
+                          color: colors.onTertiaryContainer,
+                        ),
+                        const SizedBox(width: AquaSpacing.xs),
+                        Expanded(
+                          child: Text(
+                            'Czasowo ${override.flag('state') ? "ON" : "OFF"} · '
+                            '${_formatRemaining(override.integer('remainingSec'))}',
+                            style: TextStyle(
+                              color: colors.onTertiaryContainer,
+                              fontWeight: FontWeight.w900,
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: AquaSpacing.sm),
+                    OutlinedButton.icon(
+                      onPressed: selectable ? onClearTimedOverride : null,
+                      icon: const Icon(Icons.restore_rounded),
+                      label: const Text('Zakończ i przywróć automatykę'),
+                    ),
+                  ],
+                ),
+              )
+            else
+              OutlinedButton.icon(
+                key: ValueKey<String>('timed-override-button-${definition.id}'),
+                onPressed: selectable ? onSetTimedOverride : null,
+                icon: const Icon(Icons.timer_outlined),
+                label: const Text('Ustaw ON/OFF na określony czas'),
+              ),
+          ],
         ],
       ),
     );
@@ -589,6 +922,217 @@ class _FeederCard extends StatelessWidget {
   }
 }
 
+class _TimedProcessCard extends StatelessWidget {
+  const _TimedProcessCard({
+    super.key,
+    required this.icon,
+    required this.title,
+    required this.description,
+    required this.active,
+    required this.remainingSeconds,
+    required this.busy,
+    required this.enabled,
+    required this.onToggle,
+  });
+
+  final IconData icon;
+  final String title;
+  final String description;
+  final bool active;
+  final int remainingSeconds;
+  final bool busy;
+  final bool enabled;
+  final VoidCallback onToggle;
+
+  @override
+  Widget build(BuildContext context) {
+    final colors = Theme.of(context).colorScheme;
+    final tone = active ? context.statusColors.warning : colors.primary;
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.all(AquaSpacing.md),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Row(
+              children: [
+                Container(
+                  width: 48,
+                  height: 48,
+                  decoration: BoxDecoration(
+                    color: tone.withValues(alpha: 0.14),
+                    borderRadius: BorderRadius.circular(AquaRadius.control),
+                  ),
+                  child: Icon(icon, color: tone),
+                ),
+                const SizedBox(width: AquaSpacing.sm),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        title,
+                        style: Theme.of(context).textTheme.titleMedium
+                            ?.copyWith(fontWeight: FontWeight.w900),
+                      ),
+                      Text(
+                        active
+                            ? 'Aktywny · ${_formatRemaining(remainingSeconds)}'
+                            : description,
+                        style: TextStyle(color: colors.onSurfaceVariant),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: AquaSpacing.md),
+            FilledButton.tonalIcon(
+              onPressed: enabled && !busy ? onToggle : null,
+              icon: busy
+                  ? const SizedBox.square(
+                      dimension: 18,
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    )
+                  : Icon(
+                      active ? Icons.stop_rounded : Icons.play_arrow_rounded,
+                    ),
+              label: Text(active ? 'Zakończ teraz' : 'Uruchom'),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _TimedOverrideSheet extends StatefulWidget {
+  const _TimedOverrideSheet({
+    required this.outputLabel,
+    required this.initialState,
+  });
+
+  final String outputLabel;
+  final bool initialState;
+
+  @override
+  State<_TimedOverrideSheet> createState() => _TimedOverrideSheetState();
+}
+
+class _TimedOverrideSheetState extends State<_TimedOverrideSheet> {
+  static const _durations = [
+    Duration(minutes: 15),
+    Duration(hours: 1),
+    Duration(hours: 4),
+  ];
+
+  late bool _enabled;
+  Duration _duration = _durations.first;
+
+  @override
+  void initState() {
+    super.initState();
+    _enabled = widget.initialState;
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final bottomPadding = MediaQuery.viewPaddingOf(context).bottom;
+    return SafeArea(
+      top: false,
+      child: SingleChildScrollView(
+        padding: EdgeInsets.fromLTRB(
+          AquaSpacing.lg,
+          AquaSpacing.xs,
+          AquaSpacing.lg,
+          AquaSpacing.lg + bottomPadding,
+        ),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Text(
+              'Sterowanie czasowe',
+              style: Theme.of(
+                context,
+              ).textTheme.headlineSmall?.copyWith(fontWeight: FontWeight.w900),
+            ),
+            const SizedBox(height: AquaSpacing.xs),
+            Text(
+              '${widget.outputLabel} wróci automatycznie do wcześniejszego '
+              'trybu po upływie czasu.',
+            ),
+            const SizedBox(height: AquaSpacing.lg),
+            Text(
+              'Stan wyjścia',
+              style: Theme.of(
+                context,
+              ).textTheme.titleSmall?.copyWith(fontWeight: FontWeight.w800),
+            ),
+            const SizedBox(height: AquaSpacing.xs),
+            SegmentedButton<bool>(
+              segments: const [
+                ButtonSegment(
+                  value: true,
+                  icon: Icon(Icons.power_rounded),
+                  label: Text('ON'),
+                ),
+                ButtonSegment(
+                  value: false,
+                  icon: Icon(Icons.power_off_rounded),
+                  label: Text('OFF'),
+                ),
+              ],
+              selected: {_enabled},
+              onSelectionChanged: (selection) {
+                setState(() => _enabled = selection.first);
+              },
+            ),
+            const SizedBox(height: AquaSpacing.lg),
+            Text(
+              'Czas',
+              style: Theme.of(
+                context,
+              ).textTheme.titleSmall?.copyWith(fontWeight: FontWeight.w800),
+            ),
+            const SizedBox(height: AquaSpacing.xs),
+            SegmentedButton<Duration>(
+              segments: [
+                for (final duration in _durations)
+                  ButtonSegment(
+                    value: duration,
+                    label: Text(_formatDuration(duration)),
+                  ),
+              ],
+              selected: {_duration},
+              onSelectionChanged: (selection) {
+                setState(() => _duration = selection.first);
+              },
+            ),
+            const SizedBox(height: AquaSpacing.lg),
+            FilledButton.icon(
+              key: const Key('confirm-timed-override-button'),
+              onPressed: () => Navigator.pop(
+                context,
+                _TimedOverrideChoice(enabled: _enabled, duration: _duration),
+              ),
+              icon: const Icon(Icons.timer_rounded),
+              label: const Text('Ustaw sterowanie czasowe'),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _TimedOverrideChoice {
+  const _TimedOverrideChoice({required this.enabled, required this.duration});
+
+  final bool enabled;
+  final Duration duration;
+}
+
 class _ReadOnlyActuatorCard extends StatelessWidget {
   const _ReadOnlyActuatorCard({
     required this.icon,
@@ -674,8 +1218,10 @@ class _OutputDefinition {
     required this.moduleKey,
     required this.label,
     required this.icon,
+    String? protocolTarget,
+    this.aquaelProfileTarget,
     this.heater = false,
-  });
+  }) : protocolTarget = protocolTarget ?? id;
 
   final String id;
   final String scheduleChannel;
@@ -683,5 +1229,73 @@ class _OutputDefinition {
   final String moduleKey;
   final String label;
   final IconData icon;
+  final String protocolTarget;
+  final String? aquaelProfileTarget;
   final bool heater;
+}
+
+class _LightState {
+  const _LightState({
+    required this.profile,
+    required this.known,
+    required this.transitioning,
+  });
+
+  final String profile;
+  final bool known;
+  final bool transitioning;
+}
+
+JsonMap? _findTimedOverride(List<dynamic> overrides, String target) {
+  for (final raw in overrides) {
+    final override = jsonMap(raw);
+    if (override.text('target') == target) return override;
+  }
+  return null;
+}
+
+_LightState? _readLightState(
+  JsonMap lights,
+  String? canonicalTarget,
+  String compatibilityKey,
+) {
+  if (canonicalTarget == null) return null;
+  final canonical = lights.section(canonicalTarget);
+  final fallback = lights.section(compatibilityKey);
+  final source = canonical.isNotEmpty ? canonical : fallback;
+  if (source.isEmpty) {
+    return const _LightState(
+      profile: 'day',
+      known: false,
+      transitioning: false,
+    );
+  }
+  final profile = source.text('profile', 'day').toLowerCase();
+  return _LightState(
+    profile: profile,
+    known: source.flag(
+      'known',
+      const {'day', 'daybreak', 'night'}.contains(profile),
+    ),
+    transitioning: source.flag('transitioning'),
+  );
+}
+
+String _formatDuration(Duration duration) {
+  if (duration.inHours >= 1 && duration.inMinutes % 60 == 0) {
+    return duration.inHours == 1 ? '1 godz.' : '${duration.inHours} godz.';
+  }
+  return '${duration.inMinutes} min';
+}
+
+String _formatRemaining(int seconds) {
+  final safe = seconds.clamp(0, 86400);
+  final hours = safe ~/ 3600;
+  final minutes = (safe % 3600) ~/ 60;
+  final remainder = safe % 60;
+  if (hours > 0) {
+    return '$hours h ${minutes.toString().padLeft(2, '0')} min';
+  }
+  return '${minutes.toString().padLeft(2, '0')}:'
+      '${remainder.toString().padLeft(2, '0')}';
 }

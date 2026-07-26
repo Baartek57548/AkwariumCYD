@@ -1,4 +1,4 @@
-# AquaCYD Control 4
+# AquaCYD Control 5
 
 Profesjonalne, mobilne centrum dowodzenia dla sterownika akwarium AquaCYD. Aplikacja działa offline-first: cały interfejs jest dostępny od razu, pokazuje ostatni bezpiecznie zapisany stan, a po odzyskaniu Wi‑Fi automatycznie synchronizuje się ze sterownikiem. Łączy się także bezpośrednio przez BLE, chroni operacje administracyjne kodem PIN i prowadzi użytkownika od alarmu do właściwej akcji.
 
@@ -11,6 +11,9 @@ Profesjonalne, mobilne centrum dowodzenia dla sterownika akwarium AquaCYD. Aplik
 - priorytetyzacja alarmów, wiarygodności temperatury i stanu urządzeń wykonawczych,
 - progresywne ujawnianie informacji: czujniki dodatkowe, stany urządzeń, tryby wyjść i narzędzia serwisowe nie przeciążają widoku głównego,
 - sterowanie oświetleniem, filtrem, napowietrzaniem, termostatem i karmnikiem,
+- niezależne profile `DAY`, `DAYBREAK` i `NIGHT` dla świetlówki przedniej i tylnej Aquael,
+- bezpiecznie wygasające sterowanie czasowe, tryb karmienia i tryb serwisowy,
+- lokalne centrum alarmów, historia SQLite, przypomnienia serwisowe i opcjonalna kontrola Wi‑Fi w tle,
 - czytelne rozróżnienie fizycznego stanu wyjścia od trybu automatyki,
 - harmonogramy i reguły temperatury, CO₂, ATO oraz zabezpieczenia przed wyciekiem,
 - wykresy temperatury, próbki historyczne, logi i eksport danych,
@@ -27,7 +30,7 @@ Komendy są blokowane, gdy sterownik jest offline albo telemetria jest nieaktual
 | `full` | `lib/main_full.dart` | równoległa instalacja pełnego interfejsu bez kanału aktualizacji `current` | `pl.cydakwarium.cyd_aquarium_mobile.full` |
 | `dev` | `lib/main_dev.dart` | symulator sterownika w pamięci RAM, przeznaczony do rozwoju i testów UI | `pl.cydakwarium.cyd_aquarium_mobile.dev` |
 
-Kod zawiera techniczny moduł zgodności ze starszym panelem WWW oparty na WebView, ale wydanie 4.1.0 nie pokazuje go w produkcyjnym centrum połączeń. Nie istnieje osobny flavor ani publikowany APK `legacy`; podstawowym interfejsem jest natywne centrum dowodzenia.
+Kod zawiera techniczny moduł zgodności ze starszym panelem WWW oparty na WebView, ale wydanie 5.0.0 nie pokazuje go w produkcyjnym centrum połączeń. Nie istnieje osobny flavor ani publikowany APK `legacy`; podstawowym interfejsem jest natywne centrum dowodzenia.
 
 ## Wymagania
 
@@ -46,7 +49,7 @@ Kod zawiera techniczny moduł zgodności ze starszym panelem WWW oparty na WebVi
 
 Adres nie może zawierać loginu, hasła, parametrów zapytania ani fragmentu. Pełny zakres funkcji jest dostępny przez natywne REST API. BLE zapewnia sterowanie bez sieci, lecz zakres ekranów zależy od wersji protokołu zaimplementowanej w firmware. Specyfikacja znajduje się w [docs/ble-protocol.md](docs/ble-protocol.md).
 
-Nie należy wystawiać HTTP sterownika bezpośrednio do Internetu. Bieżący firmware przesyła PIN w lokalnym protokole HTTP, dlatego sieć musi być zaufana i odizolowana. Aplikacja usuwa PIN po przejściu w tło oraz po pięciu minutach bezczynności, ale nie zastępuje to TLS ani krótkotrwałego tokenu sesyjnego po stronie firmware.
+Nie należy wystawiać HTTP sterownika bezpośrednio do Internetu. Protokół v2 wymienia PIN tylko podczas tworzenia krótkotrwałej sesji, ale lokalny transport HTTP nadal nie zapewnia TLS, dlatego sieć musi być zaufana i odizolowana. Aplikacja usuwa PIN oraz token po przejściu w tło i wygasza sesję po pięciu minutach bezczynności.
 
 ## Architektura
 
@@ -56,6 +59,8 @@ Nie należy wystawiać HTTP sterownika bezpośrednio do Internetu. Bieżący fir
 - `ControllerSnapshotCache` — ograniczony i oczyszczony z sekretów zapis ostatniego potwierdzonego stanu,
 - `ControllerApi`, `BleRemoteApi` i `connectivity/` — izolacja transportu REST, BLE oraz symulatora,
 - `status_decoder.dart` — bezpieczne parsowanie, walidacja typów i limitów odpowiedzi,
+- `alarm_center/` — reguły, cykl życia, powiadomienia i synchronizacja lokalna w tle,
+- `local_history/` — ograniczona historia SQLite i przypomnienia serwisowe,
 - `design_system.dart` — tokeny kolorów, odstępów, promieni i motywy Material 3,
 - `app_update/` — wykrywanie, pobieranie, weryfikacja i przekazanie APK do instalatora Androida.
 
@@ -80,7 +85,7 @@ flutter test
 flutter build apk --release --flavor current --target lib/main.dart
 ```
 
-Wynik powstaje w `build/app/outputs/flutter-apk/app-current-release.apk`. Wydanie 4.1.0 jest publikowane jako `AquaCYD-Control-4.1.0-current.apk`.
+Wynik powstaje w `build/app/outputs/flutter-apk/app-current-release.apk`. Wydanie 5.0.0 jest publikowane jako `AquaCYD-Control-5.0.0-current.apk`.
 
 Build release wymaga pliku `android/key.properties` z niepustymi polami:
 
@@ -108,13 +113,12 @@ Kontrakt publikacji:
 
 Przed uruchomieniem instalatora Androida aplikacja sprawdza rozmiar, SHA‑256, nazwę pakietu, wersję i certyfikat. Pierwsza instalacja wymaga zgody „Zezwalaj z tego źródła”, a każda aktualizacja kończy się systemowym potwierdzeniem użytkownika. Aplikacja nie omija zabezpieczeń Androida i nie aktualizuje się bez zgody.
 
-## Ograniczenia zależne od firmware
+## Ograniczenia zależne od środowiska
 
-- telemetria jest odpytywana okresowo; bieżący firmware nie zapewnia WebSocket, SSE ani powiadomień push działających w tle,
-- wymuszenie `WŁ.` lub `WYŁ.` dla wyjścia zapisuje odpowiedni tryb harmonogramu; nie jest to czasowy override z automatycznym wygaśnięciem,
+- telemetria foreground jest odpytywana okresowo; kontrola w tle działa w przybliżeniu co 30 minut i tylko w tej samej lokalnej sieci Wi‑Fi,
+- instalację APK zawsze zatwierdza użytkownik w systemowym instalatorze Androida,
 - fizyczny stan grzałki nie oznacza włączenia lub wyłączenia termostatu — aplikacja pokazuje te informacje oddzielnie,
-- zapis konfiguracji sieci wymaga ponownego podania hasła, ponieważ bieżący endpoint firmware zastępuje komplet ustawień Wi‑Fi,
-- bieżący firmware zapisuje profil przekaźników, ale go nie odczytuje ani nie stosuje; aplikacja blokuje edytor do czasu dodania odczytu, walidacji, atomowego zastosowania i rollbacku po stronie sterownika,
-- historia, archiwa SD, OTA i zaawansowana diagnostyka nie są dostępne przez starszy protokół BLE v1.
-
-Rozszerzenie tych funkcji wymaga jednoczesnej zmiany firmware i kontraktu komunikacyjnego aplikacji.
+- zapis konfiguracji sieci wymaga ponownego podania hasła, ponieważ sterownik nie odsyła zapisanego sekretu,
+- starszy firmware v1 nadal nie obsługuje sesji v2, sterowania czasowego, profili Aquael ani pełnej diagnostyki BLE,
+- firmware 5.0.0 nie wymusza jeszcze szyfrowania, bondingu ani ochrony MITM połączenia BLE; transportu należy używać wyłącznie przy fizycznie kontrolowanym dostępie,
+- automatyczne zdalne OTA firmware pozostaje wyłączone do czasu provisionowania klucza zaufania i Secure Boot v2 na ESP32.

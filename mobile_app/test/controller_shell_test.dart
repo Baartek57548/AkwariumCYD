@@ -1,4 +1,5 @@
 import 'package:cyd_aquarium_mobile/aquarium_app.dart';
+import 'package:cyd_aquarium_mobile/app_settings.dart';
 import 'package:cyd_aquarium_mobile/full_controller/controller_session.dart';
 import 'package:cyd_aquarium_mobile/full_controller/controller_shell.dart';
 import 'package:cyd_aquarium_mobile/full_controller/data_access.dart';
@@ -6,6 +7,9 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
+  setUp(() => AppSettings.expertModeNotifier.value = false);
+  tearDown(() => AppSettings.expertModeNotifier.value = false);
+
   testWidgets('mobile shell exposes five command-center destinations', (
     tester,
   ) async {
@@ -151,6 +155,7 @@ void main() {
   testWidgets('all operational areas are reachable from the five sections', (
     tester,
   ) async {
+    AppSettings.expertModeNotifier.value = true;
     tester.view.devicePixelRatio = 1;
     tester.view.physicalSize = const Size(412, 915);
     addTearDown(tester.view.resetDevicePixelRatio);

@@ -36,8 +36,8 @@ class _RelaysViewState extends State<RelaysView> {
 
   static const functions = <String, String>{
     'none': 'Brak / nieużywany',
-    'main_light': 'Światło 1',
-    'plant_light': 'Światło 2',
+    'main_light': 'Świetlówka przednia',
+    'plant_light': 'Świetlówka tylna',
     'filter': 'Filtr',
     'aeration': 'Napowietrzanie',
     'heater': 'Grzałka',
@@ -552,7 +552,7 @@ List<_RelayDefinition> _firmwareDefaults() => const [
   _RelayDefinition(
     channel: 1,
     function: 'main_light',
-    label: 'Światło 1',
+    label: 'Świetlówka przednia',
     defaultState: 'auto',
     safeState: 'off',
     manualAllowed: true,
@@ -561,7 +561,7 @@ List<_RelayDefinition> _firmwareDefaults() => const [
   _RelayDefinition(
     channel: 2,
     function: 'plant_light',
-    label: 'Światło 2',
+    label: 'Świetlówka tylna',
     defaultState: 'auto',
     safeState: 'off',
     manualAllowed: true,

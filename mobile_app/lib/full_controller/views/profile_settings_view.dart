@@ -163,6 +163,52 @@ class _ProfileSettingsViewState extends State<ProfileSettingsView> {
     }
   }
 
+  Future<void> _disableExpertMode() async {
+    try {
+      await AppSettings.setExpertMode(false);
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text(
+            'Włączono tryb prosty. Funkcje serwisowe zostały ukryte.',
+          ),
+          behavior: SnackBarBehavior.floating,
+        ),
+      );
+    } on Object {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Nie udało się zmienić poziomu interfejsu.'),
+          behavior: SnackBarBehavior.floating,
+        ),
+      );
+    }
+  }
+
+  Future<void> _resetOnboarding() async {
+    try {
+      await AppSettings.resetOnboarding();
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text(
+            'Przewodnik uruchomi się ponownie przy następnym starcie aplikacji.',
+          ),
+          behavior: SnackBarBehavior.floating,
+        ),
+      );
+    } on Object {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Nie udało się zresetować przewodnika.'),
+          behavior: SnackBarBehavior.floating,
+        ),
+      );
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final updateController = AppUpdateScope.maybeOf(context, listen: false);
@@ -245,6 +291,54 @@ class _ProfileSettingsViewState extends State<ProfileSettingsView> {
                         label: const Text('Zapomnij zapisany sterownik'),
                       ),
                     ],
+                  ),
+                ),
+              ),
+              const SizedBox(height: 16),
+              const SectionHeader(title: 'Poziom interfejsu'),
+              ValueListenableBuilder<bool>(
+                valueListenable: AppSettings.expertModeNotifier,
+                builder: (context, expertMode, _) => Card(
+                  child: Padding(
+                    padding: const EdgeInsets.all(16),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      children: [
+                        ListTile(
+                          contentPadding: EdgeInsets.zero,
+                          leading: Icon(
+                            expertMode
+                                ? Icons.admin_panel_settings_rounded
+                                : Icons.shield_outlined,
+                          ),
+                          title: Text(
+                            expertMode ? 'Tryb ekspercki' : 'Tryb prosty',
+                            style: const TextStyle(fontWeight: FontWeight.w800),
+                          ),
+                          subtitle: Text(
+                            expertMode
+                                ? 'Widoczne są diagnostyka, OTA i operacje '
+                                      'serwisowe sterownika.'
+                                : 'Codzienny pulpit pozostaje czytelny, a '
+                                      'ryzykowne operacje są ukryte.',
+                          ),
+                        ),
+                        const SizedBox(height: 8),
+                        if (expertMode)
+                          OutlinedButton.icon(
+                            key: const Key('disable-expert-mode-button'),
+                            onPressed: _disableExpertMode,
+                            icon: const Icon(Icons.visibility_off_outlined),
+                            label: const Text('Włącz tryb prosty'),
+                          )
+                        else
+                          const Text(
+                            'Tryb ekspercki odblokujesz PIN-em w sekcji '
+                            '„Więcej → Narzędzia serwisowe”.',
+                            textAlign: TextAlign.center,
+                          ),
+                      ],
+                    ),
                   ),
                 ),
               ),
@@ -355,6 +449,39 @@ class _ProfileSettingsViewState extends State<ProfileSettingsView> {
                 const SectionHeader(title: 'Aplikacja'),
                 AppUpdateSettingsCard(controller: updateController),
               ],
+              const SizedBox(height: 16),
+              const SectionHeader(title: 'Pomoc'),
+              Card(
+                child: Padding(
+                  padding: const EdgeInsets.all(16),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      const ListTile(
+                        contentPadding: EdgeInsets.zero,
+                        leading: Icon(Icons.explore_outlined),
+                        title: Text(
+                          'Przewodnik startowy',
+                          style: TextStyle(fontWeight: FontWeight.w800),
+                        ),
+                        subtitle: Text(
+                          'Ponownie wyjaśni pracę offline, alarmy i sposoby '
+                          'połączenia ze sterownikiem.',
+                        ),
+                      ),
+                      const SizedBox(height: 8),
+                      OutlinedButton.icon(
+                        key: const Key('reset-onboarding-button'),
+                        onPressed: _resetOnboarding,
+                        icon: const Icon(Icons.restart_alt_rounded),
+                        label: const Text(
+                          'Pokaż przewodnik przy następnym starcie',
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
               const SizedBox(height: 24),
               FilledButton.icon(
                 onPressed: _saving ? null : _save,

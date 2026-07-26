@@ -1,0 +1,353 @@
+name: Publish validated release
+
+on:
+  push:
+    tags:
+      - "mobile-v*.*.*"
+      - "firmware-v*.*.*"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  mobile:
+    name: Signed Android release
+    if: ${{ startsWith(github.ref_name, 'mobile-v') }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    environment: production-mobile
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: "8.14"
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: "3.41.5"
+          channel: stable
+          cache: true
+      - name: Validate tag against pubspec before signing
+        run: >
+          python scripts/validate_release.py
+          --tag "$GITHUB_REF_NAME"
+          --pubspec mobile_app/pubspec.yaml
+          --dry-run
+      - name: Materialize signing identity and recreate ignored Gradle wrapper
+        shell: bash
+        env:
+          ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+          ANDROID_STORE_PASSWORD: ${{ secrets.ANDROID_STORE_PASSWORD }}
+        run: |
+          set -euo pipefail
+          for name in \
+            ANDROID_KEYSTORE_BASE64 \
+            ANDROID_KEY_ALIAS \
+            ANDROID_KEY_PASSWORD \
+            ANDROID_STORE_PASSWORD
+          do
+            test -n "${!name}" || {
+              echo "Required signing secret $name is absent" >&2
+              exit 1
+            }
+          done
+          umask 077
+          key_path="$RUNNER_TEMP/aquacyd-release.jks"
+          printf '%s' "$ANDROID_KEYSTORE_BASE64" |
+            base64 --decode > "$key_path"
+          test -s "$key_path"
+          {
+            printf 'storePassword=%s\n' "$ANDROID_STORE_PASSWORD"
+            printf 'keyPassword=%s\n' "$ANDROID_KEY_PASSWORD"
+            printf 'keyAlias=%s\n' "$ANDROID_KEY_ALIAS"
+            printf 'storeFile=%s\n' "$key_path"
+          } > mobile_app/android/key.properties
+          flutter_sdk="$(dirname "$(dirname "$(command -v flutter)")")"
+          android_sdk="${ANDROID_SDK_ROOT:-${ANDROID_HOME:-}}"
+          test -n "$android_sdk"
+          printf 'sdk.dir=%s\nflutter.sdk=%s\n' \
+            "$android_sdk" "$flutter_sdk" \
+            > mobile_app/android/local.properties
+          gradle \
+            --project-dir mobile_app/android \
+            wrapper \
+            --gradle-version 8.14 \
+            --distribution-type all
+          chmod +x mobile_app/android/gradlew
+      - name: Resolve and analyze Flutter
+        working-directory: mobile_app
+        run: |
+          flutter pub get
+          flutter analyze
+          flutter test
+      - name: Run Android unit tests
+        working-directory: mobile_app/android
+        run: ./gradlew testCurrentDebugUnitTest --no-daemon --console=plain
+      - name: Build signed APK
+        working-directory: mobile_app
+        run: |
+          flutter build apk \
+            --release \
+            --flavor current \
+            --target lib/main.dart
+      - name: Verify package, version, signature and SHA-256
+        id: metadata
+        shell: bash
+        env:
+          EXPECTED_ANDROID_CERT_SHA256: 394b82b7779b9b07375237fb5233082d416c75a06dfc3a232955861176880e9e
+        run: |
+          set -euo pipefail
+          version="${GITHUB_REF_NAME#mobile-v}"
+          output_dir="$RUNNER_TEMP/mobile-release"
+          apk="$output_dir/AquaCYD-Control-$version-current.apk"
+          mkdir -p "$output_dir"
+          cp \
+            mobile_app/build/app/outputs/flutter-apk/app-current-release.apk \
+            "$apk"
+          build_tools="${ANDROID_SDK_ROOT:-$ANDROID_HOME}/build-tools"
+          aapt_path="$(find "$build_tools" -type f -name aapt -print | sort -V | tail -n 1)"
+          apksigner_path="$(
+            find "$build_tools" -type f -name apksigner -print |
+              sort -V |
+              tail -n 1
+          )"
+          test -x "$aapt_path"
+          test -x "$apksigner_path"
+          badging_output="$("$aapt_path" dump badging "$apk")"
+          badging="${badging_output%%$'\n'*}"
+          package_name="$(sed -n "s/.*package: name='\\([^']*\\)'.*/\\1/p" <<<"$badging")"
+          version_code="$(sed -n "s/.*versionCode='\\([^']*\\)'.*/\\1/p" <<<"$badging")"
+          version_name="$(sed -n "s/.*versionName='\\([^']*\\)'.*/\\1/p" <<<"$badging")"
+          signer_output="$("$apksigner_path" verify --verbose --print-certs "$apk")"
+          printf '%s\n' "$signer_output"
+          certificate_sha="$(
+            sed -n \
+              's/^Signer #1 certificate SHA-256 digest: //p; t done; b; :done; q' \
+              <<<"$signer_output" |
+              tr '[:upper:]' '[:lower:]' |
+              tr -d ':[:space:]'
+          )"
+          test "$certificate_sha" = "$EXPECTED_ANDROID_CERT_SHA256" || {
+            echo "APK was signed by an unexpected certificate" >&2
+            exit 1
+          }
+          python scripts/validate_release.py \
+            --tag "$GITHUB_REF_NAME" \
+            --asset "$apk" \
+            --pubspec mobile_app/pubspec.yaml \
+            --package-name "$package_name" \
+            --apk-version-name "$version_name" \
+            --apk-version-code "$version_code" \
+            --checksums "$output_dir/SHA256SUMS" \
+            --manifest "$output_dir/release-manifest.json"
+          (
+            cd "$output_dir"
+            sha256sum --check SHA256SUMS
+          )
+          echo "directory=$output_dir" >> "$GITHUB_OUTPUT"
+          echo "apk=$apk" >> "$GITHUB_OUTPUT"
+      - name: Refuse overwrite of an existing release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
+            echo "Release $GITHUB_REF_NAME already exists; refusing overwrite" >&2
+            exit 1
+          fi
+      - name: Publish immutable release assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_DIR: ${{ steps.metadata.outputs.directory }}
+          RELEASE_APK: ${{ steps.metadata.outputs.apk }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" \
+            "$RELEASE_APK" \
+            "$RELEASE_DIR/SHA256SUMS" \
+            "$RELEASE_DIR/release-manifest.json" \
+            --verify-tag \
+            --title "AquaCYD Control ${GITHUB_REF_NAME#mobile-v}" \
+            --generate-notes
+      - name: Remove signing material
+        if: always()
+        run: |
+          rm -f \
+            mobile_app/android/key.properties \
+            "$RUNNER_TEMP/aquacyd-release.jks"
+
+  firmware-native:
+    name: Firmware native tests
+    if: ${{ startsWith(github.ref_name, 'firmware-v') }}
+    runs-on: windows-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cache/pip
+            ~/.platformio/.cache
+          key: platformio-${{ runner.os }}-${{ hashFiles('platformio.ini') }}
+          restore-keys: platformio-${{ runner.os }}-
+      - name: Install PlatformIO
+        run: python -m pip install --disable-pip-version-check platformio==6.1.19
+      - name: Validate HIL contract without hardware
+        run: |
+          python tools/hil/runner.py --self-test
+          python tools/hil/runner.py --dry-run
+      - name: Run native domain tests
+        run: pio test --environment native
+
+  firmware:
+    name: Firmware release
+    if: ${{ startsWith(github.ref_name, 'firmware-v') }}
+    needs: firmware-native
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    environment: production-firmware
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cache/pip
+            ~/.platformio/.cache
+          key: platformio-${{ runner.os }}-${{ hashFiles('platformio.ini') }}
+          restore-keys: platformio-${{ runner.os }}-
+      - name: Validate tag
+        run: >
+          python scripts/validate_release.py
+          --tag "$GITHUB_REF_NAME"
+          --dry-run
+      - name: Install PlatformIO
+        run: python -m pip install --disable-pip-version-check platformio==6.1.19
+      - name: Verify embedded web assets
+        run: |
+          npm ci
+          npm run test:api
+          npm run build:web-assets
+          git diff --exit-code -- sdcard/aq/ota
+      - name: Compile both display variants
+        run: |
+          pio run --environment esp32dev
+          pio run --environment esp32dev-st7789
+      - name: Validate firmware names and SHA-256
+        id: metadata
+        shell: bash
+        run: |
+          set -euo pipefail
+          version="${GITHUB_REF_NAME#firmware-v}"
+          output_dir="$RUNNER_TEMP/firmware-release"
+          ili9341="$output_dir/AquaCYD-Firmware-$version-ili9341.bin"
+          st7789="$output_dir/AquaCYD-Firmware-$version-st7789.bin"
+          mkdir -p "$output_dir"
+          cp .pio/build/esp32dev/firmware.bin "$ili9341"
+          cp .pio/build/esp32dev-st7789/firmware.bin "$st7789"
+          python scripts/validate_release.py \
+            --tag "$GITHUB_REF_NAME" \
+            --asset "$ili9341" \
+            --asset "$st7789" \
+            --checksums "$output_dir/SHA256SUMS" \
+            --manifest "$output_dir/release-manifest.json"
+          (
+            cd "$output_dir"
+            sha256sum --check SHA256SUMS
+          )
+          echo "directory=$output_dir" >> "$GITHUB_OUTPUT"
+      - name: Sign OTA binaries and manifest with Ed25519
+        shell: bash
+        env:
+          FIRMWARE_SIGNING_KEY_BASE64: ${{ secrets.FIRMWARE_SIGNING_KEY_BASE64 }}
+          RELEASE_DIR: ${{ steps.metadata.outputs.directory }}
+        run: |
+          set -euo pipefail
+          test -n "$FIRMWARE_SIGNING_KEY_BASE64" || {
+            echo "Required secret FIRMWARE_SIGNING_KEY_BASE64 is absent" >&2
+            exit 1
+          }
+          umask 077
+          private_key="$RUNNER_TEMP/aquacyd-firmware-ed25519.pem"
+          public_key="$RELEASE_DIR/firmware-signing-public.pem"
+          printf '%s' "$FIRMWARE_SIGNING_KEY_BASE64" |
+            base64 --decode > "$private_key"
+          test -s "$private_key"
+          openssl pkey \
+            -in "$private_key" \
+            -pubout \
+            -out "$public_key"
+          for payload in "$RELEASE_DIR"/*.bin "$RELEASE_DIR/release-manifest.json"
+          do
+            openssl pkeyutl \
+              -sign \
+              -rawin \
+              -inkey "$private_key" \
+              -in "$payload" \
+              -out "$payload.sig"
+            test "$(wc -c < "$payload.sig")" -eq 64
+            openssl pkeyutl \
+              -verify \
+              -rawin \
+              -pubin \
+              -inkey "$public_key" \
+              -in "$payload" \
+              -sigfile "$payload.sig"
+          done
+          openssl pkey \
+            -pubin \
+            -in "$public_key" \
+            -outform DER |
+            sha256sum |
+            awk '{print $1 "  firmware-signing-public-key"}' \
+            > "$RELEASE_DIR/SIGNING_KEY_SHA256"
+      - name: Refuse overwrite of an existing release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
+            echo "Release $GITHUB_REF_NAME already exists; refusing overwrite" >&2
+            exit 1
+          fi
+      - name: Publish firmware release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_DIR: ${{ steps.metadata.outputs.directory }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" \
+            "$RELEASE_DIR"/*.bin \
+            "$RELEASE_DIR"/*.bin.sig \
+            "$RELEASE_DIR/SHA256SUMS" \
+            "$RELEASE_DIR/release-manifest.json" \
+            "$RELEASE_DIR/release-manifest.json.sig" \
+            "$RELEASE_DIR/firmware-signing-public.pem" \
+            "$RELEASE_DIR/SIGNING_KEY_SHA256" \
+            --verify-tag \
+            --title "AquaCYD Firmware ${GITHUB_REF_NAME#firmware-v}" \
+            --generate-notes
+      - name: Remove firmware signing material
+        if: always()
+        run: rm -f "$RUNNER_TEMP/aquacyd-firmware-ed25519.pem"

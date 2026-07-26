@@ -18,10 +18,13 @@ class ControllerApiException implements Exception {
   final int? statusCode;
 
   bool get isAuthenticationError =>
+      statusCode == HttpStatus.unauthorized ||
       statusCode == HttpStatus.forbidden ||
       code == 'invalid_pin' ||
       code == 'pin_invalid' ||
-      code == 'pin_required';
+      code == 'pin_required' ||
+      code == 'session_required' ||
+      code == 'session_expired';
 
   @override
   String toString() => message;
@@ -55,6 +58,57 @@ class ControllerActionResult {
   final bool success;
   final String code;
   final String message;
+}
+
+class ControllerAdminSession {
+  const ControllerAdminSession({required this.token, required this.expiresAt});
+
+  factory ControllerAdminSession.fromJson(
+    Map<String, dynamic> json, {
+    DateTime? authenticatedAt,
+  }) {
+    final token = json['sessionToken']?.toString() ?? '';
+    if (!RegExp(r'^[a-fA-F0-9]{32}$').hasMatch(token)) {
+      throw const ControllerApiException(
+        code: 'invalid_auth_response',
+        message: 'Sterownik zwrócił nieprawidłowy token sesji.',
+      );
+    }
+    final rawExpires = json['expiresInSec'];
+    final expiresInSeconds = rawExpires is num
+        ? rawExpires.toInt()
+        : int.tryParse(rawExpires?.toString() ?? '');
+    if (expiresInSeconds == null ||
+        expiresInSeconds < 30 ||
+        expiresInSeconds > 3600) {
+      throw const ControllerApiException(
+        code: 'invalid_auth_response',
+        message: 'Sterownik zwrócił nieprawidłowy czas sesji.',
+      );
+    }
+    return ControllerAdminSession(
+      token: token.toLowerCase(),
+      expiresAt: (authenticatedAt ?? DateTime.now()).add(
+        Duration(seconds: expiresInSeconds),
+      ),
+    );
+  }
+
+  final String token;
+  final DateTime expiresAt;
+
+  bool get isValid => DateTime.now().isBefore(expiresAt);
+}
+
+abstract interface class ControllerProtocolV2Api {
+  Future<Map<String, dynamic>> capabilities();
+  Future<ControllerAdminSession> authenticateSession(String pin);
+  Future<ControllerActionResult> actionV2(
+    String action, {
+    required String commandId,
+    required String token,
+    Map<String, Object?> payload = const {},
+  });
 }
 
 abstract interface class ControllerRemoteApi {
@@ -91,7 +145,7 @@ abstract interface class ControllerRemoteApi {
   Future<void> webSession(String sessionId, String state);
 }
 
-class ControllerApi implements ControllerRemoteApi {
+class ControllerApi implements ControllerRemoteApi, ControllerProtocolV2Api {
   ControllerApi(
     Uri baseUri, {
     Duration requestDeadline = const Duration(seconds: 12),
@@ -163,6 +217,21 @@ class ControllerApi implements ControllerRemoteApi {
   }
 
   @override
+  Future<Map<String, dynamic>> capabilities() async {
+    final response = await getJson('/api/v2/capabilities');
+    final data = response['data'];
+    if (data is Map<String, dynamic>) {
+      return Map<String, dynamic>.unmodifiable(data);
+    }
+    if (data is Map) {
+      return Map<String, dynamic>.unmodifiable(
+        data.map((key, value) => MapEntry(key.toString(), value)),
+      );
+    }
+    return Map<String, dynamic>.unmodifiable(response);
+  }
+
+  @override
   Future<Map<String, dynamic>> logs(String pin) {
     return getJson('/api/logs', queryParameters: {'pin': pin});
   }
@@ -211,6 +280,65 @@ class ControllerApi implements ControllerRemoteApi {
   @override
   Future<ControllerActionResult> authenticate(String pin) {
     return action('auth_check', pin: pin, includePin: true);
+  }
+
+  @override
+  Future<ControllerAdminSession> authenticateSession(String pin) async {
+    final response = await _request(
+      'POST',
+      resolve('/api/v2/auth'),
+      headers: const {HttpHeaders.contentTypeHeader: 'application/json'},
+      body: utf8.encode(jsonEncode({'v': 2, 'pin': pin})),
+      allowRetry: false,
+    );
+    final decoded = _decodeJsonObject(response.body);
+    if (!response.isSuccess || decoded['ok'] != true) {
+      throw ControllerApiException(
+        message:
+            decoded['message']?.toString() ??
+            'Nie udało się rozpocząć bezpiecznej sesji administratora.',
+        code: decoded['code']?.toString() ?? 'authentication_failed',
+        statusCode: response.statusCode,
+      );
+    }
+    final rawData = decoded['data'];
+    final data = rawData is Map<String, dynamic>
+        ? rawData
+        : rawData is Map
+        ? rawData.map((key, value) => MapEntry(key.toString(), value))
+        : <String, dynamic>{};
+    return ControllerAdminSession.fromJson(data);
+  }
+
+  @override
+  Future<ControllerActionResult> actionV2(
+    String actionName, {
+    required String commandId,
+    required String token,
+    Map<String, Object?> payload = const {},
+  }) {
+    if (!RegExp(r'^[a-zA-Z0-9_-]{8,48}$').hasMatch(commandId)) {
+      throw const ControllerApiException(
+        code: 'invalid_command_id',
+        message: 'Identyfikator polecenia ma nieprawidłowy format.',
+      );
+    }
+    if (!RegExp(r'^[a-fA-F0-9]{32}$').hasMatch(token)) {
+      throw const ControllerApiException(
+        code: 'invalid_session_token',
+        message: 'Token sesji administratora ma nieprawidłowy format.',
+      );
+    }
+    return action(
+      actionName,
+      payload: {
+        'v': 2,
+        'commandId': commandId,
+        'token': token.toLowerCase(),
+        ...payload,
+      },
+      includePin: false,
+    );
   }
 
   @override

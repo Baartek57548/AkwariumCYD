@@ -122,6 +122,14 @@ struct GuiBleCommandResult {
     const char *message;
 };
 
+struct GuiV2AuthResult {
+    bool success;
+    const char *code;
+    const char *message;
+    uint32_t expires_in_seconds;
+    uint32_t retry_after_seconds;
+};
+
 /**
  * @brief Tworzy spójny, stałorozmiarowy obraz telemetrii dla transportu BLE.
  * @return false przed zakończeniem inicjalizacji konfiguracji GUI.
@@ -162,5 +170,28 @@ bool gui_app_ble_diagnostics_json(char *out, size_t out_size, const char *pin);
 GuiBleCommandResult gui_app_ble_action(const char *action,
                                        const char *command_json,
                                        const char *pin);
+
+/** @brief Issues a bounded, short-lived admin token after PIN rate limiting. */
+GuiV2AuthResult gui_app_v2_auth(const char *pin,
+                                char *out_token,
+                                size_t out_token_size);
+
+/**
+ * Executes an idempotent protocol-v2 action using a valid short-lived token.
+ * Legacy protocol-v1 entry points remain available separately with PIN auth.
+ */
+GuiBleCommandResult gui_app_v2_action(const char *action,
+                                      const char *command_json,
+                                      const char *pin,
+                                      const char *token,
+                                      const char *command_id,
+                                      bool *out_duplicate,
+                                      char *out_replay_code,
+                                      size_t out_replay_code_size,
+                                      char *out_replay_message,
+                                      size_t out_replay_message_size);
+
+/** @brief Serializes the common HTTP/BLE protocol-v2 capability document. */
+bool gui_app_v2_capabilities_json(char *out, size_t out_size);
 
 #endif // GUI_APP_H

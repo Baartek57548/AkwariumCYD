@@ -3,12 +3,15 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
+import '../controller_runtime_services.dart';
+import '../design_system.dart';
 import 'connection_health.dart';
 import 'connection_health_bar.dart';
 import 'controller_api.dart';
 import 'controller_session.dart';
 import 'data_access.dart';
 import 'widgets.dart';
+import 'views/alarm_center_view.dart';
 import 'views/automation_center_view.dart';
 import 'views/control_hub_view.dart';
 import 'views/dashboard_view.dart';
@@ -29,11 +32,13 @@ class ControllerShell extends StatefulWidget {
     required this.session,
     this.onOpenConnection,
     this.disposeSession = true,
+    this.runtimeServices,
   });
 
   final ControllerSession session;
   final VoidCallback? onOpenConnection;
   final bool disposeSession;
+  final ControllerRuntimeServices? runtimeServices;
 
   @override
   State<ControllerShell> createState() => _ControllerShellState();
@@ -164,9 +169,31 @@ class _ControllerShellState extends State<ControllerShell>
         payload: payload,
         refreshAfter: refreshAfter,
       );
+      final runtimeServices = widget.runtimeServices;
+      if (runtimeServices != null) {
+        unawaited(
+          runtimeServices.recordCommand(
+            action: name,
+            succeeded: result.success,
+            detail: result.message,
+          ),
+        );
+      }
       if (mounted) _showMessage(result.message, success: result.success);
       return result;
     } on ControllerApiException catch (error) {
+      final runtimeServices = widget.runtimeServices;
+      if (runtimeServices != null &&
+          error.code != 'action_cancelled' &&
+          error.code != 'admin_cancelled') {
+        unawaited(
+          runtimeServices.recordCommand(
+            action: name,
+            succeeded: false,
+            detail: error.message,
+          ),
+        );
+      }
       if (mounted &&
           error.code != 'action_cancelled' &&
           error.code != 'admin_cancelled') {
@@ -228,6 +255,16 @@ class _ControllerShellState extends State<ControllerShell>
   void _openControls() {
     if (_section == _ControllerSection.control) return;
     setState(() => _section = _ControllerSection.control);
+  }
+
+  void _openAlarmCenter() {
+    final services = widget.runtimeServices;
+    if (services == null) return;
+    Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        builder: (_) => AlarmCenterView(services: services),
+      ),
+    );
   }
 
   List<Widget> _sectionViews() {
@@ -339,6 +376,29 @@ class _ControllerShellState extends State<ControllerShell>
           builder: (context, _) => _ControllerHeader(session: session),
         ),
         actions: [
+          if (widget.runtimeServices case final services?)
+            ListenableBuilder(
+              listenable: services,
+              builder: (context, _) => IconButton(
+                key: const Key('alarm-center-button'),
+                tooltip: 'Alarmy i opieka',
+                onPressed: _openAlarmCenter,
+                icon: Badge(
+                  isLabelVisible: services.activeAlarmCount > 0,
+                  label: Text(
+                    services.activeAlarmCount.clamp(0, 99).toString(),
+                  ),
+                  backgroundColor: services.criticalAlarmCount > 0
+                      ? Theme.of(context).colorScheme.error
+                      : context.statusColors.warning,
+                  child: Icon(
+                    services.activeAlarmCount > 0
+                        ? Icons.notifications_active_rounded
+                        : Icons.notifications_none_rounded,
+                  ),
+                ),
+              ),
+            ),
           ListenableBuilder(
             listenable: session,
             builder: (context, _) => PopupMenuButton<_HeaderAction>(

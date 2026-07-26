@@ -249,7 +249,7 @@ class _SchedulesViewState extends State<SchedulesView> {
           ),
         const SizedBox(height: 10),
         _ScheduleCard(
-          title: 'Światło 1',
+          title: 'Świetlówka przednia',
           icon: Icons.lightbulb_rounded,
           entry: light,
           profileEnabled: true,
@@ -259,7 +259,7 @@ class _SchedulesViewState extends State<SchedulesView> {
         ),
         const SizedBox(height: 10),
         _ScheduleCard(
-          title: 'Światło 2',
+          title: 'Świetlówka tylna',
           icon: Icons.lightbulb_outline_rounded,
           entry: plant,
           profileEnabled: true,
@@ -448,13 +448,13 @@ class _ScheduleTimeline extends StatelessWidget {
             const SizedBox(height: 10),
             const _TimelineAxis(),
             _TimelineRow(
-              label: 'Światło 1',
+              label: 'Przednia',
               entry: light,
               color: const Color(0xFFFFB020),
               lightProfiles: true,
             ),
             _TimelineRow(
-              label: 'Światło 2',
+              label: 'Tylna',
               entry: plant,
               color: const Color(0xFFFACC15),
               lightProfiles: true,

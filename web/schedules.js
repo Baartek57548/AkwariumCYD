@@ -320,7 +320,7 @@ function renderScheduleEditor(data) {
     setCommandStatus(
         'schedule-strip-outputs',
         commandCountLabel(enabledOutputs, 'modul aktywny', 'modulow aktywnych'),
-        `Światło 1 ${lightProfileCycle ? 'AUTO 3 TRYBY' : lightProfile.toUpperCase()} / Światło 2 ${light2ProfileCycle ? 'AUTO 3 TRYBY' : plantLightProfile.toUpperCase()} / karmnik ${feedEnabled ? 'ON' : 'OFF'}`,
+        `Przednia ${lightProfileCycle ? 'AUTO 3 TRYBY' : lightProfile.toUpperCase()} / Tylna ${light2ProfileCycle ? 'AUTO 3 TRYBY' : plantLightProfile.toUpperCase()} / karmnik ${feedEnabled ? 'ON' : 'OFF'}`,
         enabledOutputs > 0 ? 'ok' : 'neutral'
     );
 

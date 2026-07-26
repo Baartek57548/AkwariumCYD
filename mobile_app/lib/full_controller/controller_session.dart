@@ -19,6 +19,24 @@ class ControllerSession extends ChangeNotifier {
   static const int _offlineFailureThreshold = 3;
   static const int _maximumCachedArchives = 2;
   static const int _maximumArchiveBytes = 8 * 1024 * 1024;
+  static const Set<String> _timedOverrideTargets = {
+    'light1',
+    'light2',
+    'filter',
+    'heater',
+    'aeration',
+    'co2',
+    'water_dosing',
+  };
+  static const Set<String> _protocolV2Actions = {
+    'set_light_profile',
+    'set_timed_override',
+    'clear_timed_override',
+    'start_feeding_mode',
+    'stop_feeding_mode',
+    'start_service_mode',
+    'stop_service_mode',
+  };
 
   ControllerSession.wifi(
     ControllerRemoteApi api, {
@@ -47,6 +65,7 @@ class ControllerSession extends ChangeNotifier {
       _api = null,
       _offlineMode = false,
       _status = _createDevelopmentStatus() {
+    _capabilities = _createDevelopmentCapabilities();
     _logs = _createDevelopmentLogs();
     _diagnostics = _createDevelopmentDiagnostics();
   }
@@ -66,6 +85,7 @@ class ControllerSession extends ChangeNotifier {
   final ControllerRemoteApi? _api;
   final bool _offlineMode;
   JsonMap _status;
+  JsonMap _capabilities = <String, dynamic>{};
   JsonMap _logs = <String, dynamic>{};
   JsonMap _diagnostics = <String, dynamic>{};
   List<dynamic> _historyFiles = const [];
@@ -80,12 +100,15 @@ class ControllerSession extends ChangeNotifier {
   final String _webSessionId =
       'm${DateTime.now().microsecondsSinceEpoch.toRadixString(36)}';
   String? _adminPin;
+  String? _adminToken;
+  DateTime? _adminTokenExpiresAt;
   String? _error;
   String? _activeAction;
   bool _connected = false;
   bool _appActive = true;
   bool _automaticReconnect = true;
   bool _hasCompletedInitialRefresh = false;
+  bool _capabilityDiscoveryAttempted = false;
   bool _disposed = false;
   int _busyOperations = 0;
   int _failedPolls = 0;
@@ -94,6 +117,7 @@ class ControllerSession extends ChangeNotifier {
   ControllerConnectionPhase _connectionPhase =
       ControllerConnectionPhase.connecting;
   final Random _random = Random(7357);
+  final Random _commandRandom = Random.secure();
 
   ControllerSessionKind get sessionKind => kind;
   bool get isDevelopment => kind == ControllerSessionKind.development;
@@ -108,7 +132,10 @@ class ControllerSession extends ChangeNotifier {
   bool get connected => _connected;
   bool get automaticReconnect => _automaticReconnect;
   bool get busy => _busyOperations > 0;
-  bool get isAdmin => _adminPin != null;
+  bool get isAdmin =>
+      _adminPin != null &&
+      (_adminToken == null ||
+          (_adminTokenExpiresAt?.isAfter(DateTime.now()) ?? false));
   String? get error => _error;
   DateTime? get lastUpdate => _lastUpdate;
   Duration? get roundTrip => _lastRoundTrip;
@@ -116,6 +143,7 @@ class ControllerSession extends ChangeNotifier {
   String? get activeAction => _activeAction;
   bool isActionPending(String name) => _activeAction == name;
   JsonMap get status => _status;
+  JsonMap get capabilities => Map<String, dynamic>.unmodifiable(_capabilities);
   JsonMap get logsData => _logs;
   JsonMap get diagnostics => _diagnostics;
   List<dynamic> get historyFiles => List.unmodifiable(_historyFiles);
@@ -143,6 +171,23 @@ class ControllerSession extends ChangeNotifier {
   bool get isLegacyBluetooth =>
       isBluetooth && _status.text('mode').toUpperCase() == 'BLE_V1';
   bool get supportsAdvancedConfiguration => isDevelopment || !isLegacyBluetooth;
+  int get protocolVersion {
+    final versions = _capabilities.list('apiVersions');
+    var highest = 1;
+    for (final value in versions) {
+      final parsed = value is num
+          ? value.toInt()
+          : int.tryParse(value.toString());
+      if (parsed != null && parsed > highest) highest = parsed;
+    }
+    return highest;
+  }
+
+  bool supportsFeature(String name) {
+    if (!RegExp(r'^[a-zA-Z][a-zA-Z0-9]{1,47}$').hasMatch(name)) return false;
+    return _capabilities.section('features').flag(name);
+  }
+
   bool get telemetryIsFresh {
     if (_offlineMode) return false;
     if (isDevelopment) return true;
@@ -226,6 +271,7 @@ class ControllerSession extends ChangeNotifier {
         reportBusy: false,
       );
       if (!_connected) return;
+      await _discoverProtocolCapabilities();
 
       if (_api.supportsWebSession) {
         await _sendWebSessionHeartbeat();
@@ -241,6 +287,29 @@ class ControllerSession extends ChangeNotifier {
       if (reportBusy) _endBusy();
       _notifySafely();
       _schedulePoll();
+    }
+  }
+
+  Future<void> _discoverProtocolCapabilities({bool force = false}) async {
+    if (_disposed ||
+        isDevelopment ||
+        _offlineMode ||
+        (!force && _capabilityDiscoveryAttempted)) {
+      return;
+    }
+    _capabilityDiscoveryAttempted = true;
+    final api = _api;
+    if (api == null || api is! ControllerProtocolV2Api) return;
+    final protocolV2Api = api as ControllerProtocolV2Api;
+    try {
+      final discovered = await protocolV2Api.capabilities();
+      if (_disposed || discovered.isEmpty) return;
+      _capabilities = Map<String, dynamic>.from(discovered);
+    } on ControllerApiException {
+      // Firmware v1 nie udostępnia manifestu możliwości. Status i podstawowe
+      // sterowanie pozostają dostępne przez istniejący protokół zgodności.
+    } on Object {
+      // Wykrywanie możliwości nie może zerwać działającej sesji sterownika.
     }
   }
 
@@ -552,7 +621,25 @@ class ControllerSession extends ChangeNotifier {
         message: 'PIN zostanie zweryfikowany przy pierwszym poleceniu BLE.',
       );
     }
-    final result = await _api!.authenticate(normalized);
+    final api = _api!;
+    if (api is ControllerProtocolV2Api) {
+      final protocolV2Api = api as ControllerProtocolV2Api;
+      try {
+        final secureSession = await protocolV2Api.authenticateSession(
+          normalized,
+        );
+        _activateAdminSession(normalized, secureSession: secureSession);
+        notifyListeners();
+        return const ControllerActionResult(
+          success: true,
+          code: 'authenticated',
+          message: 'Bezpieczna sesja administratora jest aktywna.',
+        );
+      } on ControllerApiException catch (error) {
+        if (!_canFallbackToLegacyAuthentication(error)) rethrow;
+      }
+    }
+    final result = await api.authenticate(normalized);
     _activateAdminSession(normalized);
     notifyListeners();
     return result;
@@ -588,9 +675,23 @@ class ControllerSession extends ChangeNotifier {
     _beginBusy();
     _notifySafely();
     try {
+      final api = _api;
+      final token = _validAdminToken;
+      final protocolV2Api = api is ControllerProtocolV2Api
+          ? api as ControllerProtocolV2Api
+          : null;
       final result = isDevelopment
           ? _performDevelopmentAction(normalizedName, payload, pin)
-          : await _api!.action(normalizedName, payload: payload, pin: pin);
+          : token != null &&
+                protocolV2Api != null &&
+                _protocolV2Actions.contains(normalizedName)
+          ? await protocolV2Api.actionV2(
+              normalizedName,
+              commandId: _nextCommandId(),
+              token: token,
+              payload: payload,
+            )
+          : await api!.action(normalizedName, payload: payload, pin: pin);
       if (refreshAfter) {
         if (isDevelopment) {
           _lastUpdate = DateTime.now();
@@ -899,6 +1000,14 @@ class ControllerSession extends ChangeNotifier {
         message: 'Zaloguj administratora, aby wykonać tę operację.',
       );
     }
+    if (_adminToken != null && _validAdminToken == null) {
+      _clearAdminSession();
+      throw const ControllerApiException(
+        code: 'session_expired',
+        statusCode: 401,
+        message: 'Sesja administratora wygasła. Zaloguj się ponownie.',
+      );
+    }
     _armAdminSessionTimeout();
     return pin;
   }
@@ -913,8 +1022,43 @@ class ControllerSession extends ChangeNotifier {
     );
   }
 
-  void _activateAdminSession(String pin) {
+  String? get _validAdminToken {
+    final token = _adminToken;
+    final expiresAt = _adminTokenExpiresAt;
+    if (token == null ||
+        expiresAt == null ||
+        !expiresAt.isAfter(DateTime.now())) {
+      return null;
+    }
+    return token;
+  }
+
+  static bool _canFallbackToLegacyAuthentication(ControllerApiException error) {
+    return error.statusCode == 404 ||
+        const {
+          'unknown_endpoint',
+          'unknown_operation',
+          'not_supported',
+          'firmware_update_required',
+        }.contains(error.code);
+  }
+
+  String _nextCommandId() {
+    final timestamp = DateTime.now().microsecondsSinceEpoch.toRadixString(36);
+    final random = List<int>.generate(
+      3,
+      (_) => _commandRandom.nextInt(1 << 20),
+    ).map((value) => value.toRadixString(36).padLeft(4, '0')).join();
+    return 'm${timestamp}_$random';
+  }
+
+  void _activateAdminSession(
+    String pin, {
+    ControllerAdminSession? secureSession,
+  }) {
     _adminPin = pin;
+    _adminToken = secureSession?.token;
+    _adminTokenExpiresAt = secureSession?.expiresAt;
     _armAdminSessionTimeout();
   }
 
@@ -931,6 +1075,8 @@ class ControllerSession extends ChangeNotifier {
     _adminSessionTimer?.cancel();
     _adminSessionTimer = null;
     _adminPin = null;
+    _adminToken = null;
+    _adminTokenExpiresAt = null;
     _logs = <String, dynamic>{};
     _diagnostics = <String, dynamic>{};
   }
@@ -985,6 +1131,7 @@ class ControllerSession extends ChangeNotifier {
     final config = _status.section('config');
     final display = _status.section('display');
     final network = _status.section('network');
+    final controlState = _status.section('controlState');
 
     switch (name) {
       case 'auth_check':
@@ -1018,6 +1165,104 @@ class ControllerSession extends ChangeNotifier {
           notifyListeners();
         });
         _addDevelopmentLog('Karmienie ręczne uruchomione z aplikacji.', false);
+        break;
+      case 'set_timed_override':
+        final target = payload['target']?.toString() ?? '';
+        final durationSeconds = _toInt(payload['durationSec'], 0);
+        if (!_timedOverrideTargets.contains(target) ||
+            payload['state'] == null ||
+            durationSeconds < 30 ||
+            durationSeconds > 86400) {
+          throw const ControllerApiException(
+            code: 'invalid_timed_override',
+            message:
+                'Sterowanie czasowe wymaga poprawnego kanału, stanu i czasu '
+                'od 30 sekund do 24 godzin.',
+          );
+        }
+        _setDevelopmentTimedOverride(
+          controlState,
+          target,
+          _toBool(payload['state']),
+          durationSeconds,
+        );
+        break;
+      case 'clear_timed_override':
+        final target = payload['target']?.toString() ?? '';
+        if (!_timedOverrideTargets.contains(target)) {
+          throw const ControllerApiException(
+            code: 'invalid_override_target',
+            message: 'Nieprawidłowy kanał sterowania czasowego.',
+          );
+        }
+        _clearDevelopmentTimedOverride(controlState, target);
+        break;
+      case 'set_light_profile':
+        final target = payload['target']?.toString() ?? '';
+        final profile = payload['profile']?.toString().toLowerCase() ?? '';
+        if (!const {'front', 'rear'}.contains(target) ||
+            !const {'day', 'daybreak', 'night'}.contains(profile)) {
+          throw const ControllerApiException(
+            code: 'invalid_light_profile',
+            message:
+                'Profil Aquael wymaga lampy przedniej lub tylnej oraz trybu '
+                'DAY, DAYBREAK albo NIGHT.',
+          );
+        }
+        _setDevelopmentLightProfile(target, profile);
+        _addDevelopmentLog(
+          'Ustawiono lampę ${target == "front" ? "przednią" : "tylną"} '
+          'w tryb ${profile.toUpperCase()}.',
+          false,
+        );
+        break;
+      case 'start_feeding_mode':
+        final durationSeconds = _toInt(payload['durationSec'], 0);
+        if (durationSeconds < 60 || durationSeconds > 3600) {
+          throw const ControllerApiException(
+            code: 'invalid_feeding_duration',
+            message: 'Tryb karmienia może trwać od 1 do 60 minut.',
+          );
+        }
+        _startDevelopmentControlMode(
+          controlState,
+          'feedingMode',
+          durationSeconds,
+        );
+        if (_toBool(payload['dispense'])) {
+          final feeding = _status.section('feeding');
+          feeding['lastFeedEpoch'] =
+              DateTime.now().millisecondsSinceEpoch ~/ 1000;
+          feeding['lastResult'] = 'ok';
+        }
+        _addDevelopmentLog(
+          'Uruchomiono tryb karmienia na $durationSeconds s.',
+          false,
+        );
+        break;
+      case 'stop_feeding_mode':
+        _stopDevelopmentControlMode(controlState, 'feedingMode');
+        break;
+      case 'start_service_mode':
+        final durationSeconds = _toInt(payload['durationSec'], 0);
+        if (durationSeconds < 60 || durationSeconds > 7200) {
+          throw const ControllerApiException(
+            code: 'invalid_service_duration',
+            message: 'Tryb serwisowy może trwać od 1 do 120 minut.',
+          );
+        }
+        _startDevelopmentControlMode(
+          controlState,
+          'serviceMode',
+          durationSeconds,
+        );
+        _addDevelopmentLog(
+          'Uruchomiono tryb serwisowy na $durationSeconds s.',
+          false,
+        );
+        break;
+      case 'stop_service_mode':
+        _stopDevelopmentControlMode(controlState, 'serviceMode');
         break;
       case 'save_schedule':
         _applyDevSchedule(payload, schedule, schedules);
@@ -1125,6 +1370,137 @@ class ControllerSession extends ChangeNotifier {
       code: 'dev_simulated',
       message: 'Operacja została zasymulowana w pamięci RAM.',
     );
+  }
+
+  void _setDevelopmentTimedOverride(
+    JsonMap controlState,
+    String target,
+    bool state,
+    int durationSeconds,
+  ) {
+    final overrides = controlState.list('overrides');
+    _clearDevelopmentTimedOverride(controlState, target, restore: false);
+    final previousState = _developmentTargetState(target);
+    overrides.add({
+      'target': target,
+      'state': state,
+      'remainingSec': durationSeconds,
+      '_endsAtEpoch':
+          DateTime.now().millisecondsSinceEpoch ~/ 1000 + durationSeconds,
+      '_previousState': previousState,
+    });
+    _setDevelopmentTargetState(target, state);
+  }
+
+  void _clearDevelopmentTimedOverride(
+    JsonMap controlState,
+    String target, {
+    bool restore = true,
+  }) {
+    final overrides = controlState.list('overrides');
+    for (var index = overrides.length - 1; index >= 0; index--) {
+      final override = jsonMap(overrides[index]);
+      if (override.text('target') != target) continue;
+      if (restore) {
+        _setDevelopmentTargetState(
+          target,
+          override.flag('_previousState', _developmentTargetState(target)),
+        );
+      }
+      overrides.removeAt(index);
+    }
+  }
+
+  void _startDevelopmentControlMode(
+    JsonMap controlState,
+    String key,
+    int durationSeconds,
+  ) {
+    final mode = controlState.section(key);
+    mode
+      ..['active'] = true
+      ..['remainingSec'] = durationSeconds
+      ..['_endsAtEpoch'] =
+          DateTime.now().millisecondsSinceEpoch ~/ 1000 + durationSeconds;
+  }
+
+  static void _stopDevelopmentControlMode(JsonMap controlState, String key) {
+    final mode = controlState.section(key);
+    mode
+      ..['active'] = false
+      ..['remainingSec'] = 0
+      ..remove('_endsAtEpoch');
+  }
+
+  bool _developmentTargetState(String target) {
+    final modules = _status.section('modules');
+    return switch (target) {
+      'light1' => modules.flag('light_on'),
+      'light2' => modules.flag('plant_light_on'),
+      'filter' => modules.flag('filter_on'),
+      'heater' => modules.flag('heater_on'),
+      'aeration' => modules.flag('air_on'),
+      'co2' => modules.flag('co2_on'),
+      'water_dosing' => modules.flag('water_dosing_on'),
+      _ => false,
+    };
+  }
+
+  void _setDevelopmentTargetState(String target, bool enabled) {
+    final modules = _status.section('modules');
+    final relays = _status.section('relays');
+    switch (target) {
+      case 'light1':
+        modules['light_on'] = enabled;
+        modules['light1_on'] = enabled;
+        relays['light'] = enabled;
+        relays['light1'] = enabled;
+        break;
+      case 'light2':
+        modules['plant_light_on'] = enabled;
+        modules['light2_on'] = enabled;
+        relays['plantLight'] = enabled;
+        relays['light2'] = enabled;
+        break;
+      case 'filter':
+        modules['filter_on'] = enabled;
+        relays['pump'] = enabled;
+        break;
+      case 'heater':
+        modules['heater_on'] = enabled;
+        relays['heater'] = enabled;
+        break;
+      case 'aeration':
+        modules['air_on'] = enabled;
+        relays['aeration'] = enabled;
+        break;
+      case 'co2':
+        modules['co2_on'] = enabled;
+        relays['co2'] = enabled;
+        break;
+      case 'water_dosing':
+        modules['water_dosing_on'] = enabled;
+        relays['waterDosing'] = enabled;
+        _status.section('water')['active'] = enabled;
+        break;
+    }
+  }
+
+  void _setDevelopmentLightProfile(String target, String profile) {
+    final lights = _status.section('lights');
+    final canonicalKey = target == 'front' ? 'front' : 'rear';
+    final compatibilityKey = target == 'front' ? 'light1' : 'light2';
+    final profileName = profile.toUpperCase();
+    for (final key in [canonicalKey, compatibilityKey]) {
+      final lamp = lights.section(key);
+      lamp
+        ..['on'] = true
+        ..['profile'] = profile
+        ..['profileName'] = profileName
+        ..['transitioning'] = false
+        ..['known'] = true;
+    }
+    _setDevelopmentTargetState(target == 'front' ? 'light1' : 'light2', true);
   }
 
   void _setDevOutput(
@@ -1301,6 +1677,7 @@ class ControllerSession extends ChangeNotifier {
 
   void _tickDevelopment() {
     if (_disposed) return;
+    final now = DateTime.now();
     final sensors = _status.section('sensors');
     final temperature = _status.section('temperature');
     final system = _status.section('system');
@@ -1324,8 +1701,9 @@ class ControllerSession extends ChangeNotifier {
     temperature['current'] = sensors['temp_c'];
     system['uptime'] = system.integer('uptime') + 2;
     _status['uptime_ms'] = system.integer('uptime') * 1000;
-    _applyDevelopmentClock(DateTime.now());
-    _applyDevelopmentLightProfiles(DateTime.now());
+    _applyDevelopmentClock(now);
+    _applyDevelopmentLightProfiles(now);
+    _updateDevelopmentControlState(now);
     final history = temperature.list('history');
     history.add({
       'value': sensors['temp_c'],
@@ -1334,6 +1712,37 @@ class ControllerSession extends ChangeNotifier {
     if (history.length > 144) history.removeAt(0);
     _lastUpdate = DateTime.now();
     notifyListeners();
+  }
+
+  void _updateDevelopmentControlState(DateTime now) {
+    final epoch = now.millisecondsSinceEpoch ~/ 1000;
+    final controlState = _status.section('controlState');
+    for (final key in const ['feedingMode', 'serviceMode']) {
+      final mode = controlState.section(key);
+      if (!mode.flag('active')) continue;
+      final endsAt = mode.integer('_endsAtEpoch');
+      final remaining = max(0, endsAt - epoch);
+      mode['remainingSec'] = remaining;
+      if (remaining == 0) {
+        _stopDevelopmentControlMode(controlState, key);
+      }
+    }
+
+    final overrides = controlState.list('overrides');
+    for (var index = overrides.length - 1; index >= 0; index--) {
+      final override = jsonMap(overrides[index]);
+      final remaining = max(0, override.integer('_endsAtEpoch') - epoch);
+      override['remainingSec'] = remaining;
+      if (remaining > 0) continue;
+      _setDevelopmentTargetState(
+        override.text('target'),
+        override.flag(
+          '_previousState',
+          _developmentTargetState(override.text('target')),
+        ),
+      );
+      overrides.removeAt(index);
+    }
   }
 
   void _applyDevelopmentClock(DateTime now) {
@@ -1367,6 +1776,7 @@ class ControllerSession extends ChangeNotifier {
       (
         schedule: schedules.section('light'),
         light: lights.section('light1'),
+        canonicalLight: lights.section('front'),
         moduleLegacy: 'light_on',
         moduleCanonical: 'light1_on',
         relayLegacy: 'light',
@@ -1375,6 +1785,7 @@ class ControllerSession extends ChangeNotifier {
       (
         schedule: schedules.section('plant_light'),
         light: lights.section('light2'),
+        canonicalLight: lights.section('rear'),
         moduleLegacy: 'plant_light_on',
         moduleCanonical: 'light2_on',
         relayLegacy: 'plantLight',
@@ -1389,6 +1800,11 @@ class ControllerSession extends ChangeNotifier {
         entry.light['profile'] = profile.$1;
         entry.light['profileName'] = profile.$2;
         entry.light['on'] = active;
+        entry.canonicalLight['profile'] = profile.$1;
+        entry.canonicalLight['profileName'] = profile.$2;
+        entry.canonicalLight['on'] = active;
+        entry.canonicalLight['transitioning'] = false;
+        entry.canonicalLight['known'] = true;
         modules[entry.moduleLegacy] = active;
         modules[entry.moduleCanonical] = active;
         relays[entry.relayLegacy] = active;
@@ -1643,17 +2059,37 @@ class ControllerSession extends ChangeNotifier {
         'aerationPercent': 100,
       },
       'lights': {
+        'front': {
+          'on': true,
+          'profile': 'day',
+          'profileName': 'DAY',
+          'profileCycle': true,
+          'transitioning': false,
+          'known': true,
+        },
+        'rear': {
+          'on': true,
+          'profile': 'day',
+          'profileName': 'DAY',
+          'profileCycle': true,
+          'transitioning': false,
+          'known': true,
+        },
         'light1': {
           'on': true,
           'profile': 'day',
           'profileName': 'DAY',
           'profileCycle': true,
+          'transitioning': false,
+          'known': true,
         },
         'light2': {
           'on': true,
           'profile': 'day',
           'profileName': 'DAY',
           'profileCycle': true,
+          'transitioning': false,
+          'known': true,
         },
         'supportedProfiles': ['day', 'daybreak', 'night'],
       },
@@ -1692,8 +2128,38 @@ class ControllerSession extends ChangeNotifier {
         'lastFeedEpoch': epoch - 18000,
         'lastResult': 'ok',
       },
+      'controlState': {
+        'feedingMode': {'active': false, 'remainingSec': 0},
+        'serviceMode': {'active': false, 'remainingSec': 0},
+        'overrides': <dynamic>[],
+      },
     };
   }
+
+  static JsonMap _createDevelopmentCapabilities() => {
+    'apiVersions': [1, 2],
+    'transports': ['http', 'ble'],
+    'features': {
+      'timedOverrides': true,
+      'feedingMode': true,
+      'serviceMode': true,
+      'safeOta': true,
+      'idempotency': true,
+      'sessionAuth': true,
+      'aquaelLightProfiles': true,
+    },
+    'limits': {
+      'timedOverrideMinSec': 30,
+      'timedOverrideMaxSec': 86400,
+      'feedingModeMinSec': 60,
+      'feedingModeMaxSec': 3600,
+      'serviceModeMinSec': 60,
+      'serviceModeMaxSec': 7200,
+      'lightCycleOffMs': 1000,
+      'lightResetOffMs': 6000,
+    },
+    'targets': _timedOverrideTargets.toList(growable: false),
+  };
 
   static JsonMap _createDevelopmentLogs() => {
     'normal': <dynamic>[
@@ -1770,6 +2236,8 @@ class ControllerSession extends ChangeNotifier {
     _adminSessionTimer?.cancel();
     _adminSessionTimer = null;
     _adminPin = null;
+    _adminToken = null;
+    _adminTokenExpiresAt = null;
     _historyArchiveCache.clear();
 
     final api = _api;

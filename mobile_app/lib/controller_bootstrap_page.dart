@@ -1,17 +1,22 @@
 import 'dart:async';
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 
+import 'app_settings.dart';
 import 'ble_scanner_page.dart';
 import 'controller_page.dart';
 import 'controller_preferences.dart';
+import 'controller_runtime_services.dart';
 import 'controller_snapshot_cache.dart';
 import 'design_system.dart';
 import 'full_controller/connection_health.dart';
 import 'full_controller/controller_api.dart';
 import 'full_controller/controller_session.dart';
 import 'full_controller/controller_shell.dart';
+import 'full_controller/status_decoder.dart';
 import 'full_controller/wifi_connect_page.dart';
+import 'onboarding/onboarding_page.dart';
 
 typedef WifiSessionBuilder =
     ControllerSession Function(
@@ -36,6 +41,43 @@ ControllerSession _defaultWifiSessionBuilder(
   );
 }
 
+/// Tylko zweryfikowany, pełny status może wyczyścić wcześniej zapisane alarmy.
+///
+/// BLE v1 celowo pozostaje snapshotem częściowym: nie przenosi wszystkich pól
+/// bezpieczeństwa (np. zatrzaśniętego timeoutu dolewania). BLE v2, Wi-Fi i DEV
+/// przechodzą tę samą walidację kompletności co produkcyjny endpoint HTTP.
+@visibleForTesting
+bool isCompleteControllerRuntimeStatus(
+  Map<String, dynamic> status,
+  ControllerSessionKind sessionKind,
+) {
+  if (sessionKind == ControllerSessionKind.offline) return false;
+  if (sessionKind == ControllerSessionKind.bluetooth) {
+    final mode = status['mode']?.toString().trim().toUpperCase() ?? '';
+    final rawBle = status['ble'];
+    final ble = rawBle is Map ? rawBle : const <Object?, Object?>{};
+    final rawProtocol =
+        ble['protocolVersion'] ??
+        ble['protocol_version'] ??
+        status['bleProtocolVersion'];
+    final protocolVersion = rawProtocol is num
+        ? rawProtocol.toInt()
+        : int.tryParse(rawProtocol?.toString() ?? '');
+    if (mode == 'BLE_V1' ||
+        mode == 'BLE1' ||
+        mode == 'BLE_LEGACY' ||
+        (protocolVersion != null && protocolVersion <= 1)) {
+      return false;
+    }
+  }
+  try {
+    decodeControllerStatus(status);
+    return true;
+  } on FormatException {
+    return false;
+  }
+}
+
 /// Offline-first host centrum dowodzenia.
 ///
 /// Pierwsza klatka zawsze pokazuje kompletny interfejs z ostatnim bezpiecznie
@@ -50,6 +92,9 @@ class ControllerBootstrapPage extends StatefulWidget {
     this.preferences,
     this.snapshotCache,
     this.wifiSessionBuilder,
+    this.enableOnboarding = kReleaseMode,
+    this.runtimeServices,
+    this.enableRuntimeServices = kReleaseMode,
   });
 
   final String brandName;
@@ -58,6 +103,9 @@ class ControllerBootstrapPage extends StatefulWidget {
   final ControllerPreferences? preferences;
   final ControllerSnapshotCache? snapshotCache;
   final WifiSessionBuilder? wifiSessionBuilder;
+  final bool enableOnboarding;
+  final ControllerRuntimeServices? runtimeServices;
+  final bool enableRuntimeServices;
 
   @override
   State<ControllerBootstrapPage> createState() =>
@@ -71,6 +119,8 @@ class _ControllerBootstrapPageState extends State<ControllerBootstrapPage>
   late final ControllerPreferences _preferences;
   late final ControllerSnapshotCache _snapshotCache;
   late final WifiSessionBuilder _wifiSessionBuilder;
+  ControllerRuntimeServices? _runtimeServices;
+  bool _ownsRuntimeServices = false;
   late ControllerSession _session;
 
   ControllerSnapshot? _snapshot;
@@ -87,6 +137,7 @@ class _ControllerBootstrapPageState extends State<ControllerBootstrapPage>
   bool _autoReconnect = true;
   bool _initializing = true;
   bool _connectionCenterOpen = false;
+  bool _onboardingOpen = false;
 
   @override
   void initState() {
@@ -95,6 +146,13 @@ class _ControllerBootstrapPageState extends State<ControllerBootstrapPage>
     _snapshotCache = widget.snapshotCache ?? ControllerSnapshotCache();
     _wifiSessionBuilder =
         widget.wifiSessionBuilder ?? _defaultWifiSessionBuilder;
+    _runtimeServices = widget.runtimeServices;
+    if (_runtimeServices == null && widget.enableRuntimeServices) {
+      _runtimeServices = ControllerRuntimeServices();
+      _ownsRuntimeServices = true;
+    }
+    final runtimeServices = _runtimeServices;
+    if (runtimeServices != null) unawaited(runtimeServices.initialize());
     _session = ControllerSession.offline();
     _session.addListener(_onSessionChanged);
     WidgetsBinding.instance.addObserver(this);
@@ -156,6 +214,52 @@ class _ControllerBootstrapPageState extends State<ControllerBootstrapPage>
       warning: warning,
       initializing: false,
     );
+    if (widget.enableOnboarding &&
+        !AppSettings.onboardingCompletedNotifier.value) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) unawaited(_openOnboarding());
+      });
+    }
+  }
+
+  Future<void> _openOnboarding() async {
+    if (_onboardingOpen ||
+        !mounted ||
+        AppSettings.onboardingCompletedNotifier.value) {
+      return;
+    }
+    _onboardingOpen = true;
+    OnboardingConnectionChoice? choice;
+    try {
+      choice = await Navigator.of(context).push<OnboardingConnectionChoice>(
+        MaterialPageRoute<OnboardingConnectionChoice>(
+          fullscreenDialog: true,
+          builder: (_) => const OnboardingPage(),
+        ),
+      );
+    } finally {
+      _onboardingOpen = false;
+    }
+    if (!mounted || choice == null) return;
+    try {
+      await AppSettings.completeOnboarding();
+    } on Object {
+      if (mounted) {
+        _showMessage(
+          'Nie udało się zapisać zakończenia przewodnika.',
+          isError: true,
+        );
+      }
+    }
+    if (!mounted) return;
+    switch (choice) {
+      case OnboardingConnectionChoice.wifi:
+        await _connectWifi();
+      case OnboardingConnectionChoice.bluetooth:
+        await _connectBluetooth();
+      case OnboardingConnectionChoice.offline:
+        await _switchOffline();
+    }
   }
 
   void _installSession(
@@ -204,6 +308,16 @@ class _ControllerBootstrapPageState extends State<ControllerBootstrapPage>
     if (liveUpdate == null || liveUpdate == _lastObservedLiveUpdate) return;
 
     _lastObservedLiveUpdate = liveUpdate;
+    final completeSnapshot =
+        session.connected &&
+        session.connectionPhase == ControllerConnectionPhase.online &&
+        isCompleteControllerRuntimeStatus(session.status, session.sessionKind);
+    _runtimeServices?.observeStatus(
+      status: session.status,
+      sessionKind: session.sessionKind,
+      observedAt: liveUpdate,
+      completeSnapshot: completeSnapshot,
+    );
     _pendingSnapshot = ControllerSnapshot(
       status: session.status,
       savedAt: liveUpdate,
@@ -518,6 +632,7 @@ class _ControllerBootstrapPageState extends State<ControllerBootstrapPage>
     _snapshotTimer = null;
     unawaited(_persistCurrentSnapshot());
     _session.dispose();
+    if (_ownsRuntimeServices) _runtimeServices?.dispose();
     super.dispose();
   }
 
@@ -528,6 +643,7 @@ class _ControllerBootstrapPageState extends State<ControllerBootstrapPage>
       session: _session,
       onOpenConnection: () => unawaited(_openConnectionCenter()),
       disposeSession: false,
+      runtimeServices: _runtimeServices,
     );
   }
 }

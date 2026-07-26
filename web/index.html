@@ -473,14 +473,14 @@
                                 </div>
                             </div>
                             <div class="factory-row factory-row-light">
-                                <span class="factory-row-label">Światło 1</span>
+                                <span class="factory-row-label">Świetlówka przednia</span>
                                 <span class="factory-segment factory-daybreak factory-segment-micro" style="--start: 41.6667; --end: 43.75;" title="DAYBREAK 10:00-10:30" aria-label="DAYBREAK 10:00-10:30"></span>
                                 <span class="factory-segment factory-day" style="--start: 43.75; --end: 83.3333;"><strong>DAY</strong><small>10:30-20:00</small></span>
                                 <span class="factory-segment factory-daybreak factory-segment-short" style="--start: 83.3333; --end: 87.5;" title="DAYBREAK 20:00-21:00" aria-label="DAYBREAK 20:00-21:00"><strong>DB</strong></span>
                                 <span class="factory-segment factory-night factory-segment-short" style="--start: 87.5; --end: 91.6667;" title="NIGHT 21:00-22:00" aria-label="NIGHT 21:00-22:00"><strong>NOC</strong></span>
                             </div>
                             <div class="factory-row factory-row-light">
-                                <span class="factory-row-label">Światło 2</span>
+                                <span class="factory-row-label">Świetlówka tylna</span>
                                 <span class="factory-segment factory-daybreak factory-segment-micro" style="--start: 41.6667; --end: 43.75;" title="DAYBREAK 10:00-10:30" aria-label="DAYBREAK 10:00-10:30"></span>
                                 <span class="factory-segment factory-day" style="--start: 43.75; --end: 83.3333;"><strong>DAY</strong><small>10:30-20:00</small></span>
                                 <span class="factory-segment factory-daybreak factory-segment-short" style="--start: 83.3333; --end: 87.5;" title="DAYBREAK 20:00-21:00" aria-label="DAYBREAK 20:00-21:00"><strong>DB</strong></span>
@@ -615,7 +615,7 @@
                             <div class="schedule-details">
                                 <div class="schedule-item-header">
                                     <div>
-                                        <div class="schedule-title">Światło 1</div>
+                                        <div class="schedule-title">Świetlówka przednia</div>
                                         <div class="schedule-description">Pierwsza lampa Aquael D&amp;N: DAY, DAYBREAK i NIGHT.</div>
                                     </div>
                                     <select id="schedule-light-mode" class="form-control schedule-mode-select">
@@ -624,7 +624,7 @@
                                         <option value="zawsze_wylaczone">Zawsze wyłączone</option>
                                     </select>
                                 </div>
-                                <div class="schedule-profile-row" aria-label="Tryb Aquael D&amp;N dla swiatla glownego">
+                                <div class="schedule-profile-row" aria-label="Tryb Aquael D&amp;N dla świetlówki przedniej">
                                     <label for="schedule-light-profile">Tryb Aquael D&amp;N</label>
                                     <select id="schedule-light-profile" class="form-control schedule-profile-select">
                                         <option value="cycle">AUTO - DAYBREAK → DAY → DAYBREAK → NIGHT</option>
@@ -632,7 +632,7 @@
                                         <option value="daybreak">DAYBREAK - ok. 50% + niebieskie</option>
                                         <option value="night">NIGHT - niebieska poswiata</option>
                                     </select>
-                                    <small>Przelaczanie odbywa sie szybkim OFF/ON modulu w czasie do 5 sekund.</small>
+                                    <small>OFF/ON w czasie do 5 s wybiera kolejny tryb; OFF dłużej niż 5 s resetuje lampę do DAY.</small>
                                 </div>
                                 <div class="schedule-bar-container">
                                     <div class="schedule-bar" data-bar-color="var(--accent-yellow)" style="background: var(--accent-yellow);"></div>
@@ -647,7 +647,7 @@
                             <div class="schedule-details">
                                 <div class="schedule-item-header">
                                     <div>
-                                        <div class="schedule-title">Światło 2</div>
+                                        <div class="schedule-title">Świetlówka tylna</div>
                                         <div class="schedule-description">Druga niezależna lampa Aquael D&amp;N: DAY, DAYBREAK i NIGHT.</div>
                                     </div>
                                     <select id="schedule-plant-light-mode" class="form-control schedule-mode-select">
@@ -656,7 +656,7 @@
                                         <option value="zawsze_wylaczone">Zawsze wyłączone</option>
                                     </select>
                                 </div>
-                                <div class="schedule-profile-row" aria-label="Tryb Aquael D&amp;N dla swiatla roslinnego">
+                                <div class="schedule-profile-row" aria-label="Tryb Aquael D&amp;N dla świetlówki tylnej">
                                     <label for="schedule-plant-light-profile">Tryb Aquael D&amp;N</label>
                                     <select id="schedule-plant-light-profile" class="form-control schedule-profile-select">
                                         <option value="cycle">AUTO - DAYBREAK → DAY → DAYBREAK → NIGHT</option>
@@ -664,7 +664,7 @@
                                         <option value="daybreak">DAYBREAK - ok. 50% + niebieskie</option>
                                         <option value="night">NIGHT - niebieska poswiata</option>
                                     </select>
-                                    <small>Każda lampa niezależnie obsługuje DAY, DAYBREAK i NIGHT.</small>
+                                    <small>OFF/ON w czasie do 5 s wybiera kolejny tryb; OFF dłużej niż 5 s resetuje lampę do DAY.</small>
                                 </div>
                                 <div class="schedule-bar-container">
                                     <div class="schedule-bar" data-bar-color="var(--success-color)" style="background: var(--success-color);"></div>

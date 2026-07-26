@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import '../../app_settings.dart';
 import '../../design_system.dart';
 import '../../display_refresh_rate.dart';
 import '../controller_session.dart';
@@ -49,6 +50,28 @@ class SettingsHubView extends StatelessWidget {
         ),
       ),
     );
+  }
+
+  Future<void> _enableExpertMode(BuildContext context) async {
+    if (!await ensureAdmin() || !context.mounted) return;
+    try {
+      await AppSettings.setExpertMode(true);
+      if (!context.mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Tryb ekspercki został włączony.'),
+          behavior: SnackBarBehavior.floating,
+        ),
+      );
+    } on Object {
+      if (!context.mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Nie udało się zapisać trybu eksperckiego.'),
+          behavior: SnackBarBehavior.floating,
+        ),
+      );
+    }
   }
 
   @override
@@ -121,83 +144,95 @@ class SettingsHubView extends StatelessWidget {
           ],
         ),
         const SizedBox(height: AquaSpacing.md),
-        Card(
-          margin: EdgeInsets.zero,
-          clipBehavior: Clip.antiAlias,
-          child: ExpansionTile(
-            key: const Key('service-tools-section'),
-            initiallyExpanded: false,
-            leading: const Icon(Icons.build_circle_outlined),
-            title: const Text(
-              'Narzędzia serwisowe',
-              style: TextStyle(fontWeight: FontWeight.w900),
-            ),
-            subtitle: const Text(
-              'Diagnostyka, kanały oraz aktualizacje sterownika.',
-            ),
-            childrenPadding: const EdgeInsets.fromLTRB(
-              AquaSpacing.sm,
-              0,
-              AquaSpacing.sm,
-              AquaSpacing.sm,
-            ),
-            children: [
-              ResponsiveGrid(
-                minimumChildWidth: 300,
-                spacing: AquaSpacing.sm,
-                children: [
-                  _SystemLinkCard(
-                    icon: Icons.memory_rounded,
-                    title: 'Diagnostyka sprzętu',
-                    description:
-                        'Czujniki, magistrale i stan pamięci sterownika.',
-                    status: session.canIssueCommands
-                        ? 'Gotowa do skanowania'
-                        : session.hasCachedSnapshot
-                        ? 'Ostatni zapis · tylko odczyt'
-                        : 'Brak zapisanych danych',
-                    enabled: advanced,
-                    disabledReason: 'Diagnostyka wymaga Wi‑Fi lub BLE v2.',
-                    onTap: () => _open(
-                      context,
-                      'Diagnostyka sprzętu',
-                      () => DiagnosticsView(
-                        session: session,
-                        ensureAdmin: ensureAdmin,
-                      ),
-                    ),
-                  ),
-                  _SystemLinkCard(
-                    icon: Icons.cable_rounded,
-                    title: 'Kanały przekaźników',
-                    description: 'Mapa kanałów układu MCP23017.',
-                    enabled: false,
-                    disabledReason: 'Niedostępne w tej wersji firmware.',
-                    onTap: () {},
-                  ),
-                  _SystemLinkCard(
-                    icon: Icons.system_update_alt_rounded,
-                    title: 'Aktualizacje i zasilanie',
-                    description: 'Firmware OTA, tryb ECO i pamięć SD.',
-                    status: session.supportsFirmwareUpload
-                        ? 'OTA dostępne'
-                        : 'OTA tylko przez Wi‑Fi',
-                    enabled: advanced,
-                    disabledReason:
-                        'Operacje systemowe wymagają Wi‑Fi lub BLE v2.',
-                    onTap: () => _open(
-                      context,
-                      'Aktualizacje i zasilanie',
-                      () => SystemView(
-                        session: session,
-                        runAction: runAction,
-                        ensureAdmin: ensureAdmin,
-                      ),
-                    ),
-                  ),
-                ],
+        ValueListenableBuilder<bool>(
+          valueListenable: AppSettings.expertModeNotifier,
+          builder: (context, expertMode, _) => Card(
+            margin: EdgeInsets.zero,
+            clipBehavior: Clip.antiAlias,
+            child: ExpansionTile(
+              key: const Key('service-tools-section'),
+              initiallyExpanded: false,
+              leading: Icon(
+                expertMode
+                    ? Icons.build_circle_outlined
+                    : Icons.lock_outline_rounded,
               ),
-            ],
+              title: const Text(
+                'Narzędzia serwisowe',
+                style: TextStyle(fontWeight: FontWeight.w900),
+              ),
+              subtitle: Text(
+                expertMode
+                    ? 'Diagnostyka, kanały oraz aktualizacje sterownika.'
+                    : 'Ukryte w trybie prostym · wymagają PIN-u administratora.',
+              ),
+              childrenPadding: const EdgeInsets.fromLTRB(
+                AquaSpacing.sm,
+                0,
+                AquaSpacing.sm,
+                AquaSpacing.sm,
+              ),
+              children: [
+                if (!expertMode)
+                  _ExpertModeGate(onEnable: () => _enableExpertMode(context))
+                else
+                  ResponsiveGrid(
+                    minimumChildWidth: 300,
+                    spacing: AquaSpacing.sm,
+                    children: [
+                      _SystemLinkCard(
+                        icon: Icons.memory_rounded,
+                        title: 'Diagnostyka sprzętu',
+                        description:
+                            'Czujniki, magistrale i stan pamięci sterownika.',
+                        status: session.canIssueCommands
+                            ? 'Gotowa do skanowania'
+                            : session.hasCachedSnapshot
+                            ? 'Ostatni zapis · tylko odczyt'
+                            : 'Brak zapisanych danych',
+                        enabled: advanced,
+                        disabledReason: 'Diagnostyka wymaga Wi‑Fi lub BLE v2.',
+                        onTap: () => _open(
+                          context,
+                          'Diagnostyka sprzętu',
+                          () => DiagnosticsView(
+                            session: session,
+                            ensureAdmin: ensureAdmin,
+                          ),
+                        ),
+                      ),
+                      _SystemLinkCard(
+                        icon: Icons.cable_rounded,
+                        title: 'Kanały przekaźników',
+                        description: 'Mapa kanałów układu MCP23017.',
+                        enabled: false,
+                        disabledReason: 'Niedostępne w tej wersji firmware.',
+                        onTap: () {},
+                      ),
+                      _SystemLinkCard(
+                        icon: Icons.system_update_alt_rounded,
+                        title: 'Aktualizacje i zasilanie',
+                        description: 'Firmware OTA, tryb ECO i pamięć SD.',
+                        status: session.supportsFirmwareUpload
+                            ? 'OTA dostępne'
+                            : 'OTA tylko przez Wi‑Fi',
+                        enabled: advanced,
+                        disabledReason:
+                            'Operacje systemowe wymagają Wi‑Fi lub BLE v2.',
+                        onTap: () => _open(
+                          context,
+                          'Aktualizacje i zasilanie',
+                          () => SystemView(
+                            session: session,
+                            runAction: runAction,
+                            ensureAdmin: ensureAdmin,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+              ],
+            ),
           ),
         ),
         if (session.isLegacyBluetooth) ...[
@@ -341,6 +376,70 @@ class _IdentityMetric extends StatelessWidget {
           ),
         ),
       ],
+    );
+  }
+}
+
+class _ExpertModeGate extends StatelessWidget {
+  const _ExpertModeGate({required this.onEnable});
+
+  final VoidCallback onEnable;
+
+  @override
+  Widget build(BuildContext context) {
+    final colors = Theme.of(context).colorScheme;
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(AquaSpacing.md),
+      decoration: BoxDecoration(
+        color: colors.surfaceContainerHighest.withValues(alpha: 0.55),
+        borderRadius: BorderRadius.circular(AquaRadius.control),
+        border: Border.all(color: colors.outlineVariant),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Icon(Icons.shield_outlined, color: colors.primary),
+              const SizedBox(width: AquaSpacing.sm),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      'Tryb prosty chroni ustawienia serwisowe',
+                      style: Theme.of(context).textTheme.titleSmall?.copyWith(
+                        fontWeight: FontWeight.w900,
+                      ),
+                    ),
+                    const SizedBox(height: AquaSpacing.xxs),
+                    Text(
+                      'Po autoryzacji PIN-em uzyskasz dostęp do diagnostyki, '
+                      'kanałów sprzętowych, firmware OTA i operacji zasilania.',
+                      style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                        color: colors.onSurfaceVariant,
+                        height: 1.4,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: AquaSpacing.md),
+          SizedBox(
+            width: double.infinity,
+            child: FilledButton.icon(
+              key: const Key('enable-expert-mode-button'),
+              onPressed: onEnable,
+              icon: const Icon(Icons.admin_panel_settings_outlined),
+              label: const Text('Odblokuj tryb ekspercki'),
+            ),
+          ),
+        ],
+      ),
     );
   }
 }
