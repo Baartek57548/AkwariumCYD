@@ -4,9 +4,31 @@
 #include <Arduino.h>
 
 /**
+ * @brief Inicjalizuje rekurencyjną blokadę chroniącą LVGL i wspólny stan GUI.
+ *
+ * Funkcję należy wywołać przed lv_init() i przed uruchomieniem zadań
+ * komunikacyjnych. Wszystkie wywołania LVGL spoza właściciela UI muszą używać
+ * tej samej blokady.
+ */
+bool gui_app_sync_init(void);
+
+/** @brief Przejmuje blokadę GUI na maksymalnie timeout_ms. */
+bool gui_app_lock(uint32_t timeout_ms);
+
+/** @brief Zwalnia blokadę przejętą przez bieżące zadanie. */
+void gui_app_unlock(void);
+
+/**
  * @brief Inicjalizuje i tworzy układ graficzny LVGL (Status Bar + Zakładki).
  */
 void gui_app_init(void);
+
+/**
+ * @brief Obsługuje Wi-Fi, HTTP, OTA i nieblokujące sekwencje wyjść.
+ *
+ * Funkcja jest przeznaczona dla zadania I/O przypiętego do rdzenia 0.
+ */
+void gui_app_service_background(void);
 
 void gui_app_handle_ota_portal(void);
 
@@ -38,6 +60,11 @@ void gui_app_update_ldr(int ldr_value, bool valid = true);
  * @param uptime_sec Czas pracy w sekundach.
  */
 void gui_app_update_system_info(uint32_t free_heap, uint32_t uptime_sec);
+
+/**
+ * @brief Odświeża wyłącznie kompaktowy pasek czasu, IP, wieku danych i uptime.
+ */
+void gui_app_update_status_bar(uint32_t uptime_sec);
 
 /**
  * @brief Aktualizuje panel deweloperski i moduly opcjonalne rzeczywistymi odczytami HAL.

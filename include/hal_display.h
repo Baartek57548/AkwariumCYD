@@ -19,8 +19,11 @@ bool hal_display_play_rgb565_sequence(const char *frame_pattern,
                                       uint16_t height,
                                       uint16_t fps);
 
+// Returns a debounced, stabilized touch sample. Both output pointers are required.
 bool hal_display_get_touch(int16_t *x, int16_t *y);
 
+// Completes asynchronous display DMA and releases the LVGL draw buffer.
+// Call once per main-loop iteration, before lv_timer_handler().
 void hal_display_loop_cb(void);
 
 #endif // HAL_DISPLAY_H

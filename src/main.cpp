@@ -1,33 +1,21 @@
 #include <Arduino.h>
 #include <driver/adc.h>
-#include <lvgl.h>
-#include "config.h"
-#include "hal_display.h"
-#include "hal_sd.h"
-#include "hal_mcp23017.h"
-#include "hal_adc.h"
-#include "gui_app.h"
-#include "events.h"
-#include "dev_simulator.h"
-#include <ArduinoOTA.h>
+#include <esp_timer.h>
 #include <freertos/FreeRTOS.h>
 #include <freertos/task.h>
-#include <math.h>
+#include <lvgl.h>
 
-// Definicja pinu, do którego podłączony jest fotorezystor (LDR)
-const int LDR_PIN = HwConfig::LDR_PIN;
+#include "config.h"
+#include "events.h"
+#include "gui_app.h"
+#include "hal_display.h"
+#include "hal_sd.h"
+#include "runtime_controller.h"
 
-// Zmienne do obsługi czasu i okresowości (non-blocking millis)
-static unsigned long last_lvgl_tick = 0;
-static unsigned long last_lvgl_handler_time = 0;
-static unsigned long last_gui_update_time = 0;
-constexpr unsigned long WEB_FOCUS_LVGL_HANDLER_INTERVAL_MS = 100UL;
-constexpr unsigned long SENSOR_CONTROL_INTERVAL_MS = 1000UL;
-constexpr uint32_t NORMAL_LOOP_YIELD_MS = 5U;
-constexpr uint32_t WEB_FOCUS_LOOP_YIELD_MS = 1U;
+bool wifi_connected = false;
+int wifi_rssi = 0;
+bool wifi_ota_active = false;
 
-// Lokalny zegar programowy uzywany do czasu podlaczenia RTC/NTP.
-static uint32_t uptime_seconds = 0;
 int clock_hour = 20;
 int clock_minute = 30;
 int clock_second = 0;
@@ -35,301 +23,227 @@ int clock_day = 31;
 int clock_month = 5;
 int clock_year = 2026;
 
-bool wifi_connected = false;
-int wifi_rssi = 0;
-bool wifi_ota_active = false;
+namespace {
 
-static void log_ram_checkpoint(const char *stage)
-{
+constexpr uint32_t UI_LOOP_PERIOD_MS = 2U;
+constexpr uint32_t UI_MUTEX_TIMEOUT_MS = 20U;
+
+uint32_t last_lvgl_tick_ms = 0U;
+uint32_t last_clock_tick_ms = 0U;
+uint32_t last_status_bar_ms = 0U;
+RuntimeTelemetry pending_telemetry = {};
+bool pending_telemetry_valid = false;
+
+uint32_t system_uptime_seconds() {
+    return static_cast<uint32_t>(
+        static_cast<uint64_t>(esp_timer_get_time()) / 1000000ULL);
+}
+
+void log_ram_checkpoint(const char *stage) {
     Serial.printf("RAM: %s free=%lu min_free=%lu\n",
                   stage != nullptr ? stage : "unknown",
                   static_cast<unsigned long>(ESP.getFreeHeap()),
                   static_cast<unsigned long>(ESP.getMinFreeHeap()));
 }
 
-static float ads_raw_to_voltage(int16_t raw)
-{
-    return (static_cast<float>(raw) * 4.096f) / 32768.0f;
+bool is_leap_year(int year) {
+    return year % 4 == 0 && (year % 100 != 0 || year % 400 == 0);
 }
 
-static void publish_sensor_sample(SensorId id, float value, bool valid)
-{
-    SensorSample sample = {};
-    sample.id = id;
-    sample.value = value;
-    sample.timestampMs = millis();
-    sample.valid = valid;
-    events_publish_sample(sample);
+uint8_t days_in_month(int month, int year) {
+    static constexpr uint8_t DAYS[] = {
+        31U, 28U, 31U, 30U, 31U, 30U, 31U, 31U, 30U, 31U, 30U, 31U
+    };
+    if (month < 1 || month > 12) {
+        return 31U;
+    }
+    if (month == 2 && is_leap_year(year)) {
+        return 29U;
+    }
+    return DAYS[month - 1];
 }
 
-static void drain_event_samples()
-{
+void advance_local_clock(uint32_t elapsed_seconds) {
+    while (elapsed_seconds-- > 0U) {
+        ++clock_second;
+        if (clock_second < 60) {
+            continue;
+        }
+        clock_second = 0;
+        ++clock_minute;
+        if (clock_minute < 60) {
+            continue;
+        }
+        clock_minute = 0;
+        ++clock_hour;
+        if (clock_hour < 24) {
+            continue;
+        }
+        clock_hour = 0;
+        ++clock_day;
+        if (clock_day <= days_in_month(clock_month, clock_year)) {
+            continue;
+        }
+        clock_day = 1;
+        ++clock_month;
+        if (clock_month <= 12) {
+            continue;
+        }
+        clock_month = 1;
+        ++clock_year;
+    }
+}
+
+void service_clock(uint32_t now_ms) {
+    const uint32_t elapsed_ms = static_cast<uint32_t>(now_ms - last_clock_tick_ms);
+    const uint32_t elapsed_seconds = elapsed_ms / 1000UL;
+    if (elapsed_seconds == 0U) {
+        return;
+    }
+    // NTP is serviced on Core 0 and updates the same clock fields. The shared
+    // GUI mutex keeps an NTP correction and the local tick atomic.
+    if (!gui_app_lock(5U)) {
+        return;
+    }
+    last_clock_tick_ms += elapsed_seconds * 1000UL;
+    advance_local_clock(elapsed_seconds);
+    gui_app_unlock();
+}
+
+void service_status_bar(uint32_t now_ms) {
+    if (static_cast<uint32_t>(now_ms - last_status_bar_ms) < 1000U) {
+        return;
+    }
+    last_status_bar_ms = now_ms;
+    if (gui_app_lock(5U)) {
+        gui_app_update_status_bar(system_uptime_seconds());
+        gui_app_unlock();
+    }
+}
+
+void drain_sensor_events() {
     SensorSample sample = {};
     while (events_poll_sample(sample)) {
     }
 }
 
-static void run_i2c_startup_diagnostics()
-{
-    const bool mcp_ok = hal_mcp_init();
-    Serial.printf("HAL: MCP23017 address 0x%02X present: %s\n",
-                  HwConfig::MCP23017_ADDR,
-                  mcp_ok ? "yes" : "no");
-
-    if (mcp_ok) {
-        uint16_t mcp_state = 0;
-        if (hal_mcp_read_all(&mcp_state)) {
-            Serial.printf("HAL: MCP23017 logical state mask: 0x%04X\n", mcp_state);
-        } else {
-            Serial.println("HAL: MCP23017 state read failed.");
-        }
+bool apply_telemetry(const RuntimeTelemetry &frame) {
+    if (!gui_app_lock(UI_MUTEX_TIMEOUT_MS)) {
+        return false;
     }
 
-    const bool adc_ok = hal_adc_init();
-    Serial.printf("HAL: ADS1115 address 0x%02X present: %s\n",
-                  HwConfig::ADS1115_ADDR,
-                  adc_ok ? "yes" : "no");
+    char time_text[9];
+    snprintf(time_text, sizeof(time_text), "%02d:%02d:%02d",
+             constrain(clock_hour, 0, 23),
+             constrain(clock_minute, 0, 59),
+             constrain(clock_second, 0, 59));
 
-    if (adc_ok) {
-        for (uint8_t ch = HwConfig::ADC_PH; ch <= HwConfig::ADC_SPARE; ++ch) {
-            int16_t raw = 0;
-            if (hal_adc_read_raw(ch, &raw)) {
-                Serial.printf("HAL: ADS1115 A%u raw: %d\n", static_cast<unsigned>(ch), raw);
-            } else {
-                Serial.printf("HAL: ADS1115 A%u read failed.\n", static_cast<unsigned>(ch));
-            }
-        }
-    }
+    gui_app_update_ldr(frame.ldr_value, frame.ldr_valid);
+    gui_app_update_sensor_debug(
+        frame.ldr_value,
+        frame.adc_present,
+        frame.ph_valid,
+        frame.ph_raw,
+        frame.ph_voltage,
+        frame.ec_valid,
+        frame.ec_raw,
+        frame.ec_voltage,
+        frame.mcp_present,
+        frame.mcp_valid,
+        frame.mcp_state);
+    gui_update_metrics(
+        frame.temperature_valid ? frame.temperature_c : NAN,
+        frame.ph_valid ? frame.ph_value : NAN,
+        frame.free_heap_bytes,
+        time_text);
+    gui_app_update_system_info(frame.free_heap_bytes, frame.uptime_seconds);
+    gui_app_update_wifi(frame.wifi_state, frame.wifi_rssi);
+
+    gui_app_unlock();
+    drain_sensor_events();
+    return true;
 }
 
-// Lokalny zegar programowy dziala bez RTC/NTP, ale nie generuje danych sensorow.
-static void update_local_clock() {
-    clock_second++;
-    uptime_seconds++;
-    if (clock_second >= 60) {
-        clock_second = 0;
-        clock_minute++;
-        if (clock_minute >= 60) {
-            clock_minute = 0;
-            clock_hour++;
-            if (clock_hour >= 24) {
-                clock_hour = 0;
-                clock_day++;
-                int days_in_month = 31;
-                if (clock_month == 4 || clock_month == 6 || clock_month == 9 || clock_month == 11) {
-                    days_in_month = 30;
-                } else if (clock_month == 2) {
-                    bool is_leap = (clock_year % 4 == 0 && (clock_year % 100 != 0 || clock_year % 400 == 0));
-                    days_in_month = is_leap ? 29 : 28;
-                }
-                if (clock_day > days_in_month) {
-                    clock_day = 1;
-                    clock_month++;
-                    if (clock_month > 12) {
-                        clock_month = 1;
-                        clock_year++;
-                    }
-                }
-            }
-        }
+void service_lvgl(uint32_t now_ms) {
+    const uint32_t elapsed_ms = static_cast<uint32_t>(now_ms - last_lvgl_tick_ms);
+    if (elapsed_ms > 0U) {
+        lv_tick_inc(elapsed_ms);
+        last_lvgl_tick_ms = now_ms;
     }
 
-
+    if (!gui_app_lock(UI_MUTEX_TIMEOUT_MS)) {
+        return;
+    }
+    hal_display_loop_cb();
+    lv_timer_handler();
+    gui_app_unlock();
 }
+
+} // namespace
 
 void setup() {
-    // Initialize serial port
     Serial.begin(HwConfig::UartConsole::BAUD);
-    delay(100);
-    Serial.println("\n--- STARTING ESP32 CYD DASHBOARD (STABLE RUNTIME) ---");
-    if (!events_init()) {
-        Serial.println("EVENTS: initialization failed.");
+    Serial.println();
+    Serial.println("--- ESP32 CYD AQUARIUM / PRODUKCYJNY RUNTIME ---");
+
+    if (!gui_app_sync_init()) {
+        Serial.println("FATAL: nie można utworzyć blokady GUI.");
+        return;
     }
-    log_ram_checkpoint("boot_start");
+    if (!events_init()) {
+        Serial.println("EVENTS: inicjalizacja kolejek nie powiodła się.");
+    }
 
-    // Set up LDR input using standard Arduino ADC APIs (ADC1 / GPIO 34)
-    pinMode(LDR_PIN, INPUT);
-    analogRead(LDR_PIN); // Force core oneshot driver to claim GPIO 34 as analog channel
-    analogSetPinAttenuation(LDR_PIN, ADC_11db);
-    
-    Serial.println("System: LDR pin 34 configured.");
-    // Step 1: Initialize the LVGL graphics library
+    // Przekaźniki otrzymują stan bezpieczny przed inicjalizacją grafiki i SD.
+    runtime_controller_prepare_hardware();
+    log_ram_checkpoint("after_safe_hardware");
+
     lv_init();
-    log_ram_checkpoint("after_lvgl_init");
-
-    // Step 2: Initialize LovyanGFX display and XPT2046 touch via HAL
     hal_display_init();
-    Serial.println("System: Graphics layer initialization (HAL Display) completed.");
-    log_ram_checkpoint("after_display_init");
+    log_ram_checkpoint("after_display");
 
     if (hal_sd_init()) {
-        const bool splash_ok = hal_display_play_rgb565_sequence(
+        const bool animation_ok = hal_display_play_rgb565_sequence(
             HwConfig::SdCard::WELCOME_FRAME_PATTERN,
             HwConfig::SdCard::WELCOME_FRAME_COUNT,
             HwConfig::SdCard::WELCOME_WIDTH,
             HwConfig::SdCard::WELCOME_HEIGHT,
             HwConfig::SdCard::WELCOME_FRAME_RATE_FPS);
-        if (!splash_ok) {
-            hal_display_draw_rgb565_file(HwConfig::SdCard::WELCOME_POSTER_PATH,
-                                         HwConfig::SdCard::WELCOME_WIDTH,
-                                         HwConfig::SdCard::WELCOME_HEIGHT);
+        if (!animation_ok) {
+            hal_display_draw_rgb565_file(
+                HwConfig::SdCard::WELCOME_POSTER_PATH,
+                HwConfig::SdCard::WELCOME_WIDTH,
+                HwConfig::SdCard::WELCOME_HEIGHT);
         }
     }
 
-    run_i2c_startup_diagnostics();
-
-    // Step 3: Initialize user interface (GUI)
     gui_app_init();
-    Serial.println("System: Graphical User Interface (GUI) creation completed.");
-    log_ram_checkpoint("after_gui_init");
+    log_ram_checkpoint("after_gui");
 
-    // Initialize tick timer for LVGL reference
-    last_lvgl_tick = millis();
-    Serial.println("System: Device is ready for stable operation.");
+    const uint32_t now_ms = millis();
+    last_lvgl_tick_ms = now_ms;
+    last_clock_tick_ms = now_ms;
+    last_status_bar_ms = now_ms;
+    if (!runtime_controller_start()) {
+        Serial.println("FATAL: zadanie I/O Core 0 nie wystartowało.");
+    }
+    Serial.printf("SYSTEM: UI Core=%d, I/O Core=0, gotowy.\n", xPortGetCoreID());
 }
 
 void loop() {
-    unsigned long current_time = millis();
+    const uint32_t now_ms = millis();
+    service_clock(now_ms);
+    service_status_bar(now_ms);
+    service_lvgl(now_ms);
 
-    // --- WĄTEK LVGL (Precyzyjne i nieblokujące taktowanie) ---
-    // Obliczanie rzeczywistego czasu jaki upłynął i przekazanie go do rdzenia LVGL
-    unsigned long elapsed = current_time - last_lvgl_tick;
-    if (elapsed > 0) {
-        lv_tick_inc(elapsed);
-        last_lvgl_tick = current_time;
+    RuntimeTelemetry newest_frame = {};
+    if (runtime_controller_take_latest(&newest_frame)) {
+        pending_telemetry = newest_frame;
+        pending_telemetry_valid = true;
     }
-    
-    // Obsługa asynchronicznego zwalniania buforów wyświetlacza LovyanGFX
-    hal_display_loop_cb();
-    
-    // Płynna i nieblokowana pętla obsługi grafiki oraz dotyku
-    if (wifi_ota_active) {
-        ArduinoOTA.handle();
-    }
-    gui_app_handle_ota_portal();
-
-    // HTTP is serviced first. During an active web session LVGL receives a
-    // bounded maintenance slice while sensor and control deadlines stay fixed.
-    const bool web_focus_active = gui_app_is_web_focus_active();
-    if (!web_focus_active ||
-        current_time - last_lvgl_handler_time >= WEB_FOCUS_LVGL_HANDLER_INTERVAL_MS) {
-        lv_timer_handler();
-        last_lvgl_handler_time = current_time;
+    if (pending_telemetry_valid && apply_telemetry(pending_telemetry)) {
+        pending_telemetry_valid = false;
     }
 
-    // --- WĄTEK AKTUALIZACJI METRYK (Nieblokujący - Co 1000ms) ---
-    if (current_time - last_gui_update_time >= SENSOR_CONTROL_INTERVAL_MS) {
-        last_gui_update_time = current_time;
-
-        // Aktualizacja lokalnego zegara programowego bez generowania probek sensorow
-        update_local_clock();
-
-        // Przygotowanie ciągu tekstowego czasu w formacie HH:MM:SS
-        char time_str[9];
-        snprintf(time_str, sizeof(time_str), "%02d:%02d:%02d", clock_hour, clock_minute, clock_second);
-
-        // Pobranie wolnej pamięci RAM systemu ESP32
-        uint32_t free_heap = ESP.getFreeHeap();
-
-        const bool dev_mode = gui_app_is_dev_mode();
-
-        const aquarium::DevSnapshot *dev_sample = nullptr;
-        if (dev_mode) {
-            const uint16_t minute_of_day = static_cast<uint16_t>(clock_hour) * 60U +
-                                           static_cast<uint16_t>(clock_minute);
-            dev_sample = &aquarium::dev_simulator().step(current_time,
-                                                         minute_of_day,
-                                                         static_cast<uint8_t>(clock_second));
-        }
-
-        int ldr_value = dev_mode ? dev_sample->ldr : -1;
-        const bool ldr_valid = true;
-        if (!dev_mode) {
-            ldr_value = analogRead(LDR_PIN);
-        }
-        gui_app_update_ldr(ldr_value, true);
-
-        const bool adc_present = dev_mode || hal_adc_is_present();
-        int16_t ph_raw = 0;
-        int16_t ec_raw = 0;
-        bool ph_adc_ok = false;
-        bool ec_adc_ok = false;
-        float ph_voltage = 0.0f;
-        float ec_voltage = 0.0f;
-        float ec_publish_value = NAN;
-        if (dev_mode) {
-            ph_raw = dev_sample->phRaw;
-            ec_raw = dev_sample->ecRaw;
-            ph_voltage = dev_sample->phVoltage;
-            ec_voltage = dev_sample->ecVoltage;
-            ec_publish_value = dev_sample->ecConductivity;
-            ph_adc_ok = true;
-            ec_adc_ok = true;
-        } else if (adc_present) {
-            ph_adc_ok = hal_adc_read_raw(HwConfig::ADC_PH, &ph_raw);
-            if (ph_adc_ok) {
-                ph_voltage = ads_raw_to_voltage(ph_raw);
-            }
-            ec_adc_ok = hal_adc_read_raw(HwConfig::ADC_EC, &ec_raw);
-            if (ec_adc_ok) {
-                ec_voltage = ads_raw_to_voltage(ec_raw);
-                ec_publish_value = ec_voltage;
-            }
-        }
-
-        uint16_t mcp_state = 0;
-        bool mcp_present = false;
-        bool mcp_ok = false;
-        if (dev_mode) {
-            if (dev_sample->waterLevelHigh) {
-                mcp_state |= static_cast<uint16_t>(1U << static_cast<uint8_t>(HwConfig::CH_WATER_LEVEL));
-            }
-            if (dev_sample->leakDetected) {
-                mcp_state |= static_cast<uint16_t>(1U << static_cast<uint8_t>(HwConfig::CH_LEAK));
-            }
-            if (dev_sample->flowActive) {
-                mcp_state |= static_cast<uint16_t>(1U << static_cast<uint8_t>(HwConfig::CH_FLOW_PULSE));
-            }
-            mcp_present = true;
-            mcp_ok = true;
-        } else {
-            mcp_present = hal_mcp_is_present();
-            mcp_ok = mcp_present && hal_mcp_read_all(&mcp_state);
-        }
-
-        const float temp_to_send = dev_mode ? dev_sample->temperatureC : NAN;
-        const float ph_to_send = dev_mode ? dev_sample->ph : (ph_adc_ok ? (4.0f + (ph_voltage / 4.096f) * 6.0f) : NAN);
-
-        // Make current digital safety inputs visible before automation is
-        // evaluated; leak handling must not lag by one sampling cycle.
-        gui_app_update_sensor_debug(ldr_value,
-                                    adc_present,
-                                    ph_adc_ok,
-                                    ph_raw,
-                                    ph_voltage,
-                                    ec_adc_ok,
-                                    ec_raw,
-                                    ec_voltage,
-                                    mcp_present,
-                                    mcp_ok,
-                                    mcp_state);
-
-        // Automation and physical outputs run even when local rendering is deferred.
-        gui_update_metrics(temp_to_send, ph_to_send, free_heap, time_str);
-        publish_sensor_sample(SensorId::Temp, temp_to_send, isfinite(temp_to_send));
-        publish_sensor_sample(SensorId::Ph, ph_to_send, isfinite(ph_to_send));
-        publish_sensor_sample(SensorId::Ec, ec_publish_value, ec_adc_ok && isfinite(ec_publish_value));
-        publish_sensor_sample(SensorId::Ldr, ldr_valid ? static_cast<float>(ldr_value) : NAN, ldr_valid);
-        publish_sensor_sample(SensorId::Heap, static_cast<float>(free_heap), true);
-        drain_event_samples();
-
-        // Aktualizacja czasu pracy (uptime) w zakładce System
-        gui_app_update_system_info(free_heap, uptime_seconds);
-        // Update Wi-Fi status in the header (0=OFF, 1=STA, 2=AP)
-        gui_app_update_wifi(wifi_ota_active ? 2 : (wifi_connected ? 1 : 0), wifi_rssi);
-
-    }
-
-    // Keep FreeRTOS fed while giving active HTTP sessions a larger CPU share.
-    delay(web_focus_active ? WEB_FOCUS_LOOP_YIELD_MS : NORMAL_LOOP_YIELD_MS);
+    vTaskDelay(pdMS_TO_TICKS(UI_LOOP_PERIOD_MS));
 }

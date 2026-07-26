@@ -30,6 +30,12 @@
 #include <WiFi.h>
 #include <ArduinoOTA.h>
 #include <ctype.h>
+#include <atomic>
+#include <freertos/FreeRTOS.h>
+#include <freertos/queue.h>
+#include <freertos/semphr.h>
+#include <new>
+#include <stdarg.h>
 
 extern bool wifi_connected;
 extern int wifi_rssi;
@@ -49,6 +55,76 @@ static int get_weekday(int d, int m, int y) {
 
 namespace {
 
+StaticSemaphore_t gui_mutex_storage;
+SemaphoreHandle_t gui_mutex = nullptr;
+bool gui_ready = false;
+
+class GuiMutexGuard {
+public:
+    explicit GuiMutexGuard(uint32_t timeout_ms)
+        : locked_(gui_mutex != nullptr &&
+                  xSemaphoreTakeRecursive(gui_mutex, pdMS_TO_TICKS(timeout_ms)) == pdTRUE) {
+    }
+
+    ~GuiMutexGuard() {
+        if (locked_) {
+            xSemaphoreGiveRecursive(gui_mutex);
+        }
+    }
+
+    bool locked() const {
+        return locked_;
+    }
+
+    GuiMutexGuard(const GuiMutexGuard &) = delete;
+    GuiMutexGuard &operator=(const GuiMutexGuard &) = delete;
+
+private:
+    bool locked_;
+};
+
+static void label_set_text_if_changed(lv_obj_t *label, const char *text) {
+    if (label == nullptr) {
+        return;
+    }
+    const char *safe_text = text != nullptr ? text : "";
+    const char *current = lv_label_get_text(label);
+    if (current == nullptr || strcmp(current, safe_text) != 0) {
+        lv_label_set_text(label, safe_text);
+    }
+}
+
+static void label_set_text_fmt_if_changed(lv_obj_t *label, const char *format, ...) {
+    if (label == nullptr || format == nullptr) {
+        return;
+    }
+
+    char text[256];
+    va_list args;
+    va_start(args, format);
+    const int written = vsnprintf(text, sizeof(text), format, args);
+    va_end(args);
+    if (written < 0) {
+        return;
+    }
+    text[sizeof(text) - 1U] = '\0';
+    label_set_text_if_changed(label, text);
+}
+
+static lv_obj_t *create_cyd_switch(lv_obj_t *parent) {
+    lv_obj_t *sw = lv_switch_create(parent);
+    if (sw != nullptr) {
+        // Wizualny przełącznik może pozostać kompaktowy, ale jego pole dotyku
+        // spełnia minimum 40 px na małym ekranie 2,8".
+        lv_obj_set_ext_click_area(sw, 10);
+    }
+    return sw;
+}
+
+#define lv_label_set_text label_set_text_if_changed
+#define lv_label_set_text_fmt label_set_text_fmt_if_changed
+#define lv_switch_create create_cyd_switch
+
 constexpr uint32_t UI_CONFIG_MAGIC = 0x43594441UL;
 constexpr uint16_t UI_CONFIG_VERSION = 17;
 constexpr uint16_t UI_CONFIG_VERSION_DUAL_AQUAEL_DN = 16;
@@ -56,7 +132,10 @@ constexpr uint16_t UI_CONFIG_VERSION_FACTORY_SCHEDULE_BASE = 15;
 constexpr uint16_t UI_CONFIG_VERSION_AQUAEL_DN = 14;
 constexpr uint16_t UI_CONFIG_VERSION_DEV_NO_SENSORS = 13;
 constexpr uint16_t UI_CONFIG_VERSION_LDR_DEFAULT_OFF = 12;
-constexpr bool FORCE_DEVELOPER_MODE = true;
+#ifndef AQUARIUM_FORCE_DEVELOPER_MODE
+#define AQUARIUM_FORCE_DEVELOPER_MODE 0
+#endif
+constexpr bool FORCE_DEVELOPER_MODE = AQUARIUM_FORCE_DEVELOPER_MODE != 0;
 constexpr uint8_t MINUTE_STEP = 5;
 constexpr uint8_t PAGE_COUNT = 5;
 constexpr uint8_t TEMP_HISTORY_POINTS = 32;
@@ -69,6 +148,7 @@ constexpr uint16_t HISTORY_ARCHIVE_VERSION = 1;
 constexpr int LDR_ADC_MIN = 0;
 constexpr int LDR_ADC_MAX = 4095;
 constexpr int LDR_THEME_THRESHOLD = 200;
+constexpr int LDR_THEME_HYSTERESIS = 60;
 constexpr uint8_t LDR_THEME_CONFIRM_READS = 5;
 constexpr uint32_t UI_RUNTIME_SUBPAGE_MIN_FREE = 18000UL;
 constexpr uint32_t UI_RUNTIME_MODAL_MIN_FREE = 12000UL;
@@ -162,8 +242,8 @@ enum class LeakAction : uint8_t {
     DisableAll = 2
 };
 
-#define SPEAKER_PIN 26
-constexpr uint8_t SPEAKER_LEDC_CHANNEL = 0;
+constexpr uint8_t SPEAKER_PIN = HwConfig::Audio::SPEAKER_PIN;
+constexpr uint8_t SPEAKER_LEDC_CHANNEL = HwConfig::Audio::LEDC_CHANNEL;
 
 static bool audio_initialized = false;
 
@@ -333,6 +413,19 @@ struct __attribute__((packed)) HistoryArchiveRecord {
 static_assert(sizeof(HistoryArchiveHeader) == 32, "History archive header must stay fixed-size.");
 static_assert(sizeof(HistoryArchiveRecord) == 18, "History archive record must stay fixed-size.");
 
+enum class AquaelSequenceStage : uint8_t {
+    Idle = 0,
+    PowerOnSettle,
+    PulseOff,
+    PulseOnSettle
+};
+
+struct AquaelSequence {
+    AquaelSequenceStage stage;
+    uint32_t deadlineMs;
+    uint8_t desiredProfile;
+};
+
 struct McpOutputState {
     bool initialized;
     bool light;
@@ -349,6 +442,8 @@ struct McpOutputState {
     bool co2;
     bool waterDosing;
     bool feeder;
+    AquaelSequence lightSequence;
+    AquaelSequence plantLightSequence;
 };
 
 static GuiLogEntry gui_logs_normal[GUI_LOG_CAPACITY] = {};
@@ -361,6 +456,8 @@ static bool history_archive_has_written = false;
 static bool controller_clock_reliable = false;
 static char controller_clock_source[12] = "start";
 static bool feeder_pulse_active = false;
+static bool feeder_start_pending = false;
+static uint32_t feeder_pulse_deadline_ms = 0U;
 static uint32_t last_feed_epoch = 0;
 static char last_feed_result[16] = "none";
 
@@ -371,6 +468,10 @@ static lv_obj_t *label_date;
 static lv_obj_t *label_power_mode;
 static lv_obj_t *label_rtc_bat;
 static lv_obj_t *label_wifi_state;
+static char status_ip_address[16] = "0.0.0.0";
+static uint32_t status_last_sample_ms = 0U;
+static bool status_sensor_bus_ok = false;
+static bool status_temperature_ok = false;
 static lv_obj_t *label_clock_time;
 static lv_obj_t *label_clock_date;
 
@@ -514,11 +615,21 @@ static lv_obj_t *subpage_service = nullptr;
 static lv_obj_t *service_light_sw = nullptr;
 static lv_obj_t *service_filter_sw = nullptr;
 static lv_obj_t *service_vol_lbl = nullptr;
-static volatile bool musicPlaying = false;
-static int musicVolume = 5; // default 50%
-static int selectedSongIndex = 0;
+static std::atomic<bool> musicPlaying{false};
+static std::atomic<int> musicVolume{5}; // default 50%
+static std::atomic<int> selectedSongIndex{0};
 static TaskHandle_t musicTaskHandle = nullptr;
+enum class AudioEffect : uint8_t {
+    Click = 0,
+    Save,
+    Warning,
+    Mario
+};
+static StaticQueue_t audio_queue_storage;
+static uint8_t audio_queue_buffer[6U * sizeof(AudioEffect)] = {};
+static QueueHandle_t audio_queue = nullptr;
 static lv_obj_t *device_ph_detail_lbl = nullptr;
+static lv_obj_t *btn_sync_ntp_global = nullptr;
 static lv_obj_t *btn_sync_ntp_lbl_global;
 static lv_obj_t *clock_ntp_row = nullptr;
 static lv_obj_t *modal_feeder_title_lbl;
@@ -854,7 +965,14 @@ static bool ota_http_update_ok = false;
 static bool ota_http_update_failed = false;
 static bool ota_reboot_pending = false;
 static bool ota_shutdown_pending = false;
+static bool ota_start_pending = false;
 static bool wifi_disconnect_pending = false;
+static bool wifi_autoconnect_pending = false;
+static bool wifi_scan_prepare_pending = false;
+static bool wifi_connect_pending = false;
+static bool ntp_sync_pending = false;
+static uint32_t ntp_sync_deadline_ms = 0U;
+static uint32_t ntp_result_until_ms = 0U;
 static bool ota_http_upload_active = false;
 static uint32_t ota_reboot_at_ms = 0;
 static uint32_t ota_shutdown_at_ms = 0;
@@ -864,6 +982,7 @@ static uint32_t ota_http_upload_total = 0;
 static int ota_http_upload_percent = -1;
 static char ota_http_update_msg[96] = "";
 static uint8_t relay_test_active_mask = 0U;
+static uint8_t relay_test_applied_mask = 0U;
 static uint32_t relay_test_deadline_ms[8] = {0U};
 
 static lv_obj_t *tile_light = nullptr;
@@ -894,7 +1013,6 @@ static lv_obj_t *chart_max_lbl;
 static lv_obj_t *chart_cur_lbl;
 static lv_obj_t *chart_target_lbl;
 static lv_obj_t *chart_range_lbl;
-static uint8_t chart_range_index = 0;
 static float temp_history[TEMP_HISTORY_POINTS];
 static bool heater_history[TEMP_HISTORY_POINTS];
 static float ph_history[TEMP_HISTORY_POINTS];
@@ -1016,6 +1134,7 @@ static void open_ph_subpage_authorized();
 static void open_time_picker_authorized();
 static void open_date_picker_authorized();
 static void start_ota_authorized();
+static void start_ota_background();
 static void start_ota_portal();
 static void start_sta_service_portal();
 static void stop_ota_portal();
@@ -1245,11 +1364,13 @@ static bool ldr_value_to_light_theme(int ldr_value, bool *out_light_theme) {
     }
 
     const int value = clamp_ldr_value(ldr_value);
-    if (value < LDR_THEME_THRESHOLD) {
+    const int light_threshold = LDR_THEME_THRESHOLD - LDR_THEME_HYSTERESIS;
+    const int dark_threshold = LDR_THEME_THRESHOLD + LDR_THEME_HYSTERESIS;
+    if (!ui_light_theme && value <= light_threshold) {
         *out_light_theme = true;
         return true;
     }
-    if (value > LDR_THEME_THRESHOLD) {
+    if (ui_light_theme && value >= dark_threshold) {
         *out_light_theme = false;
         return true;
     }
@@ -1385,31 +1506,76 @@ static bool gui_save_clock_settings(bool reliable, const char *source) {
 }
 
 static bool sync_clock_from_ntp(uint32_t timeout_ms) {
+    if (!wifi_connected || timeout_ms == 0U) {
+        return false;
+    }
     configTzTime(NTP_TZ_POLAND, NTP_SERVER_1, NTP_SERVER_2);
-    const uint32_t started = millis();
-    struct tm timeinfo = {};
-    while (millis() - started < timeout_ms) {
-        if (getLocalTime(&timeinfo, 250)) {
-            const int year = timeinfo.tm_year + 1900;
-            const int month = timeinfo.tm_mon + 1;
-            const int day = timeinfo.tm_mday;
-            const int hour = timeinfo.tm_hour;
-            const int minute = timeinfo.tm_min;
-            const int second = timeinfo.tm_sec;
-            if (clock_fields_valid(day, month, year, hour, minute, second)) {
-                clock_year = year;
-                clock_month = month;
-                clock_day = day;
-                clock_hour = hour;
-                clock_minute = minute;
-                clock_second = second;
-                return gui_save_clock_settings(true, "ntp");
+    ntp_sync_pending = true;
+    ntp_sync_deadline_ms = millis() + timeout_ms;
+    ntp_result_until_ms = 0U;
+    if (btn_sync_ntp_lbl_global != nullptr) {
+        lv_label_set_text(btn_sync_ntp_lbl_global, "Pobieram czas...");
+    }
+    return true;
+}
+
+static void service_ntp_sync(uint32_t now_ms) {
+    if (!ntp_sync_pending) {
+        if (ntp_result_until_ms != 0U &&
+            static_cast<int32_t>(now_ms - ntp_result_until_ms) >= 0) {
+            ntp_result_until_ms = 0U;
+            if (btn_sync_ntp_lbl_global != nullptr) {
+                lv_label_set_text(btn_sync_ntp_lbl_global, "Synchronizuj NTP");
+            }
+            if (btn_sync_ntp_global != nullptr) {
+                lv_obj_set_style_bg_color(
+                    btn_sync_ntp_global,
+                    lv_color_make(35, 41, 55),
+                    0);
             }
         }
-        delay(10);
+        return;
     }
-    set_controller_clock_source(false, "ntp_err");
-    return false;
+
+    struct tm timeinfo = {};
+    bool success = false;
+    if (getLocalTime(&timeinfo, 0U)) {
+        const int year = timeinfo.tm_year + 1900;
+        const int month = timeinfo.tm_mon + 1;
+        const int day = timeinfo.tm_mday;
+        const int hour = timeinfo.tm_hour;
+        const int minute = timeinfo.tm_min;
+        const int second = timeinfo.tm_sec;
+        if (clock_fields_valid(day, month, year, hour, minute, second)) {
+            clock_year = year;
+            clock_month = month;
+            clock_day = day;
+            clock_hour = hour;
+            clock_minute = minute;
+            clock_second = second;
+            success = gui_save_clock_settings(true, "ntp");
+        }
+    }
+
+    const bool timed_out = static_cast<int32_t>(now_ms - ntp_sync_deadline_ms) >= 0;
+    if (!success && !timed_out) {
+        return;
+    }
+
+    ntp_sync_pending = false;
+    ntp_result_until_ms = now_ms + 2500U;
+    if (!success) {
+        set_controller_clock_source(false, "ntp_err");
+    }
+    if (btn_sync_ntp_lbl_global != nullptr) {
+        lv_label_set_text(btn_sync_ntp_lbl_global, success ? "Czas zapisany" : "Blad NTP");
+    }
+    if (btn_sync_ntp_global != nullptr) {
+        lv_obj_set_style_bg_color(
+            btn_sync_ntp_global,
+            success ? lv_color_make(16, 185, 129) : lv_color_make(239, 68, 68),
+            0);
+    }
 }
 
 static bool same_color(lv_color_t color, uint8_t r, uint8_t g, uint8_t b) {
@@ -2415,48 +2581,64 @@ static void play_beep(uint32_t frequency, uint32_t durationMs, uint8_t volumePer
     
     speaker_ledc_write_tone(frequency);
     speaker_ledc_write(duty);
-    delay(durationMs);
+    vTaskDelay(pdMS_TO_TICKS(durationMs));
     speaker_ledc_write(0);
 }
 
+static void play_audio_effect_blocking(AudioEffect effect) {
+    switch (effect) {
+    case AudioEffect::Click:
+        play_beep(3800, 8, 2); // Tiny, high-pitched mechanical click (2% volume)
+        break;
+    case AudioEffect::Save:
+        play_beep(2800, 20, 3);
+        vTaskDelay(pdMS_TO_TICKS(15U));
+        play_beep(3500, 35, 3);
+        break;
+    case AudioEffect::Warning:
+        play_beep(1200, 80, 2);
+        break;
+    case AudioEffect::Mario: {
+        static constexpr uint16_t NOTES[] = {659U, 659U, 659U, 523U, 659U, 784U, 392U};
+        static constexpr uint16_t DURATIONS[] = {100U, 100U, 100U, 100U, 100U, 100U, 100U};
+        static constexpr uint16_t GAPS[] = {50U, 100U, 100U, 50U, 150U, 300U, 0U};
+        for (size_t i = 0U; i < sizeof(NOTES) / sizeof(NOTES[0]); ++i) {
+            play_beep(NOTES[i], DURATIONS[i], 3U);
+            if (GAPS[i] > 0U) {
+                vTaskDelay(pdMS_TO_TICKS(GAPS[i]));
+            }
+        }
+        break;
+    }
+    }
+}
+
+static void enqueue_audio_effect(AudioEffect effect) {
+    if (audio_queue != nullptr) {
+        xQueueSend(audio_queue, &effect, 0U);
+    }
+}
+
 static void play_system_sound(SoundType type) {
-    if (!cfg.soundEnabled) return;
-    if (is_quiet_hours()) return;
+    if (!cfg.soundEnabled || is_quiet_hours()) {
+        return;
+    }
 
     switch (type) {
     case SoundType::Click:
-        play_beep(3800, 8, 2); // Tiny, high-pitched mechanical click (2% volume)
+        enqueue_audio_effect(AudioEffect::Click);
         break;
     case SoundType::Save:
-        play_beep(2800, 20, 3);
-        delay(15);
-        play_beep(3500, 35, 3);
+        enqueue_audio_effect(AudioEffect::Save);
         break;
     case SoundType::Warning:
-        play_beep(1200, 80, 2);
+        enqueue_audio_effect(AudioEffect::Warning);
         break;
     }
 }
 
 static void play_mario_tune() {
-    uint16_t E5 = 659;
-    uint16_t C5 = 523;
-    uint16_t G5 = 784;
-    uint16_t G4 = 392;
-
-    play_beep(E5, 100, 3);
-    delay(50);
-    play_beep(E5, 100, 3);
-    delay(100);
-    play_beep(E5, 100, 3);
-    delay(100);
-    play_beep(C5, 100, 3);
-    delay(50);
-    play_beep(E5, 100, 3);
-    delay(150);
-    play_beep(G5, 100, 3);
-    delay(300);
-    play_beep(G4, 100, 3);
+    enqueue_audio_effect(AudioEffect::Mario);
 }
 
 // RTTTL melody definitions
@@ -2526,7 +2708,7 @@ static void play_rtttl(const char *rtttl_str) {
 
     uint32_t wholenote = 240000 / bpm;
 
-    while (*p && musicPlaying) {
+    while (*p && musicPlaying.load()) {
         int duration = 0;
         while (*p >= '0' && *p <= '9') {
             duration = duration * 10 + (*p - '0');
@@ -2583,7 +2765,7 @@ static void play_rtttl(const char *rtttl_str) {
 
         if (note_char == 'p') {
             uint32_t elapsed = 0;
-            while (elapsed < note_duration && musicPlaying) {
+            while (elapsed < note_duration && musicPlaying.load()) {
                 uint32_t sleep_time = (note_duration - elapsed > 10) ? 10 : (note_duration - elapsed);
                 vTaskDelay(pdMS_TO_TICKS(sleep_time));
                 elapsed += sleep_time;
@@ -2601,8 +2783,8 @@ static void play_rtttl(const char *rtttl_str) {
                 }
             }
 
-            if (freq > 0 && musicPlaying) {
-                uint32_t duty = ((musicVolume * 10) * 128) / 100;
+            if (freq > 0 && musicPlaying.load()) {
+                uint32_t duty = ((musicVolume.load() * 10) * 128) / 100;
                 if (duty == 0) duty = 1;
 
                 speaker_ledc_write_tone(freq);
@@ -2612,7 +2794,7 @@ static void play_rtttl(const char *rtttl_str) {
                 uint32_t gap_duration = note_duration - sound_duration;
 
                 uint32_t elapsed = 0;
-                while (elapsed < sound_duration && musicPlaying) {
+                while (elapsed < sound_duration && musicPlaying.load()) {
                     uint32_t sleep_time = (sound_duration - elapsed > 10) ? 10 : (sound_duration - elapsed);
                     vTaskDelay(pdMS_TO_TICKS(sleep_time));
                     elapsed += sleep_time;
@@ -2621,7 +2803,7 @@ static void play_rtttl(const char *rtttl_str) {
                 speaker_ledc_write(0);
 
                 elapsed = 0;
-                while (elapsed < gap_duration && musicPlaying) {
+                while (elapsed < gap_duration && musicPlaying.load()) {
                     uint32_t sleep_time = (gap_duration - elapsed > 10) ? 10 : (gap_duration - elapsed);
                     vTaskDelay(pdMS_TO_TICKS(sleep_time));
                     elapsed += sleep_time;
@@ -2636,14 +2818,19 @@ static void play_rtttl(const char *rtttl_str) {
 static void music_player_task(void *pvParameters) {
     LV_UNUSED(pvParameters);
     while (true) {
-        if (musicPlaying) {
-            int idx = selectedSongIndex;
+        AudioEffect effect = AudioEffect::Click;
+        if (audio_queue != nullptr &&
+            xQueueReceive(audio_queue, &effect, pdMS_TO_TICKS(20U)) == pdTRUE) {
+            play_audio_effect_blocking(effect);
+        }
+        if (musicPlaying.load()) {
+            const int idx = selectedSongIndex.load();
             if (idx >= 0 && idx < 3) {
                 play_rtttl(RTTTL_SONGS[idx]);
             }
             musicPlaying = false;
         }
-        vTaskDelay(pdMS_TO_TICKS(100));
+        vTaskDelay(pdMS_TO_TICKS(10U));
     }
 }
 
@@ -2715,6 +2902,9 @@ static lv_obj_t *create_button(lv_obj_t *parent, const char *text, lv_coord_t w,
     lv_obj_t *btn = lv_btn_create(parent);
     lv_obj_set_size(btn, w, h);
     lv_obj_set_style_bg_color(btn, resolve_bg_color(bg), 0);
+    lv_obj_set_style_bg_color(btn, lv_color_darken(resolve_bg_color(bg), LV_OPA_30), LV_STATE_PRESSED);
+    lv_obj_set_style_translate_y(btn, 1, LV_STATE_PRESSED);
+    lv_obj_set_style_opa(btn, LV_OPA_40, LV_STATE_DISABLED);
     lv_obj_set_style_radius(btn, 6, 0);
     lv_obj_set_style_pad_all(btn, 0, 0);
     lv_obj_clear_flag(btn, LV_OBJ_FLAG_SCROLLABLE);
@@ -2722,6 +2912,11 @@ static lv_obj_t *create_button(lv_obj_t *parent, const char *text, lv_coord_t w,
     lv_obj_align(label, LV_ALIGN_CENTER, 0, 0);
     if (cb != nullptr) {
         lv_obj_add_event_cb(btn, cb, LV_EVENT_CLICKED, userData);
+    }
+    const lv_coord_t smaller_dimension = w < h ? w : h;
+    if (smaller_dimension < 40) {
+        const lv_coord_t extension = static_cast<lv_coord_t>((40 - smaller_dimension + 1) / 2);
+        lv_obj_set_ext_click_area(btn, extension > 10 ? 10 : extension);
     }
     return btn;
 }
@@ -2750,8 +2945,15 @@ static void apply_colored_3d_button(lv_obj_t *btn, lv_color_t bg, lv_coord_t lab
 
     apply_3d_button_properties(btn);
     lv_obj_set_style_bg_color(btn, bg, 0);
-    lv_obj_set_style_bg_color(btn, bg, LV_STATE_PRESSED);
+    lv_obj_set_style_bg_color(btn, lv_color_darken(bg, LV_OPA_30), LV_STATE_PRESSED);
     style_colored_button_label(btn, label_width);
+    lv_obj_t *label = lv_obj_get_child(btn, 0);
+    if (label != nullptr) {
+        lv_obj_set_style_text_color(
+            label,
+            lv_color_brightness(bg) > 145U ? lv_color_make(8, 13, 24) : lv_color_white(),
+            0);
+    }
 }
 
 static void style_wifi_list_item(lv_obj_t *item, lv_color_t text_color) {
@@ -3099,7 +3301,6 @@ static void pin_submit_current_entry() {
         PendingPinAction action = pending_pin_action;
         pending_pin_action = {PinAction::None, 0, false};
         close_pin_overlay();
-        lv_refr_now(nullptr);
         execute_pin_action(action);
         return;
     }
@@ -3285,7 +3486,6 @@ static void show_feeder_modal(const char *line1, const char *line2) {
     if (modal_feeder_msg_lbl != nullptr) {
         lv_label_set_text(modal_feeder_msg_lbl, line2 != nullptr ? line2 : "Naped aktywny");
     }
-    lv_refr_now(nullptr);
 }
 
 static bool write_mcp_output_if_needed(bool force,
@@ -3313,13 +3513,17 @@ static bool write_aquael_light_output(bool force,
                                       bool &profile_known,
                                       uint8_t &active_profile,
                                       uint32_t &off_since_ms,
+                                      AquaelSequence &sequence,
                                       HwConfig::McpChannel channel,
                                       bool desired_on,
                                       uint8_t desired_profile) {
     desired_profile = normalize_aquael_profile(desired_profile);
     const uint32_t now_ms = millis();
+    sequence.desiredProfile = desired_profile;
 
     if (!desired_on) {
+        sequence.stage = AquaelSequenceStage::Idle;
+        sequence.deadlineMs = 0U;
         if (!write_mcp_output_if_needed(force, shadow, channel, false)) {
             return false;
         }
@@ -3328,6 +3532,44 @@ static bool write_aquael_light_output(bool force,
         }
         profile_known = false;
         return true;
+    }
+
+    if (sequence.stage != AquaelSequenceStage::Idle &&
+        static_cast<int32_t>(now_ms - sequence.deadlineMs) < 0) {
+        return true;
+    }
+
+    if (sequence.stage == AquaelSequenceStage::PulseOff) {
+        if (!hal_mcp_write_channel(channel, true)) {
+            sequence.stage = AquaelSequenceStage::Idle;
+            return false;
+        }
+        shadow = true;
+        sequence.stage = AquaelSequenceStage::PulseOnSettle;
+        sequence.deadlineMs = now_ms + AQUAEL_DN_CYCLE_ON_SETTLE_MS;
+        return true;
+    }
+
+    if (sequence.stage == AquaelSequenceStage::PulseOnSettle) {
+        active_profile = static_cast<uint8_t>((active_profile + 1U) % 3U);
+        profile_known = true;
+        if (active_profile == sequence.desiredProfile) {
+            sequence.stage = AquaelSequenceStage::Idle;
+            off_since_ms = 0U;
+            return true;
+        }
+        if (!hal_mcp_write_channel(channel, false)) {
+            sequence.stage = AquaelSequenceStage::Idle;
+            return false;
+        }
+        shadow = false;
+        sequence.stage = AquaelSequenceStage::PulseOff;
+        sequence.deadlineMs = now_ms + AQUAEL_DN_CYCLE_OFF_MS;
+        return true;
+    }
+
+    if (sequence.stage == AquaelSequenceStage::PowerOnSettle) {
+        sequence.stage = AquaelSequenceStage::Idle;
     }
 
     if (!shadow || force) {
@@ -3340,7 +3582,9 @@ static bool write_aquael_light_output(bool force,
             profile_known = true;
         }
         off_since_ms = 0U;
-        delay(AQUAEL_DN_CYCLE_ON_SETTLE_MS);
+        sequence.stage = AquaelSequenceStage::PowerOnSettle;
+        sequence.deadlineMs = now_ms + AQUAEL_DN_CYCLE_ON_SETTLE_MS;
+        return true;
     }
 
     if (!profile_known) {
@@ -3348,29 +3592,28 @@ static bool write_aquael_light_output(bool force,
         profile_known = true;
     }
 
-    uint8_t steps = aquael_profile_steps(active_profile, desired_profile);
-    while (steps > 0U) {
-        if (!hal_mcp_write_channel(channel, false)) {
-            return false;
-        }
-        shadow = false;
-        delay(AQUAEL_DN_CYCLE_OFF_MS);
-        if (!hal_mcp_write_channel(channel, true)) {
-            return false;
-        }
-        shadow = true;
-        delay(AQUAEL_DN_CYCLE_ON_SETTLE_MS);
-        active_profile = static_cast<uint8_t>((active_profile + 1U) % 3U);
-        --steps;
+    if (aquael_profile_steps(active_profile, desired_profile) == 0U) {
+        active_profile = desired_profile;
+        profile_known = true;
+        off_since_ms = 0U;
+        return true;
     }
 
-    active_profile = desired_profile;
-    profile_known = true;
-    off_since_ms = 0U;
+    if (!hal_mcp_write_channel(channel, false)) {
+        return false;
+    }
+    shadow = false;
+    sequence.stage = AquaelSequenceStage::PulseOff;
+    sequence.deadlineMs = now_ms + AQUAEL_DN_CYCLE_OFF_MS;
     return true;
 }
 
 static void apply_mcp_outputs(void) {
+    // Regular actuator traffic belongs to the Core 0 service task. LVGL
+    // callbacks only update the desired state and return immediately.
+    if (xPortGetCoreID() != 0) {
+        return;
+    }
     if (cfg.devMode || !hal_mcp_is_present()) {
         return;
     }
@@ -3385,30 +3628,53 @@ static void apply_mcp_outputs(void) {
     const bool force = !mcp_outputs.initialized;
 
     bool ok = true;
-    ok = write_aquael_light_output(force,
-                                   mcp_outputs.light,
-                                   mcp_outputs.lightProfileKnown,
-                                   mcp_outputs.lightProfile,
-                                   mcp_outputs.lightOffSinceMs,
-                                   HwConfig::CH_LIGHT_A,
-                                   desired_light,
-                                   runtime.lightActiveMode) && ok;
-    ok = write_aquael_light_output(force,
-                                   mcp_outputs.plantLight,
-                                   mcp_outputs.plantLightProfileKnown,
-                                   mcp_outputs.plantLightProfile,
-                                   mcp_outputs.plantLightOffSinceMs,
-                                   HwConfig::CH_LIGHT_B,
-                                   desired_plant,
-                                   runtime.plantLightActiveMode) && ok;
-    ok = write_mcp_output_if_needed(force, mcp_outputs.filter, HwConfig::CH_FILTER, desired_filter) && ok;
-    ok = write_mcp_output_if_needed(force, mcp_outputs.aerator, HwConfig::CH_AERATOR, desired_air) && ok;
-    ok = write_mcp_output_if_needed(force, mcp_outputs.heater, HwConfig::CH_HEATER, desired_heater) && ok;
-    ok = write_mcp_output_if_needed(force, mcp_outputs.co2, HwConfig::CH_CO2, desired_co2) && ok;
-    ok = write_mcp_output_if_needed(force, mcp_outputs.waterDosing, HwConfig::CH_RELAY_SPARE, desired_water_dosing) && ok;
+    if ((relay_test_active_mask & (1U << HwConfig::CH_LIGHT_A)) == 0U) {
+        ok = write_aquael_light_output(force,
+                                       mcp_outputs.light,
+                                       mcp_outputs.lightProfileKnown,
+                                       mcp_outputs.lightProfile,
+                                       mcp_outputs.lightOffSinceMs,
+                                       mcp_outputs.lightSequence,
+                                       HwConfig::CH_LIGHT_A,
+                                       desired_light,
+                                       runtime.lightActiveMode) && ok;
+    }
+    if ((relay_test_active_mask & (1U << HwConfig::CH_LIGHT_B)) == 0U) {
+        ok = write_aquael_light_output(force,
+                                       mcp_outputs.plantLight,
+                                       mcp_outputs.plantLightProfileKnown,
+                                       mcp_outputs.plantLightProfile,
+                                       mcp_outputs.plantLightOffSinceMs,
+                                       mcp_outputs.plantLightSequence,
+                                       HwConfig::CH_LIGHT_B,
+                                       desired_plant,
+                                       runtime.plantLightActiveMode) && ok;
+    }
+    if ((relay_test_active_mask & (1U << HwConfig::CH_FILTER)) == 0U) {
+        ok = write_mcp_output_if_needed(force, mcp_outputs.filter, HwConfig::CH_FILTER, desired_filter) && ok;
+    }
+    if ((relay_test_active_mask & (1U << HwConfig::CH_AERATOR)) == 0U) {
+        ok = write_mcp_output_if_needed(force, mcp_outputs.aerator, HwConfig::CH_AERATOR, desired_air) && ok;
+    }
+    if ((relay_test_active_mask & (1U << HwConfig::CH_HEATER)) == 0U) {
+        ok = write_mcp_output_if_needed(force, mcp_outputs.heater, HwConfig::CH_HEATER, desired_heater) && ok;
+    }
+    if ((relay_test_active_mask & (1U << HwConfig::CH_CO2)) == 0U) {
+        ok = write_mcp_output_if_needed(force, mcp_outputs.co2, HwConfig::CH_CO2, desired_co2) && ok;
+    }
+    if ((relay_test_active_mask & (1U << HwConfig::CH_RELAY_SPARE)) == 0U) {
+        ok = write_mcp_output_if_needed(force, mcp_outputs.waterDosing, HwConfig::CH_RELAY_SPARE, desired_water_dosing) && ok;
+    }
     for (uint8_t channel = 0U; channel < 8U; ++channel) {
-        if ((relay_test_active_mask & static_cast<uint8_t>(1U << channel)) != 0U) {
-            ok = hal_mcp_write_channel(static_cast<HwConfig::McpChannel>(channel), true) && ok;
+        const uint8_t channel_mask = static_cast<uint8_t>(1U << channel);
+        if ((relay_test_active_mask & channel_mask) != 0U &&
+            (relay_test_applied_mask & channel_mask) == 0U) {
+            const bool test_ok = hal_mcp_write_channel(
+                static_cast<HwConfig::McpChannel>(channel), true);
+            if (test_ok) {
+                relay_test_applied_mask |= channel_mask;
+            }
+            ok = test_ok && ok;
         }
     }
 
@@ -3432,28 +3698,20 @@ static bool start_relay_test(uint8_t channel, bool state, uint32_t duration_ms) 
 
     const uint8_t channel_index = static_cast<uint8_t>(channel - 1U);
     const uint8_t channel_mask = static_cast<uint8_t>(1U << channel_index);
-    if (cfg.devMode) {
-        if (state) {
-            relay_test_active_mask |= channel_mask;
-            relay_test_deadline_ms[channel_index] = millis() + constrain(duration_ms, 100UL, RELAY_TEST_MAX_DURATION_MS);
-        } else {
-            relay_test_active_mask &= static_cast<uint8_t>(~channel_mask);
-            relay_test_deadline_ms[channel_index] = 0U;
-        }
-        return true;
+    if (channel_index == static_cast<uint8_t>(HwConfig::CH_FEEDER_DRIVE) &&
+        feeder_pulse_active) {
+        return false;
     }
-    if (!hal_mcp_is_present()) {
+    if (!cfg.devMode && !sensor_debug.mcpPresent) {
         return false;
     }
 
-    if (!hal_mcp_write_channel(static_cast<HwConfig::McpChannel>(channel_index), state)) {
-        return false;
-    }
     if (state) {
         relay_test_active_mask |= channel_mask;
         relay_test_deadline_ms[channel_index] = millis() + constrain(duration_ms, 100UL, RELAY_TEST_MAX_DURATION_MS);
     } else {
         relay_test_active_mask &= static_cast<uint8_t>(~channel_mask);
+        relay_test_applied_mask &= static_cast<uint8_t>(~channel_mask);
         relay_test_deadline_ms[channel_index] = 0U;
         mcp_outputs.initialized = false;
     }
@@ -3473,11 +3731,8 @@ static void update_relay_tests() {
             continue;
         }
         if (static_cast<int32_t>(now_ms - relay_test_deadline_ms[channel]) >= 0) {
-            if (!cfg.devMode && hal_mcp_is_present() &&
-                !hal_mcp_write_channel(static_cast<HwConfig::McpChannel>(channel), false)) {
-                add_gui_log("MCP: nie wylaczono kanalu po tescie", true);
-            }
             relay_test_active_mask &= static_cast<uint8_t>(~channel_mask);
+            relay_test_applied_mask &= static_cast<uint8_t>(~channel_mask);
             relay_test_deadline_ms[channel] = 0U;
             expired = true;
         }
@@ -3489,25 +3744,64 @@ static void update_relay_tests() {
     }
 }
 
-static void feeder_pulse_end_cb(lv_timer_t *timer) {
-    const bool ok = cfg.devMode ? true : hal_mcp_write_channel(HwConfig::CH_FEEDER_DRIVE, false);
+static void finish_feeder_pulse(bool ok, bool development_mode) {
     mcp_outputs.feeder = false;
     feeder_pulse_active = false;
-    snprintf(last_feed_result, sizeof(last_feed_result), "%s", cfg.devMode ? "dev_ok" : (ok ? "ok" : "mcp_error"));
+    feeder_start_pending = false;
+    feeder_pulse_deadline_ms = 0U;
+    snprintf(last_feed_result,
+             sizeof(last_feed_result),
+             "%s",
+             development_mode ? "dev_ok" : (ok ? "ok" : "mcp_error"));
     if (modal_feeder_msg_lbl != nullptr) {
         lv_label_set_text(modal_feeder_msg_lbl,
-                          cfg.devMode ? "Dawka DEV zakonczona" : (ok ? "Dawka zakonczona" : "Blad MCP przy stopie"));
+                          development_mode
+                              ? "Dawka DEV zakonczona"
+                              : (ok ? "Dawka zakonczona"
+                                    : "Blad MCP karmnika"));
     }
     if (!ok) {
-        add_gui_log("Karmnik: blad wylaczenia napedu", true);
+        add_gui_log("Karmnik: blad sterowania napedem", true);
     }
-    if (timer != nullptr) {
-        lv_timer_del(timer);
+}
+
+static void service_feeder_pulse(uint32_t now_ms) {
+    if (!feeder_pulse_active) {
+        return;
+    }
+
+    if (cfg.devMode) {
+        if (static_cast<int32_t>(now_ms - feeder_pulse_deadline_ms) >= 0) {
+            finish_feeder_pulse(true, true);
+        }
+        return;
+    }
+
+    if (feeder_start_pending) {
+        if (!hal_mcp_write_channel(HwConfig::CH_FEEDER_DRIVE, true)) {
+            finish_feeder_pulse(false, false);
+            return;
+        }
+        feeder_start_pending = false;
+        mcp_outputs.feeder = true;
+        feeder_pulse_deadline_ms =
+            now_ms + HwConfig::Debounce::FEEDER_PULSE_MS;
+        snprintf(last_feed_result, sizeof(last_feed_result), "active");
+        return;
+    }
+
+    if (static_cast<int32_t>(now_ms - feeder_pulse_deadline_ms) >= 0) {
+        const bool ok =
+            hal_mcp_write_channel(HwConfig::CH_FEEDER_DRIVE, false);
+        finish_feeder_pulse(ok, false);
     }
 }
 
 static bool run_feeder_pulse(const char *title, const char *message, bool critical_log) {
-    if (feeder_pulse_active) {
+    const uint8_t feeder_channel_mask = static_cast<uint8_t>(
+        1U << static_cast<uint8_t>(HwConfig::CH_FEEDER_DRIVE));
+    if (feeder_pulse_active ||
+        (relay_test_active_mask & feeder_channel_mask) != 0U) {
         show_feeder_modal("Karmienie", "Poprzedni cykl trwa");
         schedule_feeder_modal_close(1800);
         add_gui_log("Karmnik: poprzedni cykl nadal trwa", true);
@@ -3519,40 +3813,35 @@ static bool run_feeder_pulse(const char *title, const char *message, bool critic
     }
     show_feeder_modal(title != nullptr ? title : "Karmienie",
                       message != nullptr ? message : "Naped aktywny");
-    if (cfg.devMode) {
-        feeder_pulse_active = true;
-        mcp_outputs.feeder = true;
-        runtime.lastAutoFeedMs = millis();
-        last_feed_epoch = controller_clock_reliable ? controller_unix_time() : (millis() / 1000UL);
-        snprintf(last_feed_result, sizeof(last_feed_result), "dev_simulated");
-        lv_timer_t *pulse_timer = lv_timer_create(feeder_pulse_end_cb, HwConfig::Debounce::FEEDER_PULSE_MS, nullptr);
-        if (pulse_timer != nullptr) {
-            lv_timer_set_repeat_count(pulse_timer, 1);
-        }
-        add_gui_log("Karmnik DEV: symulacja dawki", false);
-        return true;
-    }
-    if (!hal_mcp_write_channel(HwConfig::CH_FEEDER_DRIVE, true)) {
+    if (!cfg.devMode && !sensor_debug.mcpPresent) {
         if (modal_feeder_msg_lbl != nullptr) {
-            lv_label_set_text(modal_feeder_msg_lbl, "Blad startu MCP");
+            lv_label_set_text(modal_feeder_msg_lbl, "MCP niedostepny");
         }
-        add_gui_log("Karmnik: nie uruchomiono napedu MCP", true);
-        snprintf(last_feed_result, sizeof(last_feed_result), "mcp_error");
+        add_gui_log("Karmnik: MCP23017 niedostepny", true);
+        snprintf(last_feed_result, sizeof(last_feed_result), "mcp_unavailable");
         schedule_feeder_modal_close(3000);
         return false;
     }
 
+    const uint32_t now_ms = millis();
     feeder_pulse_active = true;
-    mcp_outputs.feeder = true;
-    runtime.lastAutoFeedMs = millis();
-    last_feed_epoch = controller_clock_reliable ? controller_unix_time() : (millis() / 1000UL);
-    snprintf(last_feed_result, sizeof(last_feed_result), "active");
-    show_feeder_modal(title != nullptr ? title : "Karmienie",
-                      message != nullptr ? message : "Napęd aktywny");
-    lv_timer_t *pulse_timer = lv_timer_create(feeder_pulse_end_cb, HwConfig::Debounce::FEEDER_PULSE_MS, nullptr);
-    if (pulse_timer != nullptr) {
-        lv_timer_set_repeat_count(pulse_timer, 1);
+    feeder_start_pending = !cfg.devMode;
+    feeder_pulse_deadline_ms =
+        cfg.devMode ? now_ms + HwConfig::Debounce::FEEDER_PULSE_MS : 0U;
+    runtime.lastAutoFeedMs = now_ms;
+    last_feed_epoch =
+        controller_clock_reliable ? controller_unix_time() : (now_ms / 1000UL);
+
+    if (cfg.devMode) {
+        mcp_outputs.feeder = true;
+        snprintf(last_feed_result, sizeof(last_feed_result), "dev_simulated");
+        add_gui_log("Karmnik DEV: symulacja dawki", false);
+        return true;
     }
+
+    snprintf(last_feed_result, sizeof(last_feed_result), "queued");
+    show_feeder_modal(title != nullptr ? title : "Karmienie",
+                      message != nullptr ? message : "Napęd oczekuje");
     schedule_feeder_modal_close(3000);
     add_gui_log(critical_log ? "Karmnik: dawka automatyczna" : "Karmnik: dawka reczna", critical_log);
     return true;
@@ -4351,6 +4640,7 @@ static void reset_subpage_refs(ActiveSubpage subpage) {
         label_clock_time = nullptr;
         label_clock_date = nullptr;
         clock_ntp_row = nullptr;
+        btn_sync_ntp_global = nullptr;
         btn_sync_ntp_lbl_global = nullptr;
         break;
     case ActiveSubpage::Diagnostics:
@@ -5050,8 +5340,8 @@ static void btn_restart_event_handler(lv_event_t *e) {
 static void restart_authorized() {
     play_system_sound(SoundType::Warning);
     Serial.println("System: Device restart requested.");
-    delay(300);
-    ESP.restart();
+    ota_reboot_pending = true;
+    ota_reboot_at_ms = millis() + 300U;
 }
 
 static void factory_reset_timer_cb(lv_timer_t *timer) {
@@ -5098,13 +5388,19 @@ static void prepare_outputs_for_sleep() {
     runtime.filterOn = false;
     runtime.airOn = false;
     runtime.heaterOn = false;
+    runtime.co2On = false;
     runtime.waterFillOn = false;
-    apply_mcp_outputs();
-    if (feeder_pulse_active) {
-        hal_mcp_write_channel(HwConfig::CH_FEEDER_DRIVE, false);
-        feeder_pulse_active = false;
-        mcp_outputs.feeder = false;
+    const bool outputs_safe = cfg.devMode || hal_mcp_all_relays_safe();
+    if (!outputs_safe) {
+        add_gui_log("MCP: nie potwierdzono stanu bezpiecznego przed uspieniem",
+                    true);
     }
+    mcp_outputs = {};
+    feeder_pulse_active = false;
+    feeder_start_pending = false;
+    feeder_pulse_deadline_ms = 0U;
+    relay_test_active_mask = 0U;
+    relay_test_applied_mask = 0U;
 }
 
 static void prepare_network_for_sleep() {
@@ -5123,12 +5419,11 @@ static void light_sleep_authorized() {
     play_system_sound(SoundType::Warning);
     Serial.println("System: Light sleep requested for 10s.");
     add_gui_log("Uruchamianie Light Sleep (10s)", true);
-    delay(200);
     
-    digitalWrite(21, LOW);
+    digitalWrite(HwConfig::Backlight::PIN, LOW);
     esp_sleep_enable_timer_wakeup(10ULL * 1000000ULL);
     esp_light_sleep_start();
-    digitalWrite(21, HIGH);
+    digitalWrite(HwConfig::Backlight::PIN, HIGH);
     
     Serial.println("System: Woke up from light sleep.");
     add_gui_log("Obudzono z Light Sleep", false);
@@ -5150,11 +5445,10 @@ static void deep_sleep_authorized() {
     snprintf(log_line, sizeof(log_line), "Uruchamianie Deep Sleep (%lus)",
              static_cast<unsigned long>(sleep_seconds));
     add_gui_log(log_line, true);
-    delay(200);
     
     prepare_network_for_sleep();
     prepare_outputs_for_sleep();
-    digitalWrite(21, LOW);
+    digitalWrite(HwConfig::Backlight::PIN, LOW);
     esp_sleep_enable_timer_wakeup(static_cast<uint64_t>(sleep_seconds) * 1000000ULL);
     esp_deep_sleep_start();
 }
@@ -5168,11 +5462,10 @@ static void hibernation_authorized() {
     play_system_sound(SoundType::Warning);
     Serial.println("System: Hibernation requested for 30s.");
     add_gui_log("Uruchamianie Hibernacji (30s)", true);
-    delay(200);
     
     prepare_network_for_sleep();
     prepare_outputs_for_sleep();
-    digitalWrite(21, LOW);
+    digitalWrite(HwConfig::Backlight::PIN, LOW);
     esp_sleep_enable_timer_wakeup(30ULL * 1000000ULL);
     esp_sleep_pd_config(ESP_PD_DOMAIN_RTC_PERIPH, ESP_PD_OPTION_OFF);
     esp_sleep_pd_config(ESP_PD_DOMAIN_RTC_SLOW_MEM, ESP_PD_OPTION_OFF);
@@ -5798,7 +6091,7 @@ static bool history_archive_compact_current(const char *path) {
             break;
         }
         remaining -= static_cast<uint32_t>(bytes_read);
-        delay(0);
+        taskYIELD();
     }
 
     source.close();
@@ -7077,9 +7370,12 @@ static void ota_portal_handle_action() {
             ota_portal_send_action_result(false, "wifi_required", "Brak polaczenia WiFi.");
             return;
         }
-        const bool ok = sync_clock_from_ntp(5000);
-        ota_portal_send_action_result(ok, ok ? "ok" : "ntp_failed",
-                                      ok ? "Czas zsynchronizowany przez NTP." : "Nie udalo sie pobrac czasu NTP.");
+        const bool accepted = sync_clock_from_ntp(5000U);
+        ota_portal_send_action_result(
+            accepted,
+            accepted ? "ntp_started" : "ntp_start_failed",
+            accepted ? "Synchronizacja NTP uruchomiona."
+                     : "Nie mozna uruchomic synchronizacji NTP.");
         return;
     }
 
@@ -7545,9 +7841,6 @@ static void ota_portal_refresh_upload_screen(bool force) {
     } else {
         gui_web_client_screen_update(force);
     }
-    if (force) {
-        lv_timer_handler();
-    }
 }
 
 static void ota_portal_handle_update_upload() {
@@ -7808,7 +8101,6 @@ static void stop_ota_portal() {
     stop_mdns_service();
     ota_portal_running = false;
     ota_portal_sta_running = false;
-    ota_reboot_pending = false;
     ota_shutdown_pending = false;
     ota_http_update_ok = false;
     ota_http_update_failed = false;
@@ -8104,9 +8396,9 @@ static void prepare_wifi_sta_radio() {
     }
 
     WiFi.mode(WIFI_STA);
-    delay(50);
+    vTaskDelay(pdMS_TO_TICKS(50U));
     WiFi.disconnect(false, false);
-    delay(50);
+    vTaskDelay(pdMS_TO_TICKS(50U));
     WiFi.setSleep(false);
     WiFi.setAutoReconnect(false);
     WiFi.setHostname(Secrets::OTA_HOSTNAME);
@@ -8181,10 +8473,9 @@ static void btn_sta_handler(lv_event_t *e) {
         style_wifi_list_item(scan_item, lv_color_make(14, 165, 233));
     }
 
-    prepare_wifi_sta_radio();
     is_scanning = true;
     scan_started = false;
-    scan_start_ms = millis();
+    wifi_scan_prepare_pending = true;
 }
 
 static void btn_ota_handler(lv_event_t *e) {
@@ -8199,7 +8490,15 @@ static void btn_ota_handler(lv_event_t *e) {
 
 static void start_ota_authorized() {
     play_system_sound(SoundType::Warning);
+    if (ota_start_pending || wifi_ota_active) {
+        return;
+    }
+    ota_start_pending = true;
+    ota_portal_set_status("OTA: oczekiwanie na zadanie sieciowe...",
+                          lv_color_make(245, 158, 11));
+}
 
+static void start_ota_background() {
     if (strlen(Secrets::OTA_PASSWORD) < 8U) {
         wifi_ota_active = false;
         gui_app_update_wifi(0, 0);
@@ -8218,22 +8517,21 @@ static void start_ota_authorized() {
 
     gui_app_update_wifi(0, 0);
     ota_portal_set_status("OTA: uruchamiam punkt dostepowy...", lv_color_make(245, 158, 11));
-    lv_refr_now(nullptr);
 
     WiFi.persistent(false);
     WiFi.disconnect(true, true);
-    delay(120);
+    vTaskDelay(pdMS_TO_TICKS(120U));
     WiFi.mode(WIFI_OFF);
-    delay(80);
+    vTaskDelay(pdMS_TO_TICKS(80U));
     WiFi.mode(WIFI_AP);
     WiFi.setSleep(false);
     const bool config_ok = WiFi.softAPConfig(ota_portal_ip, ota_portal_gateway, ota_portal_subnet);
     if (!config_ok) {
         Serial.println("OTA: SoftAP IP configuration failed, continuing with default AP config.");
     }
-    delay(100);
+    vTaskDelay(pdMS_TO_TICKS(100U));
     bool ap_ok = WiFi.softAP(Secrets::OTA_AP_SSID, Secrets::OTA_PASSWORD);
-    delay(100);
+    vTaskDelay(pdMS_TO_TICKS(100U));
     Serial.printf("OTA: SoftAP start: %s, SSID: %s, IP: %s\n", 
                   ap_ok ? "OK" : "FAILED", 
                   WiFi.softAPSSID().c_str(), 
@@ -8285,7 +8583,6 @@ static void start_ota_authorized() {
 
     if (wifi_main_panel != nullptr) lv_obj_add_flag(wifi_main_panel, LV_OBJ_FLAG_HIDDEN);
     if (wifi_ota_panel != nullptr) lv_obj_clear_flag(wifi_ota_panel, LV_OBJ_FLAG_HIDDEN);
-    lv_refr_now(nullptr);
 }
 
 static void stop_ota_runtime(bool play_sound) {
@@ -8330,6 +8627,7 @@ static void cancel_sta_cb(lv_event_t *e) {
     play_system_sound(SoundType::Click);
 
     is_scanning = false;
+    wifi_scan_prepare_pending = false;
     WiFi.scanDelete();
 
     if (sta_list_obj != nullptr) {
@@ -8392,6 +8690,13 @@ static bool begin_sta_connection(const char *ssid, const char *password) {
     if (ssid == nullptr || ssid[0] == '\0') {
         Serial.println("WIFI_STA: empty SSID, connection not started.");
         return false;
+    }
+    if (xPortGetCoreID() != 0) {
+        wifi_connect_pending = true;
+        is_connecting = true;
+        wifi_connected = false;
+        wifi_rssi = 0;
+        return true;
     }
 
     WiFi.scanDelete();
@@ -8473,13 +8778,15 @@ static void btn_sync_ntp_handler(lv_event_t *e) {
     }
 
     set_label_text(btn_sync_ntp_lbl_global, "Pobieram czas...");
-    const bool synced = sync_clock_from_ntp(5000);
-    lv_obj_set_style_bg_color(btn, synced ? lv_color_make(16, 185, 129) : lv_color_make(239, 68, 68), 0);
-    set_label_text(btn_sync_ntp_lbl_global, synced ? "Czas zapisany" : "Blad NTP");
-    if (synced) {
-        gui_sync_widgets_to_state();
+    const bool accepted = sync_clock_from_ntp(5000U);
+    lv_obj_set_style_bg_color(
+        btn,
+        accepted ? lv_color_make(245, 158, 11) : lv_color_make(239, 68, 68),
+        0);
+    if (!accepted) {
+        set_label_text(btn_sync_ntp_lbl_global, "Blad NTP");
+        lv_timer_create(ntp_sync_restore_cb, 2000, btn);
     }
-    lv_timer_create(ntp_sync_restore_cb, 2000, btn);
 }
 
 static void adjust_clock_cb(lv_event_t *e) {
@@ -8798,7 +9105,6 @@ static void service_tile_cb(lv_event_t *e) {
 
     // Silence active music
     musicPlaying = false;
-    speaker_ledc_write(0);
 
     // Global override: shut down all systems except lights
     cfg.filterMode = static_cast<uint8_t>(ScheduleMode::AlwaysOff);
@@ -8852,17 +9158,13 @@ static void service_volume_slider_cb(lv_event_t *e) {
     lv_obj_t *slider = lv_event_get_target(e);
     musicVolume = lv_slider_get_value(slider);
     if (service_vol_lbl != nullptr) {
-        lv_label_set_text_fmt(service_vol_lbl, "Vol: %d0%%", musicVolume);
+        lv_label_set_text_fmt(service_vol_lbl, "Vol: %d0%%", musicVolume.load());
     }
 }
 
 static void service_play_cb(lv_event_t *e) {
     LV_UNUSED(e);
     play_system_sound(SoundType::Click);
-    if (musicPlaying) {
-        musicPlaying = false;
-        delay(50);
-    }
     musicPlaying = true;
 }
 
@@ -8870,7 +9172,6 @@ static void service_stop_cb(lv_event_t *e) {
     LV_UNUSED(e);
     play_system_sound(SoundType::Click);
     musicPlaying = false;
-    speaker_ledc_write(0);
 }
 
 static void open_heater_subpage_cb(lv_event_t *e) {
@@ -8939,18 +9240,12 @@ static void open_flow_subpage_cb(lv_event_t *e) {
     open_or_build_subpage(ActiveSubpage::Flow);
 }
 
-static void cycle_chart_range_cb(lv_event_t *e) {
-    LV_UNUSED(e);
-    chart_range_index = static_cast<uint8_t>((chart_range_index + 1U) % 3U);
-    const char *ranges[] = {"1H", "24H", "7D"};
-    set_label_text(chart_range_lbl, ranges[chart_range_index]);
-}
-
 static lv_obj_t *create_menu_item(lv_obj_t *parent, const char *title,
                                   lv_event_cb_t event_cb, void *userData,
                                   lv_obj_t **title_label = nullptr) {
     lv_obj_t *btn = lv_btn_create(parent);
     lv_obj_set_size(btn, 300, 34);
+    lv_obj_set_ext_click_area(btn, 3);
     lv_obj_set_style_bg_color(btn, resolve_bg_color(lv_color_make(20, 26, 40)), 0);
     lv_obj_set_style_bg_color(btn, resolve_bg_color(lv_color_make(30, 38, 56)), LV_STATE_PRESSED);
     lv_obj_set_style_border_color(btn, ui_light_theme ? theme_card_border() : lv_color_make(35, 41, 55), 0);
@@ -9041,7 +9336,7 @@ static void build_status_bar() {
     lv_obj_set_style_pad_bottom(label_power_mode, 2, 0);
     lv_obj_align(label_power_mode, LV_ALIGN_LEFT_MID, 34, 0);
 
-    label_date = create_label(status_bar, "--:-- -- ---", lv_color_make(226, 232, 240), &lv_font_montserrat_14);
+    label_date = create_label(status_bar, "--:-- .--- --s", lv_color_make(226, 232, 240), &lv_font_montserrat_12);
     lv_obj_set_width(label_date, 116);
     lv_label_set_long_mode(label_date, LV_LABEL_LONG_CLIP);
     lv_obj_set_style_text_align(label_date, LV_TEXT_ALIGN_CENTER, 0);
@@ -9058,7 +9353,7 @@ static void build_status_bar() {
     lv_obj_set_style_pad_bottom(label_wifi_state, 2, 0);
     lv_obj_align(label_wifi_state, LV_ALIGN_RIGHT_MID, -42, 0);
 
-    label_rtc_bat = create_label(status_bar, "USB", lv_color_make(16, 185, 129), &lv_font_montserrat_12);
+    label_rtc_bat = create_label(status_bar, "--", lv_color_make(245, 158, 11), &lv_font_montserrat_12);
     lv_obj_set_width(label_rtc_bat, 34);
     lv_label_set_long_mode(label_rtc_bat, LV_LABEL_LONG_CLIP);
     lv_obj_set_style_text_align(label_rtc_bat, LV_TEXT_ALIGN_CENTER, 0);
@@ -9631,9 +9926,10 @@ static void build_charts_page() {
     lv_obj_align(btn_chart_heap, LV_ALIGN_TOP_LEFT, 143, -2);
     style_chart_btn(btn_chart_heap);
 
-    // Przycisk zakresu czasu
-    lv_obj_t *range_btn = create_button(panel, "1H", 44, 22, lv_color_make(35, 41, 55), cycle_chart_range_cb, nullptr);
+    // Bufor RAM zawiera 32 ostatnie próbki; etykieta nie udaje zakresu 1H/24H.
+    lv_obj_t *range_btn = create_button(panel, "LIVE", 44, 22, lv_color_make(35, 41, 55), nullptr, nullptr);
     lv_obj_align(range_btn, LV_ALIGN_TOP_RIGHT, 0, -2);
+    lv_obj_clear_flag(range_btn, LV_OBJ_FLAG_CLICKABLE);
     chart_range_lbl = lv_obj_get_child(range_btn, 0);
 
     // Etykieta temperatury docelowej
@@ -10789,7 +11085,12 @@ static void open_calibration_wizard_authorized(int type) {
     lv_obj_set_style_radius(bg_overlay, 0, 0);
     lv_obj_clear_flag(bg_overlay, LV_OBJ_FLAG_SCROLLABLE);
 
-    CalibWizardData *data = new CalibWizardData();
+    CalibWizardData *data = new (std::nothrow) CalibWizardData();
+    if (data == nullptr) {
+        lv_obj_del(bg_overlay);
+        show_save_toast("Brak pamieci RAM");
+        return;
+    }
     data->bg_overlay = bg_overlay;
     data->step = 0;
     data->type = type;
@@ -11312,9 +11613,16 @@ static void build_subpages(ActiveSubpage target) {
     // Karta 4: NTP Sync Button inside scrollable list
     clock_ntp_row = create_card(clock_list, 300, 46, 0, 0);
     lv_obj_set_style_pad_all(clock_ntp_row, 0, 0);
-    lv_obj_t *ntp = create_button(clock_ntp_row, "Synchronizuj NTP", 280, 32, lv_color_make(35, 41, 55), btn_sync_ntp_handler, nullptr);
-    lv_obj_align(ntp, LV_ALIGN_CENTER, 0, 0);
-    btn_sync_ntp_lbl_global = lv_obj_get_child(ntp, 0);
+    btn_sync_ntp_global = create_button(
+        clock_ntp_row,
+        "Synchronizuj NTP",
+        280,
+        32,
+        lv_color_make(35, 41, 55),
+        btn_sync_ntp_handler,
+        nullptr);
+    lv_obj_align(btn_sync_ntp_global, LV_ALIGN_CENTER, 0, 0);
+    btn_sync_ntp_lbl_global = lv_obj_get_child(btn_sync_ntp_global, 0);
 
     // Initial NTP Sync row visibility based on connection status
     if (!wifi_connected) {
@@ -11889,7 +12197,7 @@ static void build_subpages(ActiveSubpage target) {
     lv_obj_set_size(song_dd, 140, 28);
     lv_obj_align(song_dd, LV_ALIGN_TOP_LEFT, 10, 20);
     lv_dropdown_set_options(song_dd, "Popcorn Song\nDuckTales Theme\nContra Theme");
-    lv_dropdown_set_selected(song_dd, selectedSongIndex);
+    lv_dropdown_set_selected(song_dd, static_cast<uint16_t>(selectedSongIndex.load()));
     lv_obj_set_style_bg_color(song_dd, resolve_bg_color(lv_color_make(35, 41, 55)), 0);
     lv_obj_set_style_text_color(song_dd, lv_color_white(), 0);
     lv_obj_set_style_text_font(song_dd, &lv_font_montserrat_12, 0);
@@ -11903,9 +12211,10 @@ static void build_subpages(ActiveSubpage target) {
     // Volume slider
     lv_obj_t *vol_slider = lv_slider_create(music_card);
     lv_obj_set_size(vol_slider, 75, 10);
+    lv_obj_set_ext_click_area(vol_slider, 15);
     lv_obj_align(vol_slider, LV_ALIGN_TOP_LEFT, 215, 28);
     lv_slider_set_range(vol_slider, 0, 10);
-    lv_slider_set_value(vol_slider, musicVolume, LV_ANIM_OFF);
+    lv_slider_set_value(vol_slider, musicVolume.load(), LV_ANIM_OFF);
     lv_obj_set_style_bg_color(vol_slider, resolve_bg_color(lv_color_make(30, 41, 59)), LV_PART_MAIN);
     lv_obj_set_style_bg_color(vol_slider, lv_color_make(6, 182, 212), LV_PART_INDICATOR);
     lv_obj_set_style_bg_color(vol_slider, lv_color_white(), LV_PART_KNOB);
@@ -12249,7 +12558,7 @@ static void gui_sync_widgets_to_state() {
         set_checked(service_filter_sw, cfg.filterMode != static_cast<uint8_t>(ScheduleMode::AlwaysOff));
     }
     if (service_vol_lbl != nullptr) {
-        lv_label_set_text_fmt(service_vol_lbl, "Vol: %d0%%", musicVolume);
+        lv_label_set_text_fmt(service_vol_lbl, "Vol: %d0%%", musicVolume.load());
     }
     if (sound_quiet_sched_lbl != nullptr) {
         lv_label_set_text_fmt(sound_quiet_sched_lbl, "%02u:%02u - %02u:%02u",
@@ -12754,6 +13063,7 @@ static void reset_gui_object_refs() {
     screen_manual_theme_sw = nullptr;
     screen_ph_enable_sw = nullptr;
     screen_ldr_enable_sw = nullptr;
+    btn_sync_ntp_global = nullptr;
     btn_sync_ntp_lbl_global = nullptr;
     modal_feeder_title_lbl = nullptr;
     modal_feeder_msg_lbl = nullptr;
@@ -12901,6 +13211,9 @@ static void build_gui_tree() {
 static void rebuild_gui_tree_for_theme() {
     const int restore_page = current_page_index;
     const ActiveSubpage restore_subpage = current_subpage;
+    // SSID-y z listy mają ręcznie zarządzane user_data; trzeba je zwolnić
+    // zanim LVGL usunie obiekty nadrzędne.
+    free_wifi_scan_user_data();
     lv_obj_clean(lv_scr_act());
     reset_gui_object_refs();
     current_page_index = (restore_page >= 0 && restore_page < PAGE_COUNT) ? restore_page : 0;
@@ -12924,7 +13237,36 @@ static void rebuild_gui_tree_for_theme() {
 
 } // namespace
 
+bool gui_app_sync_init(void) {
+    if (gui_mutex != nullptr) {
+        return true;
+    }
+    gui_mutex = xSemaphoreCreateRecursiveMutexStatic(&gui_mutex_storage);
+    return gui_mutex != nullptr;
+}
+
+bool gui_app_lock(uint32_t timeout_ms) {
+    return gui_mutex != nullptr &&
+           xSemaphoreTakeRecursive(gui_mutex, pdMS_TO_TICKS(timeout_ms)) == pdTRUE;
+}
+
+void gui_app_unlock(void) {
+    if (gui_mutex != nullptr) {
+        xSemaphoreGiveRecursive(gui_mutex);
+    }
+}
+
 void gui_app_init(void) {
+    if (!gui_app_sync_init()) {
+        Serial.println("GUI: nie można utworzyć blokady synchronizacji.");
+        return;
+    }
+    GuiMutexGuard guard(2000U);
+    if (!guard.locked()) {
+        Serial.println("GUI: timeout blokady podczas inicjalizacji.");
+        return;
+    }
+    gui_ready = false;
     gui_app_load_settings();
     register_wifi_event_handlers();
     if (cfg.modemSleep) {
@@ -12952,7 +13294,7 @@ void gui_app_init(void) {
     reset_gui_object_refs();
     build_gui_tree();
     gui_sync_widgets_to_state();
-    try_autoconnect_wifi_profile();
+    wifi_autoconnect_pending = !cfg.modemSleep;
     gui_app_update_wifi(wifi_connected ? 1 : 0, wifi_rssi);
     prime_pin_guard_modal();
 
@@ -12969,24 +13311,89 @@ void gui_app_init(void) {
 
 
 
-    if (wifi_check_timer == nullptr) {
-        wifi_check_timer = lv_timer_create(wifi_check_timer_cb, 500, nullptr);
+    if (audio_queue == nullptr) {
+        audio_queue = xQueueCreateStatic(
+            6U,
+            sizeof(AudioEffect),
+            audio_queue_buffer,
+            &audio_queue_storage);
     }
-
-    if (musicTaskHandle == nullptr) {
-        xTaskCreate(
+    if (musicTaskHandle == nullptr && audio_queue != nullptr) {
+        xTaskCreatePinnedToCore(
             music_player_task,
             "music_player_task",
             4096,
             nullptr,
             1,
-            &musicTaskHandle
+            &musicTaskHandle,
+            0
         );
     }
+    gui_ready = true;
+}
+
+void gui_app_service_background(void) {
+    GuiMutexGuard guard(50U);
+    if (!guard.locked() || !gui_ready) {
+        return;
+    }
+
+    static uint32_t last_wifi_service_ms = 0U;
+    if (ota_start_pending) {
+        ota_start_pending = false;
+        start_ota_background();
+    }
+    if (wifi_autoconnect_pending) {
+        wifi_autoconnect_pending = false;
+        try_autoconnect_wifi_profile();
+    }
+    if (wifi_scan_prepare_pending) {
+        wifi_scan_prepare_pending = false;
+        prepare_wifi_sta_radio();
+        scan_started = false;
+        scan_start_ms = millis();
+    }
+    if (wifi_connect_pending) {
+        wifi_connect_pending = false;
+        if (!begin_sta_connection(selected_ssid, pending_wifi_password)) {
+            is_connecting = false;
+            clear_pending_wifi_password();
+            if (wifi_status_message_lbl != nullptr) {
+                lv_label_set_text(wifi_status_message_lbl,
+                                  "Status: nie uruchomiono WiFi");
+                lv_obj_set_style_text_color(
+                    wifi_status_message_lbl,
+                    lv_color_make(239, 68, 68),
+                    0);
+            }
+        }
+    }
+    const uint32_t now_ms = millis();
+    if (static_cast<uint32_t>(now_ms - last_wifi_service_ms) >= 500U) {
+        last_wifi_service_ms = now_ms;
+        wifi_check_timer_cb(nullptr);
+    }
+    service_ntp_sync(now_ms);
+    service_feeder_pulse(now_ms);
+
+    if (wifi_ota_active) {
+        ArduinoOTA.handle();
+    }
+    gui_app_handle_ota_portal();
+    apply_mcp_outputs();
 }
 
 void gui_app_handle_ota_portal(void) {
+    GuiMutexGuard guard(50U);
+    if (!guard.locked() || !gui_ready) {
+        return;
+    }
     update_relay_tests();
+    if (ota_reboot_pending &&
+        static_cast<int32_t>(millis() - ota_reboot_at_ms) >= 0) {
+        Serial.println("SYSTEM: restarting after an authorized request.");
+        ESP.restart();
+    }
     if (wifi_disconnect_pending && static_cast<int32_t>(millis() - wifi_disconnect_at_ms) >= 0) {
         wifi_disconnect_pending = false;
         stop_ota_portal();
@@ -13010,16 +13417,23 @@ void gui_app_handle_ota_portal(void) {
     ota_http_server.handleClient();
     gui_web_focus_update();
 
-    if (ota_reboot_pending && static_cast<int32_t>(millis() - ota_reboot_at_ms) >= 0) {
-        Serial.println("HTTP_OTA: restarting after successful update.");
-        delay(50);
-        ESP.restart();
-    }
-
     if (ota_shutdown_pending && static_cast<int32_t>(millis() - ota_shutdown_at_ms) >= 0) {
         Serial.println("HTTP_OTA: stopping OTA portal by web request.");
         stop_ota_runtime(false);
     }
+}
+
+static uint8_t wifi_signal_bars(int rssi) {
+    if (rssi >= -55) {
+        return 4U;
+    }
+    if (rssi >= -67) {
+        return 3U;
+    }
+    if (rssi >= -75) {
+        return 2U;
+    }
+    return 1U;
 }
 
 void gui_app_update_wifi(int state, int rssi) {
@@ -13041,6 +13455,7 @@ void gui_app_update_wifi(int state, int rssi) {
     }
 
     if (state == 0) {
+        snprintf(status_ip_address, sizeof(status_ip_address), "0.0.0.0");
         lv_label_set_text(label_wifi_state, is_connecting ? "JOIN" : "OFF");
         lv_obj_set_style_text_color(label_wifi_state,
                                     is_connecting ? lv_color_make(245, 158, 11) : lv_color_make(239, 68, 68),
@@ -13096,8 +13511,14 @@ void gui_app_update_wifi(int state, int rssi) {
         if (btn_ota != nullptr && !is_connecting) lv_obj_clear_flag(btn_ota, LV_OBJ_FLAG_HIDDEN);
         if (btn_disconnect != nullptr) lv_obj_add_flag(btn_disconnect, LV_OBJ_FLAG_HIDDEN);
     } else if (state == 1) {
-        lv_label_set_text(label_wifi_state, "STA");
-        lv_obj_set_style_text_color(label_wifi_state, lv_color_make(16, 185, 129), 0);
+        const uint8_t bars = wifi_signal_bars(rssi);
+        lv_label_set_text_fmt(label_wifi_state, "%u %d", static_cast<unsigned>(bars), rssi);
+        lv_obj_set_style_text_color(
+            label_wifi_state,
+            bars >= 3U ? lv_color_make(16, 185, 129)
+                       : (bars == 2U ? lv_color_make(245, 158, 11)
+                                    : lv_color_make(239, 68, 68)),
+            0);
         if (wifi_info_card != nullptr) {
             lv_obj_set_style_border_color(wifi_info_card, lv_color_make(16, 185, 129), 0);
         }
@@ -13106,18 +13527,29 @@ void gui_app_update_wifi(int state, int rssi) {
             lv_obj_set_style_text_color(wifi_mode_lbl, lv_color_make(16, 185, 129), 0);
         }
 
-        String current_ssid = WiFi.SSID();
-        String current_ip = WiFi.localIP().toString();
+        wifi_config_t station_config = {};
+        const bool station_config_ok =
+            esp_wifi_get_config(WIFI_IF_STA, &station_config) == ESP_OK;
+        const char *current_ssid = station_config_ok
+                                       ? reinterpret_cast<const char *>(station_config.sta.ssid)
+                                       : "";
+        const IPAddress current_ip = WiFi.localIP();
+        snprintf(status_ip_address, sizeof(status_ip_address), "%u.%u.%u.%u",
+                 current_ip[0], current_ip[1], current_ip[2], current_ip[3]);
 
         if (wifi_ssid_lbl != nullptr) {
             char temp_ssid_buf[96];
-            snprintf(temp_ssid_buf, sizeof(temp_ssid_buf), LV_SYMBOL_WIFI "  SSID: %s", current_ssid.length() > 0 ? current_ssid.c_str() : (selected_ssid[0] != '\0' ? selected_ssid : "Aquarium_STA"));
+            snprintf(temp_ssid_buf, sizeof(temp_ssid_buf), LV_SYMBOL_WIFI "  SSID: %s",
+                     current_ssid[0] != '\0'
+                         ? current_ssid
+                         : (selected_ssid[0] != '\0' ? selected_ssid : "Aquarium_STA"));
             lv_label_set_text(wifi_ssid_lbl, temp_ssid_buf);
         }
 
         if (wifi_ip_lbl != nullptr) {
             char temp_ip_buf[64];
-            snprintf(temp_ip_buf, sizeof(temp_ip_buf), LV_SYMBOL_RIGHT "  IP: %s", current_ip.c_str());
+            snprintf(temp_ip_buf, sizeof(temp_ip_buf), LV_SYMBOL_RIGHT "  IP: %s",
+                     status_ip_address);
             lv_label_set_text(wifi_ip_lbl, temp_ip_buf);
         }
         if (wifi_rssi_lbl != nullptr) {
@@ -13127,7 +13559,7 @@ void gui_app_update_wifi(int state, int rssi) {
             if (ota_portal_running) {
                 lv_label_set_text_fmt(wifi_mac_lbl, "Portal: %s.local | %s",
                                       Secrets::OTA_HOSTNAME,
-                                      current_ip.c_str());
+                                      status_ip_address);
             } else {
                 lv_label_set_text(wifi_mac_lbl, "Portal: zatrzymany");
             }
@@ -13150,18 +13582,26 @@ void gui_app_update_wifi(int state, int rssi) {
             lv_obj_set_style_text_color(wifi_mode_lbl, lv_color_make(6, 182, 212), 0);
         }
 
-        String soft_ssid = WiFi.softAPSSID();
-        String soft_ip = WiFi.softAPIP().toString();
+        wifi_config_t access_point_config = {};
+        const bool access_point_config_ok =
+            esp_wifi_get_config(WIFI_IF_AP, &access_point_config) == ESP_OK;
+        const char *soft_ssid = access_point_config_ok
+                                    ? reinterpret_cast<const char *>(access_point_config.ap.ssid)
+                                    : "";
+        const IPAddress soft_ip = WiFi.softAPIP();
+        snprintf(status_ip_address, sizeof(status_ip_address), "%u.%u.%u.%u",
+                 soft_ip[0], soft_ip[1], soft_ip[2], soft_ip[3]);
 
         if (wifi_ssid_lbl != nullptr) {
             char temp_ssid_buf[96];
-            snprintf(temp_ssid_buf, sizeof(temp_ssid_buf), "SSID: %s", soft_ssid.length() > 0 ? soft_ssid.c_str() : Secrets::OTA_AP_SSID);
+            snprintf(temp_ssid_buf, sizeof(temp_ssid_buf), "SSID: %s",
+                     soft_ssid[0] != '\0' ? soft_ssid : Secrets::OTA_AP_SSID);
             lv_label_set_text(wifi_ssid_lbl, temp_ssid_buf);
         }
 
         if (wifi_ip_lbl != nullptr) {
             char temp_ip_buf[64];
-            snprintf(temp_ip_buf, sizeof(temp_ip_buf), "IP: %s", soft_ip.c_str());
+            snprintf(temp_ip_buf, sizeof(temp_ip_buf), "IP: %s", status_ip_address);
             lv_label_set_text(wifi_ip_lbl, temp_ip_buf);
         }
         if (wifi_rssi_lbl != nullptr) {
@@ -13201,6 +13641,8 @@ void gui_update_metrics(float temp, float ph, uint32_t free_heap, const char *ti
 
     const bool temp_valid = isfinite(temp);
     const bool ph_valid = isfinite(ph);
+    status_last_sample_ms = millis();
+    status_temperature_ok = temp_valid;
     if (temp_valid) {
         runtime.lastTemp = temp;
     }
@@ -13216,7 +13658,8 @@ void gui_update_metrics(float temp, float ph, uint32_t free_heap, const char *ti
     }
     const uint16_t nowMins = static_cast<uint16_t>(constrain(hr, 0, 23)) * 60U +
                              static_cast<uint16_t>(constrain(mn, 0, 59));
-    const bool output_hardware_available = !cfg.devMode && hal_mcp_is_present();
+    const bool output_hardware_available =
+        !cfg.devMode && sensor_debug.mcpPresent && sensor_debug.mcpValid;
     const bool output_runtime_available = cfg.devMode || output_hardware_available;
 
     uint8_t factory_light_profile = 0U;
@@ -13418,44 +13861,19 @@ void gui_update_metrics(float temp, float ph, uint32_t free_heap, const char *ti
         }
     }
 
-    // History and physical outputs belong to the control path, not the local
-    // display path. They continue at full cadence while a web client is active.
+    // History belongs to the control path, not the local display path. Core 0
+    // applies the desired output state after this calculation releases the
+    // shared mutex.
     update_charts_data(temp, ph);
-    apply_mcp_outputs();
     if (gui_web_focus_blocks_local_ui()) {
         return;
     }
 
-    if (label_date != nullptr) {
-        char full_time[24];
-        static const char *months[] = {
-            "sty", "lut", "mar", "kwi", "maj", "cze",
-            "lip", "sie", "wrz", "paz", "lis", "gru"
-        };
-        const char *month_name = (clock_month >= 1 && clock_month <= 12) ? months[clock_month - 1] : "---";
-        snprintf(full_time, sizeof(full_time), "%02d:%02d %02d %s",
-                 constrain(hr, 0, 23),
-                 constrain(mn, 0, 59),
-                 constrain(clock_day, 1, 31),
-                 month_name);
-        lv_label_set_text(label_date, full_time);
-    }
     if (label_power_mode != nullptr) {
         if (temp_valid) {
             lv_label_set_text_fmt(label_power_mode, "T %.1f*C", temp);
         } else {
             lv_label_set_text(label_power_mode, "T --.-*C");
-        }
-    }
-    if (label_rtc_bat != nullptr) {
-        if (cfg.devMode) {
-            lv_label_set_text(label_rtc_bat, "DEV");
-            lv_obj_set_style_text_color(label_rtc_bat, lv_color_make(245, 158, 11), 0);
-            lv_obj_set_style_bg_color(label_rtc_bat, resolve_bg_color(lv_color_make(69, 26, 3)), 0);
-        } else {
-            lv_label_set_text(label_rtc_bat, "USB");
-            lv_obj_set_style_text_color(label_rtc_bat, lv_color_make(16, 185, 129), 0);
-            lv_obj_set_style_bg_color(label_rtc_bat, resolve_bg_color(lv_color_make(6, 78, 59)), 0);
         }
     }
     if (label_clock_time != nullptr && time_str != nullptr) {
@@ -13507,6 +13925,72 @@ void gui_update_metrics(float temp, float ph, uint32_t free_heap, const char *ti
 
     gui_sync_widgets_to_state();
     gui_app_update_system_info(free_heap, millis() / 1000UL);
+}
+
+void gui_app_update_status_bar(uint32_t uptime_sec) {
+    const uint32_t now_ms = millis();
+    const uint32_t measured_age_sec =
+        status_last_sample_ms == 0U
+            ? 99U
+            : static_cast<uint32_t>(now_ms - status_last_sample_ms) / 1000UL;
+    const uint32_t age_sec = measured_age_sec > 99U ? 99U : measured_age_sec;
+
+    const char *ip_tail = strrchr(status_ip_address, '.');
+    ip_tail = ip_tail != nullptr ? ip_tail + 1 : "--";
+    if (strcmp(status_ip_address, "0.0.0.0") == 0) {
+        ip_tail = "--";
+    }
+    if (label_date != nullptr) {
+        lv_label_set_text_fmt(
+            label_date,
+            "%02d:%02d .%s %lus",
+            constrain(clock_hour, 0, 23),
+            constrain(clock_minute, 0, 59),
+            ip_tail,
+            static_cast<unsigned long>(age_sec));
+    }
+
+    if (label_rtc_bat == nullptr) {
+        return;
+    }
+
+    char uptime_text[8];
+    if (uptime_sec >= 86400UL) {
+        snprintf(uptime_text, sizeof(uptime_text), "%lud",
+                 static_cast<unsigned long>(uptime_sec / 86400UL));
+    } else if (uptime_sec >= 3600UL) {
+        snprintf(uptime_text, sizeof(uptime_text), "%luh",
+                 static_cast<unsigned long>(uptime_sec / 3600UL));
+    } else if (uptime_sec >= 60UL) {
+        snprintf(uptime_text, sizeof(uptime_text), "%lum",
+                 static_cast<unsigned long>(uptime_sec / 60UL));
+    } else {
+        snprintf(uptime_text, sizeof(uptime_text), "%lus",
+                 static_cast<unsigned long>(uptime_sec));
+    }
+
+    const bool stale = status_last_sample_ms == 0U || age_sec > 5U;
+    const bool healthy = status_sensor_bus_ok && status_temperature_ok && !stale;
+    char badge[8];
+    snprintf(badge, sizeof(badge), "%c%s",
+             cfg.devMode ? 'D' : (healthy ? ' ' : (stale ? '~' : '!')),
+             uptime_text);
+    lv_label_set_text(label_rtc_bat, badge);
+    lv_obj_set_style_text_color(
+        label_rtc_bat,
+        cfg.devMode ? lv_color_make(245, 158, 11)
+                    : (healthy ? lv_color_make(16, 185, 129)
+                               : (stale ? lv_color_make(245, 158, 11)
+                                        : lv_color_make(248, 113, 113))),
+        0);
+    lv_obj_set_style_bg_color(
+        label_rtc_bat,
+        resolve_bg_color(
+            cfg.devMode ? lv_color_make(69, 26, 3)
+                        : (healthy ? lv_color_make(6, 78, 59)
+                                   : (stale ? lv_color_make(69, 45, 3)
+                                            : lv_color_make(69, 10, 10)))),
+        0);
 }
 
 void gui_app_update_system_info(uint32_t free_heap, uint32_t uptime_sec) {
@@ -13648,6 +14132,11 @@ void gui_app_update_sensor_debug(int ldr_value,
     sensor_debug.mcpValid = mcp_valid;
     sensor_debug.mcpState = mcp_state;
     sensor_debug.updatedMs = millis();
+    const bool adc_health_ok =
+        (!cfg.showPhSensor || (adc_present && ph_valid)) &&
+        (!cfg.enableEc || (adc_present && ec_valid));
+    status_sensor_bus_ok =
+        cfg.devMode || (mcp_present && mcp_valid && adc_health_ok);
 
     const auto mcp_bit = [mcp_valid, mcp_state](HwConfig::McpChannel channel) {
         if (!mcp_valid) {
@@ -13843,15 +14332,18 @@ void gui_app_update_ldr(int ldr_value, bool valid) {
 }
 
 bool gui_app_is_dev_mode(void) {
-    return cfg.devMode;
+    GuiMutexGuard guard(20U);
+    return guard.locked() && gui_ready && cfg.devMode;
 }
 
 bool gui_app_is_web_focus_active(void) {
-    return web_ui_focus_active;
+    GuiMutexGuard guard(20U);
+    return guard.locked() && gui_ready && web_ui_focus_active;
 }
 
 bool gui_app_ble_snapshot(GuiBleSnapshot *out) {
-    if (out == nullptr || cfg.magic != UI_CONFIG_MAGIC) {
+    GuiMutexGuard guard(200U);
+    if (!guard.locked() || !gui_ready || out == nullptr || cfg.magic != UI_CONFIG_MAGIC) {
         return false;
     }
 
@@ -13932,6 +14424,10 @@ static bool gui_ble_pin_valid(const char *pin) {
 }
 
 GuiBleCommandResult gui_app_ble_set_output(const char *target, bool state, const char *pin) {
+    GuiMutexGuard guard(500U);
+    if (!guard.locked() || !gui_ready) {
+        return {false, "controller_busy", "Sterownik jest chwilowo zajety."};
+    }
     if (!gui_ble_pin_valid(pin)) {
         return {false, "pin_invalid", "Nieprawidlowy PIN administratora."};
     }
@@ -13979,6 +14475,10 @@ GuiBleCommandResult gui_app_ble_set_output(const char *target, bool state, const
 }
 
 GuiBleCommandResult gui_app_ble_feed(const char *pin) {
+    GuiMutexGuard guard(500U);
+    if (!guard.locked() || !gui_ready) {
+        return {false, "controller_busy", "Sterownik jest chwilowo zajety."};
+    }
     if (!gui_ble_pin_valid(pin)) {
         return {false, "pin_invalid", "Nieprawidlowy PIN administratora."};
     }
@@ -14174,7 +14674,9 @@ bool ble_parse_light_profile(const char *json, const char *key, uint8_t *out) {
 } // namespace
 
 bool gui_app_ble_full_status_json(char *out, size_t out_size) {
-    if (out == nullptr || out_size < 1024U || cfg.magic != UI_CONFIG_MAGIC) {
+    GuiMutexGuard guard(500U);
+    if (!guard.locked() || !gui_ready ||
+        out == nullptr || out_size < 1024U || cfg.magic != UI_CONFIG_MAGIC) {
         return false;
     }
 
@@ -14399,7 +14901,9 @@ bool gui_app_ble_full_status_json(char *out, size_t out_size) {
 }
 
 bool gui_app_ble_logs_json(char *out, size_t out_size, const char *pin) {
-    if (!gui_ble_pin_valid(pin) || out == nullptr || out_size < 256U) {
+    GuiMutexGuard guard(500U);
+    if (!guard.locked() || !gui_ready ||
+        !gui_ble_pin_valid(pin) || out == nullptr || out_size < 256U) {
         return false;
     }
     size_t used = 0U;
@@ -14427,25 +14931,36 @@ bool gui_app_ble_logs_json(char *out, size_t out_size, const char *pin) {
 }
 
 bool gui_app_ble_diagnostics_json(char *out, size_t out_size, const char *pin) {
-    if (!gui_ble_pin_valid(pin) || out == nullptr || out_size < 512U) {
+    GuiMutexGuard guard(500U);
+    if (!guard.locked() || !gui_ready ||
+        !gui_ble_pin_valid(pin) || out == nullptr || out_size < 512U) {
         return false;
     }
     const int written = snprintf(
         out, out_size,
         "{\"type\":\"diagnostics\",\"data\":{\"ok\":true,\"simulated\":%s,"
-        "\"sda\":21,\"scl\":22,\"frequencyHz\":400000,\"scanMs\":0,"
+        "\"sda\":%u,\"scl\":%u,\"frequencyHz\":%lu,\"scanMs\":0,"
         "\"count\":%u,\"truncated\":false,\"devices\":[],"
         "\"uart\":{\"ports\":[],\"discoverySupported\":false},"
-        "\"oneWire\":{\"dataPin\":17,\"scanMs\":0,\"count\":0,"
+        "\"oneWire\":{\"dataPin\":%u,\"scanMs\":0,\"count\":0,"
         "\"truncated\":false,\"devices\":[]}}}",
         cfg.devMode ? "true" : "false",
-        static_cast<unsigned>((sensor_debug.mcpPresent ? 1U : 0U) + (sensor_debug.adcPresent ? 1U : 0U)));
+        static_cast<unsigned>(HwConfig::I2C_SDA_PIN),
+        static_cast<unsigned>(HwConfig::I2C_SCL_PIN),
+        static_cast<unsigned long>(HwConfig::I2C_FREQUENCY_HZ),
+        static_cast<unsigned>((sensor_debug.mcpPresent ? 1U : 0U) +
+                              (sensor_debug.adcPresent ? 1U : 0U)),
+        static_cast<unsigned>(HwConfig::OneWireBus::DATA_PIN));
     return written > 0 && static_cast<size_t>(written) < out_size;
 }
 
 GuiBleCommandResult gui_app_ble_action(const char *action,
                                        const char *command_json,
                                        const char *pin) {
+    GuiMutexGuard guard(1000U);
+    if (!guard.locked() || !gui_ready) {
+        return {false, "controller_busy", "Sterownik jest chwilowo zajety."};
+    }
     if (!gui_ble_pin_valid(pin)) {
         return {false, "pin_invalid", "Nieprawidlowy PIN administratora."};
     }
@@ -14644,8 +15159,8 @@ GuiBleCommandResult gui_app_ble_action(const char *action,
             return {false, "wifi_required", "Synchronizacja NTP wymaga WiFi."};
         }
         return sync_clock_from_ntp(5000U)
-                   ? GuiBleCommandResult{true, "ok", "Czas zsynchronizowany przez NTP."}
-                   : GuiBleCommandResult{false, "ntp_failed", "Nie udalo sie pobrac czasu NTP."};
+                   ? GuiBleCommandResult{true, "ntp_started", "Synchronizacja NTP uruchomiona."}
+                   : GuiBleCommandResult{false, "ntp_start_failed", "Nie mozna uruchomic synchronizacji NTP."};
     }
     if (strcmp(action, "set_time") == 0) {
         long epoch = 0L;

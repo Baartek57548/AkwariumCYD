@@ -504,8 +504,8 @@ void controller_ble_task(void *) {
 } // namespace
 
 extern "C" void initVariant(void) {
-    const BaseType_t created = xTaskCreate(
-        controller_ble_task, "ble_controller", 8192U, nullptr, 1U, nullptr);
+    const BaseType_t created = xTaskCreatePinnedToCore(
+        controller_ble_task, "ble_controller", 8192U, nullptr, 1U, nullptr, 0);
     if (created != pdPASS) {
         Serial.println("BLE: controller task creation failed.");
     }
