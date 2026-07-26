@@ -63,6 +63,12 @@ for (const relativePath of files) {
 
     if (/\.(?:html|css|js)$/i.test(relativePath)) {
         const compressed = zlib.gzipSync(content, { level: zlib.constants.Z_BEST_COMPRESSION });
+        if (compressed.length < 10 || compressed[0] !== 0x1f || compressed[1] !== 0x8b) {
+            throw new Error(`Nieprawidlowy wynik kompresji gzip: ${relativePath}`);
+        }
+        // RFC 1952 dopuszcza 255 jako nieznany system. Normalizacja pola OS
+        // usuwa jedyną platformową różnicę między gzipem Windows i Linux.
+        compressed[9] = 0xff;
         fs.writeFileSync(`${destinationPath}.gz`, compressed);
         gzipBytes += compressed.length;
     }
