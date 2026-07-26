@@ -84,37 +84,37 @@ void main() {
       );
       await tester.pumpAndSettle(const Duration(milliseconds: 500));
 
-      expect(find.text('Podgląd ostatnio zapisanych danych'), findsOneWidget);
+      expect(find.text('Ostatnie dane są dostępne lokalnie'), findsOneWidget);
       expect(find.text('Sterownik offline'), findsWidgets);
       expect(find.byKey(const Key('connection-center-button')), findsOneWidget);
       for (final label in const [
-        'Centrum',
+        'Start',
         'Steruj',
         'Auto',
         'Historia',
-        'System',
+        'Więcej',
       ]) {
         expect(find.text(label), findsOneWidget);
       }
 
       await tester.tap(find.text('Steruj'));
       await tester.pumpAndSettle();
-      expect(find.text('Sterowanie operacyjne'), findsOneWidget);
+      expect(find.text('Sterowanie'), findsWidgets);
       final feedButton = find.widgetWithText(FilledButton, 'Podaj jedną dawkę');
       await tester.ensureVisible(feedButton);
       expect(tester.widget<FilledButton>(feedButton).onPressed, isNull);
 
       await tester.tap(find.text('Auto'));
       await tester.pumpAndSettle();
-      expect(find.text('Plan dobowy'), findsOneWidget);
+      expect(find.text('Plan dobowy 24 h'), findsOneWidget);
 
       await tester.tap(find.text('Historia'));
       await tester.pumpAndSettle();
-      expect(find.text('Trendy i historia'), findsOneWidget);
+      expect(find.text('Pomiary w czasie'), findsOneWidget);
 
-      await tester.tap(find.text('System'));
+      await tester.tap(find.text('Więcej'));
       await tester.pumpAndSettle();
-      expect(find.text('System i administracja'), findsOneWidget);
+      expect(find.text('Ustawienia i diagnostyka'), findsOneWidget);
       expect(find.text('Sterownik offline'), findsWidgets);
       expect(tester.takeException(), isNull);
     },
@@ -144,10 +144,6 @@ void main() {
 
     final connectionButton = find.byKey(const Key('connection-center-button'));
     expect(connectionButton, findsOneWidget);
-    expect(
-      tester.widget<IconButton>(connectionButton).tooltip,
-      'Połączenia Wi‑Fi i Bluetooth',
-    );
 
     await tester.tap(connectionButton);
     await tester.pump();
@@ -168,13 +164,16 @@ void main() {
     );
     await tester.pumpAndSettle(const Duration(milliseconds: 300));
 
-    expect(find.text('Brak zapisanych nastaw temperatury'), findsOneWidget);
+    expect(find.text('Brak zapisanej temperatury docelowej'), findsOneWidget);
     expect(find.text('Aplikacja działa bez urządzenia'), findsOneWidget);
 
     await tester.tap(find.text('Steruj'));
     await tester.pumpAndSettle();
-    expect(find.text('BRAK ZAPISANEGO STANU'), findsWidgets);
-    expect(find.text('WYJŚCIE FIZYCZNE OFF'), findsNothing);
+    expect(
+      find.text('Brak zapisanego stanu, trybu i harmonogramu'),
+      findsWidgets,
+    );
+    expect(find.text('WYJŚCIE OFF'), findsNothing);
 
     await tester.tap(find.text('Auto'));
     await tester.pumpAndSettle();
@@ -183,7 +182,7 @@ void main() {
     expect(find.text('Start 10:00'), findsNothing);
     expect(find.text('14:00'), findsNothing);
 
-    await tester.tap(find.text('System'));
+    await tester.tap(find.text('Więcej'));
     await tester.pumpAndSettle();
     expect(find.text('Brak zapisanej konfiguracji'), findsOneWidget);
     expect(find.textContaining('100%'), findsNothing);
@@ -207,19 +206,24 @@ void main() {
 
       await tester.tap(find.text('Auto'));
       await tester.pumpAndSettle();
-      await tester.tap(find.text('Plan dobowy'));
+      final automationSwitcher = find.byWidgetPredicate(
+        (widget) =>
+            widget is DropdownButtonFormField<int> &&
+            widget.decoration.labelText == 'Sekcja automatyki',
+      );
+      await tester.tap(automationSwitcher);
       await tester.pumpAndSettle();
-      await tester.tap(find.text('Reguły i bezpieczeństwo').last);
+      await tester.tap(find.text('Reguły').last);
       await tester.pumpAndSettle();
 
       expect(find.text('Brak zapisanych reguł automatyki'), findsOneWidget);
-      expect(find.text('Brak zapisanej konfiguracji'), findsWidgets);
+      expect(find.text('Brak zapisanej konfiguracji'), findsNothing);
       expect(find.textContaining('25.0'), findsNothing);
       expect(find.textContaining('6.8'), findsNothing);
 
-      await tester.tap(find.text('System'));
+      await tester.tap(find.text('Więcej'));
       await tester.pumpAndSettle();
-      final controllerSettings = find.text('Sterownik, sieć i ekran');
+      final controllerSettings = find.text('Urządzenie i połączenie');
       await tester.ensureVisible(controllerSettings);
       await tester.tap(controllerSettings);
       await tester.pumpAndSettle();

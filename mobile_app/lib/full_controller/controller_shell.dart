@@ -3,7 +3,6 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
-import '../design_system.dart';
 import 'connection_health.dart';
 import 'connection_health_bar.dart';
 import 'controller_api.dart';
@@ -318,13 +317,6 @@ class _ControllerShellState extends State<ControllerShell>
         } else {
           await _ensureAdmin();
         }
-      case _HeaderAction.connection:
-        final openConnection = widget.onOpenConnection;
-        if (openConnection != null) {
-          openConnection();
-        } else if (mounted && Navigator.of(context).canPop()) {
-          Navigator.of(context).pop();
-        }
     }
   }
 
@@ -334,14 +326,14 @@ class _ControllerShellState extends State<ControllerShell>
     final showRail = width >= 760;
     final extendedRail = width >= 1100;
     final textScale = MediaQuery.textScalerOf(context).scale(1);
-    final toolbarHeight = (72 + (textScale - 1) * 18).clamp(72, 108).toDouble();
+    final toolbarHeight = (64 + (textScale - 1) * 18).clamp(64, 96).toDouble();
     final navigationHeight = (72 + (textScale - 1) * 18)
         .clamp(72, 110)
         .toDouble();
     return Scaffold(
       appBar: AppBar(
         toolbarHeight: toolbarHeight,
-        titleSpacing: 16,
+        titleSpacing: 12,
         title: ListenableBuilder(
           listenable: session,
           builder: (context, _) => _ControllerHeader(session: session),
@@ -377,45 +369,15 @@ class _ControllerShellState extends State<ControllerShell>
                     contentPadding: EdgeInsets.zero,
                   ),
                 ),
-                const PopupMenuItem(
-                  value: _HeaderAction.connection,
-                  child: ListTile(
-                    leading: Icon(Icons.swap_horiz_rounded),
-                    title: Text('Zmień połączenie'),
-                    contentPadding: EdgeInsets.zero,
-                  ),
-                ),
               ],
             ),
           ),
           ListenableBuilder(
             listenable: session,
-            builder: (context, _) {
-              final colors = Theme.of(context).colorScheme;
-              final online = session.connectionHealth.isOnline;
-              final icon = online
-                  ? switch (session.sessionKind) {
-                      ControllerSessionKind.bluetooth =>
-                        Icons.bluetooth_connected_rounded,
-                      ControllerSessionKind.wifi => Icons.wifi_rounded,
-                      ControllerSessionKind.offline => Icons.history_rounded,
-                      ControllerSessionKind.development =>
-                        Icons.science_rounded,
-                    }
-                  : Icons.link_off_rounded;
-              return IconButton(
-                key: const Key('connection-center-button'),
-                tooltip: 'Połączenia Wi‑Fi i Bluetooth',
-                onPressed: widget.onOpenConnection,
-                icon: Badge(
-                  backgroundColor: online
-                      ? context.statusColors.success
-                      : colors.outline,
-                  smallSize: 9,
-                  child: Icon(icon),
-                ),
-              );
-            },
+            builder: (context, _) => _ConnectionButton(
+              session: session,
+              onPressed: widget.onOpenConnection,
+            ),
           ),
           const SizedBox(width: 4),
         ],
@@ -512,7 +474,7 @@ class _ControllerShellState extends State<ControllerShell>
                   NavigationDestination(
                     icon: Icon(item.icon),
                     selectedIcon: Icon(item.selectedIcon),
-                    label: item.label,
+                    label: item.compactLabel,
                   ),
               ],
             ),
@@ -589,45 +551,11 @@ class _ControllerHeader extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final status = session.status;
-    final deviceName = status.text('device', 'cydAkwarium');
-    final address =
-        session.baseUri?.host ??
-        status.section('network').text('ip', 'akwarium.local');
-    final (transportIcon, transportLabel) = switch (session.sessionKind) {
-      ControllerSessionKind.bluetooth => (Icons.bluetooth_rounded, 'BLE'),
-      ControllerSessionKind.offline => (Icons.history_rounded, 'Offline'),
-      ControllerSessionKind.development => (Icons.science_outlined, 'DEV'),
-      ControllerSessionKind.wifi => (Icons.wifi_rounded, 'Wi‑Fi'),
-    };
-    final colors = Theme.of(context).colorScheme;
-    final phase = session.connectionPhase;
-    final connectionIcon = switch (phase) {
-      ControllerConnectionPhase.connecting => Icons.sync_rounded,
-      ControllerConnectionPhase.online => transportIcon,
-      ControllerConnectionPhase.reconnecting =>
-        Icons.wifi_protected_setup_rounded,
-      ControllerConnectionPhase.offline => Icons.cloud_off_rounded,
-    };
-    final connectionLabel = switch (phase) {
-      ControllerConnectionPhase.connecting => 'Łączenie',
-      ControllerConnectionPhase.online => transportLabel,
-      ControllerConnectionPhase.reconnecting => 'Ponawianie',
-      ControllerConnectionPhase.offline => 'Offline',
-    };
-    final connectionTone = switch (phase) {
-      ControllerConnectionPhase.connecting => colors.tertiary,
-      ControllerConnectionPhase.online => colors.primary,
-      ControllerConnectionPhase.reconnecting => colors.tertiary,
-      ControllerConnectionPhase.offline =>
-        session.isOfflineMode ? colors.outline : colors.error,
-    };
+    final deviceName = status.text('device', 'AquaCYD');
     return LayoutBuilder(
       builder: (context, constraints) {
         final textScale = MediaQuery.textScalerOf(context).scale(1);
-        final showLogo = constraints.maxWidth >= 250 && textScale <= 1.6;
-        final showAddress = constraints.maxWidth >= 210 && textScale <= 1.4;
-        final showConnectionLabel =
-            constraints.maxWidth >= 330 && textScale <= 1.2;
+        final showLogo = constraints.maxWidth >= 230 && textScale <= 1.4;
         return Row(
           children: [
             if (showLogo) ...[
@@ -645,68 +573,13 @@ class _ControllerHeader extends StatelessWidget {
               const SizedBox(width: 10),
             ],
             Expanded(
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    deviceName,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: const TextStyle(
-                      fontSize: 18,
-                      fontWeight: FontWeight.w800,
-                    ),
-                  ),
-                  if (showAddress)
-                    Text(
-                      address,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                        color: colors.onSurfaceVariant,
-                      ),
-                    ),
-                ],
-              ),
-            ),
-            const SizedBox(width: 8),
-            Semantics(
-              label: switch (phase) {
-                ControllerConnectionPhase.connecting =>
-                  'Łączenie ze sterownikiem',
-                ControllerConnectionPhase.online =>
-                  'Połączenie aktywne: $transportLabel',
-                ControllerConnectionPhase.reconnecting =>
-                  'Trwa ponawianie połączenia',
-                ControllerConnectionPhase.offline => 'Sterownik jest offline',
-              },
-              liveRegion: true,
-              child: ExcludeSemantics(
-                child: DecoratedBox(
-                  decoration: BoxDecoration(
-                    border: Border.all(color: colors.outlineVariant),
-                    borderRadius: BorderRadius.circular(5),
-                  ),
-                  child: Padding(
-                    padding: EdgeInsets.symmetric(
-                      horizontal: showConnectionLabel ? 10 : 8,
-                      vertical: 8,
-                    ),
-                    child: Row(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        Icon(connectionIcon, size: 20, color: connectionTone),
-                        if (showConnectionLabel) ...[
-                          const SizedBox(width: 7),
-                          Text(
-                            connectionLabel,
-                            style: const TextStyle(fontWeight: FontWeight.w700),
-                          ),
-                        ],
-                      ],
-                    ),
-                  ),
+              child: Text(
+                deviceName,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(
+                  fontSize: 18,
+                  fontWeight: FontWeight.w800,
                 ),
               ),
             ),
@@ -717,25 +590,131 @@ class _ControllerHeader extends StatelessWidget {
   }
 }
 
+class _ConnectionButton extends StatelessWidget {
+  const _ConnectionButton({required this.session, required this.onPressed});
+
+  final ControllerSession session;
+  final VoidCallback? onPressed;
+
+  @override
+  Widget build(BuildContext context) {
+    final colors = Theme.of(context).colorScheme;
+    final phase = session.connectionPhase;
+    final (icon, label, tone) = switch (phase) {
+      ControllerConnectionPhase.connecting => (
+        Icons.sync_rounded,
+        'Łączenie',
+        colors.tertiary,
+      ),
+      ControllerConnectionPhase.reconnecting => (
+        Icons.sync_rounded,
+        'Ponawianie',
+        colors.tertiary,
+      ),
+      ControllerConnectionPhase.offline => (
+        Icons.link_off_rounded,
+        session.isOfflineMode ? 'Połącz' : 'Offline',
+        session.isOfflineMode ? colors.outline : colors.error,
+      ),
+      ControllerConnectionPhase.online => switch (session.sessionKind) {
+        ControllerSessionKind.bluetooth => (
+          Icons.bluetooth_connected_rounded,
+          'Bluetooth',
+          colors.primary,
+        ),
+        ControllerSessionKind.development => (
+          Icons.science_rounded,
+          'Demo',
+          colors.tertiary,
+        ),
+        ControllerSessionKind.offline => (
+          Icons.history_rounded,
+          'Offline',
+          colors.outline,
+        ),
+        ControllerSessionKind.wifi => (
+          Icons.wifi_rounded,
+          'Wi‑Fi',
+          colors.primary,
+        ),
+      },
+    };
+    final width = MediaQuery.sizeOf(context).width;
+    final textScale = MediaQuery.textScalerOf(context).scale(1);
+    final showLabel = width >= 380 && textScale <= 1.25;
+    final semanticsLabel = '$label. Otwórz połączenia Wi‑Fi i Bluetooth';
+
+    if (!showLabel) {
+      return Semantics(
+        button: true,
+        label: semanticsLabel,
+        child: IconButton(
+          key: const Key('connection-center-button'),
+          tooltip: 'Połączenia',
+          onPressed: onPressed,
+          icon: Badge(backgroundColor: tone, smallSize: 8, child: Icon(icon)),
+        ),
+      );
+    }
+
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 8),
+      child: Semantics(
+        button: true,
+        label: semanticsLabel,
+        child: FilledButton.tonalIcon(
+          key: const Key('connection-center-button'),
+          onPressed: onPressed,
+          style: FilledButton.styleFrom(
+            minimumSize: const Size(48, 48),
+            padding: const EdgeInsets.symmetric(horizontal: 12),
+            backgroundColor: tone.withValues(alpha: 0.12),
+            foregroundColor: tone,
+          ),
+          icon: Icon(icon, size: 19),
+          label: Text(label),
+        ),
+      ),
+    );
+  }
+}
+
 enum _ControllerSection {
-  dashboard('Centrum', Icons.dashboard_outlined, Icons.dashboard_rounded),
-  control('Steruj', Icons.tune_outlined, Icons.tune_rounded),
-  automation('Auto', Icons.auto_mode_outlined, Icons.auto_mode_rounded),
+  dashboard(
+    'Start',
+    'Start',
+    Icons.dashboard_outlined,
+    Icons.dashboard_rounded,
+  ),
+  control('Steruj', 'Steruj', Icons.tune_outlined, Icons.tune_rounded),
+  automation(
+    'Automatyka',
+    'Auto',
+    Icons.auto_mode_outlined,
+    Icons.auto_mode_rounded,
+  ),
   insights(
+    'Historia',
     'Historia',
     Icons.monitor_heart_outlined,
     Icons.monitor_heart_rounded,
   ),
-  settings('System', Icons.settings_outlined, Icons.settings_rounded);
+  settings('Więcej', 'Więcej', Icons.more_horiz_rounded, Icons.more_rounded);
 
-  const _ControllerSection(this.label, this.icon, this.selectedIcon);
+  const _ControllerSection(
+    this.label,
+    this.compactLabel,
+    this.icon,
+    this.selectedIcon,
+  );
 
   final String label;
+  final String compactLabel;
   final IconData icon;
   final IconData selectedIcon;
 }
 
-enum _HeaderAction { refresh, admin, connection }
+enum _HeaderAction { refresh, admin }
 
 class _AdminPinDialog extends StatefulWidget {
   const _AdminPinDialog();

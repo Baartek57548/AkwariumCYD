@@ -43,12 +43,12 @@ class _AutomationCenterViewState extends State<AutomationCenterView> {
                 ControllerSectionOption(
                   value: 0,
                   icon: Icons.calendar_month_rounded,
-                  label: 'Plan dobowy',
+                  label: 'Plan',
                 ),
                 ControllerSectionOption(
                   value: 1,
                   icon: Icons.auto_mode_rounded,
-                  label: 'Reguły i bezpieczeństwo',
+                  label: 'Reguły',
                 ),
               ],
               selected: _section,

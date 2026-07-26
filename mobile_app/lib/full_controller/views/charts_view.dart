@@ -122,7 +122,7 @@ class _ChartsViewState extends State<ChartsView> {
       onRefresh: _load,
       children: [
         SectionHeader(
-          title: 'Historia i wykresy',
+          title: 'Pomiary w czasie',
           description: history?.usedArchive == true
               ? 'Dane bieżące i archiwum SD sterownika.'
               : 'Dane dostępne przez ${widget.session.displayName}.',
@@ -233,27 +233,43 @@ class _ChartsViewState extends State<ChartsView> {
             isError: false,
           ),
         ],
-        SectionHeader(
-          title: 'Próbki',
-          description:
-              '${values.length} wartości · zakres ${_rangeLabel(rangeHours)}',
-        ),
-        _DenseHistoryTable(
-          samples: allSamples.reversed.take(80).toList(growable: false),
-          metric: metric,
-          target: target,
-        ),
         const SizedBox(height: 10),
-        Align(
-          alignment: Alignment.centerLeft,
-          child: FilledButton.icon(
-            onPressed: widget.session.supportsFileDownload ? _exportCsv : null,
-            icon: const Icon(Icons.download_rounded),
-            label: Text(
-              widget.session.supportsFileDownload
-                  ? 'Eksportuj CSV'
-                  : 'Eksport wymaga Wi‑Fi',
+        Card(
+          clipBehavior: Clip.antiAlias,
+          child: ExpansionTile(
+            key: const PageStorageKey<String>('history-data-tools'),
+            leading: const Icon(Icons.table_rows_outlined),
+            title: const Text(
+              'Dane źródłowe i eksport',
+              style: TextStyle(fontWeight: FontWeight.w700),
             ),
+            subtitle: Text(
+              '${values.length} wartości · zakres ${_rangeLabel(rangeHours)}',
+            ),
+            childrenPadding: const EdgeInsets.fromLTRB(12, 0, 12, 12),
+            children: [
+              _DenseHistoryTable(
+                samples: allSamples.reversed.take(80).toList(growable: false),
+                metric: metric,
+                target: target,
+                embedded: true,
+              ),
+              const SizedBox(height: 10),
+              Align(
+                alignment: Alignment.centerLeft,
+                child: FilledButton.icon(
+                  onPressed: widget.session.supportsFileDownload
+                      ? _exportCsv
+                      : null,
+                  icon: const Icon(Icons.download_rounded),
+                  label: Text(
+                    widget.session.supportsFileDownload
+                        ? 'Eksportuj CSV'
+                        : 'Eksport wymaga Wi‑Fi',
+                  ),
+                ),
+              ),
+            ],
           ),
         ),
       ],
@@ -367,42 +383,51 @@ class _DenseHistoryTable extends StatelessWidget {
     required this.samples,
     required this.metric,
     required this.target,
+    this.embedded = false,
   });
 
   final List<HistorySample> samples;
   final _HistoryMetric metric;
   final double? target;
+  final bool embedded;
 
   @override
   Widget build(BuildContext context) {
     final divider = Theme.of(context).dividerColor;
-    return Card(
-      clipBehavior: Clip.antiAlias,
-      child: Column(
-        children: [
-          _DenseRow(
-            cells: const ['Czas', 'Wartość', 'Odchylenie'],
-            header: true,
-            divider: divider,
-          ),
-          if (samples.isEmpty)
-            const Padding(
-              padding: EdgeInsets.all(18),
-              child: Text('Brak próbek w wybranym zakresie.'),
-            )
-          else
-            for (final sample in samples)
-              _DenseRow(
-                cells: [
-                  _formatEpoch(sample.epoch),
-                  metric.format(metric.value(sample)),
-                  _deviation(metric.value(sample), target, metric),
-                ],
-                divider: divider,
-              ),
-        ],
-      ),
+    final table = Column(
+      children: [
+        _DenseRow(
+          cells: const ['Czas', 'Wartość', 'Odchylenie'],
+          header: true,
+          divider: divider,
+        ),
+        if (samples.isEmpty)
+          const Padding(
+            padding: EdgeInsets.all(18),
+            child: Text('Brak próbek w wybranym zakresie.'),
+          )
+        else
+          for (final sample in samples)
+            _DenseRow(
+              cells: [
+                _formatEpoch(sample.epoch),
+                metric.format(metric.value(sample)),
+                _deviation(metric.value(sample), target, metric),
+              ],
+              divider: divider,
+            ),
+      ],
     );
+    if (embedded) {
+      return DecoratedBox(
+        decoration: BoxDecoration(
+          border: Border.all(color: divider),
+          borderRadius: BorderRadius.circular(12),
+        ),
+        child: ClipRRect(borderRadius: BorderRadius.circular(12), child: table),
+      );
+    }
+    return Card(clipBehavior: Clip.antiAlias, child: table);
   }
 
   static String _deviation(

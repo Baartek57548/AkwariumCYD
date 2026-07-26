@@ -45,11 +45,11 @@ void main() {
       expect(initializationGate.isCompleted, isFalse);
       expect(find.byType(NavigationBar), findsOneWidget);
       for (final label in const [
-        'Centrum',
+        'Start',
         'Steruj',
         'Auto',
         'Historia',
-        'System',
+        'Więcej',
       ]) {
         expect(find.text(label), findsOneWidget);
       }
@@ -129,8 +129,10 @@ void main() {
       expect(api.connectCalls, 1);
       expect(connectGate.isCompleted, isFalse);
       expect(find.text(savedDeviceName), findsOneWidget);
-      expect(find.text('Ostatni zapisany stan'), findsOneWidget);
-      expect(find.text('Dane dostępne podczas łączenia'), findsOneWidget);
+      expect(
+        find.text('Łączenie w tle · ostatnie dane zachowane'),
+        findsOneWidget,
+      );
       expect(tester.takeException(), isNull);
 
       await tester.pumpWidget(const SizedBox.shrink());

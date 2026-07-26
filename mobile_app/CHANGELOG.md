@@ -2,6 +2,35 @@
 
 Wersjonowanie aplikacji jest zgodne z [Semantic Versioning](https://semver.org/).
 
+## 4.1.0 — 2026-07-26
+
+### Nowe
+
+- wprowadzono progresywne ujawnianie informacji: najważniejsze dane są widoczne od razu, a szczegóły techniczne rozwija się na żądanie,
+- dodano zwięzły przycisk połączenia w prawym górnym rogu oraz zwijany panel RSSI, ping i czasu synchronizacji,
+- dodano dedykowane testy zachowania zwijanych sekcji sterowania, automatyki, historii i narzędzi serwisowych.
+
+### Zmienione
+
+- uproszczono nawigację do obszarów Start, Steruj, Auto, Historia i Więcej,
+- ekran Start pokazuje najpierw bezpieczeństwo, alarmy, temperaturę i najbliższe zdarzenie; pozostałe czujniki oraz stany urządzeń są zwinięte,
+- karmnik jest pierwszą akcją ekranu Steruj, a tryby AUTO / ON / OFF są dostępne po rozwinięciu konkretnego urządzenia,
+- formularze automatyki, dane źródłowe wykresów, eksport, informacje o sterowniku i narzędzia serwisowe są domyślnie ukryte,
+- dziennik zdarzeń nie otwiera samoczynnie dialogu PIN i jest pobierany dopiero po świadomej akcji użytkownika,
+- tryb offline rozróżnia pierwszy start bez danych od podglądu ostatniego lokalnego snapshotu.
+
+### Bezpieczeństwo i odporność
+
+- zachowano szkice formularzy i wykrywanie konfliktów podczas zwijania sekcji,
+- alarmy krytyczne pozostają zawsze widoczne i wyprzedzają treści drugorzędne,
+- polecenia nadal są blokowane bez świeżej telemetrii, a ukrycie elementu nie zmienia jego walidacji ani uprawnień.
+
+### Dystrybucja
+
+- wersja aplikacji: `4.1.0+16`,
+- tag wydania: `mobile-v4.1.0`,
+- produkcyjny asset Androida: `AquaCYD-Control-4.1.0-current.apk`.
+
 ## 4.0.1 — 2026-07-26
 
 ### Nowe

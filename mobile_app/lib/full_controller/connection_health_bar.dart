@@ -19,6 +19,7 @@ class _ControllerConnectionHealthBarState
     extends State<ControllerConnectionHealthBar>
     with WidgetsBindingObserver {
   Timer? _ageTimer;
+  bool _detailsExpanded = false;
 
   @override
   void initState() {
@@ -78,27 +79,28 @@ class _ControllerConnectionHealthBarState
     };
     final detail = switch (health.phase) {
       ControllerConnectionPhase.connecting =>
-        'Nawiązywanie pierwszego połączenia ze sterownikiem',
-      ControllerConnectionPhase.online => 'Telemetria jest aktualizowana',
+        widget.session.hasCachedSnapshot
+            ? 'Łączenie w tle · ostatnie dane są dostępne'
+            : 'Trwa łączenie — aplikacja pozostaje dostępna',
+      ControllerConnectionPhase.online =>
+        'Synchronizacja ${health.ageLabel(DateTime.now())}',
       ControllerConnectionPhase.reconnecting =>
         widget.session.automaticReconnect
-            ? 'Zachowano ostatnie dane · próba ${health.failedAttempts + 1}'
-            : 'Zachowano ostatnie dane · automatyczne łączenie wyłączone',
+            ? 'Łączenie w tle · ostatnie dane zachowane'
+            : 'Ostatnie dane zachowane · autołączenie wyłączone',
       ControllerConnectionPhase.offline =>
         widget.session.isOfflineMode
-            ? 'Lokalny podgląd · wybierz połączenie w prawym górnym rogu'
+            ? widget.session.hasCachedSnapshot
+                  ? 'Ostatnie dane są dostępne lokalnie'
+                  : 'Aplikacja działa bez urządzenia'
             : widget.session.automaticReconnect
-            ? 'Sterownik nie odpowiada · ponawianie automatyczne'
-            : 'Sterownik nie odpowiada · automatyczne łączenie wyłączone',
+            ? 'Sterownik nie odpowiada · ponawiam w tle'
+            : 'Sterownik nie odpowiada · autołączenie wyłączone',
     };
 
     return Semantics(
       container: true,
-      label:
-          'Stan połączenia: ${health.phaseLabel}. '
-          'Sygnał ${health.rssi == null ? "nieznany" : "${health.rssi} dBm"}. '
-          'Opóźnienie ${health.roundTrip == null ? "nieznane" : "${health.roundTrip!.inMilliseconds} milisekund"}. '
-          'Ostatnia synchronizacja ${health.ageLabel(DateTime.now())}.',
+      label: 'Stan połączenia: ${health.phaseLabel}. $detail.',
       child: Material(
         color: colors.surfaceContainerLow,
         child: DecoratedBox(
@@ -106,35 +108,32 @@ class _ControllerConnectionHealthBarState
             border: Border(bottom: BorderSide(color: colors.outlineVariant)),
           ),
           child: Padding(
-            padding: const EdgeInsets.fromLTRB(14, 10, 10, 10),
-            child: LayoutBuilder(
-              builder: (context, constraints) {
-                final textScale = MediaQuery.textScalerOf(context).scale(1);
-                final compact = constraints.maxWidth < 680 || textScale > 1.35;
-                final status = _StatusSummary(
+            padding: const EdgeInsets.fromLTRB(14, 6, 6, 6),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                _StatusSummary(
                   health: health,
                   detail: detail,
                   tone: tone,
                   busy: widget.session.busy,
                   canRetry: !widget.session.isOfflineMode,
+                  detailsExpanded: _detailsExpanded,
                   onRetry: () => unawaited(widget.session.connect()),
-                );
-                final metrics = _ConnectionMetrics(health: health);
-
-                if (compact) {
-                  return Column(
-                    crossAxisAlignment: CrossAxisAlignment.stretch,
-                    children: [status, const SizedBox(height: 10), metrics],
-                  );
-                }
-                return Row(
-                  children: [
-                    Expanded(child: status),
-                    const SizedBox(width: 20),
-                    Flexible(child: metrics),
-                  ],
-                );
-              },
+                  onToggleDetails: () {
+                    setState(() => _detailsExpanded = !_detailsExpanded);
+                  },
+                ),
+                if (_detailsExpanded) ...[
+                  const SizedBox(height: 6),
+                  Divider(height: 1, color: colors.outlineVariant),
+                  const SizedBox(height: 10),
+                  Padding(
+                    padding: const EdgeInsets.fromLTRB(22, 0, 8, 6),
+                    child: _ConnectionMetrics(health: health),
+                  ),
+                ],
+              ],
             ),
           ),
         ),
@@ -150,7 +149,9 @@ class _StatusSummary extends StatelessWidget {
     required this.tone,
     required this.busy,
     required this.canRetry,
+    required this.detailsExpanded,
     required this.onRetry,
+    required this.onToggleDetails,
   });
 
   final ControllerConnectionHealth health;
@@ -158,7 +159,9 @@ class _StatusSummary extends StatelessWidget {
   final Color tone;
   final bool busy;
   final bool canRetry;
+  final bool detailsExpanded;
   final VoidCallback onRetry;
+  final VoidCallback onToggleDetails;
 
   @override
   Widget build(BuildContext context) {
@@ -198,20 +201,30 @@ class _StatusSummary extends StatelessWidget {
             ],
           ),
         ),
-        const SizedBox(width: 8),
+        if (!health.isOnline && canRetry) ...[
+          const SizedBox(width: 4),
+          IconButton(
+            onPressed: busy ? null : onRetry,
+            tooltip: 'Połącz ponownie',
+            icon: busy
+                ? const SizedBox.square(
+                    dimension: 20,
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  )
+                : const Icon(Icons.refresh_rounded),
+          ),
+        ],
         IconButton(
-          onPressed: busy || !canRetry ? null : onRetry,
-          tooltip: health.isOnline ? 'Odśwież połączenie' : 'Połącz ponownie',
-          icon: busy
-              ? const SizedBox.square(
-                  dimension: 20,
-                  child: CircularProgressIndicator(strokeWidth: 2),
-                )
-              : Icon(
-                  health.isOnline
-                      ? Icons.refresh_rounded
-                      : Icons.wifi_protected_setup_rounded,
-                ),
+          key: const Key('connection-details-button'),
+          onPressed: onToggleDetails,
+          tooltip: detailsExpanded
+              ? 'Ukryj szczegóły połączenia'
+              : 'Pokaż szczegóły połączenia',
+          icon: Icon(
+            detailsExpanded
+                ? Icons.keyboard_arrow_up_rounded
+                : Icons.info_outline_rounded,
+          ),
         ),
       ],
     );

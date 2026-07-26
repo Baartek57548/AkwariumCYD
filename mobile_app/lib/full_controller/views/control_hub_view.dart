@@ -5,10 +5,17 @@ import 'package:flutter/material.dart';
 import '../../design_system.dart';
 import '../controller_api.dart';
 import '../controller_session.dart';
-import '../controller_shell.dart';
 import '../data_access.dart';
 import '../schedule_control.dart';
 import '../widgets.dart';
+
+typedef RunControlHubAction =
+    Future<ControllerActionResult> Function(
+      String name, {
+      Map<String, Object?> payload,
+      String? confirmation,
+      bool refreshAfter,
+    });
 
 class ControlHubView extends StatefulWidget {
   const ControlHubView({
@@ -19,7 +26,7 @@ class ControlHubView extends StatefulWidget {
   });
 
   final ControllerSession session;
-  final RunControllerAction runAction;
+  final RunControlHubAction runAction;
   final Future<bool> Function() ensureAdmin;
 
   @override
@@ -159,10 +166,8 @@ class _ControlHubViewState extends State<ControlHubView> {
       onRefresh: () => widget.session.refresh(),
       children: [
         const SectionHeader(
-          title: 'Sterowanie operacyjne',
-          description:
-              'Stan fizyczny jest oddzielony od trybu pracy. AUTO zachowuje '
-              'automatykę, a wymuszenie ON/OFF trwale zastępuje harmonogram.',
+          title: 'Sterowanie',
+          description: 'Nakarm ryby lub zmień tryb urządzenia.',
         ),
         if (blockReason != null) ...[
           StatusBanner(
@@ -173,6 +178,26 @@ class _ControlHubViewState extends State<ControlHubView> {
           ),
           const SizedBox(height: AquaSpacing.md),
         ],
+        ResponsiveGrid(
+          minimumChildWidth: 300,
+          spacing: AquaSpacing.sm,
+          children: [
+            _FeederCard(
+              key: const Key('manual-feed-card'),
+              active: feeding.flag('active'),
+              busy: _feeding,
+              enabled: commandReady,
+              dataAvailable: hasStoredData,
+              lastResult: feeding.text('lastResult', 'brak danych'),
+              onFeed: _feed,
+            ),
+          ],
+        ),
+        const SizedBox(height: AquaSpacing.lg),
+        const SectionHeader(
+          title: 'Urządzenia',
+          description: 'Dotknij urządzenia, aby wybrać AUTO, ON lub OFF.',
+        ),
         ResponsiveGrid(
           minimumChildWidth: 320,
           spacing: AquaSpacing.sm,
@@ -201,22 +226,13 @@ class _ControlHubViewState extends State<ControlHubView> {
         ),
         const SizedBox(height: AquaSpacing.lg),
         const SectionHeader(
-          title: 'Procesy wykonawcze',
-          description:
-              'Karmienie ręczne oraz automatyczne układy dozowania i dolewki.',
+          title: 'Automatyka w tle',
+          description: 'Stan dozowania CO₂ i automatycznej dolewki.',
         ),
         ResponsiveGrid(
           minimumChildWidth: 300,
           spacing: AquaSpacing.sm,
           children: [
-            _FeederCard(
-              active: feeding.flag('active'),
-              busy: _feeding,
-              enabled: commandReady,
-              dataAvailable: hasStoredData,
-              lastResult: feeding.text('lastResult', 'brak danych'),
-              onFeed: _feed,
-            ),
             _ReadOnlyActuatorCard(
               icon: Icons.bubble_chart_rounded,
               title: 'Dozowanie CO₂',
@@ -292,88 +308,118 @@ class _OutputModeCard extends StatelessWidget {
         : OutputControlMode.values;
 
     return Card(
-      child: Padding(
-        padding: const EdgeInsets.all(AquaSpacing.md),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
+      clipBehavior: Clip.antiAlias,
+      child: ExpansionTile(
+        key: PageStorageKey<String>('output-card-${definition.id}'),
+        minTileHeight: 72,
+        tilePadding: const EdgeInsets.symmetric(
+          horizontal: AquaSpacing.md,
+          vertical: AquaSpacing.xxs,
+        ),
+        childrenPadding: const EdgeInsets.fromLTRB(
+          AquaSpacing.md,
+          0,
+          AquaSpacing.md,
+          AquaSpacing.md,
+        ),
+        leading: Container(
+          width: 48,
+          height: 48,
+          decoration: BoxDecoration(
+            color: activeTone.withValues(alpha: 0.14),
+            borderRadius: BorderRadius.circular(AquaRadius.control),
+          ),
+          child: Icon(definition.icon, color: activeTone),
+        ),
+        title: Row(
           children: [
-            Row(
-              children: [
-                Container(
-                  width: 46,
-                  height: 46,
-                  decoration: BoxDecoration(
-                    color: activeTone.withValues(alpha: 0.14),
-                    borderRadius: BorderRadius.circular(AquaRadius.control),
-                  ),
-                  child: Icon(definition.icon, color: activeTone),
-                ),
-                const SizedBox(width: AquaSpacing.sm),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
+            Expanded(
+              child: Text(
+                definition.label,
+                style: Theme.of(
+                  context,
+                ).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w900),
+              ),
+            ),
+            if (busy) ...[
+              const SizedBox(width: AquaSpacing.xs),
+              const SizedBox.square(
+                dimension: 22,
+                child: CircularProgressIndicator(strokeWidth: 2.5),
+              ),
+            ],
+          ],
+        ),
+        subtitle: Padding(
+          padding: const EdgeInsets.only(top: AquaSpacing.xxs),
+          child: dataAvailable
+              ? Text.rich(
+                  TextSpan(
                     children: [
-                      Text(
-                        definition.label,
-                        style: Theme.of(context).textTheme.titleMedium
-                            ?.copyWith(fontWeight: FontWeight.w900),
-                      ),
-                      Text(
-                        !dataAvailable
-                            ? 'BRAK ZAPISANEGO STANU'
-                            : physicalOn
-                            ? 'WYJŚCIE FIZYCZNE ON'
-                            : 'WYJŚCIE FIZYCZNE OFF',
-                        style: Theme.of(context).textTheme.labelSmall?.copyWith(
+                      TextSpan(
+                        text: physicalOn ? 'WYJŚCIE ON' : 'WYJŚCIE OFF',
+                        style: TextStyle(
                           color: activeTone,
                           fontWeight: FontWeight.w900,
-                          letterSpacing: 0.55,
+                        ),
+                      ),
+                      TextSpan(
+                        text:
+                            ' · ${schedule.modeLabel} · ${schedule.windowLabel}',
+                        style: TextStyle(
+                          color: colors.onSurfaceVariant,
+                          fontWeight: FontWeight.w600,
                         ),
                       ),
                     ],
                   ),
-                ),
-                if (busy)
-                  const SizedBox.square(
-                    dimension: 22,
-                    child: CircularProgressIndicator(strokeWidth: 2.5),
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                )
+              : Text(
+                  'Brak zapisanego stanu, trybu i harmonogramu',
+                  style: TextStyle(
+                    color: colors.onSurfaceVariant,
+                    fontWeight: FontWeight.w600,
                   ),
-              ],
-            ),
-            const SizedBox(height: AquaSpacing.md),
-            Row(
-              children: [
-                Icon(
-                  schedule.mode == OutputControlMode.automatic
-                      ? Icons.schedule_rounded
-                      : Icons.pan_tool_alt_rounded,
-                  size: 18,
-                  color: colors.onSurfaceVariant,
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
                 ),
-                const SizedBox(width: AquaSpacing.xs),
-                Expanded(
-                  child: Text(
-                    dataAvailable
-                        ? '${schedule.modeLabel} · ${schedule.windowLabel}'
-                        : 'Brak zapisanego trybu i harmonogramu',
-                    style: TextStyle(
-                      color: colors.onSurfaceVariant,
-                      fontWeight: FontWeight.w600,
-                    ),
-                  ),
-                ),
-              ],
-            ),
-            const SizedBox(height: AquaSpacing.md),
-            _ModeSelector(
-              options: options,
-              selected: schedule.mode,
-              enabled: selectable,
-              dataAvailable: dataAvailable,
-              onSelected: (selected) => onChanged(schedule.mode, selected),
-            ),
-          ],
         ),
+        children: [
+          Divider(height: 1, color: colors.outlineVariant),
+          const SizedBox(height: AquaSpacing.md),
+          Row(
+            children: [
+              Icon(
+                schedule.mode == OutputControlMode.automatic
+                    ? Icons.schedule_rounded
+                    : Icons.pan_tool_alt_rounded,
+                size: 20,
+                color: colors.onSurfaceVariant,
+              ),
+              const SizedBox(width: AquaSpacing.xs),
+              Expanded(
+                child: Text(
+                  'Wybierz tryb sterowania',
+                  style: Theme.of(context).textTheme.labelLarge?.copyWith(
+                    color: colors.onSurfaceVariant,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: AquaSpacing.sm),
+          _ModeSelector(
+            key: ValueKey<String>('output-mode-selector-${definition.id}'),
+            options: options,
+            selected: schedule.mode,
+            enabled: selectable,
+            dataAvailable: dataAvailable,
+            onSelected: (selected) => onChanged(schedule.mode, selected),
+          ),
+        ],
       ),
     );
   }
@@ -381,6 +427,7 @@ class _OutputModeCard extends StatelessWidget {
 
 class _ModeSelector extends StatelessWidget {
   const _ModeSelector({
+    super.key,
     required this.options,
     required this.selected,
     required this.enabled,
@@ -421,6 +468,10 @@ class _ModeSelector extends StatelessWidget {
           );
         }
         return SegmentedButton<OutputControlMode>(
+          style: const ButtonStyle(
+            minimumSize: WidgetStatePropertyAll(Size(0, 48)),
+            tapTargetSize: MaterialTapTargetSize.padded,
+          ),
           segments: [
             for (final option in options)
               ButtonSegment(
@@ -459,6 +510,7 @@ class _ModeSelector extends StatelessWidget {
 
 class _FeederCard extends StatelessWidget {
   const _FeederCard({
+    super.key,
     required this.active,
     required this.busy,
     required this.enabled,
@@ -607,12 +659,6 @@ class _ReadOnlyActuatorCard extends StatelessWidget {
             ),
             const SizedBox(height: AquaSpacing.xxs),
             Text(detail, style: TextStyle(color: colors.onSurfaceVariant)),
-            const SizedBox(height: AquaSpacing.md),
-            OutlinedButton.icon(
-              onPressed: null,
-              icon: const Icon(Icons.shield_outlined),
-              label: const Text('Sterowane przez automatykę'),
-            ),
           ],
         ),
       ),

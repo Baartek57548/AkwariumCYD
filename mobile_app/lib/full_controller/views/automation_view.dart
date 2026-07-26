@@ -246,9 +246,6 @@ class _AutomationViewState extends State<AutomationView> {
 
   @override
   Widget build(BuildContext context) {
-    final sensors = widget.session.status.section('sensors');
-    final modules = widget.session.status.section('modules');
-    final water = widget.session.status.section('water');
     final canEdit = widget.session.canIssueCommands;
     final hasStoredData = widget.session.hasStatusData;
     return ControllerPageBody(
@@ -272,8 +269,9 @@ class _AutomationViewState extends State<AutomationView> {
             message: widget.session.hasCachedSnapshot
                 ? widget.session.commandBlockReason ??
                       'Połącz sterownik, aby edytować reguły automatyki.'
-                : 'Sekcje pozostają dostępne, ale puste pola nie reprezentują '
-                      'konfiguracji urządzenia.',
+                : 'Połącz sterownik przez Wi‑Fi albo Bluetooth, aby pobrać '
+                      'konfigurację. Sekcje zostaną udostępnione po pierwszej '
+                      'synchronizacji.',
             isError: false,
           ),
           const SizedBox(height: 12),
@@ -290,65 +288,6 @@ class _AutomationViewState extends State<AutomationView> {
           const SizedBox(height: 12),
         ],
         ResponsiveGrid(
-          children: [
-            MetricTile(
-              icon: Icons.thermostat_rounded,
-              label: 'Grzałka',
-              value: !hasStoredData
-                  ? '—'
-                  : modules.flag('heater_on')
-                  ? 'ON'
-                  : 'OFF',
-              detail: !hasStoredData
-                  ? 'Brak zapisanego stanu'
-                  : sensors.flag('temp_valid')
-                  ? '${sensors.number('temp_c').toStringAsFixed(2)} °C'
-                  : 'Brak odczytu',
-            ),
-            MetricTile(
-              icon: Icons.bubble_chart_rounded,
-              label: 'CO₂',
-              value: !hasStoredData
-                  ? '—'
-                  : modules.flag('co2_on')
-                  ? 'DOZOWANIE'
-                  : 'OFF',
-              detail: !hasStoredData
-                  ? 'Brak zapisanego stanu'
-                  : sensors.flag('ph_valid')
-                  ? 'pH ${sensors.number('ph').toStringAsFixed(2)}'
-                  : 'Brak odczytu pH',
-            ),
-            MetricTile(
-              icon: Icons.water_drop_rounded,
-              label: 'Automatyczna dolewka',
-              value: !hasStoredData
-                  ? '—'
-                  : water.flag('active')
-                  ? 'AKTYWNA'
-                  : 'OCZEKUJE',
-              detail: !hasStoredData
-                  ? 'Brak zapisanego stanu'
-                  : water.flag('timeoutLatched')
-                  ? 'Blokada czasowa aktywna'
-                  : 'Limit ${water.integer('timeoutSec')} s',
-            ),
-            MetricTile(
-              icon: Icons.health_and_safety_rounded,
-              label: 'Zabezpieczenie wycieku',
-              value: !hasStoredData
-                  ? '—'
-                  : sensors.flag('leak_detected')
-                  ? 'ALARM'
-                  : 'GOTOWE',
-              detail: hasStoredData
-                  ? 'Akcja: ${_leakActionLabel(leakAction)}'
-                  : 'Brak zapisanej konfiguracji',
-            ),
-          ],
-        ),
-        const SizedBox(height: 12),
-        ResponsiveGrid(
           minimumChildWidth: 390,
           children: [
             Form(
@@ -356,13 +295,17 @@ class _AutomationViewState extends State<AutomationView> {
               child: _AutomationCard(
                 icon: Icons.thermostat_rounded,
                 title: 'Termostat',
+                summary: hasStoredData
+                    ? _sectionSummary(
+                        'temperature',
+                        '${heaterEnabled ? 'Włączony' : 'Wyłączony'} · '
+                            'cel ${_decimalValue(targetTemperature, 1)} °C · '
+                            'histereza ${_decimalValue(hysteresis, 1)} °C',
+                      )
+                    : null,
+                enabled: hasStoredData,
                 children: [
-                  if (!hasStoredData)
-                    const _MissingAutomationConfiguration(
-                      description:
-                          'Po pierwszej synchronizacji zobaczysz tu stan grzałki, temperaturę docelową i histerezę.',
-                    )
-                  else ...[
+                  if (hasStoredData) ...[
                     LabeledSwitch(
                       label: 'Włącz sterowanie grzałką',
                       value: heaterEnabled,
@@ -430,13 +373,17 @@ class _AutomationViewState extends State<AutomationView> {
               child: _AutomationCard(
                 icon: Icons.bubble_chart_rounded,
                 title: 'Automatyka CO₂',
+                summary: hasStoredData
+                    ? _sectionSummary(
+                        'co2',
+                        '${co2Enabled ? 'Włączona' : 'Wyłączona'} · '
+                            'cel pH ${_decimalValue(targetPh, 2)} · '
+                            'limit ${_integerValue(co2Limit)} min',
+                      )
+                    : null,
+                enabled: hasStoredData,
                 children: [
-                  if (!hasStoredData)
-                    const _MissingAutomationConfiguration(
-                      description:
-                          'Po pierwszej synchronizacji zobaczysz tu stan dozowania, docelowe pH i limit czasu.',
-                    )
-                  else ...[
+                  if (hasStoredData) ...[
                     LabeledSwitch(
                       label: 'Włącz dozowanie CO₂',
                       subtitle:
@@ -501,13 +448,16 @@ class _AutomationViewState extends State<AutomationView> {
               child: _AutomationCard(
                 icon: Icons.water_drop_rounded,
                 title: 'Automatyczna dolewka ATO',
+                summary: hasStoredData
+                    ? _sectionSummary(
+                        'water',
+                        '${waterEnabled ? 'Włączona' : 'Wyłączona'} · '
+                            'limit ${_integerValue(waterTimeout)} s',
+                      )
+                    : null,
+                enabled: hasStoredData,
                 children: [
-                  if (!hasStoredData)
-                    const _MissingAutomationConfiguration(
-                      description:
-                          'Po pierwszej synchronizacji zobaczysz tu stan ATO i bezpieczny limit dolewania.',
-                    )
-                  else ...[
+                  if (hasStoredData) ...[
                     LabeledSwitch(
                       label: 'Włącz kontrolę poziomu wody',
                       subtitle:
@@ -545,13 +495,16 @@ class _AutomationViewState extends State<AutomationView> {
             _AutomationCard(
               icon: Icons.health_and_safety_rounded,
               title: 'Reakcja na wyciek',
+              summary: hasStoredData
+                  ? _sectionSummary(
+                      'leak',
+                      '${leakEnabled ? 'Włączona' : 'Wyłączona'} · '
+                          '${_leakActionLabel(leakAction)}',
+                    )
+                  : null,
+              enabled: hasStoredData,
               children: [
-                if (!hasStoredData)
-                  const _MissingAutomationConfiguration(
-                    description:
-                        'Po pierwszej synchronizacji zobaczysz tu stan czujnika i zaprogramowaną reakcję awaryjną.',
-                  )
-                else ...[
+                if (hasStoredData) ...[
                   LabeledSwitch(
                     label: 'Włącz czujnik wycieku',
                     value: leakEnabled,
@@ -606,6 +559,25 @@ class _AutomationViewState extends State<AutomationView> {
     );
   }
 
+  String _sectionSummary(String section, String configuredSummary) {
+    if (saving.contains(section)) return 'Zapisywanie…';
+    if (_remoteChangedSections.contains(section)) {
+      return 'Konflikt · sterownik ma nowsze ustawienia';
+    }
+    if (_dirtySections.contains(section)) return 'Niezapisane zmiany';
+    return configuredSummary;
+  }
+
+  String _decimalValue(TextEditingController controller, int fractionDigits) {
+    final value = double.tryParse(controller.text.replaceAll(',', '.'));
+    return value?.toStringAsFixed(fractionDigits) ?? '—';
+  }
+
+  String _integerValue(TextEditingController controller) {
+    final value = int.tryParse(controller.text.trim());
+    return value?.toString() ?? '—';
+  }
+
   String _leakActionLabel(String action) => switch (action) {
     'alarm' => 'tylko alarm',
     'disable_valves' => 'wyłącz zawory',
@@ -638,64 +610,51 @@ class _AutomationViewState extends State<AutomationView> {
   }
 }
 
-class _MissingAutomationConfiguration extends StatelessWidget {
-  const _MissingAutomationConfiguration({required this.description});
-
-  final String description;
-
-  @override
-  Widget build(BuildContext context) {
-    return StatusBanner(
-      icon: Icons.cloud_download_outlined,
-      title: 'Brak zapisanej konfiguracji',
-      message: description,
-      isError: false,
-    );
-  }
-}
-
 class _AutomationCard extends StatelessWidget {
   const _AutomationCard({
     required this.icon,
     required this.title,
+    required this.summary,
+    required this.enabled,
     required this.children,
   });
 
   final IconData icon;
   final String title;
+  final String? summary;
+  final bool enabled;
   final List<Widget> children;
 
   @override
   Widget build(BuildContext context) {
     return Card(
       margin: EdgeInsets.zero,
-      child: Padding(
-        padding: const EdgeInsets.all(16),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            Row(
-              children: [
-                Icon(icon),
-                const SizedBox(width: 10),
-                Expanded(
-                  child: Text(
-                    title,
-                    style: const TextStyle(
-                      fontWeight: FontWeight.w800,
-                      fontSize: 17,
-                    ),
-                  ),
-                ),
-              ],
-            ),
-            const SizedBox(height: 14),
-            for (var index = 0; index < children.length; index++) ...[
-              children[index],
-              if (index < children.length - 1) const SizedBox(height: 12),
-            ],
-          ],
+      clipBehavior: Clip.antiAlias,
+      child: ExpansionTile(
+        initiallyExpanded: false,
+        maintainState: true,
+        enabled: enabled,
+        leading: Icon(icon),
+        title: Text(
+          title,
+          style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 17),
         ),
+        subtitle: summary == null
+            ? null
+            : Text(summary!, maxLines: 2, overflow: TextOverflow.ellipsis),
+        trailing: enabled ? null : const Icon(Icons.cloud_off_outlined),
+        childrenPadding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
+        children: [
+          Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              for (var index = 0; index < children.length; index++) ...[
+                children[index],
+                if (index < children.length - 1) const SizedBox(height: 12),
+              ],
+            ],
+          ),
+        ],
       ),
     );
   }

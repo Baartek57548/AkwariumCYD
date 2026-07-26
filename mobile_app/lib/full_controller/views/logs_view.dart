@@ -35,9 +35,6 @@ class _LogsViewState extends State<LogsView>
   void initState() {
     super.initState();
     tabController = TabController(length: 2, vsync: this);
-    if (widget.session.canIssueCommands) {
-      WidgetsBinding.instance.addPostFrameCallback((_) => _load());
-    }
   }
 
   @override
@@ -53,7 +50,8 @@ class _LogsViewState extends State<LogsView>
       }
       return;
     }
-    if (!await widget.ensureAdmin()) return;
+    final authorized = await widget.ensureAdmin();
+    if (!mounted || !authorized) return;
     setState(() => loading = true);
     try {
       await widget.session.loadLogs();
@@ -119,17 +117,28 @@ class _LogsViewState extends State<LogsView>
         SectionHeader(
           title: 'Dziennik zdarzeń',
           description: logsAvailable
-              ? 'Logi normalne i krytyczne z ostatniej synchronizacji.'
-              : 'Logi nie są częścią lokalnego snapshotu stanu.',
-          trailing: IconButton(
+              ? 'Ostatnio pobrane informacje i ostrzeżenia sterownika.'
+              : 'Dziennik pobierzesz na żądanie po odblokowaniu dostępu.',
+          trailing: OutlinedButton.icon(
+            key: const Key('load-controller-logs'),
             onPressed: loading || !canSynchronize ? null : _load,
             icon: loading
                 ? const SizedBox.square(
-                    dimension: 20,
+                    dimension: 18,
                     child: CircularProgressIndicator(strokeWidth: 2),
                   )
-                : const Icon(Icons.refresh_rounded),
-            tooltip: 'Odśwież logi',
+                : Icon(
+                    logsAvailable
+                        ? Icons.sync_rounded
+                        : Icons.lock_open_rounded,
+                  ),
+            label: Text(
+              logsAvailable
+                  ? 'Synchronizuj'
+                  : widget.session.isAdmin
+                  ? 'Pobierz dziennik'
+                  : 'Odblokuj i pobierz',
+            ),
           ),
         ),
         if (!logsAvailable) ...[
@@ -137,91 +146,85 @@ class _LogsViewState extends State<LogsView>
             icon: Icons.history_toggle_off_rounded,
             title: 'Logi nie zostały zapisane lokalnie',
             message: canSynchronize
-                ? 'Zaloguj administratora i odśwież, aby pobrać dziennik '
-                      'bezpośrednio ze sterownika.'
+                ? 'Użyj przycisku „Odblokuj i pobierz”, aby świadomie '
+                      'zalogować administratora i zsynchronizować dziennik.'
                 : 'Połącz sterownik, aby pobrać dziennik. Brak wpisów na '
                       'ekranie nie oznacza braku zdarzeń w urządzeniu.',
             isError: false,
           ),
           const SizedBox(height: 14),
         ],
-        ResponsiveGrid(
-          children: [
-            MetricTile(
-              icon: Icons.info_outline_rounded,
-              label: 'Normalne',
-              value: logsAvailable ? '${normal.length}' : '—',
-              detail: logsAvailable
-                  ? 'Informacje operacyjne'
-                  : 'Brak lokalnej kopii',
-            ),
-            MetricTile(
-              icon: Icons.warning_amber_rounded,
-              label: 'Ważne',
-              value: logsAvailable ? '${critical.length}' : '—',
-              detail: !logsAvailable
-                  ? 'Brak lokalnej kopii'
-                  : critical.isEmpty
-                  ? 'Brak aktywnych wpisów'
-                  : 'Wymagają sprawdzenia',
-              tone: critical.isEmpty
-                  ? null
-                  : Theme.of(context).colorScheme.error,
-            ),
-          ],
-        ),
-        const SizedBox(height: 14),
-        Card(
-          clipBehavior: Clip.antiAlias,
-          child: Column(
-            children: [
-              TabBar(
-                controller: tabController,
-                tabs: [
-                  Tab(text: 'Normalne (${normal.length})'),
-                  Tab(text: 'Ważne (${critical.length})'),
-                ],
-              ),
-              SizedBox(
-                height: 520,
-                child: TabBarView(
+        if (logsAvailable) ...[
+          Card(
+            clipBehavior: Clip.antiAlias,
+            child: Column(
+              children: [
+                TabBar(
                   controller: tabController,
-                  children: [
-                    _LogList(
-                      entries: normal,
-                      critical: false,
-                      dataAvailable: logsAvailable,
-                    ),
-                    _LogList(
-                      entries: critical,
-                      critical: true,
-                      dataAvailable: logsAvailable,
-                    ),
+                  tabs: [
+                    Tab(text: 'Informacje (${normal.length})'),
+                    Tab(text: 'Ważne (${critical.length})'),
                   ],
                 ),
-              ),
-            ],
+                SizedBox(
+                  height: 520,
+                  child: TabBarView(
+                    controller: tabController,
+                    children: [
+                      _LogList(
+                        entries: normal,
+                        critical: false,
+                        dataAvailable: true,
+                      ),
+                      _LogList(
+                        entries: critical,
+                        critical: true,
+                        dataAvailable: true,
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
           ),
-        ),
-        const SizedBox(height: 12),
-        Wrap(
-          spacing: 10,
-          runSpacing: 10,
-          children: [
-            OutlinedButton.icon(
-              onPressed: logsAvailable ? _export : null,
-              icon: const Icon(Icons.download_rounded),
-              label: const Text('Eksportuj TXT'),
+          const SizedBox(height: 12),
+          Card(
+            clipBehavior: Clip.antiAlias,
+            child: ExpansionTile(
+              key: const PageStorageKey<String>('log-tools'),
+              leading: const Icon(Icons.build_outlined),
+              title: const Text(
+                'Narzędzia dziennika',
+                style: TextStyle(fontWeight: FontWeight.w700),
+              ),
+              subtitle: const Text('Eksport i porządkowanie wpisów'),
+              childrenPadding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
+              children: [
+                Align(
+                  alignment: Alignment.centerLeft,
+                  child: Wrap(
+                    spacing: 10,
+                    runSpacing: 10,
+                    children: [
+                      OutlinedButton.icon(
+                        onPressed: _export,
+                        icon: const Icon(Icons.download_rounded),
+                        label: const Text('Eksportuj TXT'),
+                      ),
+                      FilledButton.tonalIcon(
+                        onPressed: !canSynchronize || critical.isEmpty
+                            ? null
+                            : _clearCritical,
+                        icon: const Icon(Icons.delete_sweep_outlined),
+                        label: const Text('Wyczyść ważne logi'),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
             ),
-            FilledButton.tonalIcon(
-              onPressed: !canSynchronize || critical.isEmpty
-                  ? null
-                  : _clearCritical,
-              icon: const Icon(Icons.delete_sweep_outlined),
-              label: const Text('Wyczyść ważne logi'),
-            ),
-          ],
-        ),
+          ),
+        ],
         if (message != null)
           Padding(
             padding: const EdgeInsets.only(top: 10),

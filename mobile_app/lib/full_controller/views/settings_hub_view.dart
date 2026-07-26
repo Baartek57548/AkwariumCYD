@@ -67,10 +67,10 @@ class SettingsHubView extends StatelessWidget {
       onRefresh: () => session.refresh(),
       children: [
         const SectionHeader(
-          title: 'System i administracja',
+          title: 'Ustawienia i diagnostyka',
           description:
-              'Konfiguracja sterownika, kondycja sprzętu, firmware oraz '
-              'preferencje aplikacji.',
+              'Najważniejsze ustawienia sterownika i aplikacji oraz '
+              'narzędzia serwisowe.',
         ),
         _SystemIdentityCard(
           device: status.text('device', 'cydAkwarium'),
@@ -78,11 +78,6 @@ class SettingsHubView extends StatelessWidget {
           transport: session.displayName,
           ip: session.baseUri?.host ?? network.text('ip', 'lokalny'),
           uptime: hasStoredData ? formatUptime(system.integer('uptime')) : '—',
-          freeHeap: hasStoredData
-              ? formatBytes(
-                  system.integer('freeHeap', status.integer('heap_free')),
-                )
-              : '—',
         ),
         const SizedBox(height: AquaSpacing.md),
         ResponsiveGrid(
@@ -91,9 +86,8 @@ class SettingsHubView extends StatelessWidget {
           children: [
             _SystemLinkCard(
               icon: Icons.router_rounded,
-              title: 'Sterownik, sieć i ekran',
-              description:
-                  'Wi‑Fi, punkt dostępowy, zegar, NTP, jasność i profil ekranu CYD.',
+              title: 'Urządzenie i połączenie',
+              description: 'Sieć Wi‑Fi, punkt dostępowy, zegar i ekran CYD.',
               status: hasStoredData
                   ? '${network.text('configuredStaSsid', 'Brak profilu')} · '
                         '${display.integer('appliedBrightness', display.integer('brightness'))}%'
@@ -102,7 +96,7 @@ class SettingsHubView extends StatelessWidget {
               disabledReason: 'Pełna konfiguracja wymaga Wi‑Fi lub BLE v2.',
               onTap: () => _open(
                 context,
-                'Konfiguracja sterownika',
+                'Urządzenie i połączenie',
                 () => SettingsView(
                   session: session,
                   runAction: runAction,
@@ -111,73 +105,100 @@ class SettingsHubView extends StatelessWidget {
               ),
             ),
             _SystemLinkCard(
-              icon: Icons.memory_rounded,
-              title: 'Diagnostyka sprzętu',
-              description:
-                  'Magistrale I²C i OneWire, czujniki, pamięć oraz przyczyna restartu.',
-              status: session.canIssueCommands
-                  ? 'Gotowa do skanowania'
-                  : session.hasCachedSnapshot
-                  ? 'Ostatni zapis · tylko odczyt'
-                  : 'Brak zapisanych danych',
-              enabled: advanced,
-              disabledReason: 'Diagnostyka wymaga Wi‑Fi lub BLE v2.',
-              onTap: () => _open(
-                context,
-                'Diagnostyka sprzętu',
-                () =>
-                    DiagnosticsView(session: session, ensureAdmin: ensureAdmin),
-              ),
-            ),
-            _SystemLinkCard(
-              icon: Icons.cable_rounded,
-              title: 'Kanały przekaźników',
-              description:
-                  'Mapa ośmiu kanałów MCP23017 i ich stanów awaryjnych.',
-              status: 'Edycja zablokowana bezpiecznie',
-              enabled: false,
-              disabledReason:
-                  'Bieżący firmware zapisuje profil, ale jeszcze go nie '
-                  'stosuje. Funkcja wróci po dodaniu odczytu, walidacji i '
-                  'atomowego rollbacku po stronie sterownika.',
-              onTap: () {},
-            ),
-            _SystemLinkCard(
-              icon: Icons.system_update_alt_rounded,
-              title: 'Firmware, energia i OTA',
-              description:
-                  'Aktualizacja sterownika, tryb ECO, pamięć SD, restart i reset.',
-              status: session.supportsFirmwareUpload
-                  ? 'OTA dostępne'
-                  : 'OTA tylko przez Wi‑Fi',
-              enabled: advanced,
-              disabledReason:
-                  'Operacje systemowe nie są dostępne w ograniczonym BLE.',
-              onTap: () => _open(
-                context,
-                'Firmware i zasilanie',
-                () => SystemView(
-                  session: session,
-                  runAction: runAction,
-                  ensureAdmin: ensureAdmin,
-                ),
-              ),
-            ),
-            _SystemLinkCard(
               icon: Icons.palette_outlined,
-              title: 'Aplikacja i operator',
+              title: 'Ustawienia aplikacji',
               description:
-                  'Motyw, profil użytkownika, odświeżanie ekranu i aktualizacje aplikacji.',
+                  'Połączenie przy starcie, wygląd, język i aktualizacje aplikacji.',
               status:
                   '${formatRefreshRate(refresh.activeRefreshRate)} Hz · '
                   '${Theme.of(context).brightness == Brightness.dark ? "Dark" : "Light"}',
               onTap: () => _open(
                 context,
-                'Aplikacja i operator',
+                'Ustawienia aplikacji',
                 () => const ProfileSettingsView(),
               ),
             ),
           ],
+        ),
+        const SizedBox(height: AquaSpacing.md),
+        Card(
+          margin: EdgeInsets.zero,
+          clipBehavior: Clip.antiAlias,
+          child: ExpansionTile(
+            key: const Key('service-tools-section'),
+            initiallyExpanded: false,
+            leading: const Icon(Icons.build_circle_outlined),
+            title: const Text(
+              'Narzędzia serwisowe',
+              style: TextStyle(fontWeight: FontWeight.w900),
+            ),
+            subtitle: const Text(
+              'Diagnostyka, kanały oraz aktualizacje sterownika.',
+            ),
+            childrenPadding: const EdgeInsets.fromLTRB(
+              AquaSpacing.sm,
+              0,
+              AquaSpacing.sm,
+              AquaSpacing.sm,
+            ),
+            children: [
+              ResponsiveGrid(
+                minimumChildWidth: 300,
+                spacing: AquaSpacing.sm,
+                children: [
+                  _SystemLinkCard(
+                    icon: Icons.memory_rounded,
+                    title: 'Diagnostyka sprzętu',
+                    description:
+                        'Czujniki, magistrale i stan pamięci sterownika.',
+                    status: session.canIssueCommands
+                        ? 'Gotowa do skanowania'
+                        : session.hasCachedSnapshot
+                        ? 'Ostatni zapis · tylko odczyt'
+                        : 'Brak zapisanych danych',
+                    enabled: advanced,
+                    disabledReason: 'Diagnostyka wymaga Wi‑Fi lub BLE v2.',
+                    onTap: () => _open(
+                      context,
+                      'Diagnostyka sprzętu',
+                      () => DiagnosticsView(
+                        session: session,
+                        ensureAdmin: ensureAdmin,
+                      ),
+                    ),
+                  ),
+                  _SystemLinkCard(
+                    icon: Icons.cable_rounded,
+                    title: 'Kanały przekaźników',
+                    description: 'Mapa kanałów układu MCP23017.',
+                    enabled: false,
+                    disabledReason: 'Niedostępne w tej wersji firmware.',
+                    onTap: () {},
+                  ),
+                  _SystemLinkCard(
+                    icon: Icons.system_update_alt_rounded,
+                    title: 'Aktualizacje i zasilanie',
+                    description: 'Firmware OTA, tryb ECO i pamięć SD.',
+                    status: session.supportsFirmwareUpload
+                        ? 'OTA dostępne'
+                        : 'OTA tylko przez Wi‑Fi',
+                    enabled: advanced,
+                    disabledReason:
+                        'Operacje systemowe wymagają Wi‑Fi lub BLE v2.',
+                    onTap: () => _open(
+                      context,
+                      'Aktualizacje i zasilanie',
+                      () => SystemView(
+                        session: session,
+                        runAction: runAction,
+                        ensureAdmin: ensureAdmin,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ],
+          ),
         ),
         if (session.isLegacyBluetooth) ...[
           const SizedBox(height: AquaSpacing.md),
@@ -203,7 +224,6 @@ class _SystemIdentityCard extends StatelessWidget {
     required this.transport,
     required this.ip,
     required this.uptime,
-    required this.freeHeap,
   });
 
   final String device;
@@ -211,71 +231,75 @@ class _SystemIdentityCard extends StatelessWidget {
   final String transport;
   final String ip;
   final String uptime;
-  final String freeHeap;
 
   @override
   Widget build(BuildContext context) {
     final colors = Theme.of(context).colorScheme;
     return Card(
+      margin: EdgeInsets.zero,
+      clipBehavior: Clip.antiAlias,
       color: colors.primaryContainer.withValues(alpha: 0.34),
-      child: Padding(
-        padding: const EdgeInsets.all(AquaSpacing.lg),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Row(
-              children: [
-                Container(
-                  width: 52,
-                  height: 52,
-                  decoration: BoxDecoration(
-                    color: colors.primary.withValues(alpha: 0.14),
-                    borderRadius: BorderRadius.circular(AquaRadius.control),
-                  ),
-                  child: Icon(
-                    Icons.developer_board_rounded,
-                    color: colors.primary,
-                  ),
-                ),
-                const SizedBox(width: AquaSpacing.md),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        device,
-                        style: Theme.of(context).textTheme.titleLarge?.copyWith(
-                          fontWeight: FontWeight.w900,
-                        ),
-                      ),
-                      Text(
-                        '$firmware · $transport · $ip',
-                        style: TextStyle(color: colors.onSurfaceVariant),
-                      ),
-                    ],
-                  ),
-                ),
-              ],
-            ),
-            const SizedBox(height: AquaSpacing.md),
-            Wrap(
-              spacing: AquaSpacing.lg,
-              runSpacing: AquaSpacing.sm,
-              children: [
-                _IdentityMetric(
-                  icon: Icons.schedule_rounded,
-                  label: 'Uptime',
-                  value: uptime,
-                ),
-                _IdentityMetric(
-                  icon: Icons.memory_rounded,
-                  label: 'Wolna pamięć',
-                  value: freeHeap,
-                ),
-              ],
-            ),
-          ],
+      child: ExpansionTile(
+        key: const Key('device-details-section'),
+        leading: Container(
+          width: 44,
+          height: 44,
+          decoration: BoxDecoration(
+            color: colors.primary.withValues(alpha: 0.14),
+            borderRadius: BorderRadius.circular(AquaRadius.control),
+          ),
+          child: Icon(Icons.developer_board_rounded, color: colors.primary),
         ),
+        title: Text(
+          device,
+          style: Theme.of(
+            context,
+          ).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w900),
+        ),
+        subtitle: const Text('Informacje o sterowniku'),
+        childrenPadding: const EdgeInsets.fromLTRB(
+          AquaSpacing.lg,
+          0,
+          AquaSpacing.lg,
+          AquaSpacing.lg,
+        ),
+        children: [
+          Align(
+            alignment: Alignment.centerLeft,
+            child: _IdentityMetric(
+              icon: Icons.code_rounded,
+              label: 'Firmware',
+              value: firmware,
+            ),
+          ),
+          const SizedBox(height: AquaSpacing.sm),
+          Align(
+            alignment: Alignment.centerLeft,
+            child: _IdentityMetric(
+              icon: Icons.swap_horiz_rounded,
+              label: 'Połączenie',
+              value: transport,
+            ),
+          ),
+          const SizedBox(height: AquaSpacing.sm),
+          Align(
+            alignment: Alignment.centerLeft,
+            child: _IdentityMetric(
+              icon: Icons.lan_outlined,
+              label: 'Adres',
+              value: ip,
+            ),
+          ),
+          const SizedBox(height: AquaSpacing.sm),
+          Align(
+            alignment: Alignment.centerLeft,
+            child: _IdentityMetric(
+              icon: Icons.schedule_rounded,
+              label: 'Uptime',
+              value: uptime,
+            ),
+          ),
+        ],
       ),
     );
   }

@@ -131,8 +131,10 @@ void main() {
 
     expect(tester.takeException(), isNull);
     expect(find.text('Temperatura wody'), findsOneWidget);
-    expect(find.text('Telemetria na żywo'), findsOneWidget);
-    expect(find.text('Środowisko symulacyjne'), findsOneWidget);
+    expect(find.text('Najważniejsze pomiary'), findsOneWidget);
+    expect(find.text('Pozostałe pomiary'), findsOneWidget);
+    expect(find.text('Stan urządzeń'), findsOneWidget);
+    expect(find.text('Sygnał Wi‑Fi'), findsNothing);
   });
 
   testWidgets(

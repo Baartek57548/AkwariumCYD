@@ -23,17 +23,18 @@ void main() {
 
     expect(find.byType(NavigationBar), findsOneWidget);
     for (final label in const [
-      'Centrum',
+      'Start',
       'Steruj',
       'Auto',
       'Historia',
-      'System',
+      'Więcej',
     ]) {
       expect(find.text(label), findsOneWidget);
     }
     expect(find.text('Temperatura wody'), findsOneWidget);
-    expect(find.text('Telemetria na żywo'), findsOneWidget);
-    expect(find.text('Światło otoczenia'), findsOneWidget);
+    expect(find.text('Najważniejsze pomiary'), findsOneWidget);
+    expect(find.text('Pozostałe pomiary'), findsOneWidget);
+    expect(find.text('Światło otoczenia'), findsNothing);
     expect(tester.takeException(), isNull);
   });
 
@@ -53,14 +54,42 @@ void main() {
     expect(find.byType(NavigationRail), findsOneWidget);
     expect(find.byType(NavigationBar), findsNothing);
     for (final label in const [
-      'Centrum',
+      'Start',
       'Steruj',
-      'Auto',
+      'Automatyka',
       'Historia',
-      'System',
+      'Więcej',
     ]) {
       expect(find.text(label), findsOneWidget);
     }
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('technical connection metrics stay hidden until requested', (
+    tester,
+  ) async {
+    tester.view.devicePixelRatio = 1;
+    tester.view.physicalSize = const Size(412, 915);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    addTearDown(tester.view.resetPhysicalSize);
+    final session = ControllerSession.development();
+    addTearDown(session.dispose);
+
+    await tester.pumpWidget(
+      AquariumApp(home: ControllerShell(session: session)),
+    );
+    await tester.pumpAndSettle(const Duration(milliseconds: 500));
+
+    expect(find.text('Sygnał'), findsNothing);
+    expect(find.text('Ping'), findsNothing);
+    expect(find.text('Synchronizacja'), findsNothing);
+
+    await tester.tap(find.byKey(const Key('connection-details-button')));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Sygnał'), findsOneWidget);
+    expect(find.text('Ping'), findsOneWidget);
+    expect(find.text('Synchronizacja'), findsOneWidget);
     expect(tester.takeException(), isNull);
   });
 
@@ -101,10 +130,17 @@ void main() {
     expect(find.text('Wymagana natychmiastowa reakcja'), findsOneWidget);
     expect(find.text('Wykryto wyciek'), findsWidgets);
     expect(find.text('Brak wiarygodnego pomiaru'), findsWidgets);
+    expect(find.text('ADC 4095 / 4095'), findsNothing);
+    final additionalSensors = find.text('Pozostałe pomiary');
+    await tester.ensureVisible(additionalSensors);
+    await tester.drag(find.byType(Scrollable).first, const Offset(0, -120));
+    await tester.pumpAndSettle();
+    await tester.tap(additionalSensors);
+    await tester.pumpAndSettle();
     expect(find.text('ADC 4095 / 4095'), findsOneWidget);
     expect(
       find.bySemanticsLabel(
-        RegExp(r'Wymagana natychmiastowa reakcja.*Transport'),
+        RegExp(r'Wymagana natychmiastowa reakcja.*Wykryto wyciek'),
       ),
       findsOneWidget,
     );
@@ -129,13 +165,13 @@ void main() {
 
     await tester.tap(find.text('Steruj'));
     await tester.pumpAndSettle();
-    expect(find.text('Sterowanie operacyjne'), findsOneWidget);
-    expect(find.text('Procesy wykonawcze'), findsOneWidget);
+    expect(find.text('Sterowanie'), findsWidgets);
+    expect(find.text('Automatyka w tle'), findsOneWidget);
     expect(tester.takeException(), isNull, reason: 'sekcja Steruj');
 
     await tester.tap(find.text('Auto'));
     await tester.pumpAndSettle();
-    expect(find.text('Plan dobowy'), findsOneWidget);
+    expect(find.text('Plan dobowy 24 h'), findsOneWidget);
     expect(find.text('Sekcja automatyki'), findsOneWidget);
     final automationSwitcher = find.byWidgetPredicate(
       (widget) =>
@@ -144,35 +180,49 @@ void main() {
     );
     await tester.tap(automationSwitcher);
     await tester.pumpAndSettle();
-    expect(find.text('Reguły i bezpieczeństwo'), findsOneWidget);
-    await tester.tap(find.text('Reguły i bezpieczeństwo').last);
+    expect(find.text('Reguły'), findsOneWidget);
+    await tester.tap(find.text('Reguły').last);
     await tester.pumpAndSettle();
     expect(find.text('Automatyka'), findsOneWidget);
     expect(tester.takeException(), isNull, reason: 'sekcja Auto');
 
     await tester.tap(find.text('Historia'));
     await tester.pumpAndSettle();
-    expect(find.text('Trendy i historia'), findsOneWidget);
-    expect(find.text('Sekcja historii'), findsOneWidget);
+    expect(find.text('Pomiary w czasie'), findsOneWidget);
+    expect(find.text('Widok historii'), findsOneWidget);
     final historySwitcher = find.byWidgetPredicate(
       (widget) =>
           widget is DropdownButtonFormField<int> &&
-          widget.decoration.labelText == 'Sekcja historii',
+          widget.decoration.labelText == 'Widok historii',
     );
     await tester.tap(historySwitcher);
     await tester.pumpAndSettle();
-    expect(find.text('Dziennik zdarzeń'), findsOneWidget);
-    await tester.tapAt(const Offset(8, 8));
+    expect(find.text('Zdarzenia'), findsOneWidget);
+    await tester.tap(find.text('Zdarzenia').last);
     await tester.pumpAndSettle();
+    expect(find.text('Dziennik zdarzeń'), findsOneWidget);
     expect(tester.takeException(), isNull, reason: 'sekcja Historia');
 
-    await tester.tap(find.text('System'));
+    await tester.tap(find.text('Więcej'));
     await tester.pumpAndSettle();
-    expect(find.text('System i administracja'), findsOneWidget);
-    expect(find.text('Firmware, energia i OTA'), findsOneWidget);
+    expect(find.text('Ustawienia i diagnostyka'), findsOneWidget);
+    expect(find.text('Urządzenie i połączenie'), findsOneWidget);
+    expect(find.text('Ustawienia aplikacji'), findsOneWidget);
+    expect(find.text('Diagnostyka sprzętu'), findsNothing);
+    expect(find.text('Kanały przekaźników'), findsNothing);
+    expect(find.text('Aktualizacje i zasilanie'), findsNothing);
+
+    final serviceTools = find.text('Narzędzia serwisowe');
+    await tester.ensureVisible(serviceTools);
+    await tester.drag(find.byType(Scrollable).first, const Offset(0, -120));
+    await tester.pumpAndSettle();
+    await tester.tap(serviceTools);
+    await tester.pumpAndSettle();
+
+    expect(find.text('Aktualizacje i zasilanie'), findsOneWidget);
     expect(find.text('Diagnostyka sprzętu'), findsOneWidget);
     expect(find.text('Kanały przekaźników'), findsOneWidget);
-    expect(tester.takeException(), isNull, reason: 'sekcja System');
+    expect(tester.takeException(), isNull, reason: 'sekcja Więcej');
   });
 
   testWidgets('section navigation preserves unsaved schedule state', (
@@ -216,7 +266,7 @@ void main() {
       targetValue,
     );
 
-    await tester.tap(find.text('Centrum'));
+    await tester.tap(find.text('Start'));
     await tester.pumpAndSettle();
     await tester.tap(find.text('Auto'));
     await tester.pumpAndSettle();

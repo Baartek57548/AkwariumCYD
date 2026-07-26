@@ -143,8 +143,8 @@ void main() {
     );
     await tester.pumpAndSettle(const Duration(milliseconds: 500));
 
-    expect(find.text('Centrum'), findsOneWidget);
-    expect(find.text('Środowisko symulacyjne'), findsOneWidget);
+    expect(find.text('Start'), findsOneWidget);
+    expect(find.text('Temperatura wody'), findsOneWidget);
     expect(find.text('Sterownik przez Wi‑Fi'), findsNothing);
   });
 }

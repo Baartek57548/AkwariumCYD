@@ -4,11 +4,12 @@ Profesjonalne, mobilne centrum dowodzenia dla sterownika akwarium AquaCYD. Aplik
 
 ## Centrum dowodzenia
 
-- pięć obszarów roboczych: **Centrum**, **Steruj**, **Auto**, **Historia** i **System**,
+- pięć prostych obszarów roboczych: **Start**, **Steruj**, **Auto**, **Historia** i **Więcej**,
 - dostęp do wszystkich obszarów bez urządzenia oraz lokalny podgląd ostatniej telemetrii, nastaw i historii,
 - centrum połączeń w prawym górnym rogu z Wi‑Fi, Bluetooth, trybem offline i automatycznym reconnectem,
-- nagłówek kondycji z trybem połączenia, RSSI, pingiem i czasem ostatniej synchronizacji,
+- kompaktowy stan połączenia; RSSI, ping i czas ostatniej synchronizacji są dostępne po rozwinięciu szczegółów,
 - priorytetyzacja alarmów, wiarygodności temperatury i stanu urządzeń wykonawczych,
+- progresywne ujawnianie informacji: czujniki dodatkowe, stany urządzeń, tryby wyjść i narzędzia serwisowe nie przeciążają widoku głównego,
 - sterowanie oświetleniem, filtrem, napowietrzaniem, termostatem i karmnikiem,
 - czytelne rozróżnienie fizycznego stanu wyjścia od trybu automatyki,
 - harmonogramy i reguły temperatury, CO₂, ATO oraz zabezpieczenia przed wyciekiem,
@@ -26,7 +27,7 @@ Komendy są blokowane, gdy sterownik jest offline albo telemetria jest nieaktual
 | `full` | `lib/main_full.dart` | równoległa instalacja pełnego interfejsu bez kanału aktualizacji `current` | `pl.cydakwarium.cyd_aquarium_mobile.full` |
 | `dev` | `lib/main_dev.dart` | symulator sterownika w pamięci RAM, przeznaczony do rozwoju i testów UI | `pl.cydakwarium.cyd_aquarium_mobile.dev` |
 
-Kod zawiera techniczny moduł zgodności ze starszym panelem WWW oparty na WebView, ale wydanie 4.0.1 nie pokazuje go w produkcyjnym centrum połączeń. Nie istnieje osobny flavor ani publikowany APK `legacy`; podstawowym interfejsem jest natywne centrum dowodzenia.
+Kod zawiera techniczny moduł zgodności ze starszym panelem WWW oparty na WebView, ale wydanie 4.1.0 nie pokazuje go w produkcyjnym centrum połączeń. Nie istnieje osobny flavor ani publikowany APK `legacy`; podstawowym interfejsem jest natywne centrum dowodzenia.
 
 ## Wymagania
 
@@ -79,7 +80,7 @@ flutter test
 flutter build apk --release --flavor current --target lib/main.dart
 ```
 
-Wynik powstaje w `build/app/outputs/flutter-apk/app-current-release.apk`. Wydanie 4.0.1 jest publikowane jako `AquaCYD-Control-4.0.1-current.apk`.
+Wynik powstaje w `build/app/outputs/flutter-apk/app-current-release.apk`. Wydanie 4.1.0 jest publikowane jako `AquaCYD-Control-4.1.0-current.apk`.
 
 Build release wymaga pliku `android/key.properties` z niepustymi polami:
 

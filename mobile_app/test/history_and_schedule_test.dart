@@ -87,13 +87,14 @@ void main() {
     );
     await tester.pumpAndSettle();
 
-    expect(find.text('Historia i wykresy'), findsOneWidget);
+    expect(find.text('Pomiary w czasie'), findsOneWidget);
     expect(find.text('1H'), findsOneWidget);
     expect(find.text('3H'), findsOneWidget);
     expect(find.text('6H'), findsOneWidget);
     expect(find.text('1D'), findsOneWidget);
     expect(find.text('7D'), findsOneWidget);
-    expect(find.text('Odchylenie'), findsOneWidget);
+    expect(find.text('Dane źródłowe i eksport'), findsOneWidget);
+    expect(find.text('Odchylenie'), findsNothing);
     expect(tester.takeException(), isNull);
 
     await tester.tap(find.text('6H'));

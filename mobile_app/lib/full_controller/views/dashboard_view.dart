@@ -29,19 +29,67 @@ class DashboardView extends StatelessWidget {
     );
     final temperature = model.sensor(CommandCenterSensorKind.temperature);
     final config = status.section('config');
-    final network = status.section('network');
-    final system = status.section('system');
     final alarms = model.activeAlarms;
-    final showingStoredData =
-        !session.connectionHealth.isOnline && !session.isSimulation;
     final hasStoredData = session.hasStatusData;
+    const primarySensorKinds = {
+      CommandCenterSensorKind.ph,
+      CommandCenterSensorKind.waterLevel,
+      CommandCenterSensorKind.leak,
+    };
+    final primarySensors = model.sensors
+        .where(
+          (sensor) =>
+              sensor.kind != CommandCenterSensorKind.temperature &&
+              (primarySensorKinds.contains(sensor.kind) ||
+                  sensor.state == CommandCenterSensorState.warning ||
+                  sensor.state == CommandCenterSensorState.critical),
+        )
+        .toList(growable: false);
+    final primaryKinds = primarySensors.map((sensor) => sensor.kind).toSet();
+    final secondarySensors = model.sensors
+        .where(
+          (sensor) =>
+              sensor.kind != CommandCenterSensorKind.temperature &&
+              !primaryKinds.contains(sensor.kind),
+        )
+        .toList(growable: false);
+    final activeOutputs = model.outputs
+        .where((output) => output.available && output.isEnergized)
+        .length;
+    final manualOutputs = model.outputs
+        .where(
+          (output) =>
+              output.available &&
+              (output.controlMode == CommandCenterControlMode.forcedOn ||
+                  output.controlMode == CommandCenterControlMode.forcedOff),
+        )
+        .length;
 
     return ControllerPageBody(
       maxWidth: 1180,
       padding: const EdgeInsets.fromLTRB(14, 16, 14, 28),
       onRefresh: () => session.refresh(includeHistory: true),
       children: [
-        _SafetyHero(model: model, session: session),
+        _SafetyHero(model: model),
+        if (alarms.isNotEmpty) ...[
+          const SizedBox(height: AquaSpacing.md),
+          SectionHeader(
+            title: 'Wymaga uwagi',
+            description:
+                '${alarms.length} ${alarms.length == 1 ? "zdarzenie wymaga" : "zdarzenia wymagają"} reakcji.',
+          ),
+          Card(
+            clipBehavior: Clip.antiAlias,
+            child: Column(
+              children: [
+                for (var index = 0; index < alarms.length; index++) ...[
+                  _AlarmRow(alarm: alarms[index]),
+                  if (index != alarms.length - 1) const Divider(height: 1),
+                ],
+              ],
+            ),
+          ),
+        ],
         const SizedBox(height: AquaSpacing.md),
         LayoutBuilder(
           builder: (context, constraints) {
@@ -53,24 +101,11 @@ class DashboardView extends StatelessWidget {
               target: hasStoredData
                   ? config.nullableNumber('target_temp')
                   : null,
-              hysteresis: hasStoredData
-                  ? config.nullableNumber('temp_hysteresis')
-                  : null,
               heater: model.output(CommandCenterOutputKind.heater),
               onOpenCharts: onOpenCharts,
             );
             final operations = _OperationsOverview(
               event: model.nextScheduleEvent,
-              rssi: network.integer('rssi', -130),
-              uptime: hasStoredData
-                  ? formatUptime(system.integer('uptime'))
-                  : '—',
-              freeHeap: hasStoredData
-                  ? formatBytes(
-                      system.integer('freeHeap', status.integer('heap_free')),
-                    )
-                  : '—',
-              hasStoredData: hasStoredData,
               onOpenControls: onOpenControls,
             );
             if (!twoColumns) {
@@ -93,113 +128,64 @@ class DashboardView extends StatelessWidget {
           },
         ),
         const SizedBox(height: AquaSpacing.lg),
-        SectionHeader(
-          title: showingStoredData
-              ? 'Ostatni zapisany stan'
-              : 'Telemetria na żywo',
-          description: showingStoredData
-              ? session.hasCachedSnapshot
-                    ? 'Lokalna kopia · '
-                          '${session.connectionHealth.ageLabel(DateTime.now())}'
-                    : 'Połącz urządzenie, aby zapisać pierwszy odczyt.'
-              : 'Ostatni potwierdzony pakiet · '
-                    '${session.connectionHealth.ageLabel(DateTime.now())}',
-          trailing: TextButton.icon(
-            onPressed: onOpenCharts,
-            icon: const Icon(Icons.show_chart_rounded),
-            label: const Text('Trendy'),
-          ),
+        const SectionHeader(
+          title: 'Najważniejsze pomiary',
+          description: 'Bezpieczeństwo wody i instalacji.',
         ),
         ResponsiveGrid(
           minimumChildWidth: 190,
           spacing: AquaSpacing.sm,
           children: [
-            for (final sensor in model.sensors.where(
-              (item) =>
-                  item.kind != CommandCenterSensorKind.temperature &&
-                  item.kind != CommandCenterSensorKind.supplyVoltage &&
-                  item.kind != CommandCenterSensorKind.ioBus,
-            ))
-              _SensorCard(sensor: sensor),
+            for (final sensor in primarySensors) _SensorCard(sensor: sensor),
           ],
         ),
-        const SizedBox(height: AquaSpacing.lg),
-        const SectionHeader(
-          title: 'Urządzenia wykonawcze',
-          description:
-              'Pierwsza linia pokazuje faktyczny stan wyjścia, druga aktywny tryb sterowania.',
-        ),
-        ResponsiveGrid(
-          minimumChildWidth: 168,
-          spacing: AquaSpacing.sm,
+        const SizedBox(height: AquaSpacing.md),
+        _DashboardDisclosure(
+          key: const PageStorageKey('dashboard-additional-sensors'),
+          icon: Icons.sensors_rounded,
+          title: 'Pozostałe pomiary',
+          summary: secondarySensors.isEmpty
+              ? 'Brak dodatkowych danych'
+              : '${secondarySensors.length} dodatkowych czujników',
           children: [
-            for (final output in model.outputs)
-              _OutputStatusCard(output: output),
-          ],
-        ),
-        if (alarms.isNotEmpty) ...[
-          const SizedBox(height: AquaSpacing.lg),
-          SectionHeader(
-            title: 'Aktywne alarmy',
-            description:
-                '${alarms.length} ${alarms.length == 1 ? "zdarzenie wymaga" : "zdarzenia wymagają"} reakcji operatora.',
-          ),
-          Card(
-            clipBehavior: Clip.antiAlias,
-            child: Column(
+            ResponsiveGrid(
+              minimumChildWidth: 190,
+              spacing: AquaSpacing.sm,
               children: [
-                for (var index = 0; index < alarms.length; index++) ...[
-                  _AlarmRow(alarm: alarms[index]),
-                  if (index != alarms.length - 1) const Divider(height: 1),
-                ],
+                for (final sensor in secondarySensors)
+                  _SensorCard(sensor: sensor),
               ],
             ),
-          ),
-        ],
-        if (showingStoredData) ...[
-          const SizedBox(height: AquaSpacing.md),
-          StatusBanner(
-            icon: session.isOfflineMode
-                ? Icons.history_rounded
-                : Icons.sync_rounded,
-            title: session.isOfflineMode && session.hasCachedSnapshot
-                ? 'Podgląd ostatnio zapisanych danych'
-                : session.hasCachedSnapshot
-                ? 'Dane dostępne podczas łączenia'
-                : 'Aplikacja działa bez urządzenia',
-            message: session.hasCachedSnapshot
-                ? session.isOfflineMode
-                      ? 'Wszystkie sekcje pozostają dostępne do podglądu. '
-                            'Połącz Wi‑Fi lub Bluetooth, aby zsynchronizować '
-                            'dane i odblokować sterowanie.'
-                      : 'Wszystkie sekcje pozostają dostępne. Aplikacja '
-                            'automatycznie ponawia połączenie, a sterowanie '
-                            'odblokuje dopiero po świeżej synchronizacji.'
-                : 'Możesz przejrzeć całe centrum dowodzenia. Po pierwszym '
-                      'połączeniu aplikacja zachowa ostatni stan urządzenia.',
-            isError: false,
-          ),
-        ] else if (session.isSimulation) ...[
-          const SizedBox(height: AquaSpacing.md),
-          const StatusBanner(
-            icon: Icons.science_rounded,
-            title: 'Środowisko symulacyjne',
-            message:
-                'Dane i polecenia pozostają w pamięci telefonu. Fizyczne '
-                'wyjścia sterownika nie są aktywowane.',
-            isError: false,
-          ),
-        ],
+          ],
+        ),
+        const SizedBox(height: AquaSpacing.sm),
+        _DashboardDisclosure(
+          key: const PageStorageKey('dashboard-output-status'),
+          icon: Icons.power_rounded,
+          title: 'Stan urządzeń',
+          summary: hasStoredData
+              ? '$activeOutputs aktywne · $manualOutputs sterowane ręcznie'
+              : 'Brak zapisanego stanu',
+          children: [
+            ResponsiveGrid(
+              minimumChildWidth: 168,
+              spacing: AquaSpacing.sm,
+              children: [
+                for (final output in model.outputs)
+                  _OutputStatusCard(output: output),
+              ],
+            ),
+          ],
+        ),
       ],
     );
   }
 }
 
 class _SafetyHero extends StatelessWidget {
-  const _SafetyHero({required this.model, required this.session});
+  const _SafetyHero({required this.model});
 
   final CommandCenterModel model;
-  final ControllerSession session;
 
   @override
   Widget build(BuildContext context) {
@@ -240,9 +226,7 @@ class _SafetyHero extends StatelessWidget {
 
     return Semantics(
       container: true,
-      label:
-          '${model.safety.title}. ${model.safety.message}. '
-          'Transport ${model.capabilities.label}.',
+      label: '${model.safety.title}. ${model.safety.message}.',
       child: DecoratedBox(
         decoration: BoxDecoration(
           color: container,
@@ -250,151 +234,44 @@ class _SafetyHero extends StatelessWidget {
           border: Border.all(color: tone.withValues(alpha: 0.7)),
         ),
         child: Padding(
-          padding: const EdgeInsets.all(AquaSpacing.lg),
-          child: LayoutBuilder(
-            builder: (context, constraints) {
-              final compact =
-                  constraints.maxWidth < 620 ||
-                  MediaQuery.textScalerOf(context).scale(1) > 1.35;
-              final summary = Row(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Container(
-                    width: 52,
-                    height: 52,
-                    decoration: BoxDecoration(
-                      color: tone.withValues(alpha: 0.16),
-                      borderRadius: BorderRadius.circular(AquaRadius.control),
-                    ),
-                    child: Icon(icon, color: tone, size: 30),
-                  ),
-                  const SizedBox(width: AquaSpacing.md),
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
-                          model.safety.title,
-                          style: Theme.of(context).textTheme.headlineSmall
-                              ?.copyWith(
-                                color: foreground,
-                                fontWeight: FontWeight.w900,
-                              ),
-                        ),
-                        const SizedBox(height: AquaSpacing.xxs),
-                        Text(
-                          model.safety.message,
-                          style: Theme.of(context).textTheme.bodyMedium
-                              ?.copyWith(color: foreground, height: 1.4),
-                        ),
-                      ],
-                    ),
-                  ),
-                ],
-              );
-              final metrics = Wrap(
-                spacing: AquaSpacing.xs,
-                runSpacing: AquaSpacing.xs,
-                children: [
-                  _HeroBadge(
-                    icon: Icons.cable_rounded,
-                    label: model.capabilities.label,
-                    foreground: foreground,
-                  ),
-                  _HeroBadge(
-                    icon: Icons.notifications_active_outlined,
-                    label:
-                        !session.hasCachedSnapshot &&
-                            !session.connectionHealth.isOnline
-                        ? 'Alarmy: brak danych'
-                        : model.activeAlarms.isEmpty
-                        ? 'Brak alarmów'
-                        : '${model.activeAlarms.length} alarmów',
-                    foreground: foreground,
-                  ),
-                  _HeroBadge(
-                    icon: session.isAdmin
-                        ? Icons.lock_open_rounded
-                        : Icons.lock_outline_rounded,
-                    label: session.isAdmin ? 'Administrator' : 'Podgląd',
-                    foreground: foreground,
-                  ),
-                ],
-              );
-              if (compact) {
-                return Column(
-                  crossAxisAlignment: CrossAxisAlignment.stretch,
-                  children: [
-                    summary,
-                    const SizedBox(height: AquaSpacing.md),
-                    metrics,
-                  ],
-                );
-              }
-              return Row(
-                children: [
-                  Expanded(child: summary),
-                  const SizedBox(width: AquaSpacing.lg),
-                  Flexible(child: metrics),
-                ],
-              );
-            },
-          ),
-        ),
-      ),
-    );
-  }
-}
-
-class _HeroBadge extends StatelessWidget {
-  const _HeroBadge({
-    required this.icon,
-    required this.label,
-    required this.foreground,
-  });
-
-  final IconData icon;
-  final String label;
-  final Color foreground;
-
-  @override
-  Widget build(BuildContext context) {
-    final largeText = MediaQuery.textScalerOf(context).scale(1) > 1.45;
-    return Container(
-      width: largeText ? double.infinity : null,
-      decoration: BoxDecoration(
-        color: foreground.withValues(alpha: 0.08),
-        borderRadius: BorderRadius.circular(AquaRadius.control),
-        border: Border.all(color: foreground.withValues(alpha: 0.22)),
-      ),
-      child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 7),
-        child: Row(
-          mainAxisSize: largeText ? MainAxisSize.max : MainAxisSize.min,
-          children: [
-            Icon(icon, size: 16, color: foreground),
-            const SizedBox(width: 6),
-            if (largeText)
-              Expanded(
-                child: Text(
-                  label,
-                  style: TextStyle(
-                    color: foreground,
-                    fontWeight: FontWeight.w800,
-                  ),
+          padding: const EdgeInsets.all(AquaSpacing.md),
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Container(
+                width: 46,
+                height: 46,
+                decoration: BoxDecoration(
+                  color: tone.withValues(alpha: 0.16),
+                  borderRadius: BorderRadius.circular(AquaRadius.control),
                 ),
-              )
-            else
-              Flexible(
-                child: Text(
-                  label,
-                  style: TextStyle(
-                    color: foreground,
-                    fontWeight: FontWeight.w800,
-                  ),
+                child: Icon(icon, color: tone, size: 27),
+              ),
+              const SizedBox(width: AquaSpacing.md),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      model.safety.title,
+                      style: Theme.of(context).textTheme.titleLarge?.copyWith(
+                        color: foreground,
+                        fontWeight: FontWeight.w900,
+                      ),
+                    ),
+                    const SizedBox(height: AquaSpacing.xxs),
+                    Text(
+                      model.safety.message,
+                      style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                        color: foreground,
+                        height: 1.35,
+                      ),
+                    ),
+                  ],
                 ),
               ),
-          ],
+            ],
+          ),
         ),
       ),
     );
@@ -405,14 +282,12 @@ class _TemperatureOverview extends StatelessWidget {
   const _TemperatureOverview({
     required this.sensor,
     required this.target,
-    required this.hysteresis,
     required this.heater,
     required this.onOpenCharts,
   });
 
   final CommandCenterSensor sensor;
   final double? target;
-  final double? hysteresis;
   final CommandCenterOutput heater;
   final VoidCallback onOpenCharts;
 
@@ -504,10 +379,9 @@ class _TemperatureOverview extends StatelessWidget {
                         ),
                         const SizedBox(height: AquaSpacing.xs),
                         Text(
-                          target == null || hysteresis == null
-                              ? 'Brak zapisanych nastaw temperatury'
-                              : 'Cel ${target!.toStringAsFixed(1)} °C  ·  '
-                                    'histereza ±${hysteresis!.toStringAsFixed(1)} °C',
+                          target == null
+                              ? 'Brak zapisanej temperatury docelowej'
+                              : 'Cel ${target!.toStringAsFixed(1)} °C',
                           style: TextStyle(color: colors.onSurfaceVariant),
                         ),
                         const SizedBox(height: AquaSpacing.xs),
@@ -538,18 +412,10 @@ class _TemperatureOverview extends StatelessWidget {
 class _OperationsOverview extends StatelessWidget {
   const _OperationsOverview({
     required this.event,
-    required this.rssi,
-    required this.uptime,
-    required this.freeHeap,
-    required this.hasStoredData,
     required this.onOpenControls,
   });
 
   final CommandCenterScheduleEvent? event;
-  final int rssi;
-  final String uptime;
-  final String freeHeap;
-  final bool hasStoredData;
   final VoidCallback? onOpenControls;
 
   @override
@@ -567,7 +433,7 @@ class _OperationsOverview extends StatelessWidget {
                 const SizedBox(width: AquaSpacing.xs),
                 Expanded(
                   child: Text(
-                    'Teraz i następne',
+                    'Najbliższe zdarzenie',
                     style: Theme.of(context).textTheme.titleLarge?.copyWith(
                       fontWeight: FontWeight.w900,
                     ),
@@ -578,9 +444,7 @@ class _OperationsOverview extends StatelessWidget {
             const SizedBox(height: AquaSpacing.md),
             if (event == null)
               Text(
-                hasStoredData
-                    ? 'Brak aktywnych zdarzeń harmonogramu.'
-                    : 'Brak zapisanych danych harmonogramu.',
+                'Brak zaplanowanego zdarzenia.',
                 style: TextStyle(color: colors.onSurfaceVariant),
               )
             else ...[
@@ -599,26 +463,6 @@ class _OperationsOverview extends StatelessWidget {
                 ),
               ),
             ],
-            const SizedBox(height: AquaSpacing.md),
-            Divider(color: colors.outlineVariant),
-            const SizedBox(height: AquaSpacing.sm),
-            _OperationMetric(
-              icon: _signalIcon(rssi),
-              label: 'Sygnał Wi‑Fi',
-              value: rssi <= -130 ? 'Brak danych' : '$rssi dBm',
-            ),
-            const SizedBox(height: AquaSpacing.sm),
-            _OperationMetric(
-              icon: Icons.schedule_rounded,
-              label: 'Czas pracy',
-              value: uptime,
-            ),
-            const SizedBox(height: AquaSpacing.sm),
-            _OperationMetric(
-              icon: Icons.memory_rounded,
-              label: 'Wolna pamięć',
-              value: freeHeap,
-            ),
             if (onOpenControls != null) ...[
               const SizedBox(height: AquaSpacing.md),
               OutlinedButton.icon(
@@ -645,72 +489,41 @@ class _OperationsOverview extends StatelessWidget {
         ? '${value.inHours} h'
         : '${value.inHours} h $minutes min';
   }
-
-  static IconData _signalIcon(int rssi) {
-    if (rssi >= -55) return Icons.signal_wifi_4_bar_rounded;
-    if (rssi >= -67) return Icons.network_wifi_3_bar_rounded;
-    if (rssi >= -75) return Icons.network_wifi_2_bar_rounded;
-    if (rssi > -130) return Icons.network_wifi_1_bar_rounded;
-    return Icons.signal_wifi_off_rounded;
-  }
 }
 
-class _OperationMetric extends StatelessWidget {
-  const _OperationMetric({
+class _DashboardDisclosure extends StatelessWidget {
+  const _DashboardDisclosure({
+    super.key,
     required this.icon,
-    required this.label,
-    required this.value,
+    required this.title,
+    required this.summary,
+    required this.children,
   });
 
   final IconData icon;
-  final String label;
-  final String value;
+  final String title;
+  final String summary;
+  final List<Widget> children;
 
   @override
   Widget build(BuildContext context) {
-    final colors = Theme.of(context).colorScheme;
-    final labelWidget = Row(
-      children: [
-        Icon(icon, size: 19, color: colors.primary),
-        const SizedBox(width: AquaSpacing.xs),
-        Expanded(
-          child: Text(label, style: TextStyle(color: colors.onSurfaceVariant)),
+    return Card(
+      margin: EdgeInsets.zero,
+      clipBehavior: Clip.antiAlias,
+      child: ExpansionTile(
+        maintainState: true,
+        minTileHeight: 56,
+        leading: Icon(icon),
+        title: Text(title, style: const TextStyle(fontWeight: FontWeight.w800)),
+        subtitle: Text(summary),
+        childrenPadding: const EdgeInsets.fromLTRB(
+          AquaSpacing.sm,
+          0,
+          AquaSpacing.sm,
+          AquaSpacing.sm,
         ),
-      ],
-    );
-    return LayoutBuilder(
-      builder: (context, constraints) {
-        final textScale = MediaQuery.textScalerOf(context).scale(1);
-        if (constraints.maxWidth < 260 || textScale > 1.45) {
-          return Column(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              labelWidget,
-              const SizedBox(height: AquaSpacing.xxs),
-              Padding(
-                padding: const EdgeInsets.only(left: 27),
-                child: Text(
-                  value,
-                  style: const TextStyle(fontWeight: FontWeight.w800),
-                ),
-              ),
-            ],
-          );
-        }
-        return Row(
-          children: [
-            Expanded(child: labelWidget),
-            const SizedBox(width: AquaSpacing.xs),
-            Flexible(
-              child: Text(
-                value,
-                textAlign: TextAlign.end,
-                style: const TextStyle(fontWeight: FontWeight.w800),
-              ),
-            ),
-          ],
-        );
-      },
+        children: children,
+      ),
     );
   }
 }
