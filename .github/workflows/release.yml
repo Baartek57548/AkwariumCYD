@@ -134,10 +134,15 @@ jobs:
           version_name="$(sed -n "s/.*versionName='\\([^']*\\)'.*/\\1/p" <<<"$badging")"
           signer_output="$("$apksigner_path" verify --verbose --print-certs "$apk")"
           printf '%s\n' "$signer_output"
+          signer_count="$(
+            sed -n 's/^Number of signers: //p' <<<"$signer_output"
+          )"
+          test "$signer_count" = "1" || {
+            echo "APK must contain exactly one signer" >&2
+            exit 1
+          }
           certificate_sha="$(
-            sed -n \
-              's/^Signer #1 certificate SHA-256 digest: //p; t done; b; :done; q' \
-              <<<"$signer_output" |
+            sed -n 's/^.*certificate SHA-256 digest: //p' <<<"$signer_output" |
               tr '[:upper:]' '[:lower:]' |
               tr -d ':[:space:]'
           )"
