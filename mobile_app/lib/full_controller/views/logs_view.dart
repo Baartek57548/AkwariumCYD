@@ -35,7 +35,9 @@ class _LogsViewState extends State<LogsView>
   void initState() {
     super.initState();
     tabController = TabController(length: 2, vsync: this);
-    WidgetsBinding.instance.addPostFrameCallback((_) => _load());
+    if (widget.session.canIssueCommands) {
+      WidgetsBinding.instance.addPostFrameCallback((_) => _load());
+    }
   }
 
   @override
@@ -45,6 +47,12 @@ class _LogsViewState extends State<LogsView>
   }
 
   Future<void> _load() async {
+    if (!widget.session.canIssueCommands) {
+      if (mounted) {
+        setState(() => message = widget.session.commandBlockReason);
+      }
+      return;
+    }
     if (!await widget.ensureAdmin()) return;
     setState(() => loading = true);
     try {
@@ -104,13 +112,17 @@ class _LogsViewState extends State<LogsView>
     final logs = widget.session.logsData;
     final normal = logs.list('normal');
     final critical = logs.list('critical');
+    final logsAvailable = logs.isNotEmpty;
+    final canSynchronize = widget.session.canIssueCommands;
     return ControllerPageBody(
       children: [
         SectionHeader(
           title: 'Dziennik zdarzeń',
-          description: 'Logi normalne i krytyczne z endpointu /api/logs.',
+          description: logsAvailable
+              ? 'Logi normalne i krytyczne z ostatniej synchronizacji.'
+              : 'Logi nie są częścią lokalnego snapshotu stanu.',
           trailing: IconButton(
-            onPressed: loading ? null : _load,
+            onPressed: loading || !canSynchronize ? null : _load,
             icon: loading
                 ? const SizedBox.square(
                     dimension: 20,
@@ -120,19 +132,36 @@ class _LogsViewState extends State<LogsView>
             tooltip: 'Odśwież logi',
           ),
         ),
+        if (!logsAvailable) ...[
+          StatusBanner(
+            icon: Icons.history_toggle_off_rounded,
+            title: 'Logi nie zostały zapisane lokalnie',
+            message: canSynchronize
+                ? 'Zaloguj administratora i odśwież, aby pobrać dziennik '
+                      'bezpośrednio ze sterownika.'
+                : 'Połącz sterownik, aby pobrać dziennik. Brak wpisów na '
+                      'ekranie nie oznacza braku zdarzeń w urządzeniu.',
+            isError: false,
+          ),
+          const SizedBox(height: 14),
+        ],
         ResponsiveGrid(
           children: [
             MetricTile(
               icon: Icons.info_outline_rounded,
               label: 'Normalne',
-              value: '${normal.length}',
-              detail: 'Informacje operacyjne',
+              value: logsAvailable ? '${normal.length}' : '—',
+              detail: logsAvailable
+                  ? 'Informacje operacyjne'
+                  : 'Brak lokalnej kopii',
             ),
             MetricTile(
               icon: Icons.warning_amber_rounded,
               label: 'Ważne',
-              value: '${critical.length}',
-              detail: critical.isEmpty
+              value: logsAvailable ? '${critical.length}' : '—',
+              detail: !logsAvailable
+                  ? 'Brak lokalnej kopii'
+                  : critical.isEmpty
                   ? 'Brak aktywnych wpisów'
                   : 'Wymagają sprawdzenia',
               tone: critical.isEmpty
@@ -158,8 +187,16 @@ class _LogsViewState extends State<LogsView>
                 child: TabBarView(
                   controller: tabController,
                   children: [
-                    _LogList(entries: normal, critical: false),
-                    _LogList(entries: critical, critical: true),
+                    _LogList(
+                      entries: normal,
+                      critical: false,
+                      dataAvailable: logsAvailable,
+                    ),
+                    _LogList(
+                      entries: critical,
+                      critical: true,
+                      dataAvailable: logsAvailable,
+                    ),
                   ],
                 ),
               ),
@@ -172,12 +209,14 @@ class _LogsViewState extends State<LogsView>
           runSpacing: 10,
           children: [
             OutlinedButton.icon(
-              onPressed: _export,
+              onPressed: logsAvailable ? _export : null,
               icon: const Icon(Icons.download_rounded),
               label: const Text('Eksportuj TXT'),
             ),
             FilledButton.tonalIcon(
-              onPressed: critical.isEmpty ? null : _clearCritical,
+              onPressed: !canSynchronize || critical.isEmpty
+                  ? null
+                  : _clearCritical,
               icon: const Icon(Icons.delete_sweep_outlined),
               label: const Text('Wyczyść ważne logi'),
             ),
@@ -200,10 +239,15 @@ class _LogsViewState extends State<LogsView>
 }
 
 class _LogList extends StatelessWidget {
-  const _LogList({required this.entries, required this.critical});
+  const _LogList({
+    required this.entries,
+    required this.critical,
+    required this.dataAvailable,
+  });
 
   final List<dynamic> entries;
   final bool critical;
+  final bool dataAvailable;
 
   @override
   Widget build(BuildContext context) {
@@ -217,7 +261,13 @@ class _LogList extends StatelessWidget {
               size: 52,
             ),
             const SizedBox(height: 10),
-            Text(critical ? 'Brak ważnych wpisów' : 'Brak wpisów'),
+            Text(
+              !dataAvailable
+                  ? 'Logi nie zostały zapisane'
+                  : critical
+                  ? 'Brak ważnych wpisów'
+                  : 'Brak wpisów',
+            ),
           ],
         ),
       );

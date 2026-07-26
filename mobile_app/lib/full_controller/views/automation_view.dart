@@ -50,19 +50,23 @@ class _AutomationViewState extends State<AutomationView> {
     final config = status.section('config');
     final modules = status.section('modules');
     targetTemperature = TextEditingController(
-      text: config.number('target_temp', 25).toStringAsFixed(1),
+      text: config.nullableNumber('target_temp')?.toStringAsFixed(1) ?? '',
     );
     hysteresis = TextEditingController(
-      text: config.number('temp_hysteresis', 0.5).toStringAsFixed(1),
+      text: config.nullableNumber('temp_hysteresis')?.toStringAsFixed(1) ?? '',
     );
     targetPh = TextEditingController(
-      text: config.number('co2TargetPh', 6.8).toStringAsFixed(2),
+      text: config.nullableNumber('co2TargetPh')?.toStringAsFixed(2) ?? '',
     );
     co2Limit = TextEditingController(
-      text: '${config.integer('co2MaxTimeMin', 180)}',
+      text: config['co2MaxTimeMin'] == null
+          ? ''
+          : '${config.integer('co2MaxTimeMin')}',
     );
     waterTimeout = TextEditingController(
-      text: '${status.section('water').integer('timeoutSec', 120)}',
+      text: status.section('water')['timeoutSec'] == null
+          ? ''
+          : '${status.section('water').integer('timeoutSec')}',
     );
     heaterEnabled = modules.flag('heater_enabled');
     co2Enabled = modules.flag('co2_enabled');
@@ -129,22 +133,25 @@ class _AutomationViewState extends State<AutomationView> {
     try {
       switch (section) {
         case 'temperature':
-          targetTemperature.text = config
-              .number('target_temp', 25)
-              .toStringAsFixed(1);
-          hysteresis.text = config
-              .number('temp_hysteresis', 0.5)
-              .toStringAsFixed(1);
+          targetTemperature.text =
+              config.nullableNumber('target_temp')?.toStringAsFixed(1) ?? '';
+          hysteresis.text =
+              config.nullableNumber('temp_hysteresis')?.toStringAsFixed(1) ??
+              '';
           heaterEnabled = modules.flag('heater_enabled');
           break;
         case 'co2':
-          targetPh.text = config.number('co2TargetPh', 6.8).toStringAsFixed(2);
-          co2Limit.text = '${config.integer('co2MaxTimeMin', 180)}';
+          targetPh.text =
+              config.nullableNumber('co2TargetPh')?.toStringAsFixed(2) ?? '';
+          co2Limit.text = config['co2MaxTimeMin'] == null
+              ? ''
+              : '${config.integer('co2MaxTimeMin')}';
           co2Enabled = modules.flag('co2_enabled');
           break;
         case 'water':
-          waterTimeout.text =
-              '${status.section('water').integer('timeoutSec', 120)}';
+          waterTimeout.text = status.section('water')['timeoutSec'] == null
+              ? ''
+              : '${status.section('water').integer('timeoutSec')}';
           waterEnabled = modules.flag('water_level_enabled');
           break;
         case 'leak':
@@ -242,6 +249,8 @@ class _AutomationViewState extends State<AutomationView> {
     final sensors = widget.session.status.section('sensors');
     final modules = widget.session.status.section('modules');
     final water = widget.session.status.section('water');
+    final canEdit = widget.session.canIssueCommands;
+    final hasStoredData = widget.session.hasStatusData;
     return ControllerPageBody(
       children: [
         SectionHeader(
@@ -249,11 +258,26 @@ class _AutomationViewState extends State<AutomationView> {
           description:
               'Termostat, dozowanie CO₂, automatyczna dolewka oraz reakcja na wyciek.',
           trailing: IconButton(
-            onPressed: _restoreFromController,
+            onPressed: hasStoredData ? _restoreFromController : null,
             icon: const Icon(Icons.restore_rounded),
             tooltip: 'Przywróć dane sterownika',
           ),
         ),
+        if (!canEdit) ...[
+          StatusBanner(
+            icon: Icons.visibility_rounded,
+            title: widget.session.hasCachedSnapshot
+                ? 'Automatyka tylko do podglądu'
+                : 'Brak zapisanych reguł automatyki',
+            message: widget.session.hasCachedSnapshot
+                ? widget.session.commandBlockReason ??
+                      'Połącz sterownik, aby edytować reguły automatyki.'
+                : 'Sekcje pozostają dostępne, ale puste pola nie reprezentują '
+                      'konfiguracji urządzenia.',
+            isError: false,
+          ),
+          const SizedBox(height: 12),
+        ],
         if (_remoteChangedSections.isNotEmpty) ...[
           const StatusBanner(
             icon: Icons.sync_problem_rounded,
@@ -270,32 +294,56 @@ class _AutomationViewState extends State<AutomationView> {
             MetricTile(
               icon: Icons.thermostat_rounded,
               label: 'Grzałka',
-              value: modules.flag('heater_on') ? 'ON' : 'OFF',
-              detail: sensors.flag('temp_valid')
+              value: !hasStoredData
+                  ? '—'
+                  : modules.flag('heater_on')
+                  ? 'ON'
+                  : 'OFF',
+              detail: !hasStoredData
+                  ? 'Brak zapisanego stanu'
+                  : sensors.flag('temp_valid')
                   ? '${sensors.number('temp_c').toStringAsFixed(2)} °C'
                   : 'Brak odczytu',
             ),
             MetricTile(
               icon: Icons.bubble_chart_rounded,
               label: 'CO₂',
-              value: modules.flag('co2_on') ? 'DOZOWANIE' : 'OFF',
-              detail: sensors.flag('ph_valid')
+              value: !hasStoredData
+                  ? '—'
+                  : modules.flag('co2_on')
+                  ? 'DOZOWANIE'
+                  : 'OFF',
+              detail: !hasStoredData
+                  ? 'Brak zapisanego stanu'
+                  : sensors.flag('ph_valid')
                   ? 'pH ${sensors.number('ph').toStringAsFixed(2)}'
                   : 'Brak odczytu pH',
             ),
             MetricTile(
               icon: Icons.water_drop_rounded,
               label: 'Automatyczna dolewka',
-              value: water.flag('active') ? 'AKTYWNA' : 'OCZEKUJE',
-              detail: water.flag('timeoutLatched')
+              value: !hasStoredData
+                  ? '—'
+                  : water.flag('active')
+                  ? 'AKTYWNA'
+                  : 'OCZEKUJE',
+              detail: !hasStoredData
+                  ? 'Brak zapisanego stanu'
+                  : water.flag('timeoutLatched')
                   ? 'Blokada czasowa aktywna'
                   : 'Limit ${water.integer('timeoutSec')} s',
             ),
             MetricTile(
               icon: Icons.health_and_safety_rounded,
               label: 'Zabezpieczenie wycieku',
-              value: sensors.flag('leak_detected') ? 'ALARM' : 'GOTOWE',
-              detail: 'Akcja: ${_leakActionLabel(leakAction)}',
+              value: !hasStoredData
+                  ? '—'
+                  : sensors.flag('leak_detected')
+                  ? 'ALARM'
+                  : 'GOTOWE',
+              detail: hasStoredData
+                  ? 'Akcja: ${_leakActionLabel(leakAction)}'
+                  : 'Brak zapisanej konfiguracji',
             ),
           ],
         ),
@@ -309,58 +357,71 @@ class _AutomationViewState extends State<AutomationView> {
                 icon: Icons.thermostat_rounded,
                 title: 'Termostat',
                 children: [
-                  LabeledSwitch(
-                    label: 'Włącz sterowanie grzałką',
-                    value: heaterEnabled,
-                    onChanged: (value) =>
-                        _edit('temperature', () => heaterEnabled = value),
-                  ),
-                  Row(
-                    children: [
-                      Expanded(
-                        child: TextFormField(
-                          controller: targetTemperature,
-                          keyboardType: const TextInputType.numberWithOptions(
-                            decimal: true,
-                          ),
-                          decoration: const InputDecoration(
-                            labelText: 'Temperatura docelowa [°C]',
-                            border: OutlineInputBorder(),
-                          ),
-                          validator: (value) => validateNumber(
-                            value,
-                            label: 'Temperatura',
-                            minimum: 18,
-                            maximum: 30,
-                          ),
-                        ),
-                      ),
-                      const SizedBox(width: 10),
-                      Expanded(
-                        child: TextFormField(
-                          controller: hysteresis,
-                          keyboardType: const TextInputType.numberWithOptions(
-                            decimal: true,
-                          ),
-                          decoration: const InputDecoration(
-                            labelText: 'Histereza [°C]',
-                            border: OutlineInputBorder(),
-                          ),
-                          validator: (value) => validateNumber(
-                            value,
-                            label: 'Histereza',
-                            minimum: 0.1,
-                            maximum: 5,
+                  if (!hasStoredData)
+                    const _MissingAutomationConfiguration(
+                      description:
+                          'Po pierwszej synchronizacji zobaczysz tu stan grzałki, temperaturę docelową i histerezę.',
+                    )
+                  else ...[
+                    LabeledSwitch(
+                      label: 'Włącz sterowanie grzałką',
+                      value: heaterEnabled,
+                      onChanged: canEdit
+                          ? (value) => _edit(
+                              'temperature',
+                              () => heaterEnabled = value,
+                            )
+                          : null,
+                    ),
+                    Row(
+                      children: [
+                        Expanded(
+                          child: TextFormField(
+                            controller: targetTemperature,
+                            enabled: canEdit,
+                            keyboardType: const TextInputType.numberWithOptions(
+                              decimal: true,
+                            ),
+                            decoration: const InputDecoration(
+                              labelText: 'Temperatura docelowa [°C]',
+                              border: OutlineInputBorder(),
+                            ),
+                            validator: (value) => validateNumber(
+                              value,
+                              label: 'Temperatura',
+                              minimum: 18,
+                              maximum: 30,
+                            ),
                           ),
                         ),
-                      ),
-                    ],
-                  ),
-                  SaveButton(
-                    onPressed: _saveTemperature,
-                    label: 'Zapisz termostat',
-                    busy: saving.contains('temperature'),
-                  ),
+                        const SizedBox(width: 10),
+                        Expanded(
+                          child: TextFormField(
+                            controller: hysteresis,
+                            enabled: canEdit,
+                            keyboardType: const TextInputType.numberWithOptions(
+                              decimal: true,
+                            ),
+                            decoration: const InputDecoration(
+                              labelText: 'Histereza [°C]',
+                              border: OutlineInputBorder(),
+                            ),
+                            validator: (value) => validateNumber(
+                              value,
+                              label: 'Histereza',
+                              minimum: 0.1,
+                              maximum: 5,
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                    SaveButton(
+                      onPressed: canEdit ? _saveTemperature : null,
+                      label: 'Zapisz termostat',
+                      busy: saving.contains('temperature'),
+                    ),
+                  ],
                 ],
               ),
             ),
@@ -370,58 +431,68 @@ class _AutomationViewState extends State<AutomationView> {
                 icon: Icons.bubble_chart_rounded,
                 title: 'Automatyka CO₂',
                 children: [
-                  LabeledSwitch(
-                    label: 'Włącz dozowanie CO₂',
-                    subtitle:
-                        'Sterowanie jest blokowane przy niewiarygodnym odczycie pH.',
-                    value: co2Enabled,
-                    onChanged: (value) =>
-                        _edit('co2', () => co2Enabled = value),
-                  ),
-                  Row(
-                    children: [
-                      Expanded(
-                        child: TextFormField(
-                          controller: targetPh,
-                          keyboardType: const TextInputType.numberWithOptions(
-                            decimal: true,
-                          ),
-                          decoration: const InputDecoration(
-                            labelText: 'Docelowe pH',
-                            border: OutlineInputBorder(),
-                          ),
-                          validator: (value) => validateNumber(
-                            value,
-                            label: 'Docelowe pH',
-                            minimum: 5,
-                            maximum: 8.5,
-                          ),
-                        ),
-                      ),
-                      const SizedBox(width: 10),
-                      Expanded(
-                        child: TextFormField(
-                          controller: co2Limit,
-                          keyboardType: TextInputType.number,
-                          decoration: const InputDecoration(
-                            labelText: 'Limit czasu [min]',
-                            border: OutlineInputBorder(),
-                          ),
-                          validator: (value) => validateNumber(
-                            value,
-                            label: 'Limit CO₂',
-                            minimum: 1,
-                            maximum: 1440,
+                  if (!hasStoredData)
+                    const _MissingAutomationConfiguration(
+                      description:
+                          'Po pierwszej synchronizacji zobaczysz tu stan dozowania, docelowe pH i limit czasu.',
+                    )
+                  else ...[
+                    LabeledSwitch(
+                      label: 'Włącz dozowanie CO₂',
+                      subtitle:
+                          'Sterowanie jest blokowane przy niewiarygodnym odczycie pH.',
+                      value: co2Enabled,
+                      onChanged: canEdit
+                          ? (value) => _edit('co2', () => co2Enabled = value)
+                          : null,
+                    ),
+                    Row(
+                      children: [
+                        Expanded(
+                          child: TextFormField(
+                            controller: targetPh,
+                            enabled: canEdit,
+                            keyboardType: const TextInputType.numberWithOptions(
+                              decimal: true,
+                            ),
+                            decoration: const InputDecoration(
+                              labelText: 'Docelowe pH',
+                              border: OutlineInputBorder(),
+                            ),
+                            validator: (value) => validateNumber(
+                              value,
+                              label: 'Docelowe pH',
+                              minimum: 5,
+                              maximum: 8.5,
+                            ),
                           ),
                         ),
-                      ),
-                    ],
-                  ),
-                  SaveButton(
-                    onPressed: _saveCo2,
-                    label: 'Zapisz CO₂',
-                    busy: saving.contains('co2'),
-                  ),
+                        const SizedBox(width: 10),
+                        Expanded(
+                          child: TextFormField(
+                            controller: co2Limit,
+                            enabled: canEdit,
+                            keyboardType: TextInputType.number,
+                            decoration: const InputDecoration(
+                              labelText: 'Limit czasu [min]',
+                              border: OutlineInputBorder(),
+                            ),
+                            validator: (value) => validateNumber(
+                              value,
+                              label: 'Limit CO₂',
+                              minimum: 1,
+                              maximum: 1440,
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                    SaveButton(
+                      onPressed: canEdit ? _saveCo2 : null,
+                      label: 'Zapisz CO₂',
+                      busy: saving.contains('co2'),
+                    ),
+                  ],
                 ],
               ),
             ),
@@ -431,33 +502,43 @@ class _AutomationViewState extends State<AutomationView> {
                 icon: Icons.water_drop_rounded,
                 title: 'Automatyczna dolewka ATO',
                 children: [
-                  LabeledSwitch(
-                    label: 'Włącz kontrolę poziomu wody',
-                    subtitle:
-                        'Po wyłączeniu firmware natychmiast zatrzymuje dolewkę.',
-                    value: waterEnabled,
-                    onChanged: (value) =>
-                        _edit('water', () => waterEnabled = value),
-                  ),
-                  TextFormField(
-                    controller: waterTimeout,
-                    keyboardType: TextInputType.number,
-                    decoration: const InputDecoration(
-                      labelText: 'Maksymalny czas dolewania [s]',
-                      border: OutlineInputBorder(),
+                  if (!hasStoredData)
+                    const _MissingAutomationConfiguration(
+                      description:
+                          'Po pierwszej synchronizacji zobaczysz tu stan ATO i bezpieczny limit dolewania.',
+                    )
+                  else ...[
+                    LabeledSwitch(
+                      label: 'Włącz kontrolę poziomu wody',
+                      subtitle:
+                          'Po wyłączeniu firmware natychmiast zatrzymuje dolewkę.',
+                      value: waterEnabled,
+                      onChanged: canEdit
+                          ? (value) =>
+                                _edit('water', () => waterEnabled = value)
+                          : null,
                     ),
-                    validator: (value) => validateNumber(
-                      value,
-                      label: 'Limit ATO',
-                      minimum: 5,
-                      maximum: 300,
+                    TextFormField(
+                      controller: waterTimeout,
+                      enabled: canEdit,
+                      keyboardType: TextInputType.number,
+                      decoration: const InputDecoration(
+                        labelText: 'Maksymalny czas dolewania [s]',
+                        border: OutlineInputBorder(),
+                      ),
+                      validator: (value) => validateNumber(
+                        value,
+                        label: 'Limit ATO',
+                        minimum: 5,
+                        maximum: 300,
+                      ),
                     ),
-                  ),
-                  SaveButton(
-                    onPressed: _saveWater,
-                    label: 'Zapisz ATO',
-                    busy: saving.contains('water'),
-                  ),
+                    SaveButton(
+                      onPressed: canEdit ? _saveWater : null,
+                      label: 'Zapisz ATO',
+                      busy: saving.contains('water'),
+                    ),
+                  ],
                 ],
               ),
             ),
@@ -465,41 +546,53 @@ class _AutomationViewState extends State<AutomationView> {
               icon: Icons.health_and_safety_rounded,
               title: 'Reakcja na wyciek',
               children: [
-                LabeledSwitch(
-                  label: 'Włącz czujnik wycieku',
-                  value: leakEnabled,
-                  onChanged: (value) =>
-                      _edit('leak', () => leakEnabled = value),
-                ),
-                DropdownButtonFormField<String>(
-                  initialValue: leakAction,
-                  isExpanded: true,
-                  decoration: const InputDecoration(
-                    labelText: 'Akcja awaryjna',
-                    border: OutlineInputBorder(),
+                if (!hasStoredData)
+                  const _MissingAutomationConfiguration(
+                    description:
+                        'Po pierwszej synchronizacji zobaczysz tu stan czujnika i zaprogramowaną reakcję awaryjną.',
+                  )
+                else ...[
+                  LabeledSwitch(
+                    label: 'Włącz czujnik wycieku',
+                    value: leakEnabled,
+                    onChanged: canEdit
+                        ? (value) => _edit('leak', () => leakEnabled = value)
+                        : null,
                   ),
-                  items: const [
-                    DropdownMenuItem(
-                      value: 'alarm',
-                      child: Text('Tylko alarm'),
+                  DropdownButtonFormField<String>(
+                    initialValue: leakAction,
+                    isExpanded: true,
+                    decoration: const InputDecoration(
+                      labelText: 'Akcja awaryjna',
+                      border: OutlineInputBorder(),
                     ),
-                    DropdownMenuItem(
-                      value: 'disable_valves',
-                      child: Text('Wyłącz zawory i dozowanie'),
-                    ),
-                    DropdownMenuItem(
-                      value: 'disable_all',
-                      child: Text('Wyłącz wszystkie wyjścia'),
-                    ),
-                  ],
-                  onChanged: (value) =>
-                      _edit('leak', () => leakAction = value ?? leakAction),
-                ),
-                SaveButton(
-                  onPressed: _saveLeak,
-                  label: 'Zapisz zabezpieczenia',
-                  busy: saving.contains('leak'),
-                ),
+                    items: const [
+                      DropdownMenuItem(
+                        value: 'alarm',
+                        child: Text('Tylko alarm'),
+                      ),
+                      DropdownMenuItem(
+                        value: 'disable_valves',
+                        child: Text('Wyłącz zawory i dozowanie'),
+                      ),
+                      DropdownMenuItem(
+                        value: 'disable_all',
+                        child: Text('Wyłącz wszystkie wyjścia'),
+                      ),
+                    ],
+                    onChanged: canEdit
+                        ? (value) => _edit(
+                            'leak',
+                            () => leakAction = value ?? leakAction,
+                          )
+                        : null,
+                  ),
+                  SaveButton(
+                    onPressed: canEdit ? _saveLeak : null,
+                    label: 'Zapisz zabezpieczenia',
+                    busy: saving.contains('leak'),
+                  ),
+                ],
               ],
             ),
           ],
@@ -542,6 +635,22 @@ class _AutomationViewState extends State<AutomationView> {
         status.section('leak')['action'],
       ]),
     };
+  }
+}
+
+class _MissingAutomationConfiguration extends StatelessWidget {
+  const _MissingAutomationConfiguration({required this.description});
+
+  final String description;
+
+  @override
+  Widget build(BuildContext context) {
+    return StatusBanner(
+      icon: Icons.cloud_download_outlined,
+      title: 'Brak zapisanej konfiguracji',
+      message: description,
+      isError: false,
+    );
   }
 }
 

@@ -25,12 +25,16 @@ class DashboardView extends StatelessWidget {
       status,
       session.sessionKind,
       connected: session.connectionHealth.isOnline,
+      offline: session.isOfflineMode,
     );
     final temperature = model.sensor(CommandCenterSensorKind.temperature);
     final config = status.section('config');
     final network = status.section('network');
     final system = status.section('system');
     final alarms = model.activeAlarms;
+    final showingStoredData =
+        !session.connectionHealth.isOnline && !session.isSimulation;
+    final hasStoredData = session.hasStatusData;
 
     return ControllerPageBody(
       maxWidth: 1180,
@@ -46,18 +50,27 @@ class DashboardView extends StatelessWidget {
                 MediaQuery.textScalerOf(context).scale(1) <= 1.35;
             final primary = _TemperatureOverview(
               sensor: temperature,
-              target: config.number('target_temp', 25),
-              hysteresis: config.number('temp_hysteresis', 0.5),
+              target: hasStoredData
+                  ? config.nullableNumber('target_temp')
+                  : null,
+              hysteresis: hasStoredData
+                  ? config.nullableNumber('temp_hysteresis')
+                  : null,
               heater: model.output(CommandCenterOutputKind.heater),
               onOpenCharts: onOpenCharts,
             );
             final operations = _OperationsOverview(
               event: model.nextScheduleEvent,
               rssi: network.integer('rssi', -130),
-              uptime: formatUptime(system.integer('uptime')),
-              freeHeap: formatBytes(
-                system.integer('freeHeap', status.integer('heap_free')),
-              ),
+              uptime: hasStoredData
+                  ? formatUptime(system.integer('uptime'))
+                  : '—',
+              freeHeap: hasStoredData
+                  ? formatBytes(
+                      system.integer('freeHeap', status.integer('heap_free')),
+                    )
+                  : '—',
+              hasStoredData: hasStoredData,
               onOpenControls: onOpenControls,
             );
             if (!twoColumns) {
@@ -81,10 +94,16 @@ class DashboardView extends StatelessWidget {
         ),
         const SizedBox(height: AquaSpacing.lg),
         SectionHeader(
-          title: 'Telemetria na żywo',
-          description:
-              'Ostatni potwierdzony pakiet · '
-              '${session.connectionHealth.ageLabel(DateTime.now())}',
+          title: showingStoredData
+              ? 'Ostatni zapisany stan'
+              : 'Telemetria na żywo',
+          description: showingStoredData
+              ? session.hasCachedSnapshot
+                    ? 'Lokalna kopia · '
+                          '${session.connectionHealth.ageLabel(DateTime.now())}'
+                    : 'Połącz urządzenie, aby zapisać pierwszy odczyt.'
+              : 'Ostatni potwierdzony pakiet · '
+                    '${session.connectionHealth.ageLabel(DateTime.now())}',
           trailing: TextButton.icon(
             onPressed: onOpenCharts,
             icon: const Icon(Icons.show_chart_rounded),
@@ -137,7 +156,30 @@ class DashboardView extends StatelessWidget {
             ),
           ),
         ],
-        if (session.isDevelopment) ...[
+        if (showingStoredData) ...[
+          const SizedBox(height: AquaSpacing.md),
+          StatusBanner(
+            icon: session.isOfflineMode
+                ? Icons.history_rounded
+                : Icons.sync_rounded,
+            title: session.isOfflineMode && session.hasCachedSnapshot
+                ? 'Podgląd ostatnio zapisanych danych'
+                : session.hasCachedSnapshot
+                ? 'Dane dostępne podczas łączenia'
+                : 'Aplikacja działa bez urządzenia',
+            message: session.hasCachedSnapshot
+                ? session.isOfflineMode
+                      ? 'Wszystkie sekcje pozostają dostępne do podglądu. '
+                            'Połącz Wi‑Fi lub Bluetooth, aby zsynchronizować '
+                            'dane i odblokować sterowanie.'
+                      : 'Wszystkie sekcje pozostają dostępne. Aplikacja '
+                            'automatycznie ponawia połączenie, a sterowanie '
+                            'odblokuje dopiero po świeżej synchronizacji.'
+                : 'Możesz przejrzeć całe centrum dowodzenia. Po pierwszym '
+                      'połączeniu aplikacja zachowa ostatni stan urządzenia.',
+            isError: false,
+          ),
+        ] else if (session.isSimulation) ...[
           const SizedBox(height: AquaSpacing.md),
           const StatusBanner(
             icon: Icons.science_rounded,
@@ -261,7 +303,11 @@ class _SafetyHero extends StatelessWidget {
                   ),
                   _HeroBadge(
                     icon: Icons.notifications_active_outlined,
-                    label: model.activeAlarms.isEmpty
+                    label:
+                        !session.hasCachedSnapshot &&
+                            !session.connectionHealth.isOnline
+                        ? 'Alarmy: brak danych'
+                        : model.activeAlarms.isEmpty
                         ? 'Brak alarmów'
                         : '${model.activeAlarms.length} alarmów',
                     foreground: foreground,
@@ -365,8 +411,8 @@ class _TemperatureOverview extends StatelessWidget {
   });
 
   final CommandCenterSensor sensor;
-  final double target;
-  final double hysteresis;
+  final double? target;
+  final double? hysteresis;
   final CommandCenterOutput heater;
   final VoidCallback onOpenCharts;
 
@@ -413,7 +459,7 @@ class _TemperatureOverview extends StatelessWidget {
                       fit: StackFit.expand,
                       children: [
                         CircularProgressIndicator(
-                          value: sensor.valid ? progress : null,
+                          value: sensor.valid ? progress : 0,
                           strokeWidth: 9,
                           strokeCap: StrokeCap.round,
                           color: tone,
@@ -458,14 +504,18 @@ class _TemperatureOverview extends StatelessWidget {
                         ),
                         const SizedBox(height: AquaSpacing.xs),
                         Text(
-                          'Cel ${target.toStringAsFixed(1)} °C  ·  '
-                          'histereza ±${hysteresis.toStringAsFixed(1)} °C',
+                          target == null || hysteresis == null
+                              ? 'Brak zapisanych nastaw temperatury'
+                              : 'Cel ${target!.toStringAsFixed(1)} °C  ·  '
+                                    'histereza ±${hysteresis!.toStringAsFixed(1)} °C',
                           style: TextStyle(color: colors.onSurfaceVariant),
                         ),
                         const SizedBox(height: AquaSpacing.xs),
                         Text(
-                          heater.controlMode ==
-                                  CommandCenterControlMode.disabled
+                          !heater.available
+                              ? 'Brak zapisanego stanu termostatu'
+                              : heater.controlMode ==
+                                    CommandCenterControlMode.disabled
                               ? 'Termostat wyłączony'
                               : heater.isEnergized
                               ? 'Grzałka pracuje'
@@ -491,6 +541,7 @@ class _OperationsOverview extends StatelessWidget {
     required this.rssi,
     required this.uptime,
     required this.freeHeap,
+    required this.hasStoredData,
     required this.onOpenControls,
   });
 
@@ -498,6 +549,7 @@ class _OperationsOverview extends StatelessWidget {
   final int rssi;
   final String uptime;
   final String freeHeap;
+  final bool hasStoredData;
   final VoidCallback? onOpenControls;
 
   @override
@@ -526,7 +578,9 @@ class _OperationsOverview extends StatelessWidget {
             const SizedBox(height: AquaSpacing.md),
             if (event == null)
               Text(
-                'Brak aktywnych zdarzeń harmonogramu.',
+                hasStoredData
+                    ? 'Brak aktywnych zdarzeń harmonogramu.'
+                    : 'Brak zapisanych danych harmonogramu.',
                 style: TextStyle(color: colors.onSurfaceVariant),
               )
             else ...[

@@ -4,7 +4,7 @@ import 'package:flutter_test/flutter_test.dart';
 
 void main() {
   group('CommandCenterModel capabilities', () {
-    test('distinguishes Wi-Fi, BLE v1, BLE v2 and development sessions', () {
+    test('distinguishes all connection and offline capabilities', () {
       expect(
         _project(sessionKind: ControllerSessionKind.wifi).capabilities.primary,
         CommandCenterCapability.wifi,
@@ -24,10 +24,29 @@ void main() {
       );
       expect(
         _project(
+          sessionKind: ControllerSessionKind.offline,
+        ).capabilities.primary,
+        CommandCenterCapability.offline,
+      );
+      expect(
+        _project(
           sessionKind: ControllerSessionKind.development,
         ).capabilities.primary,
         CommandCenterCapability.development,
       );
+    });
+
+    test('offline capability remains read-only', () {
+      final capabilities = CommandCenterModel.fromStatus(
+        const <String, dynamic>{'mode': 'OFFLINE'},
+        ControllerSessionKind.offline,
+        connected: false,
+        offline: true,
+      ).capabilities;
+
+      expect(capabilities.isOffline, isTrue);
+      expect(capabilities.supportsDiagnostics, isFalse);
+      expect(capabilities.supportsFirmwareUpdate, isFalse);
     });
 
     test('reports capability limits for the legacy BLE protocol', () {

@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
+import '../design_system.dart';
 import 'connection_health.dart';
 import 'connection_health_bar.dart';
 import 'controller_api.dart';
@@ -24,9 +25,16 @@ typedef RunControllerAction =
     });
 
 class ControllerShell extends StatefulWidget {
-  const ControllerShell({super.key, required this.session});
+  const ControllerShell({
+    super.key,
+    required this.session,
+    this.onOpenConnection,
+    this.disposeSession = true,
+  });
 
   final ControllerSession session;
+  final VoidCallback? onOpenConnection;
+  final bool disposeSession;
 
   @override
   State<ControllerShell> createState() => _ControllerShellState();
@@ -43,18 +51,36 @@ class _ControllerShellState extends State<ControllerShell>
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
-    unawaited(session.connect());
+    if (widget.disposeSession) _activateSessionForCurrentLifecycle();
+  }
+
+  @override
+  void didUpdateWidget(ControllerShell oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (identical(oldWidget.session, session)) return;
+    if (oldWidget.disposeSession) oldWidget.session.dispose();
+    if (widget.disposeSession) _activateSessionForCurrentLifecycle();
+  }
+
+  void _activateSessionForCurrentLifecycle() {
+    final lifecycleState = WidgetsBinding.instance.lifecycleState;
+    final resumed =
+        lifecycleState == null || lifecycleState == AppLifecycleState.resumed;
+    session.setAppActive(resumed);
+    if (resumed) unawaited(session.connect());
   }
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
-    session.setAppActive(state == AppLifecycleState.resumed);
+    if (widget.disposeSession) {
+      session.setAppActive(state == AppLifecycleState.resumed);
+    }
   }
 
   @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
-    session.dispose();
+    if (widget.disposeSession) session.dispose();
     super.dispose();
   }
 
@@ -208,7 +234,7 @@ class _ControllerShellState extends State<ControllerShell>
   List<Widget> _sectionViews() {
     return [
       _ActiveSessionView(
-        key: const ValueKey(_ControllerSection.dashboard),
+        key: ValueKey((_ControllerSection.dashboard, session)),
         session: session,
         active: _section == _ControllerSection.dashboard,
         builder: (context, session) => DashboardView(
@@ -218,7 +244,7 @@ class _ControllerShellState extends State<ControllerShell>
         ),
       ),
       _ActiveSessionView(
-        key: const ValueKey(_ControllerSection.control),
+        key: ValueKey((_ControllerSection.control, session)),
         session: session,
         active: _section == _ControllerSection.control,
         builder: (context, session) => ControlHubView(
@@ -228,7 +254,7 @@ class _ControllerShellState extends State<ControllerShell>
         ),
       ),
       _ActiveSessionView(
-        key: const ValueKey(_ControllerSection.automation),
+        key: ValueKey((_ControllerSection.automation, session)),
         session: session,
         active: _section == _ControllerSection.automation,
         builder: (context, session) => session.isLegacyBluetooth
@@ -242,7 +268,7 @@ class _ControllerShellState extends State<ControllerShell>
             : AutomationCenterView(session: session, runAction: _runAction),
       ),
       _ActiveSessionView(
-        key: const ValueKey(_ControllerSection.insights),
+        key: ValueKey((_ControllerSection.insights, session)),
         session: session,
         active: _section == _ControllerSection.insights,
         builder: (context, session) => session.isLegacyBluetooth
@@ -260,13 +286,14 @@ class _ControllerShellState extends State<ControllerShell>
               ),
       ),
       _ActiveSessionView(
-        key: const ValueKey(_ControllerSection.settings),
+        key: ValueKey((_ControllerSection.settings, session)),
         session: session,
         active: _section == _ControllerSection.settings,
         builder: (context, session) => SettingsHubView(
           session: session,
           runAction: _runAction,
           ensureAdmin: _ensureAdmin,
+          onOpenConnection: widget.onOpenConnection,
         ),
       ),
     ];
@@ -292,7 +319,12 @@ class _ControllerShellState extends State<ControllerShell>
           await _ensureAdmin();
         }
       case _HeaderAction.connection:
-        if (mounted) Navigator.of(context).pop();
+        final openConnection = widget.onOpenConnection;
+        if (openConnection != null) {
+          openConnection();
+        } else if (mounted && Navigator.of(context).canPop()) {
+          Navigator.of(context).pop();
+        }
     }
   }
 
@@ -355,6 +387,35 @@ class _ControllerShellState extends State<ControllerShell>
                 ),
               ],
             ),
+          ),
+          ListenableBuilder(
+            listenable: session,
+            builder: (context, _) {
+              final colors = Theme.of(context).colorScheme;
+              final online = session.connectionHealth.isOnline;
+              final icon = online
+                  ? switch (session.sessionKind) {
+                      ControllerSessionKind.bluetooth =>
+                        Icons.bluetooth_connected_rounded,
+                      ControllerSessionKind.wifi => Icons.wifi_rounded,
+                      ControllerSessionKind.offline => Icons.history_rounded,
+                      ControllerSessionKind.development =>
+                        Icons.science_rounded,
+                    }
+                  : Icons.link_off_rounded;
+              return IconButton(
+                key: const Key('connection-center-button'),
+                tooltip: 'Połączenia Wi‑Fi i Bluetooth',
+                onPressed: widget.onOpenConnection,
+                icon: Badge(
+                  backgroundColor: online
+                      ? context.statusColors.success
+                      : colors.outline,
+                  smallSize: 9,
+                  child: Icon(icon),
+                ),
+              );
+            },
           ),
           const SizedBox(width: 4),
         ],
@@ -534,6 +595,7 @@ class _ControllerHeader extends StatelessWidget {
         status.section('network').text('ip', 'akwarium.local');
     final (transportIcon, transportLabel) = switch (session.sessionKind) {
       ControllerSessionKind.bluetooth => (Icons.bluetooth_rounded, 'BLE'),
+      ControllerSessionKind.offline => (Icons.history_rounded, 'Offline'),
       ControllerSessionKind.development => (Icons.science_outlined, 'DEV'),
       ControllerSessionKind.wifi => (Icons.wifi_rounded, 'Wi‑Fi'),
     };
@@ -556,7 +618,8 @@ class _ControllerHeader extends StatelessWidget {
       ControllerConnectionPhase.connecting => colors.tertiary,
       ControllerConnectionPhase.online => colors.primary,
       ControllerConnectionPhase.reconnecting => colors.tertiary,
-      ControllerConnectionPhase.offline => colors.error,
+      ControllerConnectionPhase.offline =>
+        session.isOfflineMode ? colors.outline : colors.error,
     };
     return LayoutBuilder(
       builder: (context, constraints) {

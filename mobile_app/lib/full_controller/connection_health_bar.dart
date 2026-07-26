@@ -73,16 +73,23 @@ class _ControllerConnectionHealthBarState
       ControllerConnectionPhase.online => colors.primary,
       ControllerConnectionPhase.connecting => colors.tertiary,
       ControllerConnectionPhase.reconnecting => colors.tertiary,
-      ControllerConnectionPhase.offline => colors.error,
+      ControllerConnectionPhase.offline =>
+        widget.session.isOfflineMode ? colors.outline : colors.error,
     };
     final detail = switch (health.phase) {
       ControllerConnectionPhase.connecting =>
         'Nawiązywanie pierwszego połączenia ze sterownikiem',
       ControllerConnectionPhase.online => 'Telemetria jest aktualizowana',
       ControllerConnectionPhase.reconnecting =>
-        'Zachowano ostatnie dane · próba ${health.failedAttempts + 1}',
+        widget.session.automaticReconnect
+            ? 'Zachowano ostatnie dane · próba ${health.failedAttempts + 1}'
+            : 'Zachowano ostatnie dane · automatyczne łączenie wyłączone',
       ControllerConnectionPhase.offline =>
-        'Sterownik nie odpowiada · ponawianie automatyczne',
+        widget.session.isOfflineMode
+            ? 'Lokalny podgląd · wybierz połączenie w prawym górnym rogu'
+            : widget.session.automaticReconnect
+            ? 'Sterownik nie odpowiada · ponawianie automatyczne'
+            : 'Sterownik nie odpowiada · automatyczne łączenie wyłączone',
     };
 
     return Semantics(
@@ -109,6 +116,7 @@ class _ControllerConnectionHealthBarState
                   detail: detail,
                   tone: tone,
                   busy: widget.session.busy,
+                  canRetry: !widget.session.isOfflineMode,
                   onRetry: () => unawaited(widget.session.connect()),
                 );
                 final metrics = _ConnectionMetrics(health: health);
@@ -141,6 +149,7 @@ class _StatusSummary extends StatelessWidget {
     required this.detail,
     required this.tone,
     required this.busy,
+    required this.canRetry,
     required this.onRetry,
   });
 
@@ -148,6 +157,7 @@ class _StatusSummary extends StatelessWidget {
   final String detail;
   final Color tone;
   final bool busy;
+  final bool canRetry;
   final VoidCallback onRetry;
 
   @override
@@ -190,7 +200,7 @@ class _StatusSummary extends StatelessWidget {
         ),
         const SizedBox(width: 8),
         IconButton(
-          onPressed: busy ? null : onRetry,
+          onPressed: busy || !canRetry ? null : onRetry,
           tooltip: health.isOnline ? 'Odśwież połączenie' : 'Połącz ponownie',
           icon: busy
               ? const SizedBox.square(

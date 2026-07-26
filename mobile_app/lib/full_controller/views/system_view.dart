@@ -109,6 +109,7 @@ class _SystemViewState extends State<SystemView> {
     final eco = status.section('eco');
     final battery = status.section('battery');
     final firmwareData = status.section('firmware');
+    final hasStoredData = widget.session.hasStatusData;
     final blockers = eco
         .list('blockers')
         .map((item) => item.toString())
@@ -135,37 +136,62 @@ class _SystemViewState extends State<SystemView> {
             MetricTile(
               icon: Icons.power_settings_new_rounded,
               label: 'Profil zasilania',
-              value: system.text('powerMode', 'normal').toUpperCase(),
-              detail: 'Czas pracy ${formatUptime(system.integer('uptime'))}',
+              value: hasStoredData
+                  ? system.text('powerMode', '—').toUpperCase()
+                  : '—',
+              detail: hasStoredData
+                  ? 'Czas pracy ${formatUptime(system.integer('uptime'))}'
+                  : 'Brak zapisanego stanu',
             ),
             MetricTile(
               icon: Icons.bedtime_rounded,
               label: 'ECO',
-              value: eco.flag('safe_active') ? 'AKTYWNY' : 'OCZEKUJE',
-              detail: eco.flag('deep_ready')
+              value: !hasStoredData
+                  ? '—'
+                  : eco.flag('safe_active')
+                  ? 'AKTYWNY'
+                  : 'OCZEKUJE',
+              detail: !hasStoredData
+                  ? 'Brak zapisanego stanu'
+                  : eco.flag('deep_ready')
                   ? 'Deep sleep gotowy'
                   : 'Deep sleep zablokowany',
             ),
             MetricTile(
               icon: Icons.alarm_rounded,
               label: 'Następne wybudzenie',
-              value: eco.integer('wake_after_sec') > 0
+              value: !hasStoredData
+                  ? '—'
+                  : eco.integer('wake_after_sec') > 0
                   ? formatUptime(eco.integer('wake_after_sec'))
                   : '--',
-              detail: eco.flag('rtc_ready') ? 'RTC gotowy' : 'RTC niedostępny',
+              detail: !hasStoredData
+                  ? 'Brak zapisanego stanu'
+                  : eco.flag('rtc_ready')
+                  ? 'RTC gotowy'
+                  : 'RTC niedostępny',
             ),
           ],
         ),
         const SizedBox(height: 12),
         StatusBanner(
-          icon: blockers.isEmpty ? Icons.verified_rounded : Icons.block_rounded,
-          title: blockers.isEmpty
+          icon: !hasStoredData
+              ? Icons.history_toggle_off_rounded
+              : blockers.isEmpty
+              ? Icons.verified_rounded
+              : Icons.block_rounded,
+          title: !hasStoredData
+              ? 'Brak zapisanych danych ECO'
+              : blockers.isEmpty
               ? 'Brak blokad ECO'
               : '${blockers.length} blokad ECO',
-          message: blockers.isEmpty
+          message: !hasStoredData
+              ? 'Połącz sterownik, aby sprawdzić gotowość zasilania, RTC '
+                    'i bezpiecznego uśpienia.'
+              : blockers.isEmpty
               ? 'Sterownik może przejść w bezpieczny tryb oszczędzania energii.'
               : blockers.join(' · '),
-          isError: blockers.isNotEmpty,
+          isError: hasStoredData && blockers.isNotEmpty,
         ),
         const SectionHeader(
           title: 'Aktualizacja OTA',
@@ -187,7 +213,7 @@ class _SystemViewState extends State<SystemView> {
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
                           Text(
-                            'Firmware ${firmwareData.text('version', 'dev')}',
+                            'Firmware ${firmwareData.text('version', 'nieznane')}',
                             style: const TextStyle(
                               fontWeight: FontWeight.w800,
                               fontSize: 17,
@@ -249,30 +275,43 @@ class _SystemViewState extends State<SystemView> {
               children: [
                 InfoRow(
                   label: 'Wolny heap',
-                  value: formatBytes(
-                    system.integer('freeHeap', status.integer('heap_free')),
-                  ),
+                  value: hasStoredData
+                      ? formatBytes(
+                          system.integer(
+                            'freeHeap',
+                            status.integer('heap_free'),
+                          ),
+                        )
+                      : '—',
                 ),
                 InfoRow(
                   label: 'Największy blok',
-                  value: formatBytes(
-                    system.integer(
-                      'largestHeap',
-                      status.integer('heap_largest'),
-                    ),
-                  ),
+                  value: hasStoredData
+                      ? formatBytes(
+                          system.integer(
+                            'largestHeap',
+                            status.integer('heap_largest'),
+                          ),
+                        )
+                      : '—',
                 ),
                 InfoRow(
                   label: 'Pojemność SD',
-                  value: formatBytes(status.integer('sd_total_bytes')),
+                  value: hasStoredData
+                      ? formatBytes(status.integer('sd_total_bytes'))
+                      : '—',
                 ),
                 InfoRow(
                   label: 'Zajęte SD',
-                  value: formatBytes(status.integer('sd_used_bytes')),
+                  value: hasStoredData
+                      ? formatBytes(status.integer('sd_used_bytes'))
+                      : '—',
                 ),
                 InfoRow(
                   label: 'Wolne SD',
-                  value: formatBytes(status.integer('sd_free_bytes')),
+                  value: hasStoredData
+                      ? formatBytes(status.integer('sd_free_bytes'))
+                      : '—',
                 ),
               ],
             ),

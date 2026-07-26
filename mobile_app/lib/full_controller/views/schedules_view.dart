@@ -201,6 +201,8 @@ class _SchedulesViewState extends State<SchedulesView> {
 
   @override
   Widget build(BuildContext context) {
+    final canEdit = widget.session.canIssueCommands;
+    final hasStoredData = widget.session.hasStatusData;
     return ControllerPageBody(
       children: [
         SectionHeader(
@@ -213,21 +215,46 @@ class _SchedulesViewState extends State<SchedulesView> {
             tooltip: 'Przywróć dane sterownika',
           ),
         ),
-        _ScheduleTimeline(
-          light: light,
-          plant: plant,
-          filter: filter,
-          air: air,
-          heaterEnabled: heaterMode == 0,
-          feederEnabled: feederEnabled,
-          feedTime: feedTime,
-        ),
+        if (!canEdit) ...[
+          StatusBanner(
+            icon: Icons.visibility_rounded,
+            title: widget.session.hasCachedSnapshot
+                ? 'Harmonogram tylko do podglądu'
+                : 'Brak zapisanego harmonogramu',
+            message: widget.session.hasCachedSnapshot
+                ? widget.session.commandBlockReason ??
+                      'Połącz sterownik, aby edytować i zapisać plan dobowy.'
+                : 'Widoczny układ pokazuje dostępne funkcje, ale wartości '
+                      'formularza nie pochodzą ze sterownika.',
+            isError: false,
+          ),
+          const SizedBox(height: 10),
+        ],
+        if (hasStoredData)
+          _ScheduleTimeline(
+            light: light,
+            plant: plant,
+            filter: filter,
+            air: air,
+            heaterEnabled: heaterMode == 0,
+            feederEnabled: feederEnabled,
+            feedTime: feedTime,
+          )
+        else
+          const StatePanel.empty(
+            title: 'Brak zapisanej osi czasu',
+            message:
+                'Po pierwszej synchronizacji zobaczysz tutaj pełny plan dobowy.',
+            icon: Icons.calendar_month_outlined,
+          ),
         const SizedBox(height: 10),
         _ScheduleCard(
           title: 'Światło 1',
           icon: Icons.lightbulb_rounded,
           entry: light,
           profileEnabled: true,
+          enabled: canEdit,
+          dataAvailable: hasStoredData,
           onChanged: (value) => _edit(() => light = value),
         ),
         const SizedBox(height: 10),
@@ -236,6 +263,8 @@ class _SchedulesViewState extends State<SchedulesView> {
           icon: Icons.lightbulb_outline_rounded,
           entry: plant,
           profileEnabled: true,
+          enabled: canEdit,
+          dataAvailable: hasStoredData,
           onChanged: (value) => _edit(() => plant = value),
         ),
         const SizedBox(height: 10),
@@ -243,6 +272,8 @@ class _SchedulesViewState extends State<SchedulesView> {
           title: 'Filtr',
           icon: Icons.filter_alt_rounded,
           entry: filter,
+          enabled: canEdit,
+          dataAvailable: hasStoredData,
           onChanged: (value) => _edit(() => filter = value),
         ),
         const SizedBox(height: 10),
@@ -250,6 +281,8 @@ class _SchedulesViewState extends State<SchedulesView> {
           title: 'Napowietrzanie',
           icon: Icons.air_rounded,
           entry: air,
+          enabled: canEdit,
+          dataAvailable: hasStoredData,
           onChanged: (value) => _edit(() => air = value),
         ),
         const SizedBox(height: 10),
@@ -274,7 +307,7 @@ class _SchedulesViewState extends State<SchedulesView> {
                 ),
                 const SizedBox(height: 10),
                 DropdownButtonFormField<int>(
-                  initialValue: heaterMode,
+                  initialValue: hasStoredData ? heaterMode : null,
                   isExpanded: true,
                   decoration: const InputDecoration(
                     labelText: 'Tryb termostatu',
@@ -291,8 +324,9 @@ class _SchedulesViewState extends State<SchedulesView> {
                     Text('Automatycznie', overflow: TextOverflow.ellipsis),
                     Text('Zawsze wyłączona', overflow: TextOverflow.ellipsis),
                   ],
-                  onChanged: (value) =>
-                      _edit(() => heaterMode = value ?? heaterMode),
+                  onChanged: canEdit
+                      ? (value) => _edit(() => heaterMode = value ?? heaterMode)
+                      : null,
                 ),
               ],
             ),
@@ -304,18 +338,28 @@ class _SchedulesViewState extends State<SchedulesView> {
             padding: const EdgeInsets.all(16),
             child: Column(
               children: [
-                LabeledSwitch(
-                  label: 'Automatyczny karmnik',
-                  subtitle: 'Jedna dawka dziennie zgodnie z logiką firmware.',
-                  value: feederEnabled,
-                  onChanged: (value) => _edit(() => feederEnabled = value),
-                ),
+                if (hasStoredData)
+                  LabeledSwitch(
+                    label: 'Automatyczny karmnik',
+                    subtitle: 'Jedna dawka dziennie zgodnie z logiką firmware.',
+                    value: feederEnabled,
+                    onChanged: canEdit
+                        ? (value) => _edit(() => feederEnabled = value)
+                        : null,
+                  )
+                else
+                  const ListTile(
+                    contentPadding: EdgeInsets.zero,
+                    leading: Icon(Icons.set_meal_outlined),
+                    title: Text('Automatyczny karmnik'),
+                    subtitle: Text('Brak zapisanego stanu'),
+                  ),
                 ListTile(
                   contentPadding: EdgeInsets.zero,
                   leading: const Icon(Icons.set_meal_rounded),
                   title: const Text('Godzina karmienia'),
                   trailing: TextButton(
-                    onPressed: feederEnabled
+                    onPressed: canEdit && feederEnabled
                         ? () async {
                             final selected = await showTimePicker(
                               context: context,
@@ -327,7 +371,7 @@ class _SchedulesViewState extends State<SchedulesView> {
                           }
                         : null,
                     child: Text(
-                      _timeText(feedTime),
+                      hasStoredData ? _timeText(feedTime) : '—',
                       style: const TextStyle(fontSize: 18),
                     ),
                   ),
@@ -349,7 +393,7 @@ class _SchedulesViewState extends State<SchedulesView> {
           const SizedBox(height: 12),
         ],
         SaveButton(
-          onPressed: _save,
+          onPressed: canEdit ? _save : null,
           label: 'Zapisz kompletny harmonogram',
           busy: saving,
         ),
@@ -780,6 +824,8 @@ class _ScheduleCard extends StatelessWidget {
     required this.entry,
     required this.onChanged,
     this.profileEnabled = false,
+    this.enabled = true,
+    required this.dataAvailable,
   });
 
   final String title;
@@ -787,6 +833,8 @@ class _ScheduleCard extends StatelessWidget {
   final _ScheduleEntry entry;
   final ValueChanged<_ScheduleEntry> onChanged;
   final bool profileEnabled;
+  final bool enabled;
+  final bool dataAvailable;
 
   Future<void> _pickTime(BuildContext context, bool start) async {
     final selected = await showTimePicker(
@@ -802,7 +850,7 @@ class _ScheduleCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final scheduled = entry.mode == 0;
+    final scheduled = dataAvailable && entry.mode == 0;
     return Card(
       child: Padding(
         padding: const EdgeInsets.all(16),
@@ -826,7 +874,7 @@ class _ScheduleCard extends StatelessWidget {
                   ],
                 );
                 final mode = DropdownButtonFormField<int>(
-                  initialValue: entry.mode,
+                  initialValue: dataAvailable ? entry.mode : null,
                   isExpanded: true,
                   decoration: const InputDecoration(
                     labelText: 'Tryb',
@@ -837,8 +885,10 @@ class _ScheduleCard extends StatelessWidget {
                     DropdownMenuItem(value: 1, child: Text('Zawsze ON')),
                     DropdownMenuItem(value: 2, child: Text('Zawsze OFF')),
                   ],
-                  onChanged: (value) =>
-                      onChanged(entry.copyWith(mode: value ?? entry.mode)),
+                  onChanged: enabled
+                      ? (value) =>
+                            onChanged(entry.copyWith(mode: value ?? entry.mode))
+                      : null,
                 );
                 if (constraints.maxWidth < 520) {
                   return Column(
@@ -858,7 +908,7 @@ class _ScheduleCard extends StatelessWidget {
             if (profileEnabled) ...[
               const SizedBox(height: 12),
               DropdownButtonFormField<String>(
-                initialValue: entry.profile,
+                initialValue: dataAvailable ? entry.profile : null,
                 isExpanded: true,
                 decoration: const InputDecoration(
                   labelText: 'Profil Aquael Day & Night',
@@ -888,22 +938,37 @@ class _ScheduleCard extends StatelessWidget {
                   Text('DAYBREAK', overflow: TextOverflow.ellipsis),
                   Text('NIGHT', overflow: TextOverflow.ellipsis),
                 ],
-                onChanged: (value) =>
-                    onChanged(entry.copyWith(profile: value ?? entry.profile)),
+                onChanged: enabled
+                    ? (value) => onChanged(
+                        entry.copyWith(profile: value ?? entry.profile),
+                      )
+                    : null,
               ),
             ],
             const SizedBox(height: 12),
             LayoutBuilder(
               builder: (context, constraints) {
                 final startButton = OutlinedButton.icon(
-                  onPressed: scheduled ? () => _pickTime(context, true) : null,
+                  onPressed: enabled && scheduled
+                      ? () => _pickTime(context, true)
+                      : null,
                   icon: const Icon(Icons.play_arrow_rounded),
-                  label: Text('Start ${_timeText(entry.start)}'),
+                  label: Text(
+                    dataAvailable
+                        ? 'Start ${_timeText(entry.start)}'
+                        : 'Start —',
+                  ),
                 );
                 final endButton = OutlinedButton.icon(
-                  onPressed: scheduled ? () => _pickTime(context, false) : null,
+                  onPressed: enabled && scheduled
+                      ? () => _pickTime(context, false)
+                      : null,
                   icon: const Icon(Icons.stop_rounded),
-                  label: Text('Koniec ${_timeText(entry.end)}'),
+                  label: Text(
+                    dataAvailable
+                        ? 'Koniec ${_timeText(entry.end)}'
+                        : 'Koniec —',
+                  ),
                 );
                 if (constraints.maxWidth < 400) {
                   return Column(

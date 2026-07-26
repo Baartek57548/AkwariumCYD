@@ -19,11 +19,17 @@ class BleScannerPage extends StatefulWidget {
     this.permissionRequester,
     this.scanStarter,
     this.devicePageBuilder,
+    this.returnSession = false,
+    this.initialStatus,
+    this.cachedAt,
   });
 
   final BlePermissionRequester? permissionRequester;
   final BleScanStarter? scanStarter;
   final BleDevicePageBuilder? devicePageBuilder;
+  final bool returnSession;
+  final Map<String, dynamic>? initialStatus;
+  final DateTime? cachedAt;
 
   @override
   State<BleScannerPage> createState() => _BleScannerPageState();
@@ -184,21 +190,30 @@ class _BleScannerPageState extends State<BleScannerPage> {
       final name = device.name.trim().isEmpty
           ? 'AquaCYD BLE'
           : device.name.trim();
+      final pageBuilder = widget.devicePageBuilder;
+      if (pageBuilder != null) {
+        await Navigator.of(
+          context,
+        ).push(MaterialPageRoute<void>(builder: (_) => pageBuilder(device)));
+        return;
+      }
+
+      final transport = BleControllerTransport(
+        deviceId: device.id,
+        deviceName: name,
+      );
+      final session = ControllerSession.bluetooth(
+        BleRemoteApi(transport),
+        initialStatus: widget.initialStatus,
+        cachedAt: widget.cachedAt,
+      );
+      if (widget.returnSession) {
+        Navigator.of(context).pop<ControllerSession>(session);
+        return;
+      }
       await Navigator.of(context).push(
         MaterialPageRoute<void>(
-          builder: (_) {
-            final pageBuilder = widget.devicePageBuilder;
-            if (pageBuilder != null) {
-              return pageBuilder(device);
-            }
-            final transport = BleControllerTransport(
-              deviceId: device.id,
-              deviceName: name,
-            );
-            return ControllerShell(
-              session: ControllerSession.bluetooth(BleRemoteApi(transport)),
-            );
-          },
+          builder: (_) => ControllerShell(session: session),
         ),
       );
     } catch (error) {

@@ -26,9 +26,10 @@ class _SettingsViewState extends State<SettingsView> {
   final networkForm = GlobalKey<FormState>();
   late final TextEditingController ssid;
   late final TextEditingController password;
-  late bool autoBrightness;
-  late int brightness;
-  late String displayProfile;
+  bool? autoBrightness;
+  int? brightness;
+  String? displayProfile;
+  bool _networkConfigurationLoaded = false;
   final Set<String> busy = {};
   String? message;
 
@@ -40,10 +41,41 @@ class _SettingsViewState extends State<SettingsView> {
     final display = status.section('display');
     ssid = TextEditingController(text: network.text('configuredStaSsid'));
     password = TextEditingController();
-    autoBrightness = display.flag('autoBrightness', true);
-    brightness = display.integer('brightness', 100).clamp(10, 100);
-    displayProfile = display.text('profile', 'always_on');
+    _networkConfigurationLoaded = network.containsKey('configuredStaSsid');
+    _readDisplayConfiguration(display);
   }
+
+  @override
+  void didUpdateWidget(SettingsView oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    final status = widget.session.status;
+    final network = status.section('network');
+    if (!_networkConfigurationLoaded &&
+        network.containsKey('configuredStaSsid')) {
+      ssid.text = network.text('configuredStaSsid');
+      _networkConfigurationLoaded = true;
+    }
+    if (!_hasDisplayConfiguration) {
+      _readDisplayConfiguration(status.section('display'));
+    }
+  }
+
+  void _readDisplayConfiguration(JsonMap display) {
+    if (display.containsKey('autoBrightness')) {
+      autoBrightness = display.flag('autoBrightness');
+    }
+    final configuredBrightness = display.nullableNumber('brightness');
+    if (configuredBrightness != null) {
+      brightness = configuredBrightness.round().clamp(10, 100);
+    }
+    final profile = display['profile']?.toString();
+    if (const {'always_on', 'timeout_60s', 'always_off'}.contains(profile)) {
+      displayProfile = profile;
+    }
+  }
+
+  bool get _hasDisplayConfiguration =>
+      autoBrightness != null && brightness != null && displayProfile != null;
 
   @override
   void dispose() {
@@ -80,13 +112,14 @@ class _SettingsViewState extends State<SettingsView> {
   }
 
   Future<void> _saveDisplay() async {
+    if (!_hasDisplayConfiguration) return;
     await _execute('display', () async {
       final result = await widget.runAction(
         'save_display',
         payload: {
-          'autoBrightness': autoBrightness,
-          'profile': displayProfile,
-          'brightness': brightness,
+          'autoBrightness': autoBrightness!,
+          'profile': displayProfile!,
+          'brightness': brightness!,
         },
       );
       if (mounted) setState(() => message = result.message);
@@ -112,12 +145,29 @@ class _SettingsViewState extends State<SettingsView> {
     final clock = status.section('clock');
     final display = status.section('display');
     final firmware = status.section('firmware');
+    final canEdit = widget.session.canIssueCommands;
+    final hasDisplayConfiguration = _hasDisplayConfiguration;
     return ControllerPageBody(
       children: [
         const SectionHeader(
           title: 'Ustawienia urządzenia',
           description: 'Sieć, ekran CYD, zegar oraz operacje administracyjne.',
         ),
+        if (!canEdit) ...[
+          StatusBanner(
+            icon: Icons.visibility_rounded,
+            title: widget.session.hasCachedSnapshot
+                ? 'Konfiguracja tylko do podglądu'
+                : 'Brak zapisanej konfiguracji',
+            message: widget.session.hasCachedSnapshot
+                ? widget.session.commandBlockReason ??
+                      'Połącz sterownik, aby zmieniać konfigurację urządzenia.'
+                : 'Aplikacja pokazuje komplet dostępnych ustawień, ale nie '
+                      'wypełnia ich fikcyjnymi danymi urządzenia.',
+            isError: false,
+          ),
+          const SizedBox(height: 10),
+        ],
         Card(
           child: ExpansionTile(
             initiallyExpanded: true,
@@ -149,6 +199,7 @@ class _SettingsViewState extends State<SettingsView> {
                     const SizedBox(height: 10),
                     TextFormField(
                       controller: ssid,
+                      enabled: canEdit,
                       maxLength: 32,
                       decoration: const InputDecoration(
                         labelText: 'SSID profilu STA',
@@ -165,6 +216,7 @@ class _SettingsViewState extends State<SettingsView> {
                     ),
                     TextFormField(
                       controller: password,
+                      enabled: canEdit,
                       obscureText: true,
                       maxLength: 63,
                       decoration: const InputDecoration(
@@ -183,7 +235,7 @@ class _SettingsViewState extends State<SettingsView> {
                     ),
                     const SizedBox(height: 10),
                     SaveButton(
-                      onPressed: _saveNetwork,
+                      onPressed: canEdit ? _saveNetwork : null,
                       label: 'Zapisz profil STA',
                       busy: busy.contains('network'),
                     ),
@@ -192,7 +244,7 @@ class _SettingsViewState extends State<SettingsView> {
                       children: [
                         Expanded(
                           child: OutlinedButton.icon(
-                            onPressed: busy.contains('wifi')
+                            onPressed: !canEdit || busy.contains('wifi')
                                 ? null
                                 : () => _execute('wifi', () async {
                                     await widget.runAction(
@@ -206,7 +258,7 @@ class _SettingsViewState extends State<SettingsView> {
                         const SizedBox(width: 10),
                         Expanded(
                           child: OutlinedButton.icon(
-                            onPressed: busy.contains('wifi')
+                            onPressed: !canEdit || busy.contains('wifi')
                                 ? null
                                 : () => _execute('wifi', () async {
                                     await widget.runAction(
@@ -236,63 +288,84 @@ class _SettingsViewState extends State<SettingsView> {
               style: TextStyle(fontWeight: FontWeight.w800),
             ),
             subtitle: Text(
-              '${display.integer('appliedBrightness', brightness)}% · ${_profileLabel(displayProfile)}',
+              hasDisplayConfiguration
+                  ? '${display.integer('appliedBrightness', brightness!)}% · ${_profileLabel(displayProfile!)}'
+                  : 'Brak zapisanego stanu',
             ),
             childrenPadding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
             children: [
-              DropdownButtonFormField<String>(
-                initialValue: displayProfile,
-                decoration: const InputDecoration(
-                  labelText: 'Profil zasilania ekranu',
-                  border: OutlineInputBorder(),
+              if (!hasDisplayConfiguration)
+                const StatusBanner(
+                  icon: Icons.cloud_download_outlined,
+                  title: 'Brak zapisanej konfiguracji ekranu',
+                  message:
+                      'Profil zasilania, automatyczna jasność i limit podświetlenia pojawią się po pierwszej synchronizacji.',
+                  isError: false,
+                )
+              else ...[
+                DropdownButtonFormField<String>(
+                  initialValue: displayProfile!,
+                  decoration: const InputDecoration(
+                    labelText: 'Profil zasilania ekranu',
+                    border: OutlineInputBorder(),
+                  ),
+                  items: const [
+                    DropdownMenuItem(
+                      value: 'always_on',
+                      child: Text('Zawsze włączony'),
+                    ),
+                    DropdownMenuItem(
+                      value: 'timeout_60s',
+                      child: Text('Wygaszanie po 60 sekundach'),
+                    ),
+                    DropdownMenuItem(
+                      value: 'always_off',
+                      child: Text('Zawsze wyłączony'),
+                    ),
+                  ],
+                  onChanged: canEdit
+                      ? (value) {
+                          if (value != null) {
+                            setState(() => displayProfile = value);
+                          }
+                        }
+                      : null,
                 ),
-                items: const [
-                  DropdownMenuItem(
-                    value: 'always_on',
-                    child: Text('Zawsze włączony'),
-                  ),
-                  DropdownMenuItem(
-                    value: 'timeout_60s',
-                    child: Text('Wygaszanie po 60 sekundach'),
-                  ),
-                  DropdownMenuItem(
-                    value: 'always_off',
-                    child: Text('Zawsze wyłączony'),
-                  ),
-                ],
-                onChanged: (value) =>
-                    setState(() => displayProfile = value ?? displayProfile),
-              ),
-              LabeledSwitch(
-                label: 'Automatyczna jasność',
-                subtitle:
-                    'LDR skaluje podświetlenie od 15% do ustawionego maksimum.',
-                value: autoBrightness,
-                onChanged: (value) => setState(() => autoBrightness = value),
-              ),
-              Row(
-                children: [
-                  const Expanded(child: Text('Maksymalna jasność')),
-                  Text(
-                    '$brightness%',
-                    style: const TextStyle(fontWeight: FontWeight.w800),
-                  ),
-                ],
-              ),
-              Slider(
-                value: brightness.toDouble(),
-                min: 10,
-                max: 100,
-                divisions: 18,
-                label: '$brightness%',
-                onChanged: (value) =>
-                    setState(() => brightness = (value / 5).round() * 5),
-              ),
-              SaveButton(
-                onPressed: _saveDisplay,
-                label: 'Zapisz ustawienia ekranu',
-                busy: busy.contains('display'),
-              ),
+                LabeledSwitch(
+                  label: 'Automatyczna jasność',
+                  subtitle:
+                      'LDR skaluje podświetlenie od 15% do ustawionego maksimum.',
+                  value: autoBrightness!,
+                  onChanged: canEdit
+                      ? (value) => setState(() => autoBrightness = value)
+                      : null,
+                ),
+                Row(
+                  children: [
+                    const Expanded(child: Text('Maksymalna jasność')),
+                    Text(
+                      '${brightness!}%',
+                      style: const TextStyle(fontWeight: FontWeight.w800),
+                    ),
+                  ],
+                ),
+                Slider(
+                  value: brightness!.toDouble(),
+                  min: 10,
+                  max: 100,
+                  divisions: 18,
+                  label: '${brightness!}%',
+                  onChanged: canEdit
+                      ? (value) =>
+                            setState(() => brightness = (value / 5).round() * 5)
+                      : null,
+                ),
+                SaveButton(
+                  onPressed: canEdit ? _saveDisplay : null,
+                  label: 'Zapisz ustawienia ekranu',
+                  busy: busy.contains('display'),
+                ),
+              ],
             ],
           ),
         ),
@@ -318,7 +391,7 @@ class _SettingsViewState extends State<SettingsView> {
                 children: [
                   Expanded(
                     child: OutlinedButton.icon(
-                      onPressed: busy.contains('clock')
+                      onPressed: !canEdit || busy.contains('clock')
                           ? null
                           : _setBrowserTime,
                       icon: const Icon(Icons.phone_android_rounded),
@@ -328,7 +401,7 @@ class _SettingsViewState extends State<SettingsView> {
                   const SizedBox(width: 10),
                   Expanded(
                     child: OutlinedButton.icon(
-                      onPressed: busy.contains('clock')
+                      onPressed: !canEdit || busy.contains('clock')
                           ? null
                           : () => _execute('clock', () async {
                               await widget.runAction('sync_time_ntp');
@@ -354,14 +427,14 @@ class _SettingsViewState extends State<SettingsView> {
               style: TextStyle(fontWeight: FontWeight.w800),
             ),
             subtitle: Text(
-              'Firmware ${firmware.text('version', 'dev')} · operacje nieodwracalne',
+              'Firmware ${firmware.text('version', 'nieznane')} · operacje nieodwracalne',
             ),
             childrenPadding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
             children: [
               SizedBox(
                 width: double.infinity,
                 child: OutlinedButton.icon(
-                  onPressed: busy.contains('device')
+                  onPressed: !canEdit || busy.contains('device')
                       ? null
                       : () => _execute('device', () async {
                           await widget.runAction(
@@ -379,7 +452,7 @@ class _SettingsViewState extends State<SettingsView> {
               SizedBox(
                 width: double.infinity,
                 child: FilledButton.tonalIcon(
-                  onPressed: busy.contains('device')
+                  onPressed: !canEdit || busy.contains('device')
                       ? null
                       : () => _execute('device', () async {
                           await widget.runAction(

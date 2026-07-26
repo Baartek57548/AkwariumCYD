@@ -8,7 +8,7 @@ import 'connection_health.dart';
 import 'data_access.dart';
 import 'history_data.dart';
 
-enum ControllerSessionKind { wifi, bluetooth, development }
+enum ControllerSessionKind { wifi, bluetooth, offline, development }
 
 class ControllerSession extends ChangeNotifier {
   static const Duration _onlinePollInterval = Duration(seconds: 3);
@@ -20,26 +20,51 @@ class ControllerSession extends ChangeNotifier {
   static const int _maximumCachedArchives = 2;
   static const int _maximumArchiveBytes = 8 * 1024 * 1024;
 
-  ControllerSession.wifi(ControllerRemoteApi api)
-    : kind = ControllerSessionKind.wifi,
-      _api = api,
-      _status = <String, dynamic>{};
+  ControllerSession.wifi(
+    ControllerRemoteApi api, {
+    JsonMap? initialStatus,
+    DateTime? cachedAt,
+  }) : kind = ControllerSessionKind.wifi,
+       _api = api,
+       _offlineMode = false,
+       _status = initialStatus ?? _createOfflineStatus() {
+    _lastUpdate = cachedAt;
+  }
 
-  ControllerSession.bluetooth(ControllerRemoteApi api)
-    : kind = ControllerSessionKind.bluetooth,
-      _api = api,
-      _status = <String, dynamic>{};
+  ControllerSession.bluetooth(
+    ControllerRemoteApi api, {
+    JsonMap? initialStatus,
+    DateTime? cachedAt,
+  }) : kind = ControllerSessionKind.bluetooth,
+       _api = api,
+       _offlineMode = false,
+       _status = initialStatus ?? _createOfflineStatus() {
+    _lastUpdate = cachedAt;
+  }
 
   ControllerSession.development()
     : kind = ControllerSessionKind.development,
       _api = null,
+      _offlineMode = false,
       _status = _createDevelopmentStatus() {
     _logs = _createDevelopmentLogs();
     _diagnostics = _createDevelopmentDiagnostics();
   }
 
+  ControllerSession.offline({JsonMap? cachedStatus, DateTime? cachedAt})
+    : kind = ControllerSessionKind.offline,
+      _api = null,
+      _offlineMode = true,
+      _status = cachedStatus == null || cachedStatus.isEmpty
+          ? _createOfflineStatus()
+          : cachedStatus {
+    _lastUpdate = cachedAt;
+    _connectionPhase = ControllerConnectionPhase.offline;
+  }
+
   final ControllerSessionKind kind;
   final ControllerRemoteApi? _api;
+  final bool _offlineMode;
   JsonMap _status;
   JsonMap _logs = <String, dynamic>{};
   JsonMap _diagnostics = <String, dynamic>{};
@@ -59,6 +84,8 @@ class ControllerSession extends ChangeNotifier {
   String? _activeAction;
   bool _connected = false;
   bool _appActive = true;
+  bool _automaticReconnect = true;
+  bool _hasCompletedInitialRefresh = false;
   bool _disposed = false;
   int _busyOperations = 0;
   int _failedPolls = 0;
@@ -70,8 +97,16 @@ class ControllerSession extends ChangeNotifier {
 
   ControllerSessionKind get sessionKind => kind;
   bool get isDevelopment => kind == ControllerSessionKind.development;
+  bool get isSimulation => isDevelopment && !_offlineMode;
+  bool get isOfflineMode => _offlineMode;
+  bool get hasCachedSnapshot => _lastUpdate != null;
+  bool get hasStatusData =>
+      isSimulation ||
+      hasCachedSnapshot ||
+      _connectionPhase == ControllerConnectionPhase.online;
   bool get isBluetooth => kind == ControllerSessionKind.bluetooth;
   bool get connected => _connected;
+  bool get automaticReconnect => _automaticReconnect;
   bool get busy => _busyOperations > 0;
   bool get isAdmin => _adminPin != null;
   String? get error => _error;
@@ -84,11 +119,14 @@ class ControllerSession extends ChangeNotifier {
   JsonMap get logsData => _logs;
   JsonMap get diagnostics => _diagnostics;
   List<dynamic> get historyFiles => List.unmodifiable(_historyFiles);
-  String get displayName => switch (kind) {
-    ControllerSessionKind.development => 'AquaCYD DEV',
-    ControllerSessionKind.bluetooth => 'AquaCYD BLE',
-    ControllerSessionKind.wifi => 'AquaCYD Wi-Fi',
-  };
+  String get displayName => _offlineMode
+      ? 'AquaCYD offline'
+      : switch (kind) {
+          ControllerSessionKind.development => 'AquaCYD DEV',
+          ControllerSessionKind.offline => 'AquaCYD offline',
+          ControllerSessionKind.bluetooth => 'AquaCYD BLE',
+          ControllerSessionKind.wifi => 'AquaCYD Wi-Fi',
+        };
   Uri? get baseUri => _api?.baseUri;
   ControllerConnectionHealth get connectionHealth => ControllerConnectionHealth(
     phase: _connectionPhase,
@@ -98,13 +136,15 @@ class ControllerSession extends ChangeNotifier {
     lastSync: _lastUpdate,
   );
   bool get supportsFirmwareUpload =>
-      isDevelopment || (_api?.supportsFirmwareUpload ?? false);
+      isSimulation ||
+      (canIssueCommands && (_api?.supportsFirmwareUpload ?? false));
   bool get supportsFileDownload =>
-      isDevelopment || (_api?.supportsFileDownload ?? false);
+      _offlineMode || isSimulation || (_api?.supportsFileDownload ?? false);
   bool get isLegacyBluetooth =>
       isBluetooth && _status.text('mode').toUpperCase() == 'BLE_V1';
   bool get supportsAdvancedConfiguration => isDevelopment || !isLegacyBluetooth;
   bool get telemetryIsFresh {
+    if (_offlineMode) return false;
     if (isDevelopment) return true;
     final updatedAt = _lastUpdate;
     if (!_connected ||
@@ -116,10 +156,17 @@ class ControllerSession extends ChangeNotifier {
     return !age.isNegative && age <= _commandFreshnessLimit;
   }
 
-  bool get canIssueCommands => isDevelopment || telemetryIsFresh;
+  bool get canIssueCommands => isSimulation || telemetryIsFresh;
 
   String? get commandBlockReason {
     if (canIssueCommands) return null;
+    if (_offlineMode) {
+      return hasCachedSnapshot
+          ? 'Pracujesz na ostatnio zapisanych danych. Połącz sterownik przez '
+                'Wi‑Fi albo Bluetooth, aby wysyłać polecenia.'
+          : 'Brak połączenia i zapisanych danych sterownika. Połącz Wi‑Fi '
+                'albo Bluetooth, aby pobrać stan i wysyłać polecenia.';
+    }
     if (_connectionPhase == ControllerConnectionPhase.connecting) {
       return 'Poczekaj na pierwszą synchronizację ze sterownikiem.';
     }
@@ -148,6 +195,13 @@ class ControllerSession extends ChangeNotifier {
   }
 
   Future<void> _performConnect({required bool reportBusy}) async {
+    if (_offlineMode) {
+      _connected = false;
+      _connectionPhase = ControllerConnectionPhase.offline;
+      _error = null;
+      _notifySafely();
+      return;
+    }
     _error = null;
     _connectionPhase = _lastUpdate == null
         ? ControllerConnectionPhase.connecting
@@ -167,7 +221,10 @@ class ControllerSession extends ChangeNotifier {
       }
 
       await _api!.connect();
-      await refresh(includeHistory: _status.isEmpty, reportBusy: false);
+      await refresh(
+        includeHistory: !_hasCompletedInitialRefresh,
+        reportBusy: false,
+      );
       if (!_connected) return;
 
       if (_api.supportsWebSession) {
@@ -189,6 +246,12 @@ class ControllerSession extends ChangeNotifier {
 
   Future<void> refresh({bool includeHistory = false, bool reportBusy = true}) {
     if (_disposed) return Future<void>.value();
+    if (_offlineMode) {
+      _connected = false;
+      _connectionPhase = ControllerConnectionPhase.offline;
+      _notifySafely();
+      return Future<void>.value();
+    }
     if (isDevelopment) {
       _lastUpdate = DateTime.now();
       _lastRoundTrip = Duration.zero;
@@ -236,7 +299,9 @@ class ControllerSession extends ChangeNotifier {
     try {
       final next = await _api!.status(includeHistory: includeHistory);
       if (_disposed) return;
+      if (!includeHistory) _preserveHistory(_status, next);
       _status = next;
+      _hasCompletedInitialRefresh = true;
       _connected = true;
       _failedPolls = 0;
       _error = null;
@@ -279,26 +344,59 @@ class ControllerSession extends ChangeNotifier {
       return;
     }
 
+    if (_offlineMode) {
+      _connectionPhase = ControllerConnectionPhase.offline;
+      _notifySafely();
+      return;
+    }
     if (isDevelopment) {
       _startDevelopmentTicker();
       _tickDevelopment();
       return;
     }
 
-    unawaited(
-      (_connectionPhase == ControllerConnectionPhase.online
-              ? refresh(reportBusy: false)
-              : connect(reportBusy: false))
-          .whenComplete(_schedulePoll),
-    );
-    if (_api!.supportsWebSession) {
+    if (_connectionPhase == ControllerConnectionPhase.online) {
+      unawaited(refresh(reportBusy: false).whenComplete(_schedulePoll));
+    } else if (_automaticReconnect) {
+      unawaited(connect(reportBusy: false).whenComplete(_schedulePoll));
+    } else {
+      _pollTimer?.cancel();
+      _pollTimer = null;
+    }
+    if (_connectionPhase == ControllerConnectionPhase.online &&
+        _api!.supportsWebSession) {
       unawaited(_sendWebSessionHeartbeat());
       _scheduleHeartbeat();
+    } else {
+      _webSessionTimer?.cancel();
+      _webSessionTimer = null;
     }
   }
 
+  void setAutomaticReconnect(bool enabled) {
+    if (_disposed || _offlineMode || isDevelopment) return;
+    if (_automaticReconnect == enabled) return;
+    _automaticReconnect = enabled;
+    if (!enabled && _connectionPhase != ControllerConnectionPhase.online) {
+      _pollTimer?.cancel();
+      _pollTimer = null;
+      _webSessionTimer?.cancel();
+      _webSessionTimer = null;
+      _notifySafely();
+      return;
+    }
+    if (enabled &&
+        _appActive &&
+        _connectionPhase != ControllerConnectionPhase.online) {
+      unawaited(connect(reportBusy: false));
+    }
+    _notifySafely();
+  }
+
   void _startDevelopmentTicker() {
-    if (!_appActive || _disposed || _developmentTimer != null) return;
+    if (_offlineMode || !_appActive || _disposed || _developmentTimer != null) {
+      return;
+    }
     _developmentTimer = Timer.periodic(
       const Duration(seconds: 2),
       (_) => _tickDevelopment(),
@@ -308,7 +406,13 @@ class ControllerSession extends ChangeNotifier {
   void _schedulePoll([Duration? delay]) {
     _pollTimer?.cancel();
     _pollTimer = null;
-    if (_disposed || !_appActive || isDevelopment) return;
+    if (_disposed ||
+        !_appActive ||
+        isDevelopment ||
+        (!_automaticReconnect &&
+            _connectionPhase != ControllerConnectionPhase.online)) {
+      return;
+    }
 
     _pollTimer = Timer(delay ?? _nextPollDelay(), () async {
       _pollTimer = null;
@@ -340,6 +444,8 @@ class ControllerSession extends ChangeNotifier {
     if (_disposed ||
         !_appActive ||
         isDevelopment ||
+        !_connected ||
+        _connectionPhase != ControllerConnectionPhase.online ||
         !_api!.supportsWebSession) {
       return;
     }
@@ -355,10 +461,34 @@ class ControllerSession extends ChangeNotifier {
     _failedPolls += 1;
     _connected = false;
     _error = message;
+    _webSessionTimer?.cancel();
+    _webSessionTimer = null;
     _connectionPhase =
         _lastUpdate != null && _failedPolls < _offlineFailureThreshold
         ? ControllerConnectionPhase.reconnecting
         : ControllerConnectionPhase.offline;
+  }
+
+  static void _preserveHistory(JsonMap previous, JsonMap next) {
+    final previousHistory = previous.section('temperature').list('history');
+    if (previousHistory.isEmpty) return;
+
+    final rawTemperature = next['temperature'];
+    if (rawTemperature is Map<String, dynamic>) {
+      if (!rawTemperature.containsKey('history')) {
+        rawTemperature['history'] = List<dynamic>.of(previousHistory);
+      }
+      return;
+    }
+    if (rawTemperature is Map) {
+      final temperature = rawTemperature.map(
+        (key, value) => MapEntry(key.toString(), value),
+      );
+      if (!temperature.containsKey('history')) {
+        temperature['history'] = List<dynamic>.of(previousHistory);
+      }
+      next['temperature'] = temperature;
+    }
   }
 
   void _beginBusy() {
@@ -382,6 +512,14 @@ class ControllerSession extends ChangeNotifier {
   }
 
   Future<ControllerActionResult> login(String pin) async {
+    if (_offlineMode) {
+      throw const ControllerApiException(
+        code: 'controller_unavailable',
+        message:
+            'Tryb administratora wymaga aktywnego połączenia ze sterownikiem.',
+      );
+    }
+    _requireLiveController();
     final normalized = pin.trim();
     if (!RegExp(r'^\d{4,8}$').hasMatch(normalized)) {
       throw const ControllerApiException(
@@ -437,14 +575,7 @@ class ControllerSession extends ChangeNotifier {
         message: 'Nieprawidłowa nazwa polecenia.',
       );
     }
-    if (!canIssueCommands) {
-      throw ControllerApiException(
-        code: 'controller_unavailable',
-        message:
-            commandBlockReason ??
-            'Sterownik nie jest gotowy do wykonania polecenia.',
-      );
-    }
+    _requireLiveController();
     final pin = _requirePin();
     if (_activeAction != null) {
       throw ControllerApiException(
@@ -481,6 +612,7 @@ class ControllerSession extends ChangeNotifier {
   }
 
   Future<void> loadLogs() async {
+    _requireLiveController();
     final pin = _requirePin();
     _beginBusy();
     _notifySafely();
@@ -496,6 +628,7 @@ class ControllerSession extends ChangeNotifier {
   }
 
   Future<void> scanBuses() async {
+    _requireLiveController();
     final pin = _requirePin();
     _beginBusy();
     _notifySafely();
@@ -513,6 +646,11 @@ class ControllerSession extends ChangeNotifier {
   }
 
   Future<void> loadHistoryFiles() async {
+    if (_offlineMode) {
+      _historyFiles = const [];
+      notifyListeners();
+      return;
+    }
     if (isDevelopment) {
       _historyFiles = [
         {'name': '2026-07.aqh', 'size': 18432, 'type': 'file'},
@@ -543,6 +681,7 @@ class ControllerSession extends ChangeNotifier {
         message: 'Zakres historii musi być większy od zera.',
       );
     }
+    if (_offlineMode) return _offlineHistory(range);
     if (isDevelopment) return _developmentHistory(range);
 
     await refresh(includeHistory: true, reportBusy: false);
@@ -657,6 +796,27 @@ class ControllerSession extends ChangeNotifier {
     );
   }
 
+  HistoryLoadResult _offlineHistory(Duration range) {
+    final cutoff =
+        DateTime.now().millisecondsSinceEpoch ~/ 1000 - range.inSeconds;
+    final samples = <HistorySample>[];
+    for (final raw in _status.section('temperature').list('history')) {
+      final sample = HistorySample.fromStatus(raw);
+      if (sample.epoch >= cutoff) samples.add(sample);
+    }
+    samples.sort((left, right) => left.epoch.compareTo(right.epoch));
+    return HistoryLoadResult(
+      samples: List.unmodifiable(samples),
+      requestedRange: range,
+      usedArchive: false,
+      warning: samples.isEmpty
+          ? 'Brak zapisanych próbek dla wybranego zakresu. Połącz sterownik, '
+                'aby odświeżyć historię.'
+          : 'Wyświetlane są ostatnie próbki zapisane lokalnie. Połącz '
+                'sterownik, aby pobrać pełne archiwum.',
+    );
+  }
+
   static String _durationLabel(Duration value) {
     if (value.inHours >= 24 && value.inHours % 24 == 0) {
       return '${value.inDays} d';
@@ -666,7 +826,7 @@ class ControllerSession extends ChangeNotifier {
   }
 
   Future<Uint8List> downloadCurrentHistory() async {
-    if (isDevelopment) {
+    if (_offlineMode || isDevelopment || !_connected) {
       final history = _status.section('temperature').list('history');
       final buffer = StringBuffer('epoch,temp_c,heater_active\n');
       for (final item in history) {
@@ -687,6 +847,7 @@ class ControllerSession extends ChangeNotifier {
   }
 
   Future<void> setBrowserTime() async {
+    _requireLiveController();
     final pin = _requirePin();
     if (isDevelopment) {
       _applyDevelopmentClock(DateTime.now());
@@ -705,6 +866,7 @@ class ControllerSession extends ChangeNotifier {
     String fileName, {
     void Function(int sent, int total)? onProgress,
   }) async {
+    _requireLiveController();
     final pin = _requirePin();
     if (isDevelopment) {
       if (bytes.isEmpty || !fileName.toLowerCase().endsWith('.bin')) {
@@ -739,6 +901,16 @@ class ControllerSession extends ChangeNotifier {
     }
     _armAdminSessionTimeout();
     return pin;
+  }
+
+  void _requireLiveController() {
+    if (canIssueCommands) return;
+    throw ControllerApiException(
+      code: 'controller_unavailable',
+      message:
+          commandBlockReason ??
+          'Sterownik nie jest gotowy do wykonania polecenia.',
+    );
   }
 
   void _activateAdminSession(String pin) {
@@ -1257,6 +1429,23 @@ class ControllerSession extends ChangeNotifier {
   static double _toDouble(Object? value, double fallback) {
     if (value is num) return value.toDouble();
     return double.tryParse(value?.toString() ?? '') ?? fallback;
+  }
+
+  static JsonMap _createOfflineStatus() {
+    return <String, dynamic>{
+      'device': 'AquaCYD',
+      'mode': 'OFFLINE',
+      'sensors': <String, dynamic>{},
+      'modules': <String, dynamic>{},
+      'relays': <String, dynamic>{},
+      'alarms': <String, dynamic>{},
+      'temperature': <String, dynamic>{'history': <dynamic>[]},
+      'network': <String, dynamic>{'connected': false},
+      'system': <String, dynamic>{},
+      'schedule': <String, dynamic>{},
+      'schedules': <String, dynamic>{},
+      'feeding': <String, dynamic>{},
+    };
   }
 
   static JsonMap _createDevelopmentStatus() {

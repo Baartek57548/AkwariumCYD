@@ -5,7 +5,7 @@ import 'data_access.dart';
 
 enum CommandCenterSafetyState { ok, warning, critical, offline, service }
 
-enum CommandCenterCapability { wifi, bleV1, bleV2, development }
+enum CommandCenterCapability { wifi, bleV1, bleV2, offline, development }
 
 enum CommandCenterAlarmSeverity { warning, critical }
 
@@ -61,6 +61,7 @@ final class CommandCenterCapabilities {
       primary == CommandCenterCapability.bleV1 ||
       primary == CommandCenterCapability.bleV2;
   bool get isLegacyBluetooth => primary == CommandCenterCapability.bleV1;
+  bool get isOffline => primary == CommandCenterCapability.offline;
   bool get isDevelopment => primary == CommandCenterCapability.development;
   bool get supportsExtendedStatus => primary != CommandCenterCapability.bleV1;
   bool get supportsSchedules => primary != CommandCenterCapability.bleV1;
@@ -75,21 +76,27 @@ final class CommandCenterCapabilities {
     CommandCenterCapability.wifi => 'Wi‑Fi',
     CommandCenterCapability.bleV1 => 'BLE v1',
     CommandCenterCapability.bleV2 => 'BLE v2',
+    CommandCenterCapability.offline => 'Offline',
     CommandCenterCapability.development => 'DEV',
   };
 
   static CommandCenterCapabilities project(
     JsonMap status,
-    ControllerSessionKind sessionKind,
-  ) {
-    final primary = switch (sessionKind) {
-      ControllerSessionKind.wifi => CommandCenterCapability.wifi,
-      ControllerSessionKind.development => CommandCenterCapability.development,
-      ControllerSessionKind.bluetooth =>
-        _isLegacyBle(status)
-            ? CommandCenterCapability.bleV1
-            : CommandCenterCapability.bleV2,
-    };
+    ControllerSessionKind sessionKind, {
+    bool offline = false,
+  }) {
+    final primary = offline
+        ? CommandCenterCapability.offline
+        : switch (sessionKind) {
+            ControllerSessionKind.wifi => CommandCenterCapability.wifi,
+            ControllerSessionKind.development =>
+              CommandCenterCapability.development,
+            ControllerSessionKind.offline => CommandCenterCapability.offline,
+            ControllerSessionKind.bluetooth =>
+              _isLegacyBle(status)
+                  ? CommandCenterCapability.bleV1
+                  : CommandCenterCapability.bleV2,
+          };
     return CommandCenterCapabilities._(primary);
   }
 
@@ -230,10 +237,15 @@ final class CommandCenterModel {
     JsonMap status,
     ControllerSessionKind sessionKind, {
     bool? connected,
+    bool offline = false,
     DateTime? now,
   }) {
     final isConnected = connected ?? status.isNotEmpty;
-    final capabilities = CommandCenterCapabilities.project(status, sessionKind);
+    final capabilities = CommandCenterCapabilities.project(
+      status,
+      sessionKind,
+      offline: offline,
+    );
     final alarms = _projectAlarms(status);
     final sensors = _projectSensors(status, alarms);
     final outputs = _projectOutputs(status);

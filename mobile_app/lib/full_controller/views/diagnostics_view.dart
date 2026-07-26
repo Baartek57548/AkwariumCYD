@@ -24,6 +24,10 @@ class _DiagnosticsViewState extends State<DiagnosticsView> {
   String? message;
 
   Future<void> _scan() async {
+    if (!widget.session.canIssueCommands) {
+      setState(() => message = widget.session.commandBlockReason);
+      return;
+    }
     if (!await widget.ensureAdmin()) return;
     setState(() {
       scanning = true;
@@ -48,6 +52,8 @@ class _DiagnosticsViewState extends State<DiagnosticsView> {
     final devices = diagnostics.list('devices');
     final oneWire = diagnostics.section('oneWire');
     final uart = diagnostics.section('uart');
+    final hasStoredData = widget.session.hasStatusData;
+    final canScan = widget.session.canIssueCommands;
     return ControllerPageBody(
       children: [
         SectionHeader(
@@ -55,7 +61,7 @@ class _DiagnosticsViewState extends State<DiagnosticsView> {
           description:
               'Stan czujników, pamięci i aktywne skanowanie magistral sterownika.',
           trailing: FilledButton.icon(
-            onPressed: scanning ? null : _scan,
+            onPressed: scanning || !canScan ? null : _scan,
             icon: scanning
                 ? const SizedBox.square(
                     dimension: 18,
@@ -65,36 +71,69 @@ class _DiagnosticsViewState extends State<DiagnosticsView> {
             label: const Text('Skanuj magistrale'),
           ),
         ),
+        if (!canScan) ...[
+          StatusBanner(
+            icon: Icons.visibility_rounded,
+            title: hasStoredData
+                ? 'Diagnostyka tylko do podglądu'
+                : 'Brak zapisanej diagnostyki',
+            message: hasStoredData
+                ? widget.session.commandBlockReason ??
+                      'Połącz sterownik, aby przeskanować magistrale.'
+                : 'Połącz sterownik, aby pobrać stan czujników i magistral.',
+            isError: false,
+          ),
+          const SizedBox(height: 12),
+        ],
         ResponsiveGrid(
           children: [
             MetricTile(
               icon: Icons.memory_rounded,
               label: 'Wolny heap',
-              value: formatBytes(
-                system.integer('freeHeap', status.integer('heap_free')),
-              ),
-              detail:
-                  'Największy blok ${formatBytes(system.integer('largestHeap', status.integer('heap_largest')))}',
+              value: hasStoredData
+                  ? formatBytes(
+                      system.integer('freeHeap', status.integer('heap_free')),
+                    )
+                  : '—',
+              detail: hasStoredData
+                  ? 'Największy blok ${formatBytes(system.integer('largestHeap', status.integer('heap_largest')))}'
+                  : 'Brak zapisanego pomiaru',
             ),
             MetricTile(
               icon: Icons.sd_storage_rounded,
               label: 'Karta SD',
-              value: status.flag('sd_mounted') ? 'ONLINE' : 'BRAK',
-              detail: '${formatBytes(status.integer('sd_free_bytes'))} wolne',
+              value: hasStoredData
+                  ? status.flag('sd_mounted')
+                        ? 'ONLINE'
+                        : 'BRAK'
+                  : '—',
+              detail: hasStoredData
+                  ? '${formatBytes(status.integer('sd_free_bytes'))} wolne'
+                  : 'Brak zapisanego stanu',
             ),
             MetricTile(
               icon: Icons.hub_rounded,
               label: 'MCP23017',
-              value: sensors.flag('mcp_ok') ? 'ONLINE' : 'BRAK',
-              detail: sensors.flag('mcp_valid')
+              value: hasStoredData
+                  ? sensors.flag('mcp_ok')
+                        ? 'ONLINE'
+                        : 'BRAK'
+                  : '—',
+              detail: !hasStoredData
+                  ? 'Brak zapisanego stanu'
+                  : sensors.flag('mcp_valid')
                   ? 'Odczyty wiarygodne'
                   : 'Brak aktualnego odczytu',
             ),
             MetricTile(
               icon: Icons.timer_outlined,
               label: 'Czas pracy',
-              value: formatUptime(system.integer('uptime')),
-              detail: 'Reset reason ${system.text('resetReason', '—')}',
+              value: hasStoredData
+                  ? formatUptime(system.integer('uptime'))
+                  : '—',
+              detail: hasStoredData
+                  ? 'Reset reason ${system.text('resetReason', '—')}'
+                  : 'Brak zapisanego stanu',
             ),
           ],
         ),
@@ -107,37 +146,55 @@ class _DiagnosticsViewState extends State<DiagnosticsView> {
                 _SensorRow(
                   label: 'Temperatura',
                   valid: sensors.flag('temp_valid'),
-                  value: '${sensors.number('temp_c').toStringAsFixed(2)} °C',
+                  value: hasStoredData
+                      ? '${sensors.number('temp_c').toStringAsFixed(2)} °C'
+                      : '—',
                 ),
                 _SensorRow(
                   label: 'pH',
                   valid: sensors.flag('ph_valid'),
-                  value: sensors.number('ph').toStringAsFixed(3),
+                  value: hasStoredData
+                      ? sensors.number('ph').toStringAsFixed(3)
+                      : '—',
                 ),
                 _SensorRow(
                   label: 'EC',
                   valid: sensors.flag('ec_valid'),
-                  value: '${sensors.number('ec').toStringAsFixed(1)} µS/cm',
+                  value: hasStoredData
+                      ? '${sensors.number('ec').toStringAsFixed(1)} µS/cm'
+                      : '—',
                 ),
                 _SensorRow(
                   label: 'LDR',
                   valid: sensors.flag('ldr_valid'),
-                  value: '${sensors.integer('ldr')}',
+                  value: hasStoredData ? '${sensors.integer('ldr')}' : '—',
                 ),
                 _SensorRow(
                   label: 'Poziom wody',
                   valid: sensors.flag('water_level_valid'),
-                  value: sensors.flag('water_level_high') ? 'HIGH / OK' : 'LOW',
+                  value: !hasStoredData
+                      ? '—'
+                      : sensors.flag('water_level_high')
+                      ? 'HIGH / OK'
+                      : 'LOW',
                 ),
                 _SensorRow(
                   label: 'Wyciek',
                   valid: sensors.flag('leak_valid'),
-                  value: sensors.flag('leak_detected') ? 'WYKRYTO' : 'BRAK',
+                  value: !hasStoredData
+                      ? '—'
+                      : sensors.flag('leak_detected')
+                      ? 'WYKRYTO'
+                      : 'BRAK',
                 ),
                 _SensorRow(
                   label: 'Przepływ',
                   valid: sensors.flag('flow_valid'),
-                  value: sensors.flag('flow_active') ? 'AKTYWNY' : 'BRAK',
+                  value: !hasStoredData
+                      ? '—'
+                      : sensors.flag('flow_active')
+                      ? 'AKTYWNY'
+                      : 'BRAK',
                 ),
               ],
             ),

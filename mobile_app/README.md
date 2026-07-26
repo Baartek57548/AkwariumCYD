@@ -1,10 +1,12 @@
 # AquaCYD Control 4
 
-Profesjonalne, mobilne centrum dowodzenia dla sterownika akwarium AquaCYD. Aplikacja łączy się bezpośrednio ze sterownikiem przez Wi‑Fi lub BLE, prezentuje stan instalacji, chroni operacje administracyjne kodem PIN i prowadzi użytkownika od alarmu do właściwej akcji.
+Profesjonalne, mobilne centrum dowodzenia dla sterownika akwarium AquaCYD. Aplikacja działa offline-first: cały interfejs jest dostępny od razu, pokazuje ostatni bezpiecznie zapisany stan, a po odzyskaniu Wi‑Fi automatycznie synchronizuje się ze sterownikiem. Łączy się także bezpośrednio przez BLE, chroni operacje administracyjne kodem PIN i prowadzi użytkownika od alarmu do właściwej akcji.
 
 ## Centrum dowodzenia
 
 - pięć obszarów roboczych: **Centrum**, **Steruj**, **Auto**, **Historia** i **System**,
+- dostęp do wszystkich obszarów bez urządzenia oraz lokalny podgląd ostatniej telemetrii, nastaw i historii,
+- centrum połączeń w prawym górnym rogu z Wi‑Fi, Bluetooth, trybem offline i automatycznym reconnectem,
 - nagłówek kondycji z trybem połączenia, RSSI, pingiem i czasem ostatniej synchronizacji,
 - priorytetyzacja alarmów, wiarygodności temperatury i stanu urządzeń wykonawczych,
 - sterowanie oświetleniem, filtrem, napowietrzaniem, termostatem i karmnikiem,
@@ -14,7 +16,7 @@ Profesjonalne, mobilne centrum dowodzenia dla sterownika akwarium AquaCYD. Aplik
 - diagnostyka magistral oraz czujników, ustawienia urządzenia i OTA; edytor profilu przekaźników pozostaje bezpiecznie zablokowany do czasu obsługi profilu przez firmware,
 - responsywny interfejs Material 3 w jasnym i ciemnym motywie.
 
-Komendy są blokowane, gdy sterownik jest offline albo telemetria jest nieaktualna. Operacje sieciowe są serializowane, szybkie akcje nie zasypują mikrokontrolera żądaniami, a odpytywanie po błędzie wraca z opóźnieniem wykładniczym. Ostatni prawidłowy odczyt pozostaje widoczny jako dane archiwalne.
+Komendy są blokowane, gdy sterownik jest offline albo telemetria jest nieaktualna. Formularze pozostają wtedy dostępne jako widok tylko do odczytu. Operacje sieciowe są serializowane, szybkie akcje nie zasypują mikrokontrolera żądaniami, a odpytywanie po błędzie wraca z opóźnieniem wykładniczym. Ostatni prawidłowy odczyt pozostaje widoczny, a lokalny snapshot nie przechowuje PIN-ów, haseł ani tokenów.
 
 ## Warianty aplikacji
 
@@ -24,7 +26,7 @@ Komendy są blokowane, gdy sterownik jest offline albo telemetria jest nieaktual
 | `full` | `lib/main_full.dart` | równoległa instalacja pełnego interfejsu bez kanału aktualizacji `current` | `pl.cydakwarium.cyd_aquarium_mobile.full` |
 | `dev` | `lib/main_dev.dart` | symulator sterownika w pamięci RAM, przeznaczony do rozwoju i testów UI | `pl.cydakwarium.cyd_aquarium_mobile.dev` |
 
-Kod zawiera techniczny moduł zgodności ze starszym panelem WWW oparty na WebView, ale wydanie 4.0.0 nie pokazuje go w produkcyjnym ekranie połączenia. Nie istnieje osobny flavor ani publikowany APK `legacy`; podstawowym interfejsem jest natywne centrum dowodzenia.
+Kod zawiera techniczny moduł zgodności ze starszym panelem WWW oparty na WebView, ale wydanie 4.0.1 nie pokazuje go w produkcyjnym centrum połączeń. Nie istnieje osobny flavor ani publikowany APK `legacy`; podstawowym interfejsem jest natywne centrum dowodzenia.
 
 ## Wymagania
 
@@ -49,7 +51,8 @@ Nie należy wystawiać HTTP sterownika bezpośrednio do Internetu. Bieżący fir
 
 - `full_controller/views/` — ekrany centrum dowodzenia i formularze,
 - `command_center_models.dart` — typowane modele bezpieczeństwa, czujników, wyjść, alarmów i następnych zdarzeń,
-- `ControllerSession` — stan połączenia, cykl odpytywania, kolejka komend, wygasająca autoryzacja i ponawianie,
+- `ControllerSession` — stan połączenia, tryb offline, cykl odpytywania, kolejka komend, wygasająca autoryzacja i ponawianie,
+- `ControllerSnapshotCache` — ograniczony i oczyszczony z sekretów zapis ostatniego potwierdzonego stanu,
 - `ControllerApi`, `BleRemoteApi` i `connectivity/` — izolacja transportu REST, BLE oraz symulatora,
 - `status_decoder.dart` — bezpieczne parsowanie, walidacja typów i limitów odpowiedzi,
 - `design_system.dart` — tokeny kolorów, odstępów, promieni i motywy Material 3,
@@ -76,7 +79,7 @@ flutter test
 flutter build apk --release --flavor current --target lib/main.dart
 ```
 
-Wynik powstaje w `build/app/outputs/flutter-apk/app-current-release.apk`. Wydanie 4.0.0 jest publikowane jako `AquaCYD-Control-4.0.0-current.apk`.
+Wynik powstaje w `build/app/outputs/flutter-apk/app-current-release.apk`. Wydanie 4.0.1 jest publikowane jako `AquaCYD-Control-4.0.1-current.apk`.
 
 Build release wymaga pliku `android/key.properties` z niepustymi polami:
 

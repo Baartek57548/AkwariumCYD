@@ -17,17 +17,31 @@ class SettingsHubView extends StatelessWidget {
     required this.session,
     required this.runAction,
     required this.ensureAdmin,
+    this.onOpenConnection,
   });
 
   final ControllerSession session;
   final RunControllerAction runAction;
   final Future<bool> Function() ensureAdmin;
+  final VoidCallback? onOpenConnection;
 
   void _open(BuildContext context, String title, Widget Function() builder) {
     Navigator.of(context).push(
       MaterialPageRoute<void>(
         builder: (context) => Scaffold(
-          appBar: AppBar(title: Text(title)),
+          appBar: AppBar(
+            title: Text(title),
+            actions: [
+              if (onOpenConnection != null)
+                IconButton(
+                  key: const Key('subpage-connection-center-button'),
+                  tooltip: 'Połączenia Wi‑Fi i Bluetooth',
+                  onPressed: onOpenConnection,
+                  icon: const Icon(Icons.hub_rounded),
+                ),
+              const SizedBox(width: 4),
+            ],
+          ),
           body: AnimatedBuilder(
             animation: session,
             builder: (context, _) => builder(),
@@ -46,6 +60,7 @@ class SettingsHubView extends StatelessWidget {
     final display = status.section('display');
     final refresh = DisplayRefreshRateScope.stateOf(context);
     final advanced = session.supportsAdvancedConfiguration;
+    final hasStoredData = session.hasStatusData;
     return ControllerPageBody(
       maxWidth: 980,
       padding: const EdgeInsets.fromLTRB(14, 16, 14, 28),
@@ -62,10 +77,12 @@ class SettingsHubView extends StatelessWidget {
           firmware: firmware.text('version', 'nieznana'),
           transport: session.displayName,
           ip: session.baseUri?.host ?? network.text('ip', 'lokalny'),
-          uptime: formatUptime(system.integer('uptime')),
-          freeHeap: formatBytes(
-            system.integer('freeHeap', status.integer('heap_free')),
-          ),
+          uptime: hasStoredData ? formatUptime(system.integer('uptime')) : '—',
+          freeHeap: hasStoredData
+              ? formatBytes(
+                  system.integer('freeHeap', status.integer('heap_free')),
+                )
+              : '—',
         ),
         const SizedBox(height: AquaSpacing.md),
         ResponsiveGrid(
@@ -77,9 +94,10 @@ class SettingsHubView extends StatelessWidget {
               title: 'Sterownik, sieć i ekran',
               description:
                   'Wi‑Fi, punkt dostępowy, zegar, NTP, jasność i profil ekranu CYD.',
-              status:
-                  '${network.text('configuredStaSsid', 'Brak profilu')} · '
-                  '${display.integer('appliedBrightness', display.integer('brightness', 100))}%',
+              status: hasStoredData
+                  ? '${network.text('configuredStaSsid', 'Brak profilu')} · '
+                        '${display.integer('appliedBrightness', display.integer('brightness'))}%'
+                  : 'Brak zapisanej konfiguracji',
               enabled: advanced,
               disabledReason: 'Pełna konfiguracja wymaga Wi‑Fi lub BLE v2.',
               onTap: () => _open(
@@ -99,11 +117,11 @@ class SettingsHubView extends StatelessWidget {
                   'Magistrale I²C i OneWire, czujniki, pamięć oraz przyczyna restartu.',
               status: session.canIssueCommands
                   ? 'Gotowa do skanowania'
-                  : 'Sterownik offline',
-              enabled: advanced && session.canIssueCommands,
-              disabledReason:
-                  session.commandBlockReason ??
-                  'Diagnostyka wymaga Wi‑Fi lub BLE v2.',
+                  : session.hasCachedSnapshot
+                  ? 'Ostatni zapis · tylko odczyt'
+                  : 'Brak zapisanych danych',
+              enabled: advanced,
+              disabledReason: 'Diagnostyka wymaga Wi‑Fi lub BLE v2.',
               onTap: () => _open(
                 context,
                 'Diagnostyka sprzętu',

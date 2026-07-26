@@ -98,6 +98,7 @@ class _ControlHubViewState extends State<ControlHubView> {
     final modules = status.section('modules');
     final sensors = status.section('sensors');
     final feeding = status.section('feeding');
+    final hasStoredData = widget.session.hasStatusData;
     final hardwareReady =
         widget.session.isDevelopment ||
         (sensors.flag('mcp_present', true) && sensors.flag('mcp_valid', true));
@@ -191,6 +192,7 @@ class _ControlHubViewState extends State<ControlHubView> {
                     : readOutputSchedule(status, output.scheduleChannel),
                 busy: _busyOutputs.contains(output.id),
                 enabled: commandReady,
+                dataAvailable: hasStoredData,
                 legacyBluetooth: widget.session.isLegacyBluetooth,
                 onChanged: (current, selected) =>
                     unawaited(_setOutputMode(output, current, selected)),
@@ -211,6 +213,7 @@ class _ControlHubViewState extends State<ControlHubView> {
               active: feeding.flag('active'),
               busy: _feeding,
               enabled: commandReady,
+              dataAvailable: hasStoredData,
               lastResult: feeding.text('lastResult', 'brak danych'),
               onFeed: _feed,
             ),
@@ -219,6 +222,7 @@ class _ControlHubViewState extends State<ControlHubView> {
               title: 'Dozowanie CO₂',
               physicalOn: modules.flag('co2_on'),
               automationEnabled: modules.flag('co2_enabled'),
+              dataAvailable: hasStoredData,
               detail: sensors.flag('ph_valid')
                   ? 'Aktualne pH ${sensors.number('ph').toStringAsFixed(2)}'
                   : 'Brak wiarygodnego pomiaru pH',
@@ -228,6 +232,7 @@ class _ControlHubViewState extends State<ControlHubView> {
               title: 'Dolewka ATO',
               physicalOn: status.section('water').flag('active'),
               automationEnabled: modules.flag('water_level_enabled'),
+              dataAvailable: hasStoredData,
               detail: sensors.flag('water_level_valid')
                   ? sensors.flag('water_level_high')
                         ? 'Poziom wody prawidłowy'
@@ -259,6 +264,7 @@ class _OutputModeCard extends StatelessWidget {
     required this.schedule,
     required this.busy,
     required this.enabled,
+    required this.dataAvailable,
     required this.legacyBluetooth,
     required this.onChanged,
   });
@@ -268,6 +274,7 @@ class _OutputModeCard extends StatelessWidget {
   final OutputScheduleState schedule;
   final bool busy;
   final bool enabled;
+  final bool dataAvailable;
   final bool legacyBluetooth;
   final void Function(OutputControlMode current, OutputControlMode selected)
   onChanged;
@@ -312,7 +319,9 @@ class _OutputModeCard extends StatelessWidget {
                             ?.copyWith(fontWeight: FontWeight.w900),
                       ),
                       Text(
-                        physicalOn
+                        !dataAvailable
+                            ? 'BRAK ZAPISANEGO STANU'
+                            : physicalOn
                             ? 'WYJŚCIE FIZYCZNE ON'
                             : 'WYJŚCIE FIZYCZNE OFF',
                         style: Theme.of(context).textTheme.labelSmall?.copyWith(
@@ -344,7 +353,9 @@ class _OutputModeCard extends StatelessWidget {
                 const SizedBox(width: AquaSpacing.xs),
                 Expanded(
                   child: Text(
-                    '${schedule.modeLabel} · ${schedule.windowLabel}',
+                    dataAvailable
+                        ? '${schedule.modeLabel} · ${schedule.windowLabel}'
+                        : 'Brak zapisanego trybu i harmonogramu',
                     style: TextStyle(
                       color: colors.onSurfaceVariant,
                       fontWeight: FontWeight.w600,
@@ -358,6 +369,7 @@ class _OutputModeCard extends StatelessWidget {
               options: options,
               selected: schedule.mode,
               enabled: selectable,
+              dataAvailable: dataAvailable,
               onSelected: (selected) => onChanged(schedule.mode, selected),
             ),
           ],
@@ -372,12 +384,14 @@ class _ModeSelector extends StatelessWidget {
     required this.options,
     required this.selected,
     required this.enabled,
+    required this.dataAvailable,
     required this.onSelected,
   });
 
   final List<OutputControlMode> options;
   final OutputControlMode selected;
   final bool enabled;
+  final bool dataAvailable;
   final ValueChanged<OutputControlMode> onSelected;
 
   @override
@@ -387,7 +401,9 @@ class _ModeSelector extends StatelessWidget {
         final largeText = MediaQuery.textScalerOf(context).scale(1) > 1.25;
         if (constraints.maxWidth < 300 || largeText) {
           return DropdownButtonFormField<OutputControlMode>(
-            initialValue: options.contains(selected) ? selected : null,
+            initialValue: dataAvailable && options.contains(selected)
+                ? selected
+                : null,
             isExpanded: true,
             decoration: const InputDecoration(labelText: 'Tryb sterowania'),
             items: [
@@ -413,7 +429,9 @@ class _ModeSelector extends StatelessWidget {
                 label: Text(_shortModeLabel(option)),
               ),
           ],
-          selected: options.contains(selected) ? {selected} : const {},
+          selected: dataAvailable && options.contains(selected)
+              ? {selected}
+              : const {},
           emptySelectionAllowed: true,
           showSelectedIcon: false,
           onSelectionChanged: enabled
@@ -444,6 +462,7 @@ class _FeederCard extends StatelessWidget {
     required this.active,
     required this.busy,
     required this.enabled,
+    required this.dataAvailable,
     required this.lastResult,
     required this.onFeed,
   });
@@ -451,6 +470,7 @@ class _FeederCard extends StatelessWidget {
   final bool active;
   final bool busy;
   final bool enabled;
+  final bool dataAvailable;
   final String lastResult;
   final VoidCallback onFeed;
 
@@ -478,7 +498,11 @@ class _FeederCard extends StatelessWidget {
                             ?.copyWith(fontWeight: FontWeight.w900),
                       ),
                       Text(
-                        active ? 'Trwa podawanie pokarmu' : 'Gotowy do dawki',
+                        !dataAvailable
+                            ? 'Brak zapisanego stanu'
+                            : active
+                            ? 'Trwa podawanie pokarmu'
+                            : 'Gotowy do dawki',
                         style: TextStyle(color: colors.onSurfaceVariant),
                       ),
                     ],
@@ -488,7 +512,9 @@ class _FeederCard extends StatelessWidget {
             ),
             const SizedBox(height: AquaSpacing.sm),
             Text(
-              'Ostatni wynik: $lastResult',
+              dataAvailable
+                  ? 'Ostatni wynik: $lastResult'
+                  : 'Połącz sterownik, aby pobrać stan karmnika.',
               style: Theme.of(
                 context,
               ).textTheme.bodySmall?.copyWith(color: colors.onSurfaceVariant),
@@ -517,6 +543,7 @@ class _ReadOnlyActuatorCard extends StatelessWidget {
     required this.title,
     required this.physicalOn,
     required this.automationEnabled,
+    required this.dataAvailable,
     required this.detail,
   });
 
@@ -524,6 +551,7 @@ class _ReadOnlyActuatorCard extends StatelessWidget {
   final String title;
   final bool physicalOn;
   final bool automationEnabled;
+  final bool dataAvailable;
   final String detail;
 
   @override
@@ -551,18 +579,30 @@ class _ReadOnlyActuatorCard extends StatelessWidget {
                 ),
                 Chip(
                   avatar: Icon(
-                    automationEnabled
+                    !dataAvailable
+                        ? Icons.help_outline_rounded
+                        : automationEnabled
                         ? Icons.auto_mode_rounded
                         : Icons.block_rounded,
                     size: 16,
                   ),
-                  label: Text(automationEnabled ? 'AUTO' : 'WYŁĄCZONE'),
+                  label: Text(
+                    !dataAvailable
+                        ? 'BRAK DANYCH'
+                        : automationEnabled
+                        ? 'AUTO'
+                        : 'WYŁĄCZONE',
+                  ),
                 ),
               ],
             ),
             const SizedBox(height: AquaSpacing.sm),
             Text(
-              physicalOn ? 'Wyjście aktywne' : 'Wyjście nieaktywne',
+              !dataAvailable
+                  ? 'Brak zapisanego stanu wyjścia'
+                  : physicalOn
+                  ? 'Wyjście aktywne'
+                  : 'Wyjście nieaktywne',
               style: TextStyle(color: tone, fontWeight: FontWeight.w800),
             ),
             const SizedBox(height: AquaSpacing.xxs),

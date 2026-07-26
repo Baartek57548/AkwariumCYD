@@ -133,6 +133,53 @@ void main() {
     expect(session.error, isNull);
   });
 
+  test('lightweight polling preserves history from the initial sync', () async {
+    final api = _FakeRemoteApi()
+      ..omitHistoryFromLightweightStatus = true
+      ..historySamples = <dynamic>[
+        <String, dynamic>{'epoch': 100, 'value': 24.8},
+        <String, dynamic>{'epoch': 200, 'value': 25.0},
+      ];
+    final session = ControllerSession.wifi(api);
+    addTearDown(session.dispose);
+
+    await session.connect();
+    expect(session.status.section('temperature').list('history'), hasLength(2));
+
+    await session.refresh(reportBusy: false);
+
+    expect(session.status.section('temperature').list('history'), hasLength(2));
+    expect(api.includeHistoryRequests, <bool>[true, false]);
+  });
+
+  test(
+    'disabled automatic reconnect survives pause and resume while offline',
+    () async {
+      final api = _FakeRemoteApi()..supportsHeartbeat = true;
+      final session = ControllerSession.wifi(api);
+      addTearDown(session.dispose);
+
+      await session.connect();
+      session.setAutomaticReconnect(false);
+      api.failStatus = true;
+      await session.refresh(reportBusy: false);
+
+      expect(session.connected, isFalse);
+      final connectCallsAfterFailure = api.connectCalls;
+      final statusCallsAfterFailure = api.statusCalls;
+      final heartbeatCallsAfterFailure = api.heartbeatCalls;
+
+      session.setAppActive(false);
+      session.setAppActive(true);
+      await Future<void>.delayed(Duration.zero);
+      await Future<void>.delayed(Duration.zero);
+
+      expect(api.connectCalls, connectCallsAfterFailure);
+      expect(api.statusCalls, statusCallsAfterFailure);
+      expect(api.heartbeatCalls, heartbeatCallsAfterFailure);
+    },
+  );
+
   test('control actions are serialized to protect the controller', () async {
     final api = _FakeRemoteApi();
     final actionGate = Completer<ControllerActionResult>();
@@ -175,9 +222,14 @@ class _FakeRemoteApi implements ControllerRemoteApi {
   Completer<void>? connectGate;
   Completer<ControllerActionResult>? actionGate;
   bool failStatus = false;
+  bool omitHistoryFromLightweightStatus = false;
+  bool supportsHeartbeat = false;
+  List<dynamic> historySamples = <dynamic>[];
+  final List<bool> includeHistoryRequests = <bool>[];
   int connectCalls = 0;
   int statusCalls = 0;
   int actionCalls = 0;
+  int heartbeatCalls = 0;
 
   @override
   Uri get baseUri => Uri.parse('http://192.168.4.1');
@@ -189,7 +241,7 @@ class _FakeRemoteApi implements ControllerRemoteApi {
   bool get supportsFirmwareUpload => true;
 
   @override
-  bool get supportsWebSession => false;
+  bool get supportsWebSession => supportsHeartbeat;
 
   @override
   Future<void> connect() async {
@@ -203,18 +255,21 @@ class _FakeRemoteApi implements ControllerRemoteApi {
   @override
   Future<Map<String, dynamic>> status({bool includeHistory = false}) async {
     statusCalls += 1;
+    includeHistoryRequests.add(includeHistory);
     if (failStatus) {
       throw const ControllerApiException(
         code: 'timeout',
         message: 'Sterownik nie odpowiada.',
       );
     }
+    final temperature = <String, dynamic>{};
+    if (includeHistory || !omitHistoryFromLightweightStatus) {
+      temperature['history'] = List<dynamic>.of(historySamples);
+    }
     return <String, dynamic>{
       'device': 'AquaCYD Test',
       'network': <String, dynamic>{'rssi': -61},
-      'temperature': <String, dynamic>{
-        'history': includeHistory ? <dynamic>[] : <dynamic>[],
-      },
+      'temperature': temperature,
     };
   }
 
@@ -279,5 +334,7 @@ class _FakeRemoteApi implements ControllerRemoteApi {
   }
 
   @override
-  Future<void> webSession(String sessionId, String state) async {}
+  Future<void> webSession(String sessionId, String state) async {
+    if (state == 'active') heartbeatCalls += 1;
+  }
 }

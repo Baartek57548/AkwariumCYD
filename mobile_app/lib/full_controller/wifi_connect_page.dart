@@ -8,7 +8,9 @@ import 'controller_shell.dart';
 import 'widgets.dart';
 
 class WifiConnectPage extends StatefulWidget {
-  const WifiConnectPage({super.key});
+  const WifiConnectPage({super.key, this.returnSession = false});
+
+  final bool returnSession;
 
   @override
   State<WifiConnectPage> createState() => _WifiConnectPageState();
@@ -56,6 +58,7 @@ class _WifiConnectPageState extends State<WifiConnectPage> {
   }
 
   Future<void> _connect() async {
+    if (connecting) return;
     FocusManager.instance.primaryFocus?.unfocus();
     Uri uri;
     try {
@@ -75,10 +78,12 @@ class _WifiConnectPageState extends State<WifiConnectPage> {
       connectionError = null;
     });
     final api = ControllerApi(uri);
+    var handedOff = false;
     try {
-      await api.status(includeHistory: true);
+      final status = await api.status(includeHistory: true);
       try {
         await preferences.saveAddress(uri);
+        await preferences.saveAutoReconnect(true);
       } on Object catch (error) {
         if (mounted) {
           ScaffoldMessenger.of(context)
@@ -93,9 +98,19 @@ class _WifiConnectPageState extends State<WifiConnectPage> {
         }
       }
       if (!mounted) return;
+      final session = ControllerSession.wifi(
+        api,
+        initialStatus: status,
+        cachedAt: DateTime.now(),
+      );
+      handedOff = true;
+      if (widget.returnSession) {
+        Navigator.of(context).pop<ControllerSession>(session);
+        return;
+      }
       await Navigator.of(context).pushReplacement(
         MaterialPageRoute<void>(
-          builder: (_) => ControllerShell(session: ControllerSession.wifi(api)),
+          builder: (_) => ControllerShell(session: session),
         ),
       );
     } on ControllerApiException catch (exception) {
@@ -114,6 +129,7 @@ class _WifiConnectPageState extends State<WifiConnectPage> {
         });
       }
     } finally {
+      if (!handedOff) await api.disconnect();
       if (mounted) setState(() => connecting = false);
     }
   }
@@ -214,6 +230,8 @@ class _WifiConnectPageState extends State<WifiConnectPage> {
                               label: Text(
                                 connecting
                                     ? 'Sprawdzanie API…'
+                                    : widget.returnSession
+                                    ? 'Połącz i synchronizuj'
                                     : 'Połącz i otwórz aplikację',
                               ),
                             ),

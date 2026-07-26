@@ -2,6 +2,34 @@
 
 Wersjonowanie aplikacji jest zgodne z [Semantic Versioning](https://semver.org/).
 
+## 4.0.1 — 2026-07-26
+
+### Nowe
+
+- aplikacja uruchamia od razu kompletne centrum dowodzenia, również bez połączenia ze sterownikiem,
+- ostatni potwierdzony stan urządzenia jest zapisywany lokalnie i dostępny we wszystkich pięciu sekcjach,
+- przycisk w prawym górnym rogu otwiera wspólne centrum połączeń Wi‑Fi, Bluetooth i trybu offline,
+- zapamiętany sterownik Wi‑Fi jest łączony w tle, a sesja automatycznie ponawia próbę po odzyskaniu sieci.
+
+### Zmienione
+
+- harmonogramy, automatyka i ustawienia pozostają dostępne offline jako jednoznaczny tryb tylko do odczytu,
+- brak pierwszego snapshotu nie jest uzupełniany danymi symulatora ani fikcyjnymi pomiarami,
+- podczas reconnectu interfejs zachowuje ostatni stan i blokuje polecenia do chwili otrzymania świeżej telemetrii,
+- lokalny eksport CSV działa również dla zapisanej historii offline.
+
+### Bezpieczeństwo i odporność
+
+- snapshot ma wersjonowany format, limit rozmiaru i głębokości oraz usuwa PIN-y, hasła, tokeny i sekrety,
+- zapis jest ograniczony czasowo, deduplikowany po znaczniku synchronizacji i wykonywany wyłącznie po udanym odczycie live,
+- zmiana transportu zwalnia poprzednią sesję, anuluje jej timery i nie pozwala staremu połączeniu nadpisać nowszego stanu.
+
+### Dystrybucja
+
+- wersja aplikacji: `4.0.1+15`,
+- tag wydania: `mobile-v4.0.1`,
+- produkcyjny asset Androida: `AquaCYD-Control-4.0.1-current.apk`.
+
 ## 4.0.0 — 2026-07-26
 
 ### Nowe

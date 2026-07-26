@@ -27,6 +27,14 @@ class _InsightsCenterViewState extends State<InsightsCenterView> {
   int _section = 0;
   Widget? _logs;
 
+  @override
+  void didUpdateWidget(InsightsCenterView oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (!identical(oldWidget.session, widget.session)) {
+      _logs = null;
+    }
+  }
+
   void _select(int section) {
     if (section == _section) return;
     if (section == 1) {

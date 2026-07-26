@@ -88,8 +88,11 @@ class _ChartsViewState extends State<ChartsView> {
   Widget build(BuildContext context) {
     final status = widget.session.status;
     final temperature = status.section('temperature');
-    final targetTemperature = temperature.number('target', 25);
-    final targetPh = status.section('config').number('co2TargetPh', 6.8);
+    final config = status.section('config');
+    final targetTemperature =
+        temperature.nullableNumber('target') ??
+        config.nullableNumber('target_temp');
+    final targetPh = config.nullableNumber('co2TargetPh');
     final allSamples = history?.samples ?? const <HistorySample>[];
     final points = allSamples
         .map((sample) => _PlotPoint(sample.epoch, metric.value(sample)))
