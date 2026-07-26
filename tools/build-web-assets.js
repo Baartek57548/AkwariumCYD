@@ -57,7 +57,8 @@ for (const relativePath of files) {
     }
 
     fs.mkdirSync(path.dirname(destinationPath), { recursive: true });
-    const content = fs.readFileSync(sourcePath);
+    const source = fs.readFileSync(sourcePath, 'utf8');
+    const content = Buffer.from(source.replace(/\r\n?/g, '\n'), 'utf8');
     fs.writeFileSync(destinationPath, content);
     sourceBytes += content.length;
 
