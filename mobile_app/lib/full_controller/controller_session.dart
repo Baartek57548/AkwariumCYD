@@ -14,6 +14,8 @@ class ControllerSession extends ChangeNotifier {
   static const Duration _onlinePollInterval = Duration(seconds: 3);
   static const Duration _maximumReconnectDelay = Duration(seconds: 30);
   static const Duration _heartbeatInterval = Duration(seconds: 5);
+  static const Duration _commandFreshnessLimit = Duration(seconds: 15);
+  static const Duration _adminSessionTimeout = Duration(minutes: 5);
   static const int _offlineFailureThreshold = 3;
   static const int _maximumCachedArchives = 2;
   static const int _maximumArchiveBytes = 8 * 1024 * 1024;
@@ -46,6 +48,7 @@ class ControllerSession extends ChangeNotifier {
   Timer? _pollTimer;
   Timer? _developmentTimer;
   Timer? _webSessionTimer;
+  Timer? _adminSessionTimer;
   Future<void>? _connectOperation;
   Future<void>? _refreshOperation;
   Future<void>? _heartbeatOperation;
@@ -98,6 +101,36 @@ class ControllerSession extends ChangeNotifier {
       isDevelopment || (_api?.supportsFirmwareUpload ?? false);
   bool get supportsFileDownload =>
       isDevelopment || (_api?.supportsFileDownload ?? false);
+  bool get isLegacyBluetooth =>
+      isBluetooth && _status.text('mode').toUpperCase() == 'BLE_V1';
+  bool get supportsAdvancedConfiguration => isDevelopment || !isLegacyBluetooth;
+  bool get telemetryIsFresh {
+    if (isDevelopment) return true;
+    final updatedAt = _lastUpdate;
+    if (!_connected ||
+        _connectionPhase != ControllerConnectionPhase.online ||
+        updatedAt == null) {
+      return false;
+    }
+    final age = DateTime.now().difference(updatedAt);
+    return !age.isNegative && age <= _commandFreshnessLimit;
+  }
+
+  bool get canIssueCommands => isDevelopment || telemetryIsFresh;
+
+  String? get commandBlockReason {
+    if (canIssueCommands) return null;
+    if (_connectionPhase == ControllerConnectionPhase.connecting) {
+      return 'Poczekaj na pierwszą synchronizację ze sterownikiem.';
+    }
+    if (_connectionPhase == ControllerConnectionPhase.reconnecting) {
+      return 'Sterowanie jest zablokowane podczas ponawiania połączenia.';
+    }
+    if (_connectionPhase == ControllerConnectionPhase.offline) {
+      return 'Sterownik jest offline. Polecenia nie zostaną wysłane.';
+    }
+    return 'Telemetria jest nieaktualna. Odśwież dane przed sterowaniem.';
+  }
 
   Future<void> connect({bool reportBusy = true}) {
     if (_disposed) return Future<void>.value();
@@ -221,7 +254,7 @@ class ControllerSession extends ChangeNotifier {
     }
   }
 
-  Future<void> _refreshAfterMutation({bool includeHistory = true}) async {
+  Future<void> _refreshAfterMutation({bool includeHistory = false}) async {
     final inFlight = _refreshOperation;
     if (inFlight != null) {
       await inFlight;
@@ -241,6 +274,8 @@ class ControllerSession extends ChangeNotifier {
       _webSessionTimer = null;
       _developmentTimer?.cancel();
       _developmentTimer = null;
+      _clearAdminSession();
+      _notifySafely();
       return;
     }
 
@@ -362,7 +397,7 @@ class ControllerSession extends ChangeNotifier {
           message: 'Nieprawidłowy PIN administratora.',
         );
       }
-      _adminPin = normalized;
+      _activateAdminSession(normalized);
       notifyListeners();
       return const ControllerActionResult(
         success: true,
@@ -370,16 +405,23 @@ class ControllerSession extends ChangeNotifier {
         message: 'Tryb administratora aktywny.',
       );
     }
+    if (isLegacyBluetooth) {
+      _activateAdminSession(normalized);
+      notifyListeners();
+      return const ControllerActionResult(
+        success: true,
+        code: 'pin_pending_verification',
+        message: 'PIN zostanie zweryfikowany przy pierwszym poleceniu BLE.',
+      );
+    }
     final result = await _api!.authenticate(normalized);
-    _adminPin = normalized;
+    _activateAdminSession(normalized);
     notifyListeners();
     return result;
   }
 
   void logout() {
-    _adminPin = null;
-    _logs = <String, dynamic>{};
-    _diagnostics = <String, dynamic>{};
+    _clearAdminSession();
     notifyListeners();
   }
 
@@ -395,13 +437,15 @@ class ControllerSession extends ChangeNotifier {
         message: 'Nieprawidłowa nazwa polecenia.',
       );
     }
-    final pin = _adminPin;
-    if (pin == null) {
-      throw const ControllerApiException(
-        code: 'admin_required',
-        message: 'Ta operacja wymaga zalogowania administratora.',
+    if (!canIssueCommands) {
+      throw ControllerApiException(
+        code: 'controller_unavailable',
+        message:
+            commandBlockReason ??
+            'Sterownik nie jest gotowy do wykonania polecenia.',
       );
     }
+    final pin = _requirePin();
     if (_activeAction != null) {
       throw ControllerApiException(
         code: 'action_in_progress',
@@ -426,7 +470,7 @@ class ControllerSession extends ChangeNotifier {
       return result;
     } on ControllerApiException catch (error) {
       if (error.isAuthenticationError) {
-        _adminPin = null;
+        _clearAdminSession();
       }
       rethrow;
     } finally {
@@ -443,7 +487,7 @@ class ControllerSession extends ChangeNotifier {
     try {
       _logs = isDevelopment ? _logs : await _api!.logs(pin);
     } on ControllerApiException catch (error) {
-      if (error.isAuthenticationError) _adminPin = null;
+      if (error.isAuthenticationError) _clearAdminSession();
       rethrow;
     } finally {
       _endBusy();
@@ -460,7 +504,7 @@ class ControllerSession extends ChangeNotifier {
           ? _createDevelopmentDiagnostics()
           : await _api!.busDiagnostics(pin);
     } on ControllerApiException catch (error) {
-      if (error.isAuthenticationError) _adminPin = null;
+      if (error.isAuthenticationError) _clearAdminSession();
       rethrow;
     } finally {
       _endBusy();
@@ -693,7 +737,30 @@ class ControllerSession extends ChangeNotifier {
         message: 'Zaloguj administratora, aby wykonać tę operację.',
       );
     }
+    _armAdminSessionTimeout();
     return pin;
+  }
+
+  void _activateAdminSession(String pin) {
+    _adminPin = pin;
+    _armAdminSessionTimeout();
+  }
+
+  void _armAdminSessionTimeout() {
+    _adminSessionTimer?.cancel();
+    _adminSessionTimer = Timer(_adminSessionTimeout, () {
+      if (_disposed) return;
+      _clearAdminSession();
+      _notifySafely();
+    });
+  }
+
+  void _clearAdminSession() {
+    _adminSessionTimer?.cancel();
+    _adminSessionTimer = null;
+    _adminPin = null;
+    _logs = <String, dynamic>{};
+    _diagnostics = <String, dynamic>{};
   }
 
   Future<void> _sendWebSessionHeartbeat() {
@@ -1511,6 +1578,9 @@ class ControllerSession extends ChangeNotifier {
     _developmentTimer = null;
     _webSessionTimer?.cancel();
     _webSessionTimer = null;
+    _adminSessionTimer?.cancel();
+    _adminSessionTimer = null;
+    _adminPin = null;
     _historyArchiveCache.clear();
 
     final api = _api;

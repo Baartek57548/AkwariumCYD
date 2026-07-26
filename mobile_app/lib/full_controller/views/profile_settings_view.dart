@@ -1,8 +1,11 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import '../../../app_settings.dart';
 import '../../../app_update/app_update_ui.dart';
+import '../../../controller_preferences.dart';
 import '../widgets.dart';
 
 class ProfileSettingsView extends StatefulWidget {
@@ -14,8 +17,13 @@ class ProfileSettingsView extends StatefulWidget {
 
 class _ProfileSettingsViewState extends State<ProfileSettingsView> {
   final _formKey = GlobalKey<FormState>();
+  final _controllerPreferences = ControllerPreferences();
   late final TextEditingController _usernameController;
   late ThemeMode _selectedThemeMode;
+  Uri? _savedController;
+  bool _autoReconnect = true;
+  bool _connectionPreferencesLoaded = false;
+  bool _forgettingController = false;
   bool _saving = false;
 
   @override
@@ -25,12 +33,29 @@ class _ProfileSettingsViewState extends State<ProfileSettingsView> {
       text: AppSettings.usernameNotifier.value,
     );
     _selectedThemeMode = AppSettings.themeModeNotifier.value;
+    unawaited(_loadConnectionPreferences());
   }
 
   @override
   void dispose() {
     _usernameController.dispose();
     super.dispose();
+  }
+
+  Future<void> _loadConnectionPreferences() async {
+    try {
+      final address = await _controllerPreferences.loadSavedAddress();
+      final autoReconnect = await _controllerPreferences.loadAutoReconnect();
+      if (!mounted) return;
+      setState(() {
+        _savedController = address;
+        _autoReconnect = autoReconnect;
+        _connectionPreferencesLoaded = true;
+      });
+    } on Object {
+      if (!mounted) return;
+      setState(() => _connectionPreferencesLoaded = true);
+    }
   }
 
   Future<void> _save() async {
@@ -42,6 +67,7 @@ class _ProfileSettingsViewState extends State<ProfileSettingsView> {
         'pl',
         _usernameController.text.trim(),
       );
+      await _controllerPreferences.saveAutoReconnect(_autoReconnect);
       if (mounted) {
         try {
           await HapticFeedback.lightImpact();
@@ -77,6 +103,63 @@ class _ProfileSettingsViewState extends State<ProfileSettingsView> {
       }
     } finally {
       if (mounted) setState(() => _saving = false);
+    }
+  }
+
+  Future<void> _forgetController() async {
+    if (_forgettingController || _savedController == null) return;
+    final accepted = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Zapomnieć sterownik?'),
+        content: Text(
+          'Adres ${_savedController!.host} zostanie usunięty. '
+          'Przy następnym uruchomieniu aplikacja pokaże wybór połączenia.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('Anuluj'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(context, true),
+            child: const Text('Zapomnij'),
+          ),
+        ],
+      ),
+    );
+    if (accepted != true || !mounted) return;
+
+    setState(() => _forgettingController = true);
+    try {
+      await _controllerPreferences.forgetController();
+      await _controllerPreferences.saveAutoReconnect(false);
+      if (!mounted) return;
+      setState(() {
+        _savedController = null;
+        _autoReconnect = false;
+      });
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Zapisany sterownik został usunięty.'),
+          behavior: SnackBarBehavior.floating,
+        ),
+      );
+    } on Object {
+      if (!mounted) return;
+      final colors = Theme.of(context).colorScheme;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            'Nie udało się usunąć zapisanego sterownika.',
+            style: TextStyle(color: colors.onError),
+          ),
+          backgroundColor: colors.error,
+          behavior: SnackBarBehavior.floating,
+        ),
+      );
+    } finally {
+      if (mounted) setState(() => _forgettingController = false);
     }
   }
 
@@ -116,6 +199,50 @@ class _ProfileSettingsViewState extends State<ProfileSettingsView> {
                           }
                           return null;
                         },
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+              const SizedBox(height: 16),
+              const SectionHeader(title: 'Połączenie przy starcie'),
+              Card(
+                child: Padding(
+                  padding: const EdgeInsets.all(16),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      SwitchListTile(
+                        contentPadding: EdgeInsets.zero,
+                        secondary: const Icon(Icons.autorenew_rounded),
+                        title: const Text('Łącz automatycznie przez Wi‑Fi'),
+                        subtitle: Text(
+                          _savedController == null
+                              ? 'Brak zapisanego sterownika Wi‑Fi'
+                              : 'Sterownik: ${_savedController!.host}',
+                        ),
+                        value: _autoReconnect,
+                        onChanged:
+                            !_connectionPreferencesLoaded ||
+                                _savedController == null
+                            ? null
+                            : (value) => setState(() => _autoReconnect = value),
+                      ),
+                      const SizedBox(height: 8),
+                      OutlinedButton.icon(
+                        onPressed:
+                            _savedController == null || _forgettingController
+                            ? null
+                            : _forgetController,
+                        icon: _forgettingController
+                            ? const SizedBox.square(
+                                dimension: 18,
+                                child: CircularProgressIndicator(
+                                  strokeWidth: 2,
+                                ),
+                              )
+                            : const Icon(Icons.link_off_rounded),
+                        label: const Text('Zapomnij zapisany sterownik'),
                       ),
                     ],
                   ),

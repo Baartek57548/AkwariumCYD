@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 
+import '../design_system.dart';
+
 class ControllerPageBody extends StatelessWidget {
   const ControllerPageBody({
     super.key,
@@ -109,6 +111,90 @@ class SectionHeader extends StatelessWidget {
           );
         },
       ),
+    );
+  }
+}
+
+@immutable
+class ControllerSectionOption<T> {
+  const ControllerSectionOption({
+    required this.value,
+    required this.icon,
+    required this.label,
+  });
+
+  final T value;
+  final IconData icon;
+  final String label;
+}
+
+class ControllerSectionSwitcher<T> extends StatelessWidget {
+  const ControllerSectionSwitcher({
+    super.key,
+    required this.options,
+    required this.selected,
+    required this.onSelected,
+    this.compactLabel = 'Widok',
+  });
+
+  final List<ControllerSectionOption<T>> options;
+  final T selected;
+  final ValueChanged<T> onSelected;
+  final String compactLabel;
+
+  @override
+  Widget build(BuildContext context) {
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final textScale = MediaQuery.textScalerOf(context).scale(1);
+        final compact = constraints.maxWidth < 520 || textScale > 1.3;
+        if (compact) {
+          return DropdownButtonFormField<T>(
+            initialValue: selected,
+            isExpanded: true,
+            decoration: InputDecoration(labelText: compactLabel),
+            items: [
+              for (final option in options)
+                DropdownMenuItem<T>(
+                  value: option.value,
+                  child: Row(
+                    children: [
+                      Icon(option.icon, size: 20),
+                      const SizedBox(width: AquaSpacing.xs),
+                      Expanded(
+                        child: Text(
+                          option.label,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+            ],
+            onChanged: (value) {
+              if (value != null && value != selected) onSelected(value);
+            },
+          );
+        }
+
+        return SizedBox(
+          width: double.infinity,
+          child: SegmentedButton<T>(
+            segments: [
+              for (final option in options)
+                ButtonSegment<T>(
+                  value: option.value,
+                  icon: Icon(option.icon),
+                  label: Text(option.label),
+                ),
+            ],
+            selected: {selected},
+            showSelectedIcon: false,
+            onSelectionChanged: (selection) => onSelected(selection.first),
+          ),
+        );
+      },
     );
   }
 }
@@ -305,7 +391,7 @@ class StatusBanner extends StatelessWidget {
           padding: const EdgeInsets.all(16),
           decoration: BoxDecoration(
             color: isError ? colors.errorContainer : colors.primaryContainer,
-            borderRadius: BorderRadius.circular(5),
+            borderRadius: BorderRadius.circular(AquaRadius.card),
           ),
           child: Row(
             children: [

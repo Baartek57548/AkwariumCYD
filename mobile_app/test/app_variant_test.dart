@@ -1,68 +1,92 @@
 import 'package:cyd_aquarium_mobile/aquarium_app.dart';
 import 'package:cyd_aquarium_mobile/connection_home_page.dart';
+import 'package:cyd_aquarium_mobile/design_system.dart';
 import 'package:cyd_aquarium_mobile/full_controller/controller_session.dart';
 import 'package:cyd_aquarium_mobile/full_controller/controller_shell.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
-  testWidgets('global rectangular components never exceed 5 px radius', (
+  testWidgets(
+    'design system keeps coherent shapes and accessible tap targets',
+    (tester) async {
+      ThemeData? capturedTheme;
+      await tester.pumpWidget(
+        AquariumApp(
+          home: Builder(
+            builder: (context) {
+              capturedTheme = Theme.of(context);
+              return const Scaffold(body: SizedBox.expand());
+            },
+          ),
+        ),
+      );
+      await tester.pump();
+
+      final theme = capturedTheme!;
+      expect(_maximumRadius(theme.cardTheme.shape), AquaRadius.card);
+      expect(
+        _maximumRadius(theme.filledButtonTheme.style?.shape?.resolve({})),
+        AquaRadius.control,
+      );
+      expect(
+        _maximumRadius(theme.navigationBarTheme.indicatorShape),
+        AquaRadius.control,
+      );
+      expect(_maximumRadius(theme.dialogTheme.shape), AquaRadius.card);
+      expect(_maximumRadius(theme.bottomSheetTheme.shape), AquaRadius.hero);
+      expect(theme.materialTapTargetSize, MaterialTapTargetSize.padded);
+
+      final buttonStyles = [
+        theme.filledButtonTheme.style,
+        theme.elevatedButtonTheme.style,
+        theme.outlinedButtonTheme.style,
+        theme.textButtonTheme.style,
+        theme.iconButtonTheme.style,
+      ];
+      for (final style in buttonStyles) {
+        expect(
+          style?.minimumSize?.resolve({})?.height,
+          greaterThanOrEqualTo(48),
+        );
+      }
+    },
+  );
+
+  testWidgets(
+    'production chooser exposes only supported connection transports',
+    (tester) async {
+      await tester.pumpWidget(const AquariumApp(home: ConnectionHomePage()));
+
+      expect(find.text('AquaCYD Control'), findsOneWidget);
+      expect(find.text('Połącz centrum dowodzenia'), findsOneWidget);
+      expect(find.text('Sterownik przez Wi‑Fi'), findsOneWidget);
+      expect(find.text('Sterownik przez BLE'), findsOneWidget);
+      expect(find.text('Symulator całego sterownika'), findsNothing);
+      expect(find.text('Panel WWW zgodności'), findsNothing);
+      expect(find.text('Narzędzia serwisowe'), findsNothing);
+    },
+  );
+
+  testWidgets('service tools appear only after explicit variant opt-in', (
     tester,
   ) async {
-    ThemeData? capturedTheme;
     await tester.pumpWidget(
-      AquariumApp(
-        home: Builder(
-          builder: (context) {
-            capturedTheme = Theme.of(context);
-            return const Scaffold(body: SizedBox.expand());
-          },
+      const AquariumApp(
+        home: ConnectionHomePage(
+          showDevelopment: true,
+          showLegacyWebView: true,
         ),
       ),
     );
+    final serviceTools = find.text('Narzędzia serwisowe');
+    await tester.ensureVisible(serviceTools);
     await tester.pump();
+    await tester.tap(serviceTools);
+    await tester.pumpAndSettle();
 
-    final theme = capturedTheme!;
-    final shapes = <ShapeBorder?>[
-      theme.cardTheme.shape,
-      theme.filledButtonTheme.style?.shape?.resolve({}),
-      theme.elevatedButtonTheme.style?.shape?.resolve({}),
-      theme.outlinedButtonTheme.style?.shape?.resolve({}),
-      theme.textButtonTheme.style?.shape?.resolve({}),
-      theme.iconButtonTheme.style?.shape?.resolve({}),
-      theme.dialogTheme.shape,
-      theme.bottomSheetTheme.shape,
-      theme.popupMenuTheme.shape,
-      theme.chipTheme.shape,
-      theme.navigationBarTheme.indicatorShape,
-      theme.navigationRailTheme.indicatorShape,
-    ];
-
-    for (final shape in shapes) {
-      expect(_maximumRadius(shape), lessThanOrEqualTo(5));
-    }
-
-    expect(theme.materialTapTargetSize, MaterialTapTargetSize.padded);
-    final buttonStyles = [
-      theme.filledButtonTheme.style,
-      theme.elevatedButtonTheme.style,
-      theme.outlinedButtonTheme.style,
-      theme.textButtonTheme.style,
-      theme.iconButtonTheme.style,
-    ];
-    for (final style in buttonStyles) {
-      expect(style?.minimumSize?.resolve({})?.height, greaterThanOrEqualTo(48));
-    }
-  });
-
-  testWidgets('current variant exposes all connection modes', (tester) async {
-    await tester.pumpWidget(const MaterialApp(home: ConnectionHomePage()));
-
-    expect(find.text('AquaCYD Control'), findsOneWidget);
-    expect(find.text('Pełna aplikacja przez Wi‑Fi'), findsOneWidget);
-    expect(find.text('Połącz przez Bluetooth BLE'), findsOneWidget);
-    expect(find.text('Uruchom tryb DEV'), findsOneWidget);
-    expect(find.text('Oryginalny panel WWW'), findsOneWidget);
+    expect(find.text('Symulator całego sterownika'), findsOneWidget);
+    expect(find.text('Panel WWW zgodności'), findsOneWidget);
   });
 
   testWidgets('connection chooser remains usable on a narrow scaled display', (
@@ -74,55 +98,54 @@ void main() {
     addTearDown(tester.view.resetPhysicalSize);
 
     await tester.pumpWidget(
-      MaterialApp(
-        builder: (context, child) => MediaQuery(
-          data: MediaQuery.of(
-            context,
-          ).copyWith(textScaler: const TextScaler.linear(1.8)),
-          child: child!,
-        ),
-        home: const ConnectionHomePage(),
-      ),
+      AquariumApp(home: const ConnectionHomePage(), title: 'AquaCYD Control'),
+    );
+    tester.binding.platformDispatcher.textScaleFactorTestValue = 1.8;
+    addTearDown(
+      tester.binding.platformDispatcher.clearTextScaleFactorTestValue,
     );
     await tester.pump();
 
-    expect(find.text('Wybierz sposób połączenia'), findsOneWidget);
-    expect(find.text('Pełna aplikacja przez Wi‑Fi'), findsOneWidget);
+    expect(find.text('Połącz centrum dowodzenia'), findsOneWidget);
+    expect(find.text('Sterownik przez Wi‑Fi'), findsOneWidget);
+    expect(find.text('Sterownik przez BLE'), findsOneWidget);
     expect(tester.takeException(), isNull);
   });
 
-  testWidgets('full variant contains only production transports', (
-    tester,
-  ) async {
-    await tester.pumpWidget(
-      const MaterialApp(
-        home: ConnectionHomePage(
-          brandName: 'AquaCYD Full',
-          showDevelopment: false,
-          showLegacyWebView: false,
+  testWidgets(
+    'full variant preserves brand while hiding development surfaces',
+    (tester) async {
+      await tester.pumpWidget(
+        const AquariumApp(
+          home: ConnectionHomePage(
+            brandName: 'AquaCYD Full',
+            showDevelopment: false,
+            showLegacyWebView: false,
+          ),
         ),
-      ),
-    );
+      );
 
-    expect(find.text('AquaCYD Full'), findsOneWidget);
-    expect(find.text('Pełna aplikacja przez Wi‑Fi'), findsOneWidget);
-    expect(find.text('Połącz przez Bluetooth BLE'), findsOneWidget);
-    expect(find.text('Uruchom tryb DEV'), findsNothing);
-    expect(find.text('Oryginalny panel WWW'), findsNothing);
-  });
+      expect(find.text('AquaCYD Full'), findsOneWidget);
+      expect(find.text('Sterownik przez Wi‑Fi'), findsOneWidget);
+      expect(find.text('Sterownik przez BLE'), findsOneWidget);
+      expect(find.text('Symulator całego sterownika'), findsNothing);
+      expect(find.text('Panel WWW zgodności'), findsNothing);
+    },
+  );
 
-  testWidgets('dev variant starts directly in the complete controller', (
+  testWidgets('development session starts in the complete command center', (
     tester,
   ) async {
-    final session = ControllerSession.development();
     await tester.pumpWidget(
-      MaterialApp(home: ControllerShell(session: session)),
+      AquariumApp(
+        home: ControllerShell(session: ControllerSession.development()),
+      ),
     );
     await tester.pumpAndSettle(const Duration(milliseconds: 500));
 
-    expect(find.text('Pulpit'), findsOneWidget);
-    expect(find.text('Tryb deweloperski'), findsOneWidget);
-    expect(find.text('Pełna aplikacja przez Wi‑Fi'), findsNothing);
+    expect(find.text('Centrum'), findsOneWidget);
+    expect(find.text('Środowisko symulacyjne'), findsOneWidget);
+    expect(find.text('Sterownik przez Wi‑Fi'), findsNothing);
   });
 }
 

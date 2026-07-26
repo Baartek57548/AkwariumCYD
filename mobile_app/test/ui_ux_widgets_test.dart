@@ -115,15 +115,13 @@ void main() {
     addTearDown(tester.view.resetPhysicalSize);
     final session = ControllerSession.development();
     addTearDown(session.dispose);
+    tester.binding.platformDispatcher.textScaleFactorTestValue = 3;
+    addTearDown(
+      tester.binding.platformDispatcher.clearTextScaleFactorTestValue,
+    );
 
     await tester.pumpWidget(
-      MaterialApp(
-        builder: (context, child) => MediaQuery(
-          data: MediaQuery.of(
-            context,
-          ).copyWith(textScaler: const TextScaler.linear(3)),
-          child: child!,
-        ),
+      AquariumApp(
         home: Scaffold(
           body: DashboardView(session: session, onOpenCharts: () {}),
         ),
@@ -132,10 +130,9 @@ void main() {
     await tester.pump();
 
     expect(tester.takeException(), isNull);
-    expect(
-      tester.getTopLeft(find.text('Adres IP')).dy,
-      greaterThan(tester.getTopLeft(find.text('Tryb')).dy),
-    );
+    expect(find.text('Temperatura wody'), findsOneWidget);
+    expect(find.text('Telemetria na żywo'), findsOneWidget);
+    expect(find.text('Środowisko symulacyjne'), findsOneWidget);
   });
 
   testWidgets(

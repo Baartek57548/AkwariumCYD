@@ -1,3 +1,5 @@
+import 'dart:convert';
+
 import 'package:flutter/material.dart';
 
 import '../controller_api.dart';
@@ -30,6 +32,9 @@ class _SchedulesViewState extends State<SchedulesView> {
   late TimeOfDay feedTime;
   bool saving = false;
   String? statusMessage;
+  bool _dirty = false;
+  bool _remoteChangedWhileEditing = false;
+  String _sourceFingerprint = '';
 
   @override
   void initState() {
@@ -38,8 +43,9 @@ class _SchedulesViewState extends State<SchedulesView> {
   }
 
   void _loadFromStatus() {
-    final schedules = widget.session.status.section('schedules');
-    final legacy = widget.session.status.section('schedule');
+    final status = widget.session.status;
+    final schedules = status.section('schedules');
+    final legacy = status.section('schedule');
     final lightSchedule = schedules.section('light1').isNotEmpty
         ? schedules.section('light1')
         : schedules.section('light');
@@ -101,12 +107,35 @@ class _SchedulesViewState extends State<SchedulesView> {
       fallbackMode: legacy.integer('airMode'),
     );
     heaterMode = legacy.integer('heaterMode') == 1 ? 1 : 0;
-    final feeding = widget.session.status.section('feeding');
+    final feeding = status.section('feeding');
     feederEnabled = feeding.integer('freq', 1) > 0;
     feedTime = TimeOfDay(
       hour: feeding.integer('hour', 14).clamp(0, 23),
       minute: feeding.integer('minute').clamp(0, 59),
     );
+    _sourceFingerprint = _fingerprint(status);
+    _dirty = false;
+    _remoteChangedWhileEditing = false;
+  }
+
+  @override
+  void didUpdateWidget(SchedulesView oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    final currentFingerprint = _fingerprint(widget.session.status);
+    if (currentFingerprint == _sourceFingerprint) return;
+    if (_dirty || saving) {
+      _remoteChangedWhileEditing = true;
+    } else {
+      _loadFromStatus();
+    }
+  }
+
+  void _edit(VoidCallback change) {
+    setState(() {
+      change();
+      _dirty = true;
+      statusMessage = null;
+    });
   }
 
   Future<void> _save() async {
@@ -152,11 +181,16 @@ class _SchedulesViewState extends State<SchedulesView> {
           'feedFreq': feederEnabled ? 1 : 0,
           'feedTime': _timeText(feedTime),
         },
+        confirmation: _remoteChangedWhileEditing
+            ? 'Konfiguracja sterownika zmieniła się podczas edycji. '
+                  'Zapisać ten kompletny plan i zastąpić nowsze wartości?'
+            : 'Zapisać kompletny plan dobowy w sterowniku?',
       );
       if (mounted) {
-        setState(
-          () => statusMessage = 'Harmonogramy zapisane i zsynchronizowane.',
-        );
+        setState(() {
+          _loadFromStatus();
+          statusMessage = 'Harmonogramy zapisane i zsynchronizowane.';
+        });
       }
     } on ControllerApiException catch (error) {
       if (mounted) setState(() => statusMessage = error.message);
@@ -194,7 +228,7 @@ class _SchedulesViewState extends State<SchedulesView> {
           icon: Icons.lightbulb_rounded,
           entry: light,
           profileEnabled: true,
-          onChanged: (value) => setState(() => light = value),
+          onChanged: (value) => _edit(() => light = value),
         ),
         const SizedBox(height: 10),
         _ScheduleCard(
@@ -202,21 +236,21 @@ class _SchedulesViewState extends State<SchedulesView> {
           icon: Icons.lightbulb_outline_rounded,
           entry: plant,
           profileEnabled: true,
-          onChanged: (value) => setState(() => plant = value),
+          onChanged: (value) => _edit(() => plant = value),
         ),
         const SizedBox(height: 10),
         _ScheduleCard(
           title: 'Filtr',
           icon: Icons.filter_alt_rounded,
           entry: filter,
-          onChanged: (value) => setState(() => filter = value),
+          onChanged: (value) => _edit(() => filter = value),
         ),
         const SizedBox(height: 10),
         _ScheduleCard(
           title: 'Napowietrzanie',
           icon: Icons.air_rounded,
           entry: air,
-          onChanged: (value) => setState(() => air = value),
+          onChanged: (value) => _edit(() => air = value),
         ),
         const SizedBox(height: 10),
         Card(
@@ -258,7 +292,7 @@ class _SchedulesViewState extends State<SchedulesView> {
                     Text('Zawsze wyłączona', overflow: TextOverflow.ellipsis),
                   ],
                   onChanged: (value) =>
-                      setState(() => heaterMode = value ?? heaterMode),
+                      _edit(() => heaterMode = value ?? heaterMode),
                 ),
               ],
             ),
@@ -274,7 +308,7 @@ class _SchedulesViewState extends State<SchedulesView> {
                   label: 'Automatyczny karmnik',
                   subtitle: 'Jedna dawka dziennie zgodnie z logiką firmware.',
                   value: feederEnabled,
-                  onChanged: (value) => setState(() => feederEnabled = value),
+                  onChanged: (value) => _edit(() => feederEnabled = value),
                 ),
                 ListTile(
                   contentPadding: EdgeInsets.zero,
@@ -288,7 +322,7 @@ class _SchedulesViewState extends State<SchedulesView> {
                               initialTime: feedTime,
                             );
                             if (selected != null && mounted) {
-                              setState(() => feedTime = selected);
+                              _edit(() => feedTime = selected);
                             }
                           }
                         : null,
@@ -303,6 +337,17 @@ class _SchedulesViewState extends State<SchedulesView> {
           ),
         ),
         const SizedBox(height: 16),
+        if (_remoteChangedWhileEditing) ...[
+          const StatusBanner(
+            icon: Icons.sync_problem_rounded,
+            title: 'Sterownik ma nowszą konfigurację',
+            message:
+                'Lokalny szkic nie został nadpisany. Przywróć dane '
+                'sterownika albo świadomie potwierdź zapis całego planu.',
+            isError: false,
+          ),
+          const SizedBox(height: 12),
+        ],
         SaveButton(
           onPressed: _save,
           label: 'Zapisz kompletny harmonogram',
@@ -316,6 +361,12 @@ class _SchedulesViewState extends State<SchedulesView> {
       ],
     );
   }
+
+  static String _fingerprint(JsonMap status) => jsonEncode([
+    status.section('schedules'),
+    status.section('schedule'),
+    status.section('feeding'),
+  ]);
 }
 
 class _ScheduleTimeline extends StatelessWidget {

@@ -2,7 +2,7 @@ import 'package:flutter/material.dart';
 
 import 'app_settings.dart';
 import 'aquarium_app.dart';
-import 'connection_home_page.dart';
+import 'controller_bootstrap_page.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -10,7 +10,7 @@ Future<void> main() async {
   runApp(
     const AquariumApp(
       title: 'AquaCYD Full',
-      home: ConnectionHomePage(
+      home: ControllerBootstrapPage(
         brandName: 'AquaCYD Full',
         showDevelopment: false,
         showLegacyWebView: false,

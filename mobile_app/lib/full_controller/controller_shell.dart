@@ -9,10 +9,10 @@ import 'controller_api.dart';
 import 'controller_session.dart';
 import 'data_access.dart';
 import 'widgets.dart';
-import 'views/charts_view.dart';
+import 'views/automation_center_view.dart';
 import 'views/control_hub_view.dart';
 import 'views/dashboard_view.dart';
-import 'views/schedules_view.dart';
+import 'views/insights_center_view.dart';
 import 'views/settings_hub_view.dart';
 
 typedef RunControllerAction =
@@ -35,6 +35,7 @@ class ControllerShell extends StatefulWidget {
 class _ControllerShellState extends State<ControllerShell>
     with WidgetsBindingObserver {
   _ControllerSection _section = _ControllerSection.dashboard;
+  bool _actionPipelineBusy = false;
 
   ControllerSession get session => widget.session;
 
@@ -81,38 +82,58 @@ class _ControllerShellState extends State<ControllerShell>
     String? confirmation,
     bool refreshAfter = true,
   }) async {
-    if (!await _ensureAdmin()) {
-      throw const ControllerApiException(
-        code: 'admin_cancelled',
-        message: 'Operacja została anulowana.',
+    if (_actionPipelineBusy) {
+      const message =
+          'Inna operacja oczekuje na potwierdzenie albo jest już wykonywana.';
+      if (mounted) _showMessage(message, success: false);
+      throw ControllerApiException(
+        code: 'action_in_progress',
+        message: message,
       );
     }
-    if (confirmation != null && mounted) {
-      final accepted = await showDialog<bool>(
-        context: context,
-        builder: (context) => AlertDialog(
-          title: const Text('Potwierdzenie operacji'),
-          content: Text(confirmation),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(context, false),
-              child: const Text('Anuluj'),
-            ),
-            FilledButton(
-              onPressed: () => Navigator.pop(context, true),
-              child: const Text('Potwierdź'),
-            ),
-          ],
-        ),
-      );
-      if (accepted != true) {
+    _actionPipelineBusy = true;
+    try {
+      if (!session.canIssueCommands) {
+        final message =
+            session.commandBlockReason ??
+            'Sterownik nie jest gotowy do wykonania polecenia.';
+        if (mounted) _showMessage(message, success: false);
+        throw ControllerApiException(
+          code: 'controller_unavailable',
+          message: message,
+        );
+      }
+      if (!await _ensureAdmin()) {
         throw const ControllerApiException(
-          code: 'action_cancelled',
+          code: 'admin_cancelled',
           message: 'Operacja została anulowana.',
         );
       }
-    }
-    try {
+      if (confirmation != null && mounted) {
+        final accepted = await showDialog<bool>(
+          context: context,
+          builder: (context) => AlertDialog(
+            title: const Text('Potwierdzenie operacji'),
+            content: Text(confirmation),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(context, false),
+                child: const Text('Anuluj'),
+              ),
+              FilledButton(
+                onPressed: () => Navigator.pop(context, true),
+                child: const Text('Potwierdź'),
+              ),
+            ],
+          ),
+        );
+        if (accepted != true) {
+          throw const ControllerApiException(
+            code: 'action_cancelled',
+            message: 'Operacja została anulowana.',
+          );
+        }
+      }
       final result = await session.action(
         name,
         payload: payload,
@@ -121,10 +142,14 @@ class _ControllerShellState extends State<ControllerShell>
       if (mounted) _showMessage(result.message, success: result.success);
       return result;
     } on ControllerApiException catch (error) {
-      if (mounted && error.code != 'action_cancelled') {
+      if (mounted &&
+          error.code != 'action_cancelled' &&
+          error.code != 'admin_cancelled') {
         _showMessage(error.message, success: false);
       }
       rethrow;
+    } finally {
+      _actionPipelineBusy = false;
     }
   }
 
@@ -171,17 +196,13 @@ class _ControllerShellState extends State<ControllerShell>
   }
 
   void _openCharts() {
-    Navigator.of(context).push(
-      MaterialPageRoute<void>(
-        builder: (context) => Scaffold(
-          appBar: AppBar(title: const Text('Historia i wykresy')),
-          body: AnimatedBuilder(
-            animation: session,
-            builder: (context, _) => ChartsView(session: session),
-          ),
-        ),
-      ),
-    );
+    if (_section == _ControllerSection.insights) return;
+    setState(() => _section = _ControllerSection.insights);
+  }
+
+  void _openControls() {
+    if (_section == _ControllerSection.control) return;
+    setState(() => _section = _ControllerSection.control);
   }
 
   List<Widget> _sectionViews() {
@@ -190,8 +211,11 @@ class _ControllerShellState extends State<ControllerShell>
         key: const ValueKey(_ControllerSection.dashboard),
         session: session,
         active: _section == _ControllerSection.dashboard,
-        builder: (context, session) =>
-            DashboardView(session: session, onOpenCharts: _openCharts),
+        builder: (context, session) => DashboardView(
+          session: session,
+          onOpenCharts: _openCharts,
+          onOpenControls: _openControls,
+        ),
       ),
       _ActiveSessionView(
         key: const ValueKey(_ControllerSection.control),
@@ -204,11 +228,36 @@ class _ControllerShellState extends State<ControllerShell>
         ),
       ),
       _ActiveSessionView(
-        key: const ValueKey(_ControllerSection.schedules),
+        key: const ValueKey(_ControllerSection.automation),
         session: session,
-        active: _section == _ControllerSection.schedules,
-        builder: (context, session) =>
-            SchedulesView(session: session, runAction: _runAction),
+        active: _section == _ControllerSection.automation,
+        builder: (context, session) => session.isLegacyBluetooth
+            ? const _CapabilityUnavailable(
+                icon: Icons.auto_mode_rounded,
+                title: 'Automatyka wymaga pełnego API',
+                message:
+                    'BLE v1 udostępnia tylko telemetrię i podstawowe polecenia. '
+                    'Połącz sterownik przez Wi‑Fi albo zaktualizuj firmware do BLE v2.',
+              )
+            : AutomationCenterView(session: session, runAction: _runAction),
+      ),
+      _ActiveSessionView(
+        key: const ValueKey(_ControllerSection.insights),
+        session: session,
+        active: _section == _ControllerSection.insights,
+        builder: (context, session) => session.isLegacyBluetooth
+            ? const _CapabilityUnavailable(
+                icon: Icons.monitor_heart_rounded,
+                title: 'Historia jest niedostępna przez BLE v1',
+                message:
+                    'Wykresy, archiwa SD i dziennik zdarzeń wymagają połączenia '
+                    'Wi‑Fi albo protokołu BLE v2.',
+              )
+            : InsightsCenterView(
+                session: session,
+                runAction: _runAction,
+                ensureAdmin: _ensureAdmin,
+              ),
       ),
       _ActiveSessionView(
         key: const ValueKey(_ControllerSection.settings),
@@ -430,9 +479,12 @@ class _ActiveSessionView extends StatefulWidget {
 }
 
 class _ActiveSessionViewState extends State<_ActiveSessionView> {
+  late bool _hasBeenActivated;
+
   @override
   void initState() {
     super.initState();
+    _hasBeenActivated = widget.active && widget.session.status.isNotEmpty;
     if (widget.active) widget.session.addListener(_onSessionChanged);
   }
 
@@ -444,11 +496,15 @@ class _ActiveSessionViewState extends State<_ActiveSessionView> {
     }
     if (widget.active) {
       widget.session.addListener(_onSessionChanged);
+      if (widget.session.status.isNotEmpty) _hasBeenActivated = true;
     }
   }
 
   void _onSessionChanged() {
-    if (mounted && widget.active) setState(() {});
+    if (!mounted || !widget.active) return;
+    setState(() {
+      if (widget.session.status.isNotEmpty) _hasBeenActivated = true;
+    });
   }
 
   @override
@@ -458,7 +514,10 @@ class _ActiveSessionViewState extends State<_ActiveSessionView> {
   }
 
   @override
-  Widget build(BuildContext context) => widget.builder(context, widget.session);
+  Widget build(BuildContext context) {
+    if (!_hasBeenActivated) return const SizedBox.shrink();
+    return widget.builder(context, widget.session);
+  }
 }
 
 class _ControllerHeader extends StatelessWidget {
@@ -596,14 +655,15 @@ class _ControllerHeader extends StatelessWidget {
 }
 
 enum _ControllerSection {
-  dashboard('Pulpit', Icons.speed_outlined, Icons.speed_rounded),
-  control('Sterowanie', Icons.tune_outlined, Icons.tune_rounded),
-  schedules(
-    'Harmonogram',
-    Icons.calendar_month_outlined,
-    Icons.calendar_month_rounded,
+  dashboard('Centrum', Icons.dashboard_outlined, Icons.dashboard_rounded),
+  control('Steruj', Icons.tune_outlined, Icons.tune_rounded),
+  automation('Auto', Icons.auto_mode_outlined, Icons.auto_mode_rounded),
+  insights(
+    'Historia',
+    Icons.monitor_heart_outlined,
+    Icons.monitor_heart_rounded,
   ),
-  settings('Ustawienia', Icons.settings_outlined, Icons.settings_rounded);
+  settings('System', Icons.settings_outlined, Icons.settings_rounded);
 
   const _ControllerSection(this.label, this.icon, this.selectedIcon);
 
@@ -692,5 +752,22 @@ class _ConnectionState extends StatelessWidget {
       actionLabel: 'Spróbuj ponownie',
       onAction: retry,
     );
+  }
+}
+
+class _CapabilityUnavailable extends StatelessWidget {
+  const _CapabilityUnavailable({
+    required this.icon,
+    required this.title,
+    required this.message,
+  });
+
+  final IconData icon;
+  final String title;
+  final String message;
+
+  @override
+  Widget build(BuildContext context) {
+    return StatePanel.empty(icon: icon, title: title, message: message);
   }
 }

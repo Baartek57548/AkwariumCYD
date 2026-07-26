@@ -1,3 +1,5 @@
+import 'dart:convert';
+
 import 'package:flutter/material.dart';
 
 import '../controller_api.dart';
@@ -35,6 +37,10 @@ class _AutomationViewState extends State<AutomationView> {
   late bool leakEnabled;
   late String leakAction;
   final Set<String> saving = {};
+  final Set<String> _dirtySections = {};
+  final Set<String> _remoteChangedSections = {};
+  final Map<String, String> _sourceFingerprints = {};
+  bool _syncingFromStatus = false;
   String? message;
 
   @override
@@ -63,6 +69,27 @@ class _AutomationViewState extends State<AutomationView> {
     waterEnabled = modules.flag('water_level_enabled');
     leakEnabled = modules.flag('leak_enabled');
     leakAction = status.section('leak').text('action', 'disable_all');
+    _sourceFingerprints.addAll(_fingerprints(status));
+    _watch('temperature', targetTemperature);
+    _watch('temperature', hysteresis);
+    _watch('co2', targetPh);
+    _watch('co2', co2Limit);
+    _watch('water', waterTimeout);
+  }
+
+  @override
+  void didUpdateWidget(AutomationView oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    final status = widget.session.status;
+    final current = _fingerprints(status);
+    for (final entry in current.entries) {
+      if (_sourceFingerprints[entry.key] == entry.value) continue;
+      if (_dirtySections.contains(entry.key) || saving.contains(entry.key)) {
+        _remoteChangedSections.add(entry.key);
+      } else {
+        _syncSection(entry.key, status, entry.value);
+      }
+    }
   }
 
   @override
@@ -73,6 +100,75 @@ class _AutomationViewState extends State<AutomationView> {
     co2Limit.dispose();
     waterTimeout.dispose();
     super.dispose();
+  }
+
+  void _watch(String section, TextEditingController controller) {
+    controller.addListener(() {
+      if (_syncingFromStatus || _dirtySections.contains(section) || !mounted) {
+        return;
+      }
+      setState(() {
+        _dirtySections.add(section);
+        message = null;
+      });
+    });
+  }
+
+  void _edit(String section, VoidCallback change) {
+    setState(() {
+      change();
+      _dirtySections.add(section);
+      message = null;
+    });
+  }
+
+  void _syncSection(String section, JsonMap status, [String? fingerprint]) {
+    final config = status.section('config');
+    final modules = status.section('modules');
+    _syncingFromStatus = true;
+    try {
+      switch (section) {
+        case 'temperature':
+          targetTemperature.text = config
+              .number('target_temp', 25)
+              .toStringAsFixed(1);
+          hysteresis.text = config
+              .number('temp_hysteresis', 0.5)
+              .toStringAsFixed(1);
+          heaterEnabled = modules.flag('heater_enabled');
+          break;
+        case 'co2':
+          targetPh.text = config.number('co2TargetPh', 6.8).toStringAsFixed(2);
+          co2Limit.text = '${config.integer('co2MaxTimeMin', 180)}';
+          co2Enabled = modules.flag('co2_enabled');
+          break;
+        case 'water':
+          waterTimeout.text =
+              '${status.section('water').integer('timeoutSec', 120)}';
+          waterEnabled = modules.flag('water_level_enabled');
+          break;
+        case 'leak':
+          leakEnabled = modules.flag('leak_enabled');
+          leakAction = status.section('leak').text('action', 'disable_all');
+          break;
+      }
+    } finally {
+      _syncingFromStatus = false;
+    }
+    _sourceFingerprints[section] =
+        fingerprint ?? _fingerprints(status)[section]!;
+    _dirtySections.remove(section);
+    _remoteChangedSections.remove(section);
+  }
+
+  void _restoreFromController() {
+    setState(() {
+      final status = widget.session.status;
+      for (final section in _sourceFingerprints.keys.toList()) {
+        _syncSection(section, status);
+      }
+      message = 'Przywrócono aktualną konfigurację sterownika.';
+    });
   }
 
   Future<void> _saveTemperature() async {
@@ -120,8 +216,20 @@ class _AutomationViewState extends State<AutomationView> {
       message = 'Zapisywanie konfiguracji…';
     });
     try {
-      final result = await widget.runAction(action, payload: payload);
-      if (mounted) setState(() => message = result.message);
+      final result = await widget.runAction(
+        action,
+        payload: payload,
+        confirmation: _remoteChangedSections.contains(key)
+            ? 'Sterownik ma nowszą konfigurację tej sekcji. '
+                  'Zastąpić ją wartościami z lokalnego szkicu?'
+            : null,
+      );
+      if (mounted) {
+        setState(() {
+          _syncSection(key, widget.session.status);
+          message = result.message;
+        });
+      }
     } on ControllerApiException catch (error) {
       if (mounted) setState(() => message = error.message);
     } finally {
@@ -136,11 +244,27 @@ class _AutomationViewState extends State<AutomationView> {
     final water = widget.session.status.section('water');
     return ControllerPageBody(
       children: [
-        const SectionHeader(
+        SectionHeader(
           title: 'Automatyka',
           description:
               'Termostat, dozowanie CO₂, automatyczna dolewka oraz reakcja na wyciek.',
+          trailing: IconButton(
+            onPressed: _restoreFromController,
+            icon: const Icon(Icons.restore_rounded),
+            tooltip: 'Przywróć dane sterownika',
+          ),
         ),
+        if (_remoteChangedSections.isNotEmpty) ...[
+          const StatusBanner(
+            icon: Icons.sync_problem_rounded,
+            title: 'Sterownik ma nowsze ustawienia',
+            message:
+                'Lokalny szkic pozostał bez zmian. Przywróć dane albo '
+                'potwierdź zastąpienie wybranej sekcji podczas zapisu.',
+            isError: false,
+          ),
+          const SizedBox(height: 12),
+        ],
         ResponsiveGrid(
           children: [
             MetricTile(
@@ -188,7 +312,8 @@ class _AutomationViewState extends State<AutomationView> {
                   LabeledSwitch(
                     label: 'Włącz sterowanie grzałką',
                     value: heaterEnabled,
-                    onChanged: (value) => setState(() => heaterEnabled = value),
+                    onChanged: (value) =>
+                        _edit('temperature', () => heaterEnabled = value),
                   ),
                   Row(
                     children: [
@@ -250,7 +375,8 @@ class _AutomationViewState extends State<AutomationView> {
                     subtitle:
                         'Sterowanie jest blokowane przy niewiarygodnym odczycie pH.',
                     value: co2Enabled,
-                    onChanged: (value) => setState(() => co2Enabled = value),
+                    onChanged: (value) =>
+                        _edit('co2', () => co2Enabled = value),
                   ),
                   Row(
                     children: [
@@ -310,7 +436,8 @@ class _AutomationViewState extends State<AutomationView> {
                     subtitle:
                         'Po wyłączeniu firmware natychmiast zatrzymuje dolewkę.',
                     value: waterEnabled,
-                    onChanged: (value) => setState(() => waterEnabled = value),
+                    onChanged: (value) =>
+                        _edit('water', () => waterEnabled = value),
                   ),
                   TextFormField(
                     controller: waterTimeout,
@@ -341,10 +468,12 @@ class _AutomationViewState extends State<AutomationView> {
                 LabeledSwitch(
                   label: 'Włącz czujnik wycieku',
                   value: leakEnabled,
-                  onChanged: (value) => setState(() => leakEnabled = value),
+                  onChanged: (value) =>
+                      _edit('leak', () => leakEnabled = value),
                 ),
                 DropdownButtonFormField<String>(
                   initialValue: leakAction,
+                  isExpanded: true,
                   decoration: const InputDecoration(
                     labelText: 'Akcja awaryjna',
                     border: OutlineInputBorder(),
@@ -364,7 +493,7 @@ class _AutomationViewState extends State<AutomationView> {
                     ),
                   ],
                   onChanged: (value) =>
-                      setState(() => leakAction = value ?? leakAction),
+                      _edit('leak', () => leakAction = value ?? leakAction),
                 ),
                 SaveButton(
                   onPressed: _saveLeak,
@@ -389,6 +518,31 @@ class _AutomationViewState extends State<AutomationView> {
     'disable_valves' => 'wyłącz zawory',
     _ => 'wyłącz wszystko',
   };
+
+  static Map<String, String> _fingerprints(JsonMap status) {
+    final config = status.section('config');
+    final modules = status.section('modules');
+    return {
+      'temperature': jsonEncode([
+        config['target_temp'],
+        config['temp_hysteresis'],
+        modules['heater_enabled'],
+      ]),
+      'co2': jsonEncode([
+        config['co2TargetPh'],
+        config['co2MaxTimeMin'],
+        modules['co2_enabled'],
+      ]),
+      'water': jsonEncode([
+        status.section('water')['timeoutSec'],
+        modules['water_level_enabled'],
+      ]),
+      'leak': jsonEncode([
+        modules['leak_enabled'],
+        status.section('leak')['action'],
+      ]),
+    };
+  }
 }
 
 class _AutomationCard extends StatelessWidget {
@@ -415,11 +569,13 @@ class _AutomationCard extends StatelessWidget {
               children: [
                 Icon(icon),
                 const SizedBox(width: 10),
-                Text(
-                  title,
-                  style: const TextStyle(
-                    fontWeight: FontWeight.w800,
-                    fontSize: 17,
+                Expanded(
+                  child: Text(
+                    title,
+                    style: const TextStyle(
+                      fontWeight: FontWeight.w800,
+                      fontSize: 17,
+                    ),
                   ),
                 ),
               ],

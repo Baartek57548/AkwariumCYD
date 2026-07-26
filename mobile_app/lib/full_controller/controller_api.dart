@@ -20,6 +20,7 @@ class ControllerApiException implements Exception {
   bool get isAuthenticationError =>
       statusCode == HttpStatus.forbidden ||
       code == 'invalid_pin' ||
+      code == 'pin_invalid' ||
       code == 'pin_required';
 
   @override

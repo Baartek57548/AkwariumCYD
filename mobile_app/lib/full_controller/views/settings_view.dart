@@ -69,8 +69,10 @@ class _SettingsViewState extends State<SettingsView> {
   Future<void> _saveNetwork() async {
     if (networkForm.currentState?.validate() != true) return;
     await _execute('network', () async {
-      final payload = <String, Object?>{'staSsid': ssid.text.trim()};
-      if (password.text.isNotEmpty) payload['staPassword'] = password.text;
+      final payload = <String, Object?>{
+        'staSsid': ssid.text.trim(),
+        'staPassword': password.text,
+      };
       final result = await widget.runAction('save_network', payload: payload);
       password.clear();
       if (mounted) setState(() => message = result.message);
@@ -166,13 +168,14 @@ class _SettingsViewState extends State<SettingsView> {
                       obscureText: true,
                       maxLength: 63,
                       decoration: const InputDecoration(
-                        labelText: 'Nowe hasło Wi-Fi',
-                        helperText: 'Pozostaw puste, aby nie zmieniać hasła.',
+                        labelText: 'Hasło Wi‑Fi',
+                        helperText:
+                            'Firmware wymaga hasła przy każdym zapisie profilu.',
                         border: OutlineInputBorder(),
                       ),
                       validator: (value) {
                         final length = value?.length ?? 0;
-                        if (length != 0 && length < 8) {
+                        if (length < 8) {
                           return 'Hasło WPA musi mieć co najmniej 8 znaków.';
                         }
                         return null;

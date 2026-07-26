@@ -30,7 +30,7 @@ class _ControllerConnectionHealthBarState
 
   void _startAgeTimer() {
     _ageTimer?.cancel();
-    _ageTimer = Timer.periodic(const Duration(seconds: 1), (_) {
+    _ageTimer = Timer.periodic(const Duration(seconds: 15), (_) {
       if (mounted) setState(() {});
     });
   }
@@ -87,7 +87,6 @@ class _ControllerConnectionHealthBarState
 
     return Semantics(
       container: true,
-      liveRegion: true,
       label:
           'Stan połączenia: ${health.phaseLabel}. '
           'Sygnał ${health.rssi == null ? "nieznany" : "${health.rssi} dBm"}. '

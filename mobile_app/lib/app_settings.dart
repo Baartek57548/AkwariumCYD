@@ -2,13 +2,13 @@ import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 class AppSettings {
-  static final themeModeNotifier = ValueNotifier<ThemeMode>(ThemeMode.system);
+  static final themeModeNotifier = ValueNotifier<ThemeMode>(ThemeMode.dark);
   static final languageNotifier = ValueNotifier<Locale>(const Locale('pl'));
   static final usernameNotifier = ValueNotifier<String>('Użytkownik');
 
   static Future<void> init() async {
     final prefs = await SharedPreferences.getInstance();
-    final theme = prefs.getString('theme_mode') ?? 'system';
+    final theme = prefs.getString('theme_mode') ?? 'dark';
     final lang = prefs.getString('selected_language') ?? 'pl';
     final user = prefs.getString('username') ?? 'Użytkownik';
 
@@ -39,7 +39,7 @@ class AppSettings {
       case 'dark':
         return ThemeMode.dark;
       default:
-        return ThemeMode.system;
+        return ThemeMode.dark;
     }
   }
 }

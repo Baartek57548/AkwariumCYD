@@ -7,6 +7,7 @@ import 'app_update/app_update_controller.dart';
 import 'app_update/app_update_models.dart';
 import 'app_update/app_update_ui.dart';
 import 'connection_home_page.dart';
+import 'design_system.dart';
 import 'display_refresh_rate.dart';
 import 'app_settings.dart';
 
@@ -180,7 +181,6 @@ class _AquariumAppState extends State<AquariumApp> with WidgetsBindingObserver {
 
   @override
   Widget build(BuildContext context) {
-    const seed = Color(0xFF33A6B8);
     return DisplayRefreshRateScope(
       profile: refreshRateController.profile,
       state: refreshRateController.state,
@@ -189,8 +189,8 @@ class _AquariumAppState extends State<AquariumApp> with WidgetsBindingObserver {
         scaffoldMessengerKey: _scaffoldMessengerKey,
         title: widget.title,
         debugShowCheckedModeBanner: false,
-        theme: _theme(seed, Brightness.light),
-        darkTheme: _theme(seed, Brightness.dark),
+        theme: AquaTheme.light(),
+        darkTheme: AquaTheme.dark(),
         themeMode: AppSettings.themeModeNotifier.value,
         locale: const Locale('pl'),
         supportedLocales: const [Locale('pl')],
@@ -222,128 +222,6 @@ class _AquariumAppState extends State<AquariumApp> with WidgetsBindingObserver {
           return content;
         },
         home: widget.home ?? const ConnectionHomePage(),
-      ),
-    );
-  }
-
-  ThemeData _theme(Color seed, Brightness brightness) {
-    final dark = brightness == Brightness.dark;
-    const borderRadius = BorderRadius.all(Radius.circular(5));
-    const componentShape = RoundedRectangleBorder(borderRadius: borderRadius);
-    final scheme = ColorScheme.fromSeed(
-      seedColor: seed,
-      brightness: brightness,
-      surface: dark ? const Color(0xFF101112) : const Color(0xFFF7F8F8),
-    );
-    return ThemeData(
-      colorScheme: scheme,
-      scaffoldBackgroundColor: dark
-          ? const Color(0xFF080909)
-          : const Color(0xFFF1F4F4),
-      useMaterial3: true,
-      materialTapTargetSize: MaterialTapTargetSize.padded,
-      cardTheme: CardThemeData(
-        elevation: 0,
-        color: dark ? const Color(0xFF151616) : Colors.white,
-        margin: EdgeInsets.zero,
-        shape: RoundedRectangleBorder(
-          borderRadius: borderRadius,
-          side: BorderSide(
-            color: dark ? const Color(0xFF272929) : const Color(0xFFE1E6E6),
-          ),
-        ),
-      ),
-      appBarTheme: AppBarTheme(
-        elevation: 0,
-        scrolledUnderElevation: 0,
-        centerTitle: false,
-        backgroundColor: dark ? const Color(0xFF080909) : Colors.white,
-        surfaceTintColor: Colors.transparent,
-      ),
-      navigationBarTheme: NavigationBarThemeData(
-        elevation: 0,
-        height: 72,
-        backgroundColor: dark ? const Color(0xFF121313) : Colors.white,
-        indicatorColor: scheme.primaryContainer,
-        indicatorShape: componentShape,
-        labelTextStyle: WidgetStateProperty.resolveWith((states) {
-          return TextStyle(
-            fontSize: 12,
-            fontWeight: states.contains(WidgetState.selected)
-                ? FontWeight.w700
-                : FontWeight.w500,
-          );
-        }),
-      ),
-      dividerTheme: DividerThemeData(
-        color: dark ? const Color(0xFF272929) : const Color(0xFFE1E6E6),
-      ),
-      inputDecorationTheme: InputDecorationTheme(
-        filled: true,
-        fillColor: dark ? const Color(0xFF111212) : Colors.white,
-        border: const OutlineInputBorder(borderRadius: borderRadius),
-      ),
-      filledButtonTheme: const FilledButtonThemeData(
-        style: ButtonStyle(
-          minimumSize: WidgetStatePropertyAll(Size(64, 48)),
-          shape: WidgetStatePropertyAll(componentShape),
-        ),
-      ),
-      elevatedButtonTheme: const ElevatedButtonThemeData(
-        style: ButtonStyle(
-          minimumSize: WidgetStatePropertyAll(Size(64, 48)),
-          shape: WidgetStatePropertyAll(componentShape),
-        ),
-      ),
-      outlinedButtonTheme: const OutlinedButtonThemeData(
-        style: ButtonStyle(
-          minimumSize: WidgetStatePropertyAll(Size(64, 48)),
-          shape: WidgetStatePropertyAll(componentShape),
-        ),
-      ),
-      textButtonTheme: const TextButtonThemeData(
-        style: ButtonStyle(
-          minimumSize: WidgetStatePropertyAll(Size(64, 48)),
-          shape: WidgetStatePropertyAll(componentShape),
-        ),
-      ),
-      iconButtonTheme: const IconButtonThemeData(
-        style: ButtonStyle(
-          minimumSize: WidgetStatePropertyAll(Size.square(48)),
-          shape: WidgetStatePropertyAll(componentShape),
-        ),
-      ),
-      floatingActionButtonTheme: const FloatingActionButtonThemeData(
-        shape: componentShape,
-      ),
-      chipTheme: ChipThemeData(shape: componentShape),
-      dialogTheme: const DialogThemeData(shape: componentShape),
-      bottomSheetTheme: const BottomSheetThemeData(shape: componentShape),
-      popupMenuTheme: const PopupMenuThemeData(shape: componentShape),
-      snackBarTheme: const SnackBarThemeData(shape: componentShape),
-      navigationRailTheme: const NavigationRailThemeData(
-        indicatorShape: componentShape,
-      ),
-      segmentedButtonTheme: const SegmentedButtonThemeData(
-        style: ButtonStyle(shape: WidgetStatePropertyAll(componentShape)),
-      ),
-      menuTheme: const MenuThemeData(
-        style: MenuStyle(shape: WidgetStatePropertyAll(componentShape)),
-      ),
-      dropdownMenuTheme: const DropdownMenuThemeData(
-        menuStyle: MenuStyle(shape: WidgetStatePropertyAll(componentShape)),
-      ),
-      datePickerTheme: const DatePickerThemeData(shape: componentShape),
-      timePickerTheme: const TimePickerThemeData(shape: componentShape),
-      searchBarTheme: const SearchBarThemeData(
-        shape: WidgetStatePropertyAll(componentShape),
-      ),
-      tooltipTheme: TooltipThemeData(
-        decoration: BoxDecoration(
-          color: scheme.inverseSurface,
-          borderRadius: borderRadius,
-        ),
-        textStyle: TextStyle(color: scheme.onInverseSurface),
       ),
     );
   }

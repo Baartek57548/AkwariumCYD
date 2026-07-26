@@ -1,3 +1,4 @@
+import 'package:cyd_aquarium_mobile/aquarium_app.dart';
 import 'package:cyd_aquarium_mobile/full_controller/controller_session.dart';
 import 'package:cyd_aquarium_mobile/full_controller/controller_shell.dart';
 import 'package:cyd_aquarium_mobile/full_controller/data_access.dart';
@@ -5,7 +6,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
-  testWidgets('mobile shell exposes four task-oriented destinations', (
+  testWidgets('mobile shell exposes five command-center destinations', (
     tester,
   ) async {
     tester.view.devicePixelRatio = 1;
@@ -14,31 +15,36 @@ void main() {
     addTearDown(tester.view.resetPhysicalSize);
 
     await tester.pumpWidget(
-      MaterialApp(
-        theme: ThemeData(useMaterial3: true),
+      AquariumApp(
         home: ControllerShell(session: ControllerSession.development()),
       ),
     );
     await tester.pumpAndSettle(const Duration(milliseconds: 500));
 
     expect(find.byType(NavigationBar), findsOneWidget);
-    expect(find.text('Pulpit'), findsOneWidget);
-    expect(find.text('Sterowanie'), findsOneWidget);
-    expect(find.text('Harmonogram'), findsOneWidget);
-    expect(find.text('Ustawienia'), findsOneWidget);
+    for (final label in const [
+      'Centrum',
+      'Steruj',
+      'Auto',
+      'Historia',
+      'System',
+    ]) {
+      expect(find.text(label), findsOneWidget);
+    }
     expect(find.text('Temperatura wody'), findsOneWidget);
-    expect(find.text('Jasność względna'), findsOneWidget);
+    expect(find.text('Telemetria na żywo'), findsOneWidget);
+    expect(find.text('Światło otoczenia'), findsOneWidget);
     expect(tester.takeException(), isNull);
   });
 
-  testWidgets('tablet shell uses a four-item navigation rail', (tester) async {
+  testWidgets('tablet shell uses a five-item navigation rail', (tester) async {
     tester.view.devicePixelRatio = 1;
     tester.view.physicalSize = const Size(1200, 900);
     addTearDown(tester.view.resetDevicePixelRatio);
     addTearDown(tester.view.resetPhysicalSize);
 
     await tester.pumpWidget(
-      MaterialApp(
+      AquariumApp(
         home: ControllerShell(session: ControllerSession.development()),
       ),
     );
@@ -46,16 +52,22 @@ void main() {
 
     expect(find.byType(NavigationRail), findsOneWidget);
     expect(find.byType(NavigationBar), findsNothing);
-    expect(find.text('Pulpit'), findsOneWidget);
-    expect(find.text('Sterowanie'), findsOneWidget);
-    expect(find.text('Harmonogram'), findsOneWidget);
-    expect(find.text('Ustawienia'), findsOneWidget);
+    for (final label in const [
+      'Centrum',
+      'Steruj',
+      'Auto',
+      'Historia',
+      'System',
+    ]) {
+      expect(find.text(label), findsOneWidget);
+    }
     expect(tester.takeException(), isNull);
   });
 
-  testWidgets('dashboard renders unavailable and alarm sensor states safely', (
+  testWidgets('critical alarm is prominent and sensor failures render safely', (
     tester,
   ) async {
+    final semantics = tester.ensureSemantics();
     tester.view.devicePixelRatio = 1;
     tester.view.physicalSize = const Size(412, 915);
     addTearDown(tester.view.resetDevicePixelRatio);
@@ -76,29 +88,31 @@ void main() {
       ..['activeCount'] = 1
       ..['flags'] = 16
       ..['leak'] = true;
+    tester.binding.platformDispatcher.textScaleFactorTestValue = 1.3;
+    addTearDown(
+      tester.binding.platformDispatcher.clearTextScaleFactorTestValue,
+    );
 
     await tester.pumpWidget(
-      MaterialApp(
-        theme: ThemeData.dark(useMaterial3: true),
-        builder: (context, child) => MediaQuery(
-          data: MediaQuery.of(
-            context,
-          ).copyWith(textScaler: const TextScaler.linear(1.3)),
-          child: child!,
-        ),
-        home: ControllerShell(session: session),
-      ),
+      AquariumApp(home: ControllerShell(session: session)),
     );
-    await tester.pumpAndSettle(const Duration(milliseconds: 500));
+    await tester.pump(const Duration(milliseconds: 500));
 
-    expect(find.text('System wymaga uwagi'), findsOneWidget);
-    expect(find.text('Błąd czujnika'), findsOneWidget);
+    expect(find.text('Wymagana natychmiastowa reakcja'), findsOneWidget);
+    expect(find.text('Wykryto wyciek'), findsWidgets);
+    expect(find.text('Brak wiarygodnego pomiaru'), findsWidgets);
     expect(find.text('ADC 4095 / 4095'), findsOneWidget);
-    expect(find.textContaining('wyciek'), findsWidgets);
+    expect(
+      find.bySemanticsLabel(
+        RegExp(r'Wymagana natychmiastowa reakcja.*Transport'),
+      ),
+      findsOneWidget,
+    );
     expect(tester.takeException(), isNull);
+    semantics.dispose();
   });
 
-  testWidgets('all legacy tools remain reachable from the four sections', (
+  testWidgets('all operational areas are reachable from the five sections', (
     tester,
   ) async {
     tester.view.devicePixelRatio = 1;
@@ -107,25 +121,58 @@ void main() {
     addTearDown(tester.view.resetPhysicalSize);
 
     await tester.pumpWidget(
-      MaterialApp(
+      AquariumApp(
         home: ControllerShell(session: ControllerSession.development()),
       ),
     );
     await tester.pumpAndSettle(const Duration(milliseconds: 500));
 
-    await tester.tap(find.text('Sterowanie'));
+    await tester.tap(find.text('Steruj'));
     await tester.pumpAndSettle();
-    expect(find.text('Szybkie sterowanie'), findsOneWidget);
-    expect(find.text('Automatyka'), findsOneWidget);
-    expect(find.text('Przekaźniki'), findsOneWidget);
+    expect(find.text('Sterowanie operacyjne'), findsOneWidget);
+    expect(find.text('Procesy wykonawcze'), findsOneWidget);
+    expect(tester.takeException(), isNull, reason: 'sekcja Steruj');
 
-    await tester.tap(find.text('Ustawienia'));
+    await tester.tap(find.text('Auto'));
     await tester.pumpAndSettle();
-    expect(find.text('Zasilanie i OTA'), findsOneWidget);
-    expect(find.text('Logi'), findsOneWidget);
+    expect(find.text('Plan dobowy'), findsOneWidget);
+    expect(find.text('Sekcja automatyki'), findsOneWidget);
+    final automationSwitcher = find.byWidgetPredicate(
+      (widget) =>
+          widget is DropdownButtonFormField<int> &&
+          widget.decoration.labelText == 'Sekcja automatyki',
+    );
+    await tester.tap(automationSwitcher);
+    await tester.pumpAndSettle();
+    expect(find.text('Reguły i bezpieczeństwo'), findsOneWidget);
+    await tester.tap(find.text('Reguły i bezpieczeństwo').last);
+    await tester.pumpAndSettle();
+    expect(find.text('Automatyka'), findsOneWidget);
+    expect(tester.takeException(), isNull, reason: 'sekcja Auto');
+
+    await tester.tap(find.text('Historia'));
+    await tester.pumpAndSettle();
+    expect(find.text('Trendy i historia'), findsOneWidget);
+    expect(find.text('Sekcja historii'), findsOneWidget);
+    final historySwitcher = find.byWidgetPredicate(
+      (widget) =>
+          widget is DropdownButtonFormField<int> &&
+          widget.decoration.labelText == 'Sekcja historii',
+    );
+    await tester.tap(historySwitcher);
+    await tester.pumpAndSettle();
+    expect(find.text('Dziennik zdarzeń'), findsOneWidget);
+    await tester.tapAt(const Offset(8, 8));
+    await tester.pumpAndSettle();
+    expect(tester.takeException(), isNull, reason: 'sekcja Historia');
+
+    await tester.tap(find.text('System'));
+    await tester.pumpAndSettle();
+    expect(find.text('System i administracja'), findsOneWidget);
+    expect(find.text('Firmware, energia i OTA'), findsOneWidget);
     expect(find.text('Diagnostyka sprzętu'), findsOneWidget);
-    expect(find.text('Obsługiwane'), findsOneWidget);
-    expect(tester.takeException(), isNull);
+    expect(find.text('Kanały przekaźników'), findsOneWidget);
+    expect(tester.takeException(), isNull, reason: 'sekcja System');
   });
 
   testWidgets('section navigation preserves unsaved schedule state', (
@@ -137,15 +184,21 @@ void main() {
     addTearDown(tester.view.resetPhysicalSize);
 
     await tester.pumpWidget(
-      MaterialApp(
+      AquariumApp(
         home: ControllerShell(session: ControllerSession.development()),
       ),
     );
     await tester.pumpAndSettle(const Duration(milliseconds: 500));
 
-    await tester.tap(find.text('Harmonogram'));
+    await tester.tap(find.text('Auto'));
     await tester.pumpAndSettle();
-    final dropdownFinder = find.byType(DropdownButtonFormField<int>).first;
+    final dropdownFinder = find
+        .byWidgetPredicate(
+          (widget) =>
+              widget is DropdownButtonFormField<int> &&
+              widget.decoration.labelText != 'Sekcja automatyki',
+        )
+        .first;
     await tester.ensureVisible(dropdownFinder);
     await tester.pumpAndSettle();
     final initialValue = tester
@@ -163,9 +216,9 @@ void main() {
       targetValue,
     );
 
-    await tester.tap(find.text('Pulpit'));
+    await tester.tap(find.text('Centrum'));
     await tester.pumpAndSettle();
-    await tester.tap(find.text('Harmonogram'));
+    await tester.tap(find.text('Auto'));
     await tester.pumpAndSettle();
 
     expect(
