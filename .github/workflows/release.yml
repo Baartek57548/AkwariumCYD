@@ -355,12 +355,14 @@ jobs:
           )"
           test -f "$espsecure_path"
 
-          echo "private_key=$private_key" >> "$GITHUB_OUTPUT"
-          echo "derived_public_key=$derived_public_key" >> "$GITHUB_OUTPUT"
-          echo "public_key=$committed_public_key" >> "$GITHUB_OUTPUT"
-          echo "public_key_sha256=$public_key_sha256" >> "$GITHUB_OUTPUT"
-          echo "key_id=${public_key_sha256:0:16}" >> "$GITHUB_OUTPUT"
-          echo "espsecure_path=$espsecure_path" >> "$GITHUB_OUTPUT"
+          {
+            echo "private_key=$private_key"
+            echo "derived_public_key=$derived_public_key"
+            echo "public_key=$committed_public_key"
+            echo "public_key_sha256=$public_key_sha256"
+            echo "key_id=${public_key_sha256:0:16}"
+            echo "espsecure_path=$espsecure_path"
+          } >> "$GITHUB_OUTPUT"
       - name: Secure Boot v2 sign, package and verify both targets
         id: metadata
         shell: bash
