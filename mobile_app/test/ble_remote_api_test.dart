@@ -30,8 +30,8 @@ void main() {
       addTearDown(api.disconnect);
       await api.connect();
 
-      final first = api.logs('1234');
-      final second = api.logs('1234');
+      final first = api.logs(legacyPin: '1234');
+      final second = api.logs(legacyPin: '1234');
       await Future<void>.delayed(Duration.zero);
 
       expect(transport.dataCommandCalls, 1);

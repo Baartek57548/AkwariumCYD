@@ -30,7 +30,10 @@ Komendy są blokowane, gdy sterownik jest offline albo telemetria jest nieaktual
 | `full` | `lib/main_full.dart` | równoległa instalacja pełnego interfejsu bez kanału aktualizacji `current` | `pl.cydakwarium.cyd_aquarium_mobile.full` |
 | `dev` | `lib/main_dev.dart` | symulator sterownika w pamięci RAM, przeznaczony do rozwoju i testów UI | `pl.cydakwarium.cyd_aquarium_mobile.dev` |
 
-Kod zawiera techniczny moduł zgodności ze starszym panelem WWW oparty na WebView, ale wydanie 5.0.0 nie pokazuje go w produkcyjnym centrum połączeń. Nie istnieje osobny flavor ani publikowany APK `legacy`; podstawowym interfejsem jest natywne centrum dowodzenia.
+Kod zawiera techniczny moduł zgodności ze starszym panelem WWW oparty na
+WebView, ale wydanie 5.1.0 nie pokazuje go w produkcyjnym centrum połączeń. Nie
+istnieje osobny flavor ani publikowany APK `legacy`; podstawowym interfejsem
+jest natywne centrum dowodzenia.
 
 ## Wymagania
 
@@ -45,11 +48,18 @@ Kod zawiera techniczny moduł zgodności ze starszym panelem WWW oparty na WebVi
 1. Połącz telefon z siecią sterownika.
 2. Wybierz połączenie Wi‑Fi i użyj `http://akwarium.local`. Dla punktu dostępowego sterownika użyj `http://192.168.4.1`.
 3. Jeśli mDNS nie działa w danej sieci, wpisz bezpośredni adres IPv4 sterownika wraz ze schematem `http://`.
-4. Zaloguj operacje administracyjne kodem PIN skonfigurowanym w firmware. Fabryczny PIN bieżącego firmware i symulatora DEV to `1234`; przed wdrożeniem należy go zmienić.
+4. Przy pierwszej chronionej akcji przepisz sześciocyfrowy PIN pokazany na
+   ekranie CYD i zapisz go w bezpiecznym miejscu. Każdy sterownik produkcyjny
+   generuje własny PIN; po pierwszym poprawnym logowaniu jego jawna kopia jest
+   usuwana z NVS. Wyłącznie symulator i profil DEV używają PIN-u `1234`.
 
 Adres nie może zawierać loginu, hasła, parametrów zapytania ani fragmentu. Pełny zakres funkcji jest dostępny przez natywne REST API. BLE zapewnia sterowanie bez sieci, lecz zakres ekranów zależy od wersji protokołu zaimplementowanej w firmware. Specyfikacja znajduje się w [docs/ble-protocol.md](docs/ble-protocol.md).
 
-Nie należy wystawiać HTTP sterownika bezpośrednio do Internetu. Protokół v2 wymienia PIN tylko podczas tworzenia krótkotrwałej sesji, ale lokalny transport HTTP nadal nie zapewnia TLS, dlatego sieć musi być zaufana i odizolowana. Aplikacja usuwa PIN oraz token po przejściu w tło i wygasza sesję po pięciu minutach bezczynności.
+Nie należy wystawiać HTTP sterownika bezpośrednio do Internetu. Aplikacja
+zezwala na nieszyfrowany HTTP wyłącznie dla adresów lokalnych; publiczny host
+wymaga HTTPS. Protokół v2 wysyła PIN tylko podczas tworzenia krótkotrwałej
+sesji, a kolejne komendy używają tokenu w nagłówku. Aplikacja usuwa PIN oraz
+token po przejściu w tło i wygasza sesję po pięciu minutach bezczynności.
 
 ## Architektura
 
@@ -85,7 +95,8 @@ flutter test
 flutter build apk --release --flavor current --target lib/main.dart
 ```
 
-Wynik powstaje w `build/app/outputs/flutter-apk/app-current-release.apk`. Wydanie 5.0.0 jest publikowane jako `AquaCYD-Control-5.0.0-current.apk`.
+Wynik powstaje w `build/app/outputs/flutter-apk/app-current-release.apk`.
+Wydanie 5.1.0 jest publikowane jako `AquaCYD-Control-5.1.0-current.apk`.
 
 Build release wymaga pliku `android/key.properties` z niepustymi polami:
 
@@ -100,7 +111,7 @@ Plik JKS, hasła i `key.properties` muszą pozostać poza repozytorium. Gradle p
 
 ## Aktualizacje aplikacji
 
-Kanał aktualizacji działa wyłącznie w produkcyjnym buildzie release wariantu `current`. Aplikacja sprawdza stabilne GitHub Releases po uruchomieniu, po powrocie na pierwszy plan oraz nie częściej niż raz na 12 godzin. Użytkownik może także uruchomić sprawdzenie ręcznie, odłożyć aktualizację o 24 godziny albo pominąć wskazaną wersję.
+Kanał aktualizacji działa wyłącznie w produkcyjnym buildzie release wariantu `current`. Aplikacja sprawdza stabilne GitHub Releases po uruchomieniu, po powrocie na pierwszy plan oraz okresowo co 6 godzin. Po błędzie ponawia sprawdzenie z ograniczonym opóźnieniem wykładniczym. Użytkownik może także uruchomić sprawdzenie ręcznie, odłożyć aktualizację o 24 godziny albo pominąć wskazaną wersję.
 
 Kontrakt publikacji:
 
@@ -113,6 +124,21 @@ Kontrakt publikacji:
 
 Przed uruchomieniem instalatora Androida aplikacja sprawdza rozmiar, SHA‑256, nazwę pakietu, wersję i certyfikat. Pierwsza instalacja wymaga zgody „Zezwalaj z tego źródła”, a każda aktualizacja kończy się systemowym potwierdzeniem użytkownika. Aplikacja nie omija zabezpieczeń Androida i nie aktualizuje się bez zgody.
 
+## Aktualizacje firmware sterownika
+
+Po połączeniu ze sterownikiem przez Wi‑Fi aplikacja okresowo sprawdza stabilne
+wydania `firmware-vX.Y.Z` na GitHubie. Dobiera dokładnie jeden pakiet
+`AquaCYD-Firmware-X.Y.Z-<target>.aqfw` zgodny z wariantem wyświetlacza oraz
+kluczem zaufania urządzenia. Przed pobraniem i instalacją pokazuje wersję oraz
+prosi użytkownika o zgodę.
+
+Pobrany plik podlega limitom rozmiaru i czasu, kontroli SHA-256 z metadanych
+GitHub Release oraz lokalnej walidacji nagłówka `.aqfw`. Dopiero wtedy aplikacja
+wysyła go przez uwierzytelnioną sesję Wi‑Fi. Sterownik niezależnie sprawdza
+podpis RSA-3072/PSS, digest, target, wersję bezpieczeństwa i reguły rollbacku,
+a uruchomienie nowego obrazu następuje dopiero po jego własnej weryfikacji.
+Aktualizacja przez BLE nie jest obsługiwana.
+
 ## Ograniczenia zależne od środowiska
 
 - telemetria foreground jest odpytywana okresowo; kontrola w tle działa w przybliżeniu co 30 minut i tylko w tej samej lokalnej sieci Wi‑Fi,
@@ -120,5 +146,8 @@ Przed uruchomieniem instalatora Androida aplikacja sprawdza rozmiar, SHA‑256, 
 - fizyczny stan grzałki nie oznacza włączenia lub wyłączenia termostatu — aplikacja pokazuje te informacje oddzielnie,
 - zapis konfiguracji sieci wymaga ponownego podania hasła, ponieważ sterownik nie odsyła zapisanego sekretu,
 - starszy firmware v1 nadal nie obsługuje sesji v2, sterowania czasowego, profili Aquael ani pełnej diagnostyki BLE,
-- firmware 5.0.0 nie wymusza jeszcze szyfrowania, bondingu ani ochrony MITM połączenia BLE; transportu należy używać wyłącznie przy fizycznie kontrolowanym dostępie,
-- automatyczne zdalne OTA firmware pozostaje wyłączone do czasu provisionowania klucza zaufania i Secure Boot v2 na ESP32.
+- firmware 5.1.0 wymusza dla BLE szyfrowanie, LE Secure Connections, bonding,
+  ochronę MITM i 128-bitowy klucz; aplikacja blokuje komendy, jeśli urządzenie
+  nie potwierdzi pełnego profilu bezpieczeństwa,
+- instalacja firmware wymaga połączenia Wi‑Fi, aktywnej sesji administratora i
+  jawnej zgody użytkownika; aplikacja nie wykonuje bezobsługowego OTA.

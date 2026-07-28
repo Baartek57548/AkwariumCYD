@@ -105,13 +105,33 @@ wyłącznie te stałe, bez modyfikowania sterownika dotyku.
 
 ## Aktualizacja
 
-Panel WWW i ArduinoOTA działają w zadaniu Core 0. Po przyjęciu obrazu firmware
-restart jest odroczony, aby odpowiedź HTTP zdążyła zostać wysłana. Lokalny
-restart działa także wtedy, gdy portal WWW nie jest uruchomiony.
+Produkcyjny panel WWW w zadaniu Core 0 przyjmuje wyłącznie podpisany pakiet
+`.aqfw` przeznaczony dla właściwego panelu. Przed zapisem nieaktywnej partycji
+firmware weryfikuje RSA-3072/PSS nagłówka, wersję, `securityVersion`, zgodność
+bootloadera, target i rozmiar; podczas transferu sprawdza SHA-256 oraz kompletny
+payload Secure Boot v2. Niepodpisany `.bin`, pakiet dla innego ekranu oraz
+starsza wersja bezpieczeństwa są odrzucane.
 
-Hasło punktu dostępowego OTA i PIN administratora są zdefiniowane w
-`include/config.h`. Przed wdrożeniem urządzenia należy je zmienić. Hasło WPA
-musi mieć co najmniej osiem znaków.
+Po przyjęciu obrazu restart jest odroczony, aby odpowiedź HTTP zdążyła zostać
+wysłana. Lokalny restart działa także wtedy, gdy portal WWW nie jest
+uruchomiony. ArduinoOTA jest domyślnie wyłączone przez
+`AQUARIUM_ALLOW_UNSIGNED_ARDUINO_OTA=0` i może być użyte wyłącznie w świadomie
+zbudowanym profilu serwisowym, nigdy w produkcyjnym release.
+
+Przy pierwszym uruchomieniu produkcyjny firmware generuje z użyciem sprzętowego
+RNG ESP32 unikalny sześciocyfrowy PIN administratora oraz 16-znakowe hasło WPA2
+punktu dostępowego. Dane są przechowywane w dedykowanej przestrzeni NVS
+`aq_security` pod kluczem `credentials`; PIN pozostaje tam jako skrót SHA-256.
+Jawny PIN jest dostępny wyłącznie na ekranie pierwszej konfiguracji i zostaje
+wyzerowany po pierwszym poprawnym logowaniu. Reset fabryczny czyści tę przestrzeń,
+więc po restarcie urządzenie tworzy nową parę poświadczeń. Stałe `1234` i
+`admin1234` są dostępne tylko w profilu DEV i symulatorze, nigdy w obrazie
+produkcyjnym.
+
+GitHub Release publikuje osobne `.aqfw` dla ILI9341 i ST7789 oraz odpowiadające
+im obrazy `*-sbv2.bin` przeznaczone do kontrolowanego serwisu przewodowego.
+Kontrakt podpisu, fingerprint klucza i bezpieczny provisioning sprzętowy opisuje
+[FIRMWARE_SIGNING_AND_PROVISIONING.md](FIRMWARE_SIGNING_AND_PROVISIONING.md).
 
 ## Ograniczenia sprzętowe
 

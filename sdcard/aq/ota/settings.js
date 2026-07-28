@@ -754,8 +754,8 @@ async function syncBrowserTime() {
         if (!isAdminAuthenticated()) {
             await loginAsAdmin();
         }
-        const pin = getAdminPinForRequest();
-        if (!pin) {
+        const token = getAdminTokenForRequest();
+        if (!token) {
             const error = new Error('Wymagane logowanie admina.');
             error.code = 'admin_required';
             throw error;
@@ -765,15 +765,18 @@ async function syncBrowserTime() {
             API_SETTIME,
             {
                 method: 'POST',
-                headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-                body: new URLSearchParams({ epoch: String(epoch), pin }).toString()
+                headers: {
+                    'Content-Type': 'application/x-www-form-urlencoded',
+                    'X-AquaCYD-Session': token
+                },
+                body: new URLSearchParams({ epoch: String(epoch) }).toString()
             },
             API_REQUEST_TIMEOUT_MS,
             (response) => response.text()
         );
         const { response, body: message } = result;
         if (!response.ok) {
-            if (response.status === 403) {
+            if (response.status === 401 || response.status === 403) {
                 logoutAdmin();
             }
             const error = new Error(message || 'request_failed');

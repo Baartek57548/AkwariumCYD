@@ -468,8 +468,8 @@ final class _FakeControllerRemoteApi implements ControllerRemoteApi {
   Future<ControllerActionResult> action(
     String action, {
     Map<String, Object?> payload = const {},
-    String? pin,
-    bool includePin = true,
+    String? sessionToken,
+    String? legacyPin,
   }) async {
     return const ControllerActionResult(
       success: true,
@@ -479,12 +479,18 @@ final class _FakeControllerRemoteApi implements ControllerRemoteApi {
   }
 
   @override
-  Future<Map<String, dynamic>> logs(String pin) async {
+  Future<Map<String, dynamic>> logs({
+    String? sessionToken,
+    String? legacyPin,
+  }) async {
     return <String, dynamic>{};
   }
 
   @override
-  Future<Map<String, dynamic>> busDiagnostics(String pin) async {
+  Future<Map<String, dynamic>> busDiagnostics({
+    String? sessionToken,
+    String? legacyPin,
+  }) async {
     return <String, dynamic>{};
   }
 
@@ -492,7 +498,11 @@ final class _FakeControllerRemoteApi implements ControllerRemoteApi {
   Future<List<dynamic>> historyFiles() async => <dynamic>[];
 
   @override
-  Future<void> setBrowserTime(int epochSeconds, String pin) async {}
+  Future<void> setBrowserTime(
+    int epochSeconds, {
+    String? sessionToken,
+    String? legacyPin,
+  }) async {}
 
   @override
   Future<Uint8List> download(

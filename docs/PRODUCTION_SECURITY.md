@@ -20,7 +20,7 @@ sygnatury i każde wejście przekraczające ustalony limit rozmiaru.
 | Przechwycony PIN lub token | nieautoryzowane komendy | krótkotrwałe tokeny, rotacja, ograniczony zakres uprawnień i unieważnianie sesji |
 | Powtórzenie tej samej komendy | podwójne karmienie lub przełączenie przekaźnika | unikalny `commandId`, pamięć ostatnich identyfikatorów i idempotentna odpowiedź |
 | Zalanie żądaniami | watchdog, brak RAM, opóźnienie automatyki | limity rozmiaru, liczby klientów i token bucket per klient/endpoint |
-| Podmieniony firmware | trwałe przejęcie urządzenia | podpis Ed25519, SHA-256, klucz publiczny w firmware, Secure Boot i A/B rollback |
+| Podmieniony firmware | trwałe przejęcie urządzenia | podpis RSA-3072/PSS, SHA-256, klucz publiczny w firmware, Secure Boot v2 i A/B rollback |
 | Utrata zasilania podczas OTA | urządzenie nie uruchamia się | zapis do nieaktywnej partycji, walidacja przed przełączeniem, rollback po braku health check |
 | Przejęty telefon | dostęp do sterownika | Android Keystore/iOS Keychain, blokada biometryczna dla działań krytycznych, szybkie wylogowanie |
 | Atak fizyczny na ESP32 | odczyt Wi-Fi i konfiguracji | szyfrowanie NVS/Flash Encryption oraz kontrolowany interfejs serwisowy |
@@ -42,10 +42,17 @@ sygnatury i każde wejście przekraczające ustalony limit rozmiaru.
   wyłącznie w bezpiecznym magazynie systemowym.
 - Tokeny dla odczytu telemetrii nie powinny umożliwiać OTA, resetu, zmiany Wi-Fi
   ani sterowania wyjściami.
-- PIN administratora służy lokalnie do utworzenia sesji, a nie jako sekret
-  przesyłany przy każdej komendzie v2. Nie wolno zapisywać go w logach,
-  snapshotach offline ani zwykłych preferencjach.
+- Każde urządzenie produkcyjne generuje własny sześciocyfrowy PIN i hasło AP
+  z generatora sprzętowego ESP32. PIN służy wyłącznie do utworzenia sesji, a nie
+  jest przesyłany przy każdej komendzie. W NVS pozostaje jego SHA-256; jawna
+  kopia potrzebna do pierwszego uruchomienia jest kasowana po poprawnym
+  logowaniu. Nie wolno zapisywać PIN-u w logach ani snapshotach offline.
 - Wylogowanie i reset urządzenia muszą unieważniać wszystkie aktywne sesje.
+
+Panel WWW używa `X-AquaCYD-Session` także dla starszych ścieżek akcji,
+diagnostyki, logów i ustawienia czasu. Parametr `pin` w URL/formularzu nie jest
+już akceptowany przez firmware produkcyjny. Wylogowanie wywołuje
+`POST /api/v2/logout`, który unieważnia token po stronie sterownika.
 
 ## Limity i walidacja API
 
@@ -75,47 +82,57 @@ BLE wymaga LE Secure Connections, bondingu i jawnego potwierdzenia nowego
 telefonu. Po konfiguracji Wi-Fi tryb reklamowania powinien wygasać. MQTT wymaga
 TLS, osobnych danych klienta i ACL ograniczającego urządzenie do jego tematów.
 
-Firmware 5.0.0 nie wymusza jeszcze szyfrowania łącza, bondingu ani ochrony MITM
-i reklamuje te ograniczenia w `capabilities`. Krótkotrwały token aplikacyjny
-ogranicza czas przejętej sesji, ale nie zastępuje ochrony warstwy BLE. Do czasu
-wdrożenia retry po żądaniu parowania i zaliczenia HIL na Androidzie oraz iOS
-Bluetooth należy używać tylko przy fizycznie kontrolowanym dostępie do
-sterownika; podstawowym transportem produkcyjnym pozostaje odizolowana sieć
-lokalna.
+Firmware 5.1.0 wymusza LE Secure Connections, bonding, ochronę MITM i klucz
+128-bit. Chronione charakterystyki nie przyjmują poleceń przed zakończeniem
+uwierzytelnionego połączenia, a nieudane parowanie kończy się rozłączeniem.
+Aplikacja Android inicjuje bonding natywnie i wykonuje chroniony handshake przed
+subskrypcją oraz komendami. Przed szerokim wdrożeniem nadal należy zaliczyć HIL
+na docelowych wersjach Androida i iOS, ponieważ zachowanie okna systemowego
+parowania zależy od systemu i producenta telefonu.
 
 ## Podpisane OTA i rollback
 
-Produkcyjny obraz powstaje z tagu `firmware-vX.Y.Z`. Workflow publikuje SHA-256,
-manifest i sygnatury Ed25519. Prywatny klucz istnieje tylko jako sekret
-chronionego środowiska GitHub; repozytorium i artefakty CI go nie zawierają.
+Produkcyjny obraz powstaje z tagu `firmware-vX.Y.Z`, który musi odpowiadać
+`FirmwareInfo::VERSION`. Workflow podpisuje finalny payload przez `espsecure`
+Secure Boot v2 i opakowuje go w `.aqfw`. Nagłówek pakietu ma podpis
+RSA-3072/PSS/SHA-256 i kryptograficznie wiąże target ekranu, wersję firmware,
+`securityVersion`, minimalną wersję bootloadera, identyfikator klucza, długość
+oraz SHA-256 całego payloadu. Prywatny klucz istnieje tylko jako sekret
+chronionego środowiska GitHub; repozytorium i artefakty go nie zawierają.
 
-Ważne ograniczenie obecnej wersji: podpis jest weryfikowany w pipeline wydania,
-ale firmware nie ma jeszcze provisionowanego klucza zaufania i nie weryfikuje
-Ed25519 na urządzeniu. Plik SHA-256 umieszczony obok obrazu wykrywa przypadkowe
-uszkodzenie i umożliwia operatorowi ręczne porównanie, lecz sam nie chroni przed
-atakującym, który podmieni jednocześnie obraz i sumę.
+Firmware ma wbudowany publiczny trust anchor i przed rozpoczęciem zapisu
+weryfikuje podpis nagłówka `.aqfw`, target, politykę wersji oraz rozmiar
+partycji. Podczas zapisu oblicza SHA-256, odrzuca obcięte i nadmiarowe dane,
+kontroluje obecność bloku podpisu Secure Boot v2 i dopiero po pełnej walidacji
+kończy aktualizację. Plik `SHA256SUMS` w release pozostaje dodatkowym narzędziem
+audytowym operatora, ale nie jest źródłem zaufania urządzenia.
 
-Obecny `ota_guard` sprawdza rozmiar partycji, wolną pamięć, bezpieczny stan
-operacji i backup konfiguracji, zapisuje poprzednią partycję, prowadzi okno
-`pendingVerify` i wykonuje rollback po nieudanym starcie. Chroni to przed
-przerwaniem aktualizacji i wadliwym obrazem, ale nie potwierdza jego autora.
-Dlatego OTA wolno wykonywać tylko lokalnie, z zaufanej sieci/AP, po ręcznej
-weryfikacji SHA-256 pobranego release. Automatyczne zdalne OTA pozostaje
-zablokowane produkcyjnie.
+`ota_guard` sprawdza wolną pamięć, bezpieczny stan operacji i backup
+konfiguracji, zapisuje poprzednią partycję, prowadzi okno `pendingVerify`,
+realizuje rollback po nieudanym starcie i utrzymuje monotoniczny programowy
+próg `securityVersion`. Niezgodny, starszy lub niepodpisany pakiet jest
+odrzucany. Produkcyjny endpoint HTTP przyjmuje wyłącznie `.aqfw`; surowe
+ArduinoOTA jest domyślnie wyłączone na etapie kompilacji.
 
-Pełne domknięcie wymaga provisionowania klucza publicznego w kontrolowanym
-wydaniu fabrycznym i weryfikacji podpisanego obrazu przez ESP32 Secure Boot v2
-lub równoważny mechanizm przed wyborem partycji startowej. Dopiero wtedy
-sygnatura z release może być traktowana jako ochrona przed podmianą.
+To zabezpiecza ścieżkę aktualizacji na poziomie aplikacji. Egzekwowanie podpisu
+przez ROM przed uruchomieniem kodu oraz ochrona pamięci Flash wymagają osobnego,
+fabrycznego provisioningu Secure Boot v2 i Flash Encryption na każdej płytce.
+Pipeline wydania nigdy nie zapisuje eFuse. Automatyczna aktualizacja może być
+oferowana dopiero po jawnej zgodzie użytkownika i przez uwierzytelniony lokalny
+transport albo kontrolowaną bramę TLS; nie wolno pobierać obrazu z dowolnego URL.
 
-Secure Boot v2 oraz Flash Encryption należy włączać dopiero po przećwiczeniu
-procedury odzyskiwania, ponieważ przepalenie eFuse jest nieodwracalne.
+Secure Boot v2 i Flash Encryption należy włączać dopiero po sprawdzeniu rewizji
+ESP32, utworzeniu obrazu odzyskiwania oraz przećwiczeniu HIL i rollbacku.
+Przepalenie eFuse jest nieodwracalne. Szczegółowy kontrakt pakietu, fingerprint
+klucza, odczytowy audyt i procedurę pilotażową opisuje
+[FIRMWARE_SIGNING_AND_PROVISIONING.md](FIRMWARE_SIGNING_AND_PROVISIONING.md).
 
 ## Sekrety, logi i prywatność
 
 - GitHub Environments `production-mobile`, `production-firmware` i
   `aquacyd-hil` powinny wymagać zatwierdzenia oraz ograniczać gałęzie/tagi.
-- Klucze JKS i Ed25519 nie mogą trafiać do cache, raportów ani artefaktów.
+- Klucze JKS i prywatny klucz RSA firmware nie mogą trafiać do cache, raportów
+  ani artefaktów.
 - Logi zapisują identyfikator komendy i wynik, ale nie token, PIN, SSID, hasło,
   pełny adres MAC ani payload konfiguracji.
 - Snapshot offline przechowuje tylko niezbędną telemetrię i ustawienia bez

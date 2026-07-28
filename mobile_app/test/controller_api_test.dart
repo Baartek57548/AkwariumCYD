@@ -1,8 +1,11 @@
 import 'dart:convert';
 import 'dart:io';
+import 'dart:typed_data';
 
 import 'package:cyd_aquarium_mobile/full_controller/controller_api.dart';
 import 'package:flutter_test/flutter_test.dart';
+
+import 'support/firmware_package_fixture.dart';
 
 const _networkTestDeadline = Duration(milliseconds: 250);
 const _slowNetworkResponse = Duration(milliseconds: 750);
@@ -14,7 +17,14 @@ void main() {
     final requests = <_RecordedRequest>[];
     final subscription = server.listen((request) async {
       final body = await utf8.decoder.bind(request).join();
-      requests.add(_RecordedRequest(request.method, request.uri, body));
+      requests.add(
+        _RecordedRequest(
+          request.method,
+          request.uri,
+          body,
+          sessionHeader: request.headers.value('X-AquaCYD-Session'),
+        ),
+      );
       request.response.headers.contentType = ContentType.json;
       if (request.uri.path == '/api/status') {
         request.response.write(jsonEncode(_validStatus(includeHistory: true)));
@@ -33,7 +43,7 @@ void main() {
     final status = await api.status(includeHistory: true);
     final result = await api.action(
       'save_temperature',
-      pin: '1234',
+      legacyPin: '1234',
       payload: const {'heaterMode': 0, 'target': '25.5', 'enabled': true},
     );
 
@@ -97,7 +107,14 @@ void main() {
       const token = '0123456789abcdef0123456789abcdef';
       final subscription = server.listen((request) async {
         final body = await utf8.decoder.bind(request).join();
-        requests.add(_RecordedRequest(request.method, request.uri, body));
+        requests.add(
+          _RecordedRequest(
+            request.method,
+            request.uri,
+            body,
+            sessionHeader: request.headers.value('X-AquaCYD-Session'),
+          ),
+        );
         request.response.headers.contentType = ContentType.json;
         switch (request.uri.path) {
           case '/api/v2/capabilities':
@@ -164,6 +181,71 @@ void main() {
       expect(actionFields['token'], token);
       expect(actionFields['durationSec'], '1800');
       expect(actionFields, isNot(contains('pin')));
+      expect(requests[2].sessionHeader, token);
+    },
+  );
+
+  test(
+    'protected HTTP endpoints use only the session header in secure mode',
+    () async {
+      final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+      addTearDown(() => server.close(force: true));
+      const token = '0123456789abcdef0123456789abcdef';
+      final requests = <_RecordedRequest>[];
+      final subscription = server.listen((request) async {
+        final body = await utf8.decoder.bind(request).join();
+        requests.add(
+          _RecordedRequest(
+            request.method,
+            request.uri,
+            body,
+            sessionHeader: request.headers.value('X-AquaCYD-Session'),
+          ),
+        );
+        request.response.headers.contentType = ContentType.json;
+        request.response.write(
+          request.uri.path == '/api/v2/logout'
+              ? jsonEncode({'ok': true, 'code': 'logged_out'})
+              : jsonEncode({
+                  'ok': true,
+                  'success': true,
+                  'code': 'ok',
+                  'message': 'Wykonano.',
+                }),
+        );
+        await request.response.close();
+      });
+      addTearDown(subscription.cancel);
+      final api = ControllerApi(
+        Uri.parse('http://${server.address.address}:${server.port}'),
+      );
+
+      await api.logs(sessionToken: token);
+      await api.busDiagnostics(sessionToken: token);
+      await api.action(
+        'save_display',
+        sessionToken: token,
+        payload: const {'brightness': 80},
+      );
+      await api.setBrowserTime(1785276000, sessionToken: token);
+      await api.revokeSession(token);
+
+      expect(requests, hasLength(5));
+      expect(requests.map((request) => request.uri.path), const [
+        '/api/logs',
+        '/api/bus-diagnostics',
+        '/api/action',
+        '/settime',
+        '/api/v2/logout',
+      ]);
+      for (final request in requests) {
+        expect(request.sessionHeader, token);
+        expect(request.uri.queryParameters, isNot(contains('pin')));
+        if (request.uri.path == '/api/action' ||
+            request.uri.path == '/settime') {
+          expect(Uri.splitQueryString(request.body), isNot(contains('pin')));
+        }
+      }
     },
   );
 
@@ -259,7 +341,11 @@ void main() {
     );
 
     await expectLater(
-      api.action('relay', payload: const {'channel': 1}),
+      api.action(
+        'relay',
+        payload: const {'channel': 1},
+        sessionToken: '0123456789abcdef0123456789abcdef',
+      ),
       throwsA(
         isA<ControllerApiException>().having(
           (error) => error.code,
@@ -383,6 +469,112 @@ void main() {
       ),
     );
   });
+
+  test('firmware upload uses only the administrator session header', () async {
+    final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+    addTearDown(() => server.close(force: true));
+    Uri? requestUri;
+    String? sessionHeader;
+    Uint8List? requestBody;
+    final subscription = server.listen((request) async {
+      requestUri = request.uri;
+      sessionHeader = request.headers.value('X-AquaCYD-Session');
+      final body = BytesBuilder(copy: false);
+      await for (final chunk in request) {
+        body.add(chunk);
+      }
+      requestBody = body.takeBytes();
+      request.response.headers.contentType = ContentType.json;
+      request.response.write(
+        jsonEncode({'ok': true, 'message': 'Pakiet zweryfikowany. Restart.'}),
+      );
+      await request.response.close();
+    });
+    addTearDown(subscription.cancel);
+    final api = ControllerApi(
+      Uri.parse('http://${server.address.address}:${server.port}'),
+    );
+    final firmware = buildFirmwarePackageFixture();
+    const token = '0123456789abcdef0123456789abcdef';
+    final progress = <(int, int)>[];
+
+    final result = await api.uploadFirmware(
+      firmware,
+      'firmware-ili9341.aqfw',
+      token,
+      onProgress: (sent, total) => progress.add((sent, total)),
+    );
+
+    expect(result.success, isTrue);
+    expect(result.code, 'ok');
+    expect(requestUri?.path, '/update');
+    expect(requestUri?.queryParameters, isEmpty);
+    expect(sessionHeader, token);
+    expect(progress.first, (0, firmware.length));
+    expect(progress.last, (firmware.length, firmware.length));
+    expect(requestBody, containsAllInOrder(<int>[...utf8.encode('AQCYDOTA')]));
+    expect(
+      utf8.decode(requestBody!, allowMalformed: true),
+      contains('filename="firmware-ili9341.aqfw"'),
+    );
+  });
+
+  test('firmware upload rejects ok:false even with HTTP 200', () async {
+    final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+    addTearDown(() => server.close(force: true));
+    final subscription = server.listen((request) async {
+      await request.drain<void>();
+      request.response.headers.contentType = ContentType.json;
+      request.response.write(
+        jsonEncode({
+          'ok': false,
+          'code': 'signature_invalid',
+          'message': 'Podpis pakietu jest nieprawidłowy.',
+        }),
+      );
+      await request.response.close();
+    });
+    addTearDown(subscription.cancel);
+    final api = ControllerApi(
+      Uri.parse('http://${server.address.address}:${server.port}'),
+    );
+
+    await expectLater(
+      api.uploadFirmware(
+        buildFirmwarePackageFixture(),
+        'firmware.aqfw',
+        '0123456789abcdef0123456789abcdef',
+      ),
+      throwsA(
+        isA<ControllerApiException>().having(
+          (error) => error.code,
+          'code',
+          'signature_invalid',
+        ),
+      ),
+    );
+  });
+
+  test('firmware upload validates the package before network access', () async {
+    final api = ControllerApi(Uri.parse('http://127.0.0.1:1'));
+    final tampered = buildFirmwarePackageFixture();
+    tampered[tampered.length - 1] ^= 1;
+
+    await expectLater(
+      api.uploadFirmware(
+        tampered,
+        'firmware.aqfw',
+        '0123456789abcdef0123456789abcdef',
+      ),
+      throwsA(
+        isA<ControllerApiException>().having(
+          (error) => error.code,
+          'code',
+          'firmware_digest_mismatch',
+        ),
+      ),
+    );
+  });
 }
 
 Map<String, dynamic> _validStatus({bool includeHistory = false}) {
@@ -417,9 +609,15 @@ Map<String, dynamic> _validStatus({bool includeHistory = false}) {
 }
 
 class _RecordedRequest {
-  const _RecordedRequest(this.method, this.uri, this.body);
+  const _RecordedRequest(
+    this.method,
+    this.uri,
+    this.body, {
+    this.sessionHeader,
+  });
 
   final String method;
   final Uri uri;
   final String body;
+  final String? sessionHeader;
 }

@@ -40,6 +40,15 @@ void gui_app_handle_ota_portal(void);
 void gui_app_update_wifi(int state, int rssi);
 
 /**
+ * Publishes the BLE pairing state from Core 0 without touching LVGL there.
+ * The UI task renders the six-digit passkey and result on its next refresh.
+ *
+ * @param passkey Six-digit code for state=1, otherwise ignored.
+ * @param state 0=idle, 1=display passkey, 2=paired, 3=failed.
+ */
+void gui_app_update_ble_pairing(uint32_t passkey, uint8_t state);
+
+/**
  * @brief Skonsolidowana funkcja aktualizacji metryk interfejsu (wywoływana co 1s).
  * @param temp Temperatura w stopniach Celsjusza.
  * @param ph Wartość odczynu pH.
@@ -91,6 +100,12 @@ bool gui_app_is_dev_mode(void);
  * @brief Informuje, czy panel WWW jest aktywnie uzywany i lokalny ekran jest w trybie WiFi-focus.
  */
 bool gui_app_is_web_focus_active(void);
+
+/**
+ * Returns true only after configuration and the essential LVGL tree are
+ * initialized. Used by the post-OTA health gate before marking an image valid.
+ */
+bool gui_app_runtime_ready(void);
 
 struct GuiBleSnapshot {
     uint8_t protocol_version;

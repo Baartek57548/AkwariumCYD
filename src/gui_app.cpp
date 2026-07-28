@@ -1,7 +1,10 @@
 #include "gui_app.h"
 
+#include "ble_controller.h"
 #include "config.h"
+#include "device_credentials.h"
 #include "events.h"
+#include "firmware_trust_anchor.h"
 #include "hal_adc.h"
 #include "hal_display.h"
 #include "hal_i2c_bus.h"
@@ -16,6 +19,7 @@
 #include "dev_simulator.h"
 #include "idempotency_ledger.h"
 #include "ota_guard.h"
+#include "secure_ota.h"
 #include "web_activity_tracker.h"
 #include "wifi_retry_policy.h"
 
@@ -940,7 +944,7 @@ static lv_obj_t *pin_overlay = nullptr;
 static lv_obj_t *pin_value_lbl = nullptr;
 static lv_obj_t *pin_status_lbl = nullptr;
 static lv_obj_t *pin_matrix = nullptr;
-static char pin_entry[5] = "";
+static char pin_entry[9] = "";
 
 static bool is_scanning = false;
 static unsigned long conn_start_ms = 0;
@@ -987,6 +991,10 @@ static uint32_t ota_http_upload_bytes = 0;
 static uint32_t ota_http_upload_total = 0;
 static int ota_http_upload_percent = -1;
 static char ota_http_update_msg[96] = "";
+static portMUX_TYPE ble_pairing_mux = portMUX_INITIALIZER_UNLOCKED;
+static volatile uint32_t ble_pairing_passkey = 0U;
+static volatile uint32_t ble_pairing_until_ms = 0U;
+static volatile uint8_t ble_pairing_state = 0U;
 static uint8_t relay_test_active_mask = 0U;
 static uint8_t relay_test_applied_mask = 0U;
 static uint32_t relay_test_deadline_ms[8] = {0U};
@@ -1170,6 +1178,7 @@ static void ota_portal_handle_root();
 static void ota_portal_handle_status();
 static void ota_portal_handle_v2_capabilities();
 static void ota_portal_handle_v2_auth();
+static void ota_portal_handle_v2_logout();
 static void ota_portal_handle_i2c_scan();
 static void ota_portal_handle_logs();
 static void ota_portal_handle_action();
@@ -1196,6 +1205,7 @@ static void ota_portal_handle_update_finish();
 static void ota_portal_handle_update_upload();
 static void ota_portal_handle_not_found();
 static bool ota_portal_require_pin();
+static bool ota_portal_require_admin_session();
 static bool ota_portal_sd_ready();
 static const char *ota_portal_basename(const char *path);
 static void restart_authorized();
@@ -3194,13 +3204,22 @@ static void pin_update_label() {
     if (pin_value_lbl == nullptr) {
         return;
     }
-    char masked[5] = "";
+    char masked[9] = "";
     const size_t len = strlen(pin_entry);
-    for (size_t i = 0; i < len && i < 4; ++i) {
+    for (size_t i = 0; i < len && i < sizeof(masked) - 1U; ++i) {
         masked[i] = '*';
     }
-    masked[len < 4 ? len : 4] = '\0';
-    lv_label_set_text(pin_value_lbl, masked[0] != '\0' ? masked : "----");
+    masked[len < sizeof(masked) - 1U ? len : sizeof(masked) - 1U] = '\0';
+    char placeholder[9] = {};
+    const size_t pin_length =
+        device_credentials_admin_pin_length();
+    const size_t placeholder_length =
+        pin_length < sizeof(placeholder) ? pin_length : sizeof(placeholder) - 1U;
+    memset(placeholder, '-', placeholder_length);
+    placeholder[placeholder_length] = '\0';
+    lv_label_set_text(
+        pin_value_lbl,
+        masked[0] != '\0' ? masked : placeholder);
 }
 
 static void pin_refresh_back_key_label();
@@ -3214,6 +3233,17 @@ static void pin_set_status(const char *text, lv_color_t color) {
     }
     lv_obj_set_style_text_color(pin_status_lbl, color, 0);
     lv_label_set_text(pin_status_lbl, text != nullptr ? text : "");
+}
+
+static void pin_show_setup_hint_if_needed() {
+    const char *setup_pin = device_credentials_setup_pin();
+    if (setup_pin == nullptr) {
+        pin_set_status("", theme_text_muted());
+        return;
+    }
+    char message[64];
+    snprintf(message, sizeof(message), "Nowy PIN: %s - zapisz go", setup_pin);
+    pin_set_status(message, lv_color_make(245, 158, 11));
 }
 
 static void pin_refresh_back_key_label() {
@@ -3400,9 +3430,10 @@ static void pin_matrix_draw_cb(lv_event_t *e) {
 }
 
 static void pin_submit_current_entry() {
-    if (strcmp(pin_entry, Secrets::DEFAULT_PIN) == 0) {
+    if (device_credentials_admin_pin_matches(pin_entry)) {
         pin_authenticated = true;
         pin_auth_until_ms = millis() + PIN_AUTH_WINDOW_MS;
+        device_credentials_acknowledge_setup_pin();
         PendingPinAction action = pending_pin_action;
         pending_pin_action = {PinAction::None, 0, false};
         close_pin_overlay();
@@ -3464,14 +3495,16 @@ static void pin_matrix_cb(lv_event_t *e) {
 
     if (key[0] >= '0' && key[0] <= '9' && key[1] == '\0') {
         const size_t len = strlen(pin_entry);
-        if (len < 4) {
+        const size_t required_length =
+            device_credentials_admin_pin_length();
+        if (len < required_length && len < sizeof(pin_entry) - 1U) {
             pin_entry[len] = key[0];
             pin_entry[len + 1] = '\0';
         }
         pin_refresh_back_key_label();
         pin_update_label();
         pin_set_status("", theme_text_muted());
-        if (strlen(pin_entry) == 4U) {
+        if (strlen(pin_entry) == required_length) {
             pin_submit_current_entry();
         }
         return;
@@ -3489,7 +3522,7 @@ static bool show_pin_guard_modal() {
         pin_last_key_ms = 0;
         pin_refresh_back_key_label();
         pin_update_label();
-        pin_set_status("", theme_text_muted());
+        pin_show_setup_hint_if_needed();
         lv_obj_clear_flag(pin_overlay, LV_OBJ_FLAG_HIDDEN);
         lv_obj_move_foreground(pin_overlay);
         Serial.printf("UI_PIN: shown overlay=%p hidden=%d\n",
@@ -3510,7 +3543,7 @@ static bool show_pin_guard_modal() {
     pin_last_key_ms = 0;
     pin_refresh_back_key_label();
     pin_update_label();
-    pin_set_status("", theme_text_muted());
+    pin_show_setup_hint_if_needed();
     lv_obj_clear_flag(pin_overlay, LV_OBJ_FLAG_HIDDEN);
     lv_obj_move_foreground(pin_overlay);
     Serial.printf("UI_PIN: shown overlay=%p hidden=%d\n",
@@ -5523,6 +5556,8 @@ static void factory_reset_authorized() {
         prefs.clear();
         prefs.end();
     }
+    device_credentials_factory_reset();
+    admin_sessions.clear();
     load_default_config(cfg);
     gui_app_save_settings();
     WiFi.disconnect(true, true);
@@ -5821,10 +5856,10 @@ body{margin:0;font-family:Arial,sans-serif;background:#f1f5f9;color:#0f172a}main
 h1{margin:0 0 4px;font-size:26px}.muted{color:#64748b}.row{display:flex;gap:10px;flex-wrap:wrap}.btn{border:0;border-radius:8px;padding:10px 14px;background:#0ea5e9;color:#fff;font-weight:700;text-decoration:none;display:inline-block}
 input{width:100%;box-sizing:border-box;border:1px solid #cbd5e1;border-radius:8px;padding:10px}progress{width:100%;height:18px}
 </style></head><body><main><h1>cydAkwarium OTA</h1><p class="muted">Awaryjna strona firmware. Wlasciwy plik powinien byc na SD: /aq/ota/index.html</p>
-<section class="card"><h2>Aktualizacja firmware</h2><form id="f"><label>PIN</label><input id="pin" name="pin" type="password" inputmode="numeric" required><p><input id="bin" name="firmware" type="file" accept=".bin" required></p><p><progress id="p" max="100" value="0"></progress></p><button class="btn" type="submit">Wgraj .bin</button></form><p id="msg" class="muted"></p></section>
+<section class="card"><h2>Aktualizacja firmware</h2><form id="f"><label>PIN administratora</label><input id="pin" type="password" inputmode="numeric" required><p><input id="pkg" name="firmware" type="file" accept=".aqfw" required></p><p><progress id="p" max="100" value="0"></progress></p><button class="btn" type="submit">Zweryfikuj i wgraj .aqfw</button></form><p id="msg" class="muted"></p></section>
 <section class="card"><h2>Dane</h2><a class="btn" href="/api/history.csv">Pobierz aktualna historie CSV</a></section>
 </main><script>
-f.onsubmit=function(e){e.preventDefault();var file=bin.files[0];if(!file||!pin.value){return}var x=new XMLHttpRequest();x.open('POST','/update?pin='+encodeURIComponent(pin.value));x.upload.onprogress=function(ev){if(ev.lengthComputable)p.value=(ev.loaded*100/ev.total)|0};x.onload=function(){msg.textContent=x.responseText};var d=new FormData();d.append('firmware',file,file.name);x.send(d)};
+f.onsubmit=async function(e){e.preventDefault();var file=pkg.files[0];if(!file||!file.name.toLowerCase().endsWith('.aqfw')||file.size>1966592){msg.textContent='Wybierz poprawny pakiet .aqfw';return}try{var auth=await fetch('/api/v2/auth',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({pin:pin.value})});var body=await auth.json();var token=body&&body.data&&body.data.sessionToken;if(!auth.ok||!token){throw new Error(body.message||'Logowanie odrzucone')}var x=new XMLHttpRequest();x.open('POST','/update');x.setRequestHeader('X-AquaCYD-Session',token);x.upload.onprogress=function(ev){if(ev.lengthComputable)p.value=(ev.loaded*100/ev.total)|0};x.onload=function(){msg.textContent=x.responseText};x.onerror=function(){msg.textContent='Przerwane polaczenie OTA'};var d=new FormData();d.append('firmware',file,file.name);x.send(d)}catch(error){msg.textContent=error.message||'Blad autoryzacji'}};
 </script></body></html>
 )rawliteral";
 
@@ -5852,7 +5887,8 @@ static const char *ota_portal_content_type(const char *path) {
     if (strcmp(ext, ".json") == 0) return "application/json; charset=utf-8";
     if (strcmp(ext, ".csv") == 0) return "text/csv; charset=utf-8";
     if (strcmp(ext, ".txt") == 0 || strcmp(ext, ".log") == 0 || strcmp(ext, ".cfg") == 0) return "text/plain; charset=utf-8";
-    if (strcmp(ext, ".bin") == 0 || strcmp(ext, ".aqbin") == 0) return "application/octet-stream";
+    if (strcmp(ext, ".bin") == 0 || strcmp(ext, ".aqbin") == 0 ||
+        strcmp(ext, ".aqfw") == 0) return "application/octet-stream";
     if (strcmp(ext, ".gz") == 0) return "application/gzip";
     return "application/octet-stream";
 }
@@ -6489,7 +6525,7 @@ static void ota_portal_handle_i2c_scan() {
 
 static void ota_portal_handle_v2_capabilities() {
     ota_portal_mark_web_activity();
-    char response[2048];
+    char response[3072];
     if (!gui_app_v2_capabilities_json(response, sizeof(response))) {
         ota_http_server.send(
             503,
@@ -7759,6 +7795,8 @@ static void ota_portal_handle_action() {
             prefs.clear();
             prefs.end();
         }
+        device_credentials_factory_reset();
+        admin_sessions.clear();
         load_default_config(cfg);
         display_auto_brightness = true;
         display_max_brightness = 100U;
@@ -8119,25 +8157,64 @@ static void ota_portal_handle_download() {
     file.close();
 }
 
-static bool ota_portal_request_has_pin() {
-    if (!ota_http_server.hasArg("pin")) {
-        return false;
-    }
-    return ota_http_server.arg("pin").equals(Secrets::DEFAULT_PIN);
+static bool ota_portal_require_pin() {
+    return ota_portal_require_admin_session();
 }
 
-static bool ota_portal_require_pin() {
-    if (ota_portal_request_has_pin()) {
+static bool ota_portal_request_has_admin_session() {
+    if (!ota_http_server.hasHeader("X-AquaCYD-Session")) {
+        return false;
+    }
+    const String &header = ota_http_server.header("X-AquaCYD-Session");
+    if (header.length() + 1U !=
+        aquarium::AdminSessionManager::kTokenBytes) {
+        return false;
+    }
+    char token[aquarium::AdminSessionManager::kTokenBytes] = {};
+    header.toCharArray(token, sizeof(token));
+    return admin_sessions.validate(token, millis());
+}
+
+static bool ota_portal_require_admin_session() {
+    if (ota_portal_request_has_admin_session()) {
         return true;
     }
     ota_portal_no_cache();
-    ota_http_server.send(403, "application/json", "{\"ok\":false,\"success\":false,\"code\":\"pin_required\",\"message\":\"Wymagany poprawny PIN.\"}");
+    ota_http_server.send(
+        401,
+        "application/json",
+        "{\"ok\":false,\"success\":false,\"code\":\"session_required\","
+        "\"message\":\"Wymagana aktywna sesja administratora.\"}");
     return false;
+}
+
+static void ota_portal_handle_v2_logout() {
+    ota_portal_mark_web_activity();
+    if (!ota_portal_request_has_admin_session()) {
+        ota_portal_no_cache();
+        ota_http_server.send(
+            401,
+            "application/json",
+            "{\"ok\":false,\"success\":false,\"code\":\"session_required\","
+            "\"message\":\"Sesja administratora wygasla.\"}");
+        return;
+    }
+    char token[aquarium::AdminSessionManager::kTokenBytes] = {};
+    ota_http_server.header("X-AquaCYD-Session")
+        .toCharArray(token, sizeof(token));
+    admin_sessions.revoke(token);
+    memset(token, 0, sizeof(token));
+    ota_portal_no_cache();
+    ota_http_server.send(
+        200,
+        "application/json",
+        "{\"ok\":true,\"success\":true,\"code\":\"logged_out\","
+        "\"message\":\"Sesja administratora zostala uniewazniona.\"}");
 }
 
 static void ota_portal_handle_stop_ota() {
     ota_portal_mark_web_activity();
-    if (!ota_portal_require_pin()) {
+    if (!ota_portal_require_admin_session()) {
         return;
     }
     ota_portal_no_cache();
@@ -8150,11 +8227,20 @@ static void ota_portal_handle_stop_ota() {
 
 static void ota_portal_handle_update_finish() {
     ota_portal_mark_web_activity();
-    if (!ota_portal_request_has_pin()) {
+    // A successful upload was authenticated again immediately before
+    // secure_ota_finish(). Do not turn that committed result into a misleading
+    // 401 if the five-minute token expires between the upload and response
+    // callbacks.
+    if (!ota_http_update_ok &&
+        !ota_portal_request_has_admin_session()) {
         ota_http_update_ok = false;
         ota_http_update_failed = true;
         ota_portal_no_cache();
-        ota_http_server.send(403, "application/json", "{\"ok\":false,\"message\":\"Wymagany poprawny PIN.\"}");
+        ota_http_server.send(
+            401,
+            "application/json",
+            "{\"ok\":false,\"code\":\"session_required\","
+            "\"message\":\"Wymagana aktywna sesja administratora.\"}");
         return;
     }
     ota_portal_no_cache();
@@ -8176,6 +8262,10 @@ static void ota_portal_handle_update_finish() {
 }
 
 static void ota_portal_set_update_error(const char *message) {
+    if (secure_ota_status().active) {
+        secure_ota_abort(
+            message != nullptr ? message : "secure_ota_failed");
+    }
     if (ota_http_service_mode_owned) {
         control_modes.stop_service();
         ota_http_service_mode_owned = false;
@@ -8208,36 +8298,34 @@ static void ota_portal_handle_update_upload() {
         ota_http_upload_total = 0;
         ota_http_upload_percent = -1;
         ota_http_update_msg[0] = '\0';
-        if (!ota_portal_request_has_pin()) {
-            ota_portal_set_update_error("Wymagany poprawny PIN");
+        if (!ota_portal_request_has_admin_session()) {
+            ota_portal_set_update_error("Wymagana aktywna sesja");
             ota_portal_refresh_upload_screen(true);
             return;
         }
-        if (!upload.filename.endsWith(".bin")) {
-            ota_portal_set_update_error("Wybierz plik .bin");
+        String normalized_filename = upload.filename;
+        normalized_filename.toLowerCase();
+        if (!normalized_filename.endsWith(".aqfw")) {
+            ota_portal_set_update_error("Wybierz podpisany plik .aqfw");
             ota_portal_refresh_upload_screen(true);
             return;
         }
         const bool backup_ok = backup_configuration_for_ota();
-        const uint32_t content_length = static_cast<uint32_t>(
-            strtoul(
-                ota_http_server.header("Content-Length").c_str(),
-                nullptr,
-                10));
-        char preflight_code[48] = {};
-        if (!ota_guard_prepare_update(
-                content_length,
-                ESP.getFreeHeap(),
+        char secure_begin_code[48] = {};
+        if (!secure_ota_begin(
                 feeder_pulse_active,
                 backup_ok,
-                preflight_code,
-                sizeof(preflight_code))) {
+                ESP.getFreeHeap(),
+                secure_begin_code,
+                sizeof(secure_begin_code))) {
             char message[96];
-            snprintf(message, sizeof(message),
-                     "OTA preflight: %s",
-                     preflight_code[0] != '\0'
-                         ? preflight_code
-                         : "preflight_failed");
+            snprintf(
+                message,
+                sizeof(message),
+                "OTA niedostepne: %s",
+                secure_begin_code[0] != '\0'
+                    ? secure_begin_code
+                    : "initialization_failed");
             ota_portal_set_update_error(message);
             ota_portal_refresh_upload_screen(true);
             return;
@@ -8248,20 +8336,11 @@ static void ota_portal_handle_update_upload() {
                 millis()) == aquarium::ControlModeResult::Applied;
         force_safe_service_outputs();
         Serial.printf("HTTP_OTA: upload start %s\n", upload.filename.c_str());
-        if (!Update.begin(UPDATE_SIZE_UNKNOWN)) {
-            char message[96];
-            snprintf(
-                message,
-                sizeof(message),
-                "Update.begin failed: %u",
-                static_cast<unsigned>(Update.getError()));
-            ota_portal_set_update_error(message);
-            ota_portal_refresh_upload_screen(true);
-            return;
-        }
         ota_http_upload_active = true;
-        ota_http_upload_total = content_length;
-        ota_portal_set_status("HTTP OTA: odbieranie pliku...", lv_color_make(245, 158, 11));
+        ota_http_upload_total = 0U;
+        ota_portal_set_status(
+            "HTTP OTA: weryfikacja pakietu...",
+            lv_color_make(245, 158, 11));
         ota_portal_refresh_upload_screen(true);
         return;
     }
@@ -8270,24 +8349,37 @@ static void ota_portal_handle_update_upload() {
         if (ota_http_update_failed) {
             return;
         }
-        ota_http_upload_bytes = static_cast<uint32_t>(upload.totalSize);
+        char secure_code[48] = {};
+        if (!secure_ota_write(
+                upload.buf,
+                upload.currentSize,
+                secure_code,
+                sizeof(secure_code))) {
+            char message[96];
+            snprintf(
+                message,
+                sizeof(message),
+                "OTA odrzucone: %s",
+                secure_code[0] != '\0'
+                    ? secure_code
+                    : "verification_failed");
+            ota_portal_set_update_error(message);
+            ota_portal_refresh_upload_screen(true);
+            return;
+        }
+        const SecureOtaStatus secure_status = secure_ota_status();
+        ota_http_upload_bytes = secure_status.package_bytes_received;
+        ota_http_upload_total =
+            secure_status.expected_image_bytes > 0U
+                ? secure_status.expected_image_bytes +
+                      aquarium::kOtaPackageHeaderBytes
+                : 0U;
         if (ota_http_upload_total > 0U) {
             const uint32_t percent = static_cast<uint32_t>(
                 (static_cast<uint64_t>(ota_http_upload_bytes) * 100ULL) / ota_http_upload_total);
             ota_http_upload_percent = static_cast<int>(percent > 99U ? 99U : percent);
         } else {
             ota_http_upload_percent = -1;
-        }
-        const size_t written = Update.write(upload.buf, upload.currentSize);
-        if (written != upload.currentSize) {
-            Update.abort();
-            char message[96];
-            snprintf(
-                message,
-                sizeof(message),
-                "Update.write failed: %u",
-                static_cast<unsigned>(Update.getError()));
-            ota_portal_set_update_error(message);
         }
         ota_portal_refresh_upload_screen(false);
         return;
@@ -8296,25 +8388,42 @@ static void ota_portal_handle_update_upload() {
     if (upload.status == UPLOAD_FILE_END) {
         ota_http_upload_bytes = static_cast<uint32_t>(upload.totalSize);
         if (ota_http_update_failed) {
-            Update.abort();
             ota_http_upload_active = false;
             ota_portal_refresh_upload_screen(true);
             return;
         }
-        if (Update.end(true)) {
+        if (!ota_portal_request_has_admin_session()) {
+            secure_ota_abort("session_expired");
+            ota_portal_set_update_error(
+                "Sesja administratora wygasla podczas uploadu");
+            ota_portal_refresh_upload_screen(true);
+            return;
+        }
+        char secure_code[48] = {};
+        if (secure_ota_finish(secure_code, sizeof(secure_code))) {
             ota_http_update_ok = true;
             ota_http_upload_active = false;
             ota_http_upload_percent = 100;
+            const aquarium::OtaPackageMetadata *metadata =
+                secure_ota_metadata();
             snprintf(ota_http_update_msg, sizeof(ota_http_update_msg),
-                     "OK: %lu bytes", static_cast<unsigned long>(upload.totalSize));
-            Serial.printf("HTTP_OTA: upload done %lu bytes\n", static_cast<unsigned long>(upload.totalSize));
+                     "Zweryfikowano %s (%lu B)",
+                     metadata != nullptr
+                         ? metadata->firmware_version
+                         : "firmware",
+                     static_cast<unsigned long>(upload.totalSize));
+            Serial.printf(
+                "HTTP_OTA: signed package verified, %lu bytes\n",
+                static_cast<unsigned long>(upload.totalSize));
         } else {
             char message[96];
             snprintf(
                 message,
                 sizeof(message),
-                "Update.end failed: %u",
-                static_cast<unsigned>(Update.getError()));
+                "OTA odrzucone: %s",
+                secure_code[0] != '\0'
+                    ? secure_code
+                    : "verification_failed");
             ota_portal_set_update_error(message);
         }
         ota_portal_refresh_upload_screen(true);
@@ -8322,7 +8431,7 @@ static void ota_portal_handle_update_upload() {
     }
 
     if (upload.status == UPLOAD_FILE_ABORTED) {
-        Update.abort();
+        secure_ota_abort("upload_aborted");
         ota_http_upload_active = false;
         ota_portal_set_update_error("Upload przerwany");
         ota_portal_refresh_upload_screen(true);
@@ -8381,13 +8490,18 @@ static void register_ota_portal_routes() {
     if (routes_registered) {
         return;
     }
-    static const char *collect_headers[] = {"Content-Length", "Accept-Encoding"};
-    ota_http_server.collectHeaders(collect_headers, 2);
+    static const char *collect_headers[] = {
+        "Content-Length",
+        "Accept-Encoding",
+        "X-AquaCYD-Session"
+    };
+    ota_http_server.collectHeaders(collect_headers, 3);
     ota_http_server.on("/", HTTP_GET, ota_portal_handle_root);
     ota_http_server.on("/index.html", HTTP_GET, ota_portal_handle_root);
     ota_http_server.on("/api/status", HTTP_GET, ota_portal_handle_status);
     ota_http_server.on("/api/v2/capabilities", HTTP_GET, ota_portal_handle_v2_capabilities);
     ota_http_server.on("/api/v2/auth", HTTP_POST, ota_portal_handle_v2_auth);
+    ota_http_server.on("/api/v2/logout", HTTP_POST, ota_portal_handle_v2_logout);
     ota_http_server.on("/api/v2/action", HTTP_POST, ota_portal_handle_action);
     ota_http_server.on("/api/bus-diagnostics", HTTP_GET, ota_portal_handle_i2c_scan);
     ota_http_server.on("/api/i2c-scan", HTTP_GET, ota_portal_handle_i2c_scan);
@@ -8479,7 +8593,7 @@ static void start_sta_service_portal() {
 
 static void stop_ota_portal() {
     if (ota_http_upload_active) {
-        Update.abort();
+        secure_ota_abort("portal_stopped");
         ota_http_upload_active = false;
     }
     if (ota_http_service_mode_owned) {
@@ -8903,7 +9017,8 @@ static void start_ota_authorized() {
 }
 
 static void start_ota_background() {
-    if (strlen(Secrets::OTA_PASSWORD) < 8U) {
+    const char *ota_password = device_credentials_ota_ap_password();
+    if (ota_password == nullptr || strlen(ota_password) < 8U) {
         wifi_ota_active = false;
         gui_app_update_wifi(0, 0);
         ota_portal_set_status("Status: Blad OTA - haslo AP min. 8 znakow", lv_color_make(239, 68, 68));
@@ -8934,26 +9049,20 @@ static void start_ota_background() {
         Serial.println("OTA: SoftAP IP configuration failed, continuing with default AP config.");
     }
     vTaskDelay(pdMS_TO_TICKS(100U));
-    bool ap_ok = WiFi.softAP(Secrets::OTA_AP_SSID, Secrets::OTA_PASSWORD);
+    bool ap_ok = WiFi.softAP(Secrets::OTA_AP_SSID, ota_password);
     vTaskDelay(pdMS_TO_TICKS(100U));
     Serial.printf("OTA: SoftAP start: %s, SSID: %s, IP: %s\n", 
                   ap_ok ? "OK" : "FAILED", 
                   WiFi.softAPSSID().c_str(), 
                   WiFi.softAPIP().toString().c_str());
 
-    const bool ota_backup_ok = backup_configuration_for_ota();
-    char ota_preflight_code[48] = {};
-    const bool legacy_ota_ready = ota_guard_prepare_update(
-        0U,
-        ESP.getFreeHeap(),
-        feeder_pulse_active,
-        ota_backup_ok,
-        ota_preflight_code,
-        sizeof(ota_preflight_code));
+#if AQUARIUM_ALLOW_UNSIGNED_ARDUINO_OTA
     ArduinoOTA.setHostname(Secrets::OTA_HOSTNAME);
-    ArduinoOTA.setPassword(Secrets::OTA_PASSWORD);
+    ArduinoOTA.setPassword(ota_password);
     ArduinoOTA.onStart([]() {
-        Serial.println("OTA: Start");
+        Serial.println(
+            "OTA_DEV: unsigned ArduinoOTA started; never enable this profile in production.");
+        backup_configuration_for_ota();
         arduino_ota_service_mode_owned =
             control_modes.start_service(
                 aquarium::ControlModeManager::kServiceMaxSeconds,
@@ -8986,10 +9095,13 @@ static void start_ota_background() {
             lv_obj_set_style_text_color(wifi_status_message_lbl, lv_color_make(239, 68, 68), 0);
         }
     });
+#endif
 
     if (!ap_ok) {
         wifi_ota_active = false;
+#if AQUARIUM_ALLOW_UNSIGNED_ARDUINO_OTA
         ArduinoOTA.end();
+#endif
         WiFi.softAPdisconnect(true);
         WiFi.mode(WIFI_OFF);
         gui_app_update_wifi(0, 0);
@@ -8997,14 +9109,12 @@ static void start_ota_background() {
         return;
     }
 
-    if (legacy_ota_ready) {
-        ArduinoOTA.begin();
-    } else {
-        Serial.printf("OTA: ArduinoOTA disabled by preflight: %s\n",
-                      ota_preflight_code[0] != '\0'
-                          ? ota_preflight_code
-                          : "preflight_failed");
-    }
+#if AQUARIUM_ALLOW_UNSIGNED_ARDUINO_OTA
+    ArduinoOTA.begin();
+#else
+    Serial.println(
+        "OTA: raw ArduinoOTA disabled; only signed .aqfw packages are accepted.");
+#endif
     start_ota_portal();
     wifi_ota_active = true;
     gui_app_update_wifi(2, 0);
@@ -9018,7 +9128,9 @@ static void stop_ota_runtime(bool play_sound) {
     if (play_sound) {
         play_system_sound(SoundType::Click);
     }
+#if AQUARIUM_ALLOW_UNSIGNED_ARDUINO_OTA
     ArduinoOTA.end();
+#endif
     stop_ota_portal();
     WiFi.softAPdisconnect(true);
     wifi_ota_active = false;
@@ -11873,7 +11985,7 @@ static void build_subpages(ActiveSubpage target) {
         lv_obj_align(ota_ssid_lbl, LV_ALIGN_TOP_LEFT, 12, 36);
 
         char ota_pass_text[96];
-        snprintf(ota_pass_text, sizeof(ota_pass_text), LV_SYMBOL_EYE_OPEN "  Haslo: %s", Secrets::OTA_PASSWORD);
+        snprintf(ota_pass_text, sizeof(ota_pass_text), LV_SYMBOL_EYE_OPEN "  Haslo: %s", device_credentials_ota_ap_password());
         lv_obj_t *ota_pass_lbl = create_label(ota_card, ota_pass_text, theme_text_main(), &lv_font_montserrat_12);
         lv_obj_set_width(ota_pass_lbl, 280);
         lv_label_set_long_mode(ota_pass_lbl, LV_LABEL_LONG_DOT);
@@ -13696,6 +13808,7 @@ void gui_app_init(void) {
         return;
     }
     gui_ready = false;
+    device_credentials_initialize();
     gui_app_load_settings();
     register_wifi_event_handlers();
     if (cfg.modemSleep) {
@@ -13767,11 +13880,6 @@ void gui_app_service_background(void) {
         return;
     }
 
-    ota_guard_service(
-        millis(),
-        cfg.magic == UI_CONFIG_MAGIC,
-        ESP.getFreeHeap());
-
     static uint32_t last_wifi_service_ms = 0U;
     if (ota_start_pending) {
         ota_start_pending = false;
@@ -13811,7 +13919,9 @@ void gui_app_service_background(void) {
     service_feeder_pulse(now_ms);
 
     if (wifi_ota_active) {
+#if AQUARIUM_ALLOW_UNSIGNED_ARDUINO_OTA
         ArduinoOTA.handle();
+#endif
     }
     gui_app_handle_ota_portal();
     apply_mcp_outputs();
@@ -13870,7 +13980,78 @@ static uint8_t wifi_signal_bars(int rssi) {
     return 1U;
 }
 
+void gui_app_update_ble_pairing(uint32_t passkey, uint8_t state) {
+    const uint32_t now_ms = millis();
+    uint32_t visible_for_ms = 0U;
+    if (state == 1U) {
+        visible_for_ms = 60000U;
+    } else if (state == 2U) {
+        visible_for_ms = 5000U;
+    } else if (state == 3U) {
+        visible_for_ms = 8000U;
+    }
+    portENTER_CRITICAL(&ble_pairing_mux);
+    ble_pairing_passkey = state == 1U ? passkey : 0U;
+    ble_pairing_state = state <= 3U ? state : 0U;
+    ble_pairing_until_ms =
+        visible_for_ms > 0U ? now_ms + visible_for_ms : 0U;
+    portEXIT_CRITICAL(&ble_pairing_mux);
+}
+
 void gui_app_update_wifi(int state, int rssi) {
+    uint8_t pairing_state = 0U;
+    uint32_t pairing_passkey = 0U;
+    uint32_t pairing_until_ms = 0U;
+    portENTER_CRITICAL(&ble_pairing_mux);
+    pairing_state = ble_pairing_state;
+    pairing_passkey = ble_pairing_passkey;
+    pairing_until_ms = ble_pairing_until_ms;
+    portEXIT_CRITICAL(&ble_pairing_mux);
+
+    if (pairing_state != 0U &&
+        static_cast<int32_t>(millis() - pairing_until_ms) >= 0) {
+        gui_app_update_ble_pairing(0U, 0U);
+        pairing_state = 0U;
+    }
+    if (pairing_state != 0U) {
+        const lv_color_t pairing_color =
+            pairing_state == 2U
+                ? lv_color_make(16, 185, 129)
+                : (pairing_state == 3U
+                       ? lv_color_make(239, 68, 68)
+                       : lv_color_make(6, 182, 212));
+        if (label_wifi_state != nullptr) {
+            if (pairing_state == 1U) {
+                lv_label_set_text_fmt(
+                    label_wifi_state,
+                    "%06lu",
+                    static_cast<unsigned long>(pairing_passkey));
+            } else {
+                lv_label_set_text(
+                    label_wifi_state,
+                    pairing_state == 2U ? "BLE OK" : "BLE ERR");
+            }
+            lv_obj_set_style_text_color(label_wifi_state, pairing_color, 0);
+        }
+        if (wifi_status_message_lbl != nullptr) {
+            if (pairing_state == 1U) {
+                lv_label_set_text_fmt(
+                    wifi_status_message_lbl,
+                    "BLE: wpisz kod %06lu w telefonie",
+                    static_cast<unsigned long>(pairing_passkey));
+            } else {
+                lv_label_set_text(
+                    wifi_status_message_lbl,
+                    pairing_state == 2U
+                        ? "BLE: telefon bezpiecznie sparowany"
+                        : "BLE: parowanie odrzucone lub nieudane");
+            }
+            lv_obj_set_style_text_color(
+                wifi_status_message_lbl, pairing_color, 0);
+        }
+        return;
+    }
+
     if (gui_web_focus_blocks_local_ui()) {
         gui_web_client_screen_update(false);
         return;
@@ -14803,6 +14984,15 @@ bool gui_app_is_web_focus_active(void) {
     return guard.locked() && gui_ready && web_ui_focus_active;
 }
 
+bool gui_app_runtime_ready(void) {
+    GuiMutexGuard guard(50U);
+    return guard.locked() &&
+           gui_ready &&
+           cfg.magic == UI_CONFIG_MAGIC &&
+           lv_scr_act() != nullptr &&
+           label_wifi_state != nullptr;
+}
+
 bool gui_app_ble_snapshot(GuiBleSnapshot *out) {
     GuiMutexGuard guard(200U);
     if (!guard.locked() || !gui_ready || out == nullptr || cfg.magic != UI_CONFIG_MAGIC) {
@@ -14871,18 +15061,7 @@ bool gui_app_ble_snapshot(GuiBleSnapshot *out) {
 }
 
 static bool gui_ble_pin_valid(const char *pin) {
-    if (pin == nullptr) {
-        return false;
-    }
-    const size_t expected_length = strlen(Secrets::DEFAULT_PIN);
-    if (strlen(pin) != expected_length) {
-        return false;
-    }
-    uint8_t difference = 0U;
-    for (size_t index = 0; index < expected_length; ++index) {
-        difference |= static_cast<uint8_t>(pin[index] ^ Secrets::DEFAULT_PIN[index]);
-    }
-    return difference == 0U;
+    return device_credentials_admin_pin_matches(pin);
 }
 
 GuiBleCommandResult gui_app_ble_set_output(const char *target, bool state, const char *pin) {
@@ -15797,6 +15976,8 @@ GuiBleCommandResult gui_app_ble_action(const char *action,
             prefs.clear();
             prefs.end();
         }
+        device_credentials_factory_reset();
+        admin_sessions.clear();
         load_default_config(cfg);
         display_auto_brightness = true;
         display_max_brightness = 100U;
@@ -15839,6 +16020,7 @@ GuiV2AuthResult gui_app_v2_auth(const char *pin,
         out_token_size);
     switch (status.result) {
     case aquarium::AuthenticationResult::Authenticated:
+        device_credentials_acknowledge_setup_pin();
         return {
             true,
             "authenticated",
@@ -16081,6 +16263,17 @@ GuiBleCommandResult execute_v2_control_action_locked(const char *action,
         control_modes.stop_service();
         return {true, "automatic_restored", "Tryb serwisowy zakonczony; powrot do AUTO."};
     }
+    if (strcmp(action, "forget_ble_bonds") == 0) {
+        return ble_controller_request_forget_bonds()
+                   ? GuiBleCommandResult{
+                         true,
+                         "ble_bonds_reset_scheduled",
+                         "Zapisane telefony BLE zostana usuniete; polaczenie zostanie zamkniete."}
+                   : GuiBleCommandResult{
+                         false,
+                         "ble_unavailable",
+                         "Stos BLE nie jest jeszcze gotowy."};
+    }
     return {false, "unknown_action", "Nieznana akcja protokolu v2."};
 }
 
@@ -16092,7 +16285,8 @@ bool is_v2_control_action(const char *action) {
             strcmp(action, "start_feeding_mode") == 0 ||
             strcmp(action, "stop_feeding_mode") == 0 ||
             strcmp(action, "start_service_mode") == 0 ||
-            strcmp(action, "stop_service_mode") == 0);
+            strcmp(action, "stop_service_mode") == 0 ||
+            strcmp(action, "forget_ble_bonds") == 0);
 }
 
 uint32_t v2_action_fingerprint(const char *action, const char *command_json) {
@@ -16271,9 +16465,14 @@ bool gui_app_v2_capabilities_json(char *out, size_t out_size) {
         "\"transports\":[\"http\",\"ble\"],"
         "\"features\":{\"timedOverrides\":true,\"feedingMode\":true,"
         "\"serviceMode\":true,\"safeOta\":true,\"idempotency\":true,"
-        "\"adminSessions\":true,\"aquaelLightProfiles\":true},"
-        "\"security\":{\"ble\":{\"linkEncryption\":false,\"bonding\":false,"
-        "\"mitmProtection\":false,\"applicationAuth\":\"short_lived_token\"}},"
+        "\"adminSessions\":true,\"aquaelLightProfiles\":true,"
+        "\"signedFirmwarePackages\":true},"
+        "\"security\":{\"ble\":{\"linkEncryption\":true,\"bonding\":true,"
+        "\"mitmProtection\":true,\"secureConnections\":true,"
+        "\"minimumKeySize\":16,\"bondCount\":%d,"
+        "\"applicationAuth\":\"short_lived_token\"},"
+        "\"ota\":{\"algorithm\":\"rsa-pss-sha256\","
+        "\"trustedKeyId\":\"%s\",\"unsignedOtaAllowed\":%s}},"
         "\"endpoints\":{\"status\":{\"method\":\"GET\",\"path\":\"/api/status\"},"
         "\"capabilities\":{\"method\":\"GET\",\"path\":\"/api/v2/capabilities\"},"
         "\"auth\":{\"method\":\"POST\",\"path\":\"/api/v2/auth\","
@@ -16283,7 +16482,7 @@ bool gui_app_v2_capabilities_json(char *out, size_t out_size) {
         "\"jsonAlias\":\"/api/v2/action\"}},"
         "\"auth\":{\"scheme\":\"short_lived_token\",\"ttlSec\":300,"
         "\"maxSessions\":2,\"maxFailedPinAttempts\":5,\"lockoutSec\":60,"
-        "\"pinFallbackV1\":true},"
+        "\"pinFallbackV1\":false,\"logoutPath\":\"/api/v2/logout\"},"
         "\"limits\":{\"commandIdMin\":8,\"commandIdMax\":48,"
         "\"overrideMinSec\":30,\"overrideMaxSec\":86400,"
         "\"feedingMinSec\":60,\"feedingMaxSec\":3600,"
@@ -16294,14 +16493,31 @@ bool gui_app_v2_capabilities_json(char *out, size_t out_size) {
         "\"aeration\",\"co2\",\"water_dosing\"],"
         "\"actions\":[\"set_light_profile\",\"set_timed_override\","
         "\"clear_timed_override\",\"start_feeding_mode\","
-        "\"stop_feeding_mode\",\"start_service_mode\",\"stop_service_mode\"],"
+        "\"stop_feeding_mode\",\"start_service_mode\",\"stop_service_mode\","
+        "\"forget_ble_bonds\"],"
         "\"lights\":{\"front\":{\"label\":\"Przednia\",\"relay\":\"light1\"},"
         "\"rear\":{\"label\":\"Tylna\",\"relay\":\"light2\"},"
         "\"profiles\":[\"day\",\"daybreak\",\"night\"]},"
-        "\"ota\":{\"rollbackAvailable\":%s,\"updatePartitionBytes\":%lu,"
-        "\"pendingVerify\":%s,\"state\":\"%s\"}}}",
+        "\"ota\":{\"format\":\"aqfw-v1\",\"productId\":\"aquacyd-cyd\","
+        "\"target\":\"%s\",\"keyId\":\"%s\","
+        "\"bootloaderVersion\":%u,\"securityVersion\":%lu,"
+        "\"minimumSecurityVersion\":%lu,\"rollbackAvailable\":%s,"
+        "\"updatePartitionBytes\":%lu,\"pendingVerify\":%s,"
+        "\"state\":\"%s\"}}}",
         static_cast<unsigned long>(controller_unix_time()),
         FirmwareInfo::VERSION,
+        ble_controller_bond_count(),
+        FirmwareTrust::KEY_ID,
+        AQUARIUM_ALLOW_UNSIGNED_ARDUINO_OTA ? "true" : "false",
+#if CYD_PANEL_ST7789
+        "st7789",
+#else
+        "ili9341",
+#endif
+        FirmwareTrust::KEY_ID,
+        static_cast<unsigned>(FirmwareInfo::BOOTLOADER_COMPATIBILITY_VERSION),
+        static_cast<unsigned long>(FirmwareInfo::SECURITY_VERSION),
+        static_cast<unsigned long>(ota.minimum_security_version),
         ota.rollback_available ? "true" : "false",
         static_cast<unsigned long>(ota.update_partition_bytes),
         ota.pending_verify ? "true" : "false",

@@ -9,6 +9,17 @@ const { createDevServer } = require('../server');
 
 let server;
 let baseUrl;
+let adminToken;
+
+async function authenticate(pin = '1234') {
+    const response = await fetch(`${baseUrl}/api/v2/auth`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ pin })
+    });
+    const payload = await response.json();
+    return { response, payload };
+}
 
 before(async () => {
     const created = createDevServer();
@@ -18,6 +29,9 @@ before(async () => {
         server.listen(0, '127.0.0.1', resolve);
     });
     baseUrl = `http://127.0.0.1:${server.address().port}`;
+    const auth = await authenticate();
+    assert.equal(auth.response.status, 200);
+    adminToken = auth.payload.data.sessionToken;
 });
 
 after(async () => {
@@ -28,8 +42,11 @@ after(async () => {
 async function postAction(action, payload = {}) {
     return fetch(`${baseUrl}/api/action`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-        body: new URLSearchParams({ action, pin: '1234', ...payload })
+        headers: {
+            'Content-Type': 'application/x-www-form-urlencoded',
+            'X-AquaCYD-Session': adminToken
+        },
+        body: new URLSearchParams({ action, ...payload })
     });
 }
 
@@ -87,28 +104,49 @@ test('web session heartbeat tracks and releases clients', async () => {
     assert.equal(payload.activeClients, 0);
 });
 
-test('admin authentication rejects invalid PIN and accepts valid PIN', async () => {
+test('admin authentication issues and revokes a short-lived token', async () => {
+    let auth = await authenticate('9999');
+    assert.equal(auth.response.status, 401);
+
+    auth = await authenticate();
+    assert.equal(auth.response.status, 200);
+    assert.equal(auth.payload.ok, true);
+    assert.match(auth.payload.data.sessionToken, /^[0-9a-f]{32}$/u);
+
     let response = await fetch(`${baseUrl}/api/action`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-        body: new URLSearchParams({ action: 'auth_check', pin: '9999' })
-    });
-    assert.equal(response.status, 403);
-
-    response = await fetch(`${baseUrl}/api/action`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-        body: new URLSearchParams({ action: 'auth_check', pin: '1234' })
+        headers: {
+            'Content-Type': 'application/x-www-form-urlencoded',
+            'X-AquaCYD-Session': auth.payload.data.sessionToken
+        },
+        body: new URLSearchParams({ action: 'auth_check' })
     });
     assert.equal(response.status, 200);
     assert.equal((await response.json()).success, true);
+
+    response = await fetch(`${baseUrl}/api/v2/logout`, {
+        method: 'POST',
+        headers: { 'X-AquaCYD-Session': auth.payload.data.sessionToken }
+    });
+    assert.equal(response.status, 200);
+    response = await fetch(`${baseUrl}/api/action`, {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/x-www-form-urlencoded',
+            'X-AquaCYD-Session': auth.payload.data.sessionToken
+        },
+        body: new URLSearchParams({ action: 'auth_check' })
+    });
+    assert.equal(response.status, 401);
 });
 
-test('bus diagnostics require admin PIN and identify I2C, UART and OneWire', async () => {
+test('bus diagnostics require an admin session and identify I2C, UART and OneWire', async () => {
     let response = await fetch(`${baseUrl}/api/bus-diagnostics`);
-    assert.equal(response.status, 403);
+    assert.equal(response.status, 401);
 
-    response = await fetch(`${baseUrl}/api/bus-diagnostics?pin=1234`);
+    response = await fetch(`${baseUrl}/api/bus-diagnostics`, {
+        headers: { 'X-AquaCYD-Session': adminToken }
+    });
     assert.equal(response.status, 200);
     const scan = await response.json();
 
@@ -138,34 +176,24 @@ test('bus diagnostics require admin PIN and identify I2C, UART and OneWire', asy
     assert.equal(scan.oneWire.devices[0].rom, '28-FF641D871603-5F');
     assert.equal(scan.oneWire.devices[0].crcValid, true);
 
-    const legacyResponse = await fetch(`${baseUrl}/api/i2c-scan?pin=1234`);
+    const legacyResponse = await fetch(`${baseUrl}/api/i2c-scan`, {
+        headers: { 'X-AquaCYD-Session': adminToken }
+    });
     assert.equal(legacyResponse.status, 200);
 });
 
 test('settings actions update RAM state and remain API-compatible', async () => {
-    const response = await fetch(`${baseUrl}/api/action`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-        body: new URLSearchParams({
-            action: 'save_temperature',
-            pin: '1234',
-            heaterMode: '0',
-            target: '25.7',
-            hysteresis: '0.6'
-        })
+    const response = await postAction('save_temperature', {
+        heaterMode: '0',
+        target: '25.7',
+        hysteresis: '0.6'
     });
     assert.equal(response.status, 200);
 
-    const displayResponse = await fetch(`${baseUrl}/api/action`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-        body: new URLSearchParams({
-            action: 'save_display',
-            pin: '1234',
-            autoBrightness: '0',
-            profile: 'timeout_60s',
-            brightness: '65'
-        })
+    const displayResponse = await postAction('save_display', {
+        autoBrightness: '0',
+        profile: 'timeout_60s',
+        brightness: '65'
     });
     assert.equal(displayResponse.status, 200);
 
@@ -259,8 +287,11 @@ test('time, archive and download endpoints implement the browser contract', asyn
     const epoch = 1782928800;
     const timeResponse = await fetch(`${baseUrl}/settime`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-        body: new URLSearchParams({ epoch: String(epoch), pin: '1234' })
+        headers: {
+            'Content-Type': 'application/x-www-form-urlencoded',
+            'X-AquaCYD-Session': adminToken
+        },
+        body: new URLSearchParams({ epoch: String(epoch) })
     });
     assert.equal(timeResponse.status, 200);
 
@@ -274,23 +305,37 @@ test('time, archive and download endpoints implement the browser contract', asyn
     assert.equal(downloadResponse.status, 200);
     assert.match(await downloadResponse.text(), /AQBIN-DEV-RAM/u);
 
-    const otaPayload = Buffer.alloc(128, 0xA5);
-    const otaResponse = await fetch(`${baseUrl}/update?pin=1234`, {
+    const authResponse = await fetch(`${baseUrl}/api/v2/auth`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/octet-stream' },
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ pin: '1234' })
+    });
+    assert.equal(authResponse.status, 200);
+    const auth = await authResponse.json();
+
+    const otaPayload = Buffer.alloc(1024, 0xA5);
+    const otaResponse = await fetch(`${baseUrl}/update`, {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/octet-stream',
+            'X-AquaCYD-Session': auth.data.sessionToken
+        },
         body: otaPayload
     });
     assert.equal(otaResponse.status, 200);
     const otaResult = await otaResponse.json();
+    assert.equal(otaResult.ok, true);
     assert.equal(otaResult.success, true);
     assert.equal(otaResult.bytes, otaPayload.length);
 });
 
-test('logs require admin PIN and preserve UTF-8', async () => {
+test('logs require an admin session and preserve UTF-8', async () => {
     let response = await fetch(`${baseUrl}/api/logs`);
-    assert.equal(response.status, 403);
+    assert.equal(response.status, 401);
 
-    response = await fetch(`${baseUrl}/api/logs?pin=1234`);
+    response = await fetch(`${baseUrl}/api/logs`, {
+        headers: { 'X-AquaCYD-Session': adminToken }
+    });
     assert.equal(response.status, 200);
     const logs = await response.json();
     assert.ok(logs.normal.length >= 3);

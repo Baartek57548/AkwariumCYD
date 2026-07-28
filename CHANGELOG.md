@@ -1,5 +1,30 @@
 # Changelog
 
+## mobile-v5.1.0 / firmware-v5.1.0 - 2026-07-28
+
+Produkcyjne wydanie bezpieczeństwa aplikacji i firmware AquaCYD `5.1.0`.
+
+### What is included
+
+- BLE LE Secure Connections z bondingiem, MITM, 128-bitowym kluczem i kodem
+  parowania wyświetlanym na CYD.
+- Podpisane pakiety OTA `.aqfw` z RSA-3072/PSS, Secure Boot v2, walidacją targetu,
+  integralności i ochroną anti-downgrade.
+- Krótkotrwała sesja administracyjna przekazywana w nagłówku zamiast PIN-u w URL.
+- Automatyczny rollback, jeśli po aktualizacji nie zostaną potwierdzone zdrowe
+  zadania sterownika i gotowy interfejs.
+- APK `5.1.0+18` z walidacją pakietu przed wysłaniem i natywnym bondingiem
+  Android.
+- Automatyczne wykrywanie właściwego wariantu firmware na GitHubie, komunikat
+  w aplikacji oraz instalacja dopiero po świadomej zgodzie użytkownika.
+- Unikalny PIN i hasło serwisowego AP generowane osobno na każdym produkcyjnym
+  CYD; webowe komendy przesyłają wyłącznie krótkotrwały token sesji.
+
+### Notes
+
+- Pipeline nie przepala eFuse. Secure Boot v2 i Flash Encryption wymagają
+  kontrolowanego provisioningu fizycznego urządzenia ESP32 ECO3+.
+
 ## mobile-v3.7.0 - 2026-07-25
 
 Produkcyjne wydanie aplikacji AquaCYD Control `3.7.0+13`.

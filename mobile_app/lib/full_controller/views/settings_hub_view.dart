@@ -81,6 +81,7 @@ class SettingsHubView extends StatelessWidget {
     final system = status.section('system');
     final firmware = status.section('firmware');
     final display = status.section('display');
+    final firmwareRelease = session.firmwareReleaseStatus;
     final refresh = DisplayRefreshRateScope.stateOf(context);
     final advanced = session.supportsAdvancedConfiguration;
     final hasStoredData = session.hasStatusData;
@@ -144,6 +145,52 @@ class SettingsHubView extends StatelessWidget {
           ],
         ),
         const SizedBox(height: AquaSpacing.md),
+        if (firmwareRelease.hasUpdate && firmwareRelease.release != null) ...[
+          Card(
+            margin: EdgeInsets.zero,
+            color: Theme.of(context).colorScheme.primaryContainer,
+            child: Padding(
+              padding: const EdgeInsets.all(AquaSpacing.lg),
+              child: Row(
+                children: [
+                  const Icon(Icons.new_releases_rounded, size: 34),
+                  const SizedBox(width: AquaSpacing.md),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          'Nowy firmware '
+                          '${firmwareRelease.release!.version}',
+                          style: Theme.of(context).textTheme.titleMedium
+                              ?.copyWith(fontWeight: FontWeight.w900),
+                        ),
+                        Text(
+                          '${firmwareRelease.release!.target.label} · '
+                          '${firmwareRelease.release!.formattedSize}',
+                        ),
+                      ],
+                    ),
+                  ),
+                  const SizedBox(width: AquaSpacing.sm),
+                  FilledButton(
+                    onPressed: () => _open(
+                      context,
+                      'Aktualizacja firmware',
+                      () => SystemView(
+                        session: session,
+                        runAction: runAction,
+                        ensureAdmin: ensureAdmin,
+                      ),
+                    ),
+                    child: const Text('Sprawdź'),
+                  ),
+                ],
+              ),
+            ),
+          ),
+          const SizedBox(height: AquaSpacing.md),
+        ],
         ValueListenableBuilder<bool>(
           valueListenable: AppSettings.expertModeNotifier,
           builder: (context, expertMode, _) => Card(

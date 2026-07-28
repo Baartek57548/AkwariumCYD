@@ -1,6 +1,6 @@
 # Protokół cydAkwarium BLE v2
 
-Firmware 5.0.0 udostępnia protokół v2 oraz zachowuje operacje v1 dla starszych
+Firmware 5.1.0 udostępnia protokół v2 oraz zachowuje operacje v1 dla starszych
 wersji aplikacji. Klient powinien najpierw odczytać informacje urządzenia i
 wywołać `capabilities`; brak tej operacji oznacza firmware v1.
 
@@ -55,7 +55,7 @@ nie tworzy alarmów z niepełnego albo zapisanego offline payloadu.
 ## Sesja administratora v2
 
 ```json
-{"id":3,"v":2,"op":"auth","pin":"1234"}
+{"id":3,"v":2,"op":"auth","pin":"482731"}
 ```
 
 Udane logowanie publikuje zdarzenie:
@@ -123,7 +123,7 @@ Odczyt uproszczonego statusu:
 Zmiana stanu modułu:
 
 ```json
-{"id":11,"op":"set","target":"light1","state":true,"pin":"1234"}
+{"id":11,"op":"set","target":"light1","state":true,"pin":"482731"}
 ```
 
 Dozwolone cele obejmują `light1`, `light2`, `filter`, `heater` i `aeration`.
@@ -132,7 +132,7 @@ Aliasy `light` i `plant` pozostają obsługiwane.
 Karmienie:
 
 ```json
-{"id":12,"op":"feed","pin":"1234"}
+{"id":12,"op":"feed","pin":"482731"}
 ```
 
 Odpowiedź v1 ma postać:
@@ -148,7 +148,13 @@ usuwa wtedy PIN i token z pamięci sesji.
 ## Bezpieczeństwo transportu
 
 Tokeny, PIN-y i payloady nie mogą trafiać do logów ani trwałych snapshotów.
-BLE nie zastępuje kontroli fizycznego dostępu. Produkcyjne wdrożenie powinno
-wymuszać szyfrowanie łącza, bonding i potwierdzenie nowego telefonu na ekranie
-sterownika; do czasu pełnego wdrożenia tej procedury nie należy pozostawiać
-reklamowania BLE stale aktywnego w miejscu dostępnym publicznie.
+Firmware 5.1.0 wymusza szyfrowanie łącza, LE Secure Connections, bonding,
+ochronę MITM i 128-bitowy klucz. Nowy telefon przechodzi systemowe parowanie z
+sześciocyfrowym kodem wyświetlanym na CYD. Kod jest stały wyłącznie podczas
+bieżącej próby parowania, wygasa po 5 minutach i przy następnej próbie jest
+zastępowany inną wartością. Zapis i odczyt charakterystyk sterujących są
+odrzucane, dopóki link nie jest uwierzytelniony. Sterownik obsługuje jedną
+aktywną sesję BLE, a aplikacja po połączeniu weryfikuje manifest bezpieczeństwa
+urządzenia przed wysłaniem komend. Bonding nie zastępuje kontroli fizycznego
+dostępu; zapisane powiązania należy usunąć z ustawień serwisowych po utracie
+telefonu.

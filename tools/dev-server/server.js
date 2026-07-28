@@ -3,6 +3,7 @@
 const fs = require('node:fs');
 const http = require('node:http');
 const path = require('node:path');
+const crypto = require('node:crypto');
 const { URL, URLSearchParams } = require('node:url');
 
 const { DevSimulator } = require('./simulator');
@@ -11,7 +12,7 @@ const DEFAULT_PORT = 8000;
 const HOST = process.env.CYD_DEV_HOST || '127.0.0.1';
 const ADMIN_PIN = process.env.CYD_DEV_PIN || '1234';
 const MAX_BODY_BYTES = 64 * 1024;
-const MAX_OTA_BYTES = 4 * 1024 * 1024 + 64 * 1024;
+const MAX_OTA_BYTES = 1966080 + 512 + 64 * 1024;
 const WEB_ROOT = path.resolve(__dirname, '..', '..', 'web');
 const MIME_TYPES = Object.freeze({
     '.css': 'text/css; charset=utf-8',
@@ -23,6 +24,7 @@ const MIME_TYPES = Object.freeze({
     '.js': 'application/javascript; charset=utf-8',
     '.json': 'application/json; charset=utf-8',
     '.png': 'image/png',
+    '.aqfw': 'application/octet-stream',
     '.svg': 'image/svg+xml; charset=utf-8',
     '.woff2': 'font/woff2'
 });
@@ -91,15 +93,36 @@ function readBinaryBody(request, maximumBytes) {
     });
 }
 
-function requirePin(params, response) {
-    if (params.get('pin') === ADMIN_PIN) return true;
-    sendJson(response, 403, { success: false, code: 'invalid_pin', message: 'Błędny PIN administratora.' });
-    return false;
-}
-
 function createDevServer(options = {}) {
     const simulator = options.simulator || new DevSimulator();
     const sseClients = new Set();
+    const adminSessions = new Map();
+
+    function issueAdminSession() {
+        const token = crypto.randomBytes(16).toString('hex');
+        adminSessions.set(token, Date.now() + 5 * 60 * 1000);
+        return token;
+    }
+
+    function requestSessionToken(request) {
+        return String(request.headers['x-aquacyd-session'] || '');
+    }
+
+    function requireAdminSession(request, response) {
+        const token = requestSessionToken(request);
+        const expiresAt = adminSessions.get(token) || 0;
+        if (/^[0-9a-f]{32}$/.test(token) && Date.now() < expiresAt) {
+            return true;
+        }
+        adminSessions.delete(token);
+        sendJson(response, 401, {
+            ok: false,
+            success: false,
+            code: 'session_required',
+            message: 'Wymagana aktywna sesja administratora.'
+        });
+        return false;
+    }
 
     function broadcast(eventName, payload) {
         const frame = `event: ${eventName}\ndata: ${JSON.stringify(payload)}\n\n`;
@@ -121,15 +144,11 @@ function createDevServer(options = {}) {
     async function handleAction(request, response) {
         const params = new URLSearchParams(await readBody(request));
         const action = params.get('action') || '';
+        if (!requireAdminSession(request, response)) return;
         if (action === 'auth_check') {
-            if (params.get('pin') !== ADMIN_PIN) {
-                sendJson(response, 403, { success: false, code: 'invalid_pin', message: 'Błędny PIN administratora.' });
-                return;
-            }
             sendJson(response, 200, { success: true, code: 'ok', message: 'Autoryzacja poprawna.' });
             return;
         }
-        if (!requirePin(params, response)) return;
 
         const booleanValue = (name, fallback) => params.has(name) ? params.get(name) === '1' : fallback;
         const numberValue = (name, fallback, minimum, maximum) => {
@@ -335,8 +354,74 @@ function createDevServer(options = {}) {
                 sendJson(response, 200, simulator.step());
                 return;
             }
+            if (request.method === 'GET' && pathname === '/api/v2/capabilities') {
+                sendJson(response, 200, {
+                    type: 'capabilities',
+                    v: 2,
+                    data: {
+                        device: 'cydAkwarium',
+                        firmwareVersion: '5.1.0',
+                        ota: {
+                            format: 'aqfw-v1',
+                            productId: 'aquacyd-cyd',
+                            target: 'ili9341',
+                            keyId: '9470c281de5f898f',
+                            bootloaderVersion: 1,
+                            securityVersion: 1,
+                            minimumSecurityVersion: 1,
+                            updatePartitionBytes: 1966080,
+                            pendingVerify: false,
+                            state: 'valid'
+                        }
+                    }
+                });
+                return;
+            }
+            if (request.method === 'POST' && pathname === '/api/v2/auth') {
+                let payload = {};
+                try {
+                    payload = JSON.parse(await readBody(request));
+                } catch (_) {
+                    sendJson(response, 400, {
+                        ok: false,
+                        code: 'invalid_json',
+                        message: 'Nieprawidłowy JSON.'
+                    });
+                    return;
+                }
+                if (String(payload.pin || '') !== ADMIN_PIN) {
+                    sendJson(response, 401, {
+                        ok: false,
+                        code: 'pin_invalid',
+                        message: 'Błędny PIN administratora.'
+                    });
+                    return;
+                }
+                sendJson(response, 200, {
+                    type: 'auth',
+                    v: 2,
+                    ok: true,
+                    code: 'authenticated',
+                    data: {
+                        sessionToken: issueAdminSession(),
+                        expiresInSec: 300
+                    }
+                });
+                return;
+            }
+            if (request.method === 'POST' && pathname === '/api/v2/logout') {
+                if (!requireAdminSession(request, response)) return;
+                adminSessions.delete(requestSessionToken(request));
+                sendJson(response, 200, {
+                    ok: true,
+                    success: true,
+                    code: 'logged_out',
+                    message: 'Sesja administratora została unieważniona.'
+                });
+                return;
+            }
             if (request.method === 'GET' && (pathname === '/api/bus-diagnostics' || pathname === '/api/i2c-scan')) {
-                if (!requirePin(requestUrl.searchParams, response)) return;
+                if (!requireAdminSession(request, response)) return;
                 sendJson(response, 200, {
                     ok: true,
                     simulated: true,
@@ -391,7 +476,7 @@ function createDevServer(options = {}) {
                 return;
             }
             if (request.method === 'GET' && pathname === '/api/logs') {
-                if (!requirePin(requestUrl.searchParams, response)) return;
+                if (!requireAdminSession(request, response)) return;
                 const payload = simulator.logPayload();
                 if (requestUrl.searchParams.get('format') === 'text') {
                     const type = requestUrl.searchParams.get('type') === 'critical' ? 'critical' : 'normal';
@@ -421,18 +506,29 @@ function createDevServer(options = {}) {
                 return;
             }
             if (request.method === 'POST' && pathname === '/update') {
-                if (!requirePin(requestUrl.searchParams, response)) return;
+                if (!requireAdminSession(request, response)) return;
                 const upload = await readBinaryBody(request, MAX_OTA_BYTES);
-                if (upload.length < 16) {
-                    sendJson(response, 400, { success: false, code: 'empty_firmware', message: 'Pakiet OTA jest pusty.' });
+                if (upload.length <= 512) {
+                    sendJson(response, 400, {
+                        ok: false,
+                        success: false,
+                        code: 'empty_firmware',
+                        message: 'Pakiet OTA jest pusty.'
+                    });
                     return;
                 }
-                sendJson(response, 200, { success: true, code: 'simulated', bytes: upload.length, message: 'Pakiet OTA odebrany w trybie DEV bez restartu.' });
+                sendJson(response, 200, {
+                    ok: true,
+                    success: true,
+                    code: 'simulated',
+                    bytes: upload.length,
+                    message: 'Podpisany pakiet OTA odebrany w trybie DEV bez restartu.'
+                });
                 return;
             }
             if (request.method === 'POST' && pathname === '/settime') {
                 const params = new URLSearchParams(await readBody(request));
-                if (!requirePin(params, response)) return;
+                if (!requireAdminSession(request, response)) return;
                 const epoch = Number(params.get('epoch'));
                 if (!Number.isInteger(epoch) || epoch < 1700000000 || epoch > 4102444800) {
                     sendText(response, 400, 'invalid_epoch');
@@ -444,6 +540,7 @@ function createDevServer(options = {}) {
                 return;
             }
             if (request.method === 'POST' && pathname === '/api/ota/stop') {
+                if (!requireAdminSession(request, response)) return;
                 sendJson(response, 200, { success: true, code: 'simulated', message: 'OTA DEV zatrzymane.' });
                 return;
             }

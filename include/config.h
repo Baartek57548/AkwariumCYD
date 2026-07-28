@@ -158,21 +158,22 @@ constexpr uint32_t FEEDER_PULSE_MS = 500UL;
 
 namespace FirmwareInfo {
 
-constexpr char VERSION[] = "5.0.0";
+constexpr char VERSION[] = "5.1.0";
 constexpr uint8_t API_VERSION = 2U;
+constexpr uint32_t SECURITY_VERSION = 1U;
+constexpr uint16_t BOOTLOADER_COMPATIBILITY_VERSION = 1U;
 
 } // namespace FirmwareInfo
 
+#ifndef AQUARIUM_ALLOW_UNSIGNED_ARDUINO_OTA
+#define AQUARIUM_ALLOW_UNSIGNED_ARDUINO_OTA 0
+#endif
+
 namespace Secrets {
 
-constexpr char DEFAULT_PIN[] = "1234";
 constexpr char OTA_HOSTNAME[] = "akwarium";
 constexpr char OTA_AP_SSID[] = "cydAkwarium-OTA";
-constexpr char OTA_PASSWORD[] = "admin1234";
 
 } // namespace Secrets
-
-static_assert(sizeof(Secrets::OTA_PASSWORD) >= 9,
-              "ESP32 SoftAP wymaga hasla WPA o dlugosci co najmniej 8 znakow.");
 
 #endif

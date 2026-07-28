@@ -9,9 +9,9 @@
     <title>cydAkwarium - panel sterownika</title>
     <meta name="color-scheme" content="light dark">
     <meta name="theme-color" content="#070b11">
-    <script src="theme-bootstrap.js?v=20260725ux1"></script>
-    <link rel="stylesheet" href="charts.css?v=20260725ux1">
-    <link rel="stylesheet" href="style.css?v=20260725ux1">
+    <script src="theme-bootstrap.js?v=20260729secure2"></script>
+    <link rel="stylesheet" href="charts.css?v=20260729secure2">
+    <link rel="stylesheet" href="style.css?v=20260729secure2">
 </head>
 <body class="role-guest">
     <a class="skip-link" href="#main-content">Przejdź do głównej treści</a>
@@ -1755,7 +1755,7 @@
                     <article class="view-command-card" data-tone="neutral">
                         <span>Pakiet</span>
                         <strong id="ota-strip-file">Brak pliku</strong>
-                        <small id="ota-strip-file-detail">Akceptowany firmware .bin do 4 MB</small>
+                        <small id="ota-strip-file-detail">Podpisany firmware .aqfw, maks. 1,88 MiB</small>
                     </article>
                     <article class="view-command-card" data-tone="neutral">
                         <span>Połączenie</span>
@@ -1771,14 +1771,14 @@
                         </div>
 
                         <h3 class="mb-2" style="font-size: 24px; font-weight: 600; color: var(--text-main);">Instalacja nowej wersji</h3>
-                        <p class="text-muted mb-4" style="font-size: 14px; max-width: 400px; margin-left: auto; margin-right: auto; line-height: 1.5;">Prześlij skompilowany plik <code style="background: rgba(255,255,255,0.05); padding: 2px 6px; border-radius: 4px; font-family: monospace; color: var(--accent-cyan);">.bin</code>, aby zaktualizować firmware sterownika akwarium.</p>
+                        <p class="text-muted mb-4" style="font-size: 14px; max-width: 430px; margin-left: auto; margin-right: auto; line-height: 1.5;">Prześlij podpisany pakiet <code style="background: rgba(255,255,255,0.05); padding: 2px 6px; border-radius: 4px; font-family: monospace; color: var(--accent-cyan);">.aqfw</code>. Panel sprawdzi target, wersję i SHA-256, a sterownik zweryfikuje podpis RSA przed aktywacją obrazu.</p>
 
                         <div id="firmware-upload-wrapper" class="file-upload-wrapper file-upload-interactive mb-4" role="button" tabindex="0" style="border: 2px dashed rgba(255,255,255,0.15); border-radius: 16px; padding: 40px 20px; transition: border-color 0.3s, background 0.3s; cursor: pointer; background: rgba(0,0,0,0.2);">
-                            <input type="file" id="firmware-file" accept=".bin" style="display: none;">
+                            <input type="file" id="firmware-file" accept=".aqfw,application/octet-stream" style="display: none;">
                             <i class="fa-solid fa-file-arrow-up mb-3" style="font-size: 32px; color: var(--text-muted);"></i>
                             <div style="font-size: 16px; font-weight: 500; color: var(--text-main); margin-bottom: 8px;">Przeciągnij plik tutaj lub kliknij</div>
-                            <div style="font-size: 12px; color: var(--text-muted);">Maksymalny rozmiar pliku: 4 MB</div>
-                            <div id="firmware-file-name" style="margin-top: 10px; font-size: 12px; color: var(--accent-cyan); font-family: monospace;">Nie wybrano pliku .bin</div>
+                            <div style="font-size: 12px; color: var(--text-muted);">Maksymalny rozmiar pakietu: 1,88 MiB</div>
+                            <div id="firmware-file-name" style="margin-top: 10px; font-size: 12px; color: var(--accent-cyan); font-family: monospace;">Nie wybrano podpisanego pliku .aqfw</div>
                         </div>
 
                         <div id="ota-progress" class="ota-progress-card" role="progressbar" aria-label="Postęp aktualizacji OTA" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0" style="display: none; width: 100%; text-align: left; background: rgba(0,0,0,0.2); padding: 20px; border-radius: 16px; border: 1px solid rgba(255,255,255,0.05); margin-bottom: 24px;">
@@ -2058,17 +2058,17 @@
         <div class="chart-time-axis fullscreen-time-axis" id="fullscreen-time-axis"></div>
     </div>
 
-    <script src="chart-engine.js?v=20260725ux1"></script>
-    <script src="charts.js?v=20260725ux1"></script>
-    <script src="app-core.js?v=20260725ux1"></script>
-    <script src="theme.js?v=20260725ux1"></script>
-    <script src="logs.js?v=20260725ux1"></script>
-    <script src="settings.js?v=20260725ux1"></script>
-    <script src="schedules.js?v=20260725ux1"></script>
-    <script src="dashboard.js?v=20260725ux1"></script>
-    <script src="ota.js?v=20260725ux1"></script>
-    <script src="relays-wizard.js?v=20260725ux1"></script>
-    <script src="app-init.js?v=20260725ux1"></script>
+    <script src="chart-engine.js?v=20260729secure2"></script>
+    <script src="charts.js?v=20260729secure2"></script>
+    <script src="app-core.js?v=20260729secure2"></script>
+    <script src="theme.js?v=20260729secure2"></script>
+    <script src="logs.js?v=20260729secure2"></script>
+    <script src="settings.js?v=20260729secure2"></script>
+    <script src="schedules.js?v=20260729secure2"></script>
+    <script src="dashboard.js?v=20260729secure2"></script>
+    <script src="ota.js?v=20260729secure2"></script>
+    <script src="relays-wizard.js?v=20260729secure2"></script>
+    <script src="app-init.js?v=20260729secure2"></script>
 </body>
 </html>
 

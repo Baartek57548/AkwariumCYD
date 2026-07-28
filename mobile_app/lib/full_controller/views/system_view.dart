@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 
@@ -5,6 +7,7 @@ import '../controller_api.dart';
 import '../controller_session.dart';
 import '../controller_shell.dart';
 import '../data_access.dart';
+import '../firmware_package.dart';
 import '../widgets.dart';
 
 class SystemView extends StatefulWidget {
@@ -25,36 +28,84 @@ class SystemView extends StatefulWidget {
 
 class _SystemViewState extends State<SystemView> {
   PlatformFile? firmware;
+  FirmwarePackage? firmwarePackage;
   double uploadProgress = 0;
   bool uploading = false;
+  bool installingRelease = false;
   String? message;
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted &&
+          widget.session.firmwareReleaseStatus.phase ==
+              FirmwareReleasePhase.idle) {
+        unawaited(widget.session.checkForFirmwareUpdates());
+      }
+    });
+  }
 
   Future<void> _pickFirmware() async {
     final result = await FilePicker.pickFiles(
       type: FileType.custom,
-      allowedExtensions: const ['bin'],
+      allowedExtensions: const ['aqfw'],
       withData: true,
     );
+    if (!mounted) return;
     final file = result?.files.singleOrNull;
     if (file == null) return;
     if (file.bytes == null || file.bytes!.isEmpty) {
-      setState(() => message = 'Nie udało się odczytać zawartości firmware.');
+      setState(() {
+        firmware = null;
+        firmwarePackage = null;
+        message = 'Nie udało się odczytać zawartości pakietu firmware.';
+      });
       return;
     }
     if (file.size > ControllerApi.maximumFirmwareBytes) {
-      setState(() => message = 'Firmware przekracza limit 8 MB.');
+      setState(() {
+        firmware = null;
+        firmwarePackage = null;
+        message = 'Pakiet firmware przekracza bezpieczny limit rozmiaru.';
+      });
       return;
     }
-    setState(() {
-      firmware = file;
-      uploadProgress = 0;
-      message = 'Wybrano ${file.name} (${formatBytes(file.size)}).';
-    });
+    try {
+      final parsed = widget.session.inspectFirmwarePackage(
+        file.bytes!,
+        file.name,
+      );
+      widget.session.clearFirmwareUpdateStatus();
+      setState(() {
+        firmware = file;
+        firmwarePackage = parsed;
+        uploadProgress = 0;
+        message =
+            'Pakiet jest zgodny: ${parsed.firmwareVersion}, '
+            '${parsed.target.label}, ${formatBytes(parsed.imageBytes)}.';
+      });
+    } on ControllerApiException catch (error) {
+      setState(() {
+        firmware = null;
+        firmwarePackage = null;
+        uploadProgress = 0;
+        message = error.message;
+      });
+    } on Object {
+      setState(() {
+        firmware = null;
+        firmwarePackage = null;
+        uploadProgress = 0;
+        message = 'Nie udało się bezpiecznie sprawdzić pakietu firmware.';
+      });
+    }
   }
 
   Future<void> _upload() async {
     final file = firmware;
-    if (file == null || file.bytes == null) return;
+    final package = firmwarePackage;
+    if (file == null || file.bytes == null || package == null) return;
     final bytes = file.bytes!;
     final fileName = file.name;
     if (!await widget.ensureAdmin()) return;
@@ -64,7 +115,12 @@ class _SystemViewState extends State<SystemView> {
       builder: (context) => AlertDialog(
         title: const Text('Aktualizacja firmware OTA'),
         content: Text(
-          'Wgrać $fileName? Nie wyłączaj sterownika podczas aktualizacji. Po zapisie ESP32 uruchomi się ponownie.',
+          'Zainstalować firmware ${package.firmwareVersion} dla '
+          '${package.target.label}?\n\n'
+          'Pakiet: ${formatBytes(package.packageBytes)}\n'
+          'SHA-256: ${package.shortDigest}\n\n'
+          'Nie wyłączaj sterownika podczas aktualizacji. Sterownik zweryfikuje '
+          'podpis RSA przed zapisem i dopiero potem uruchomi się ponownie.',
         ),
         actions: [
           TextButton(
@@ -97,8 +153,72 @@ class _SystemViewState extends State<SystemView> {
       if (mounted) setState(() => message = result.message);
     } on ControllerApiException catch (error) {
       if (mounted) setState(() => message = error.message);
+    } on Object {
+      if (mounted) {
+        setState(
+          () => message = 'Nieoczekiwany błąd podczas aktualizacji firmware.',
+        );
+      }
     } finally {
       if (mounted) setState(() => uploading = false);
+    }
+  }
+
+  Future<void> _installAvailableRelease() async {
+    final release = widget.session.firmwareReleaseStatus.release;
+    if (release == null || installingRelease) return;
+    final notes = release.notes.trim();
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: Text('Firmware ${release.version} jest dostępny'),
+        content: SingleChildScrollView(
+          child: Text(
+            'Wariant: ${release.target.label}\n'
+            'Rozmiar: ${release.formattedSize}\n\n'
+            '${notes.isEmpty ? "Wydanie nie zawiera dodatkowych informacji." : notes}\n\n'
+            'Pakiet zostanie pobrany z oficjalnego wydania GitHub, '
+            'sprawdzony pod kątem rozmiaru, SHA-256 i zgodności, a następnie '
+            'wysłany do sterownika. Podpis RSA zweryfikuje sterownik. '
+            'Nie wyłączaj zasilania podczas instalacji.',
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('Nie teraz'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(context, true),
+            child: const Text('Pobierz i zainstaluj'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true || !mounted) return;
+    setState(() {
+      installingRelease = true;
+      message = null;
+    });
+    try {
+      final package = await widget.session.downloadAvailableFirmware();
+      if (!mounted) return;
+      if (!await widget.ensureAdmin() || !mounted) return;
+      final result = await widget.session.uploadFirmware(
+        package.bytes,
+        release.asset.name,
+      );
+      if (mounted) setState(() => message = result.message);
+    } on ControllerApiException catch (error) {
+      if (mounted) setState(() => message = error.message);
+    } on Object {
+      if (mounted) {
+        setState(
+          () => message = 'Nie udało się przygotować aktualizacji firmware.',
+        );
+      }
+    } finally {
+      if (mounted) setState(() => installingRelease = false);
     }
   }
 
@@ -109,6 +229,32 @@ class _SystemViewState extends State<SystemView> {
     final eco = status.section('eco');
     final battery = status.section('battery');
     final firmwareData = status.section('firmware');
+    final updateStatus = widget.session.firmwareUpdateStatus;
+    final releaseStatus = widget.session.firmwareReleaseStatus;
+    final availableRelease = releaseStatus.release;
+    final releaseDownloading =
+        releaseStatus.phase == FirmwareReleasePhase.downloading;
+    final releaseCanceling =
+        releaseStatus.phase == FirmwareReleasePhase.canceling;
+    final releaseTransferring = releaseDownloading || releaseCanceling;
+    final releaseActionable =
+        availableRelease != null &&
+        (releaseStatus.phase == FirmwareReleasePhase.available ||
+            releaseStatus.phase == FirmwareReleasePhase.readyToInstall ||
+            releaseStatus.phase == FirmwareReleasePhase.failed);
+    final otaActive =
+        uploading ||
+        installingRelease ||
+        updateStatus.isActive ||
+        releaseStatus.isBusy;
+    final progress = releaseTransferring
+        ? releaseStatus.progress
+        : updateStatus.isActive
+        ? updateStatus.progress
+        : uploadProgress;
+    final otaMessage =
+        releaseStatus.message ??
+        (updateStatus.message.isNotEmpty ? updateStatus.message : message);
     final hasStoredData = widget.session.hasStatusData;
     final blockers = eco
         .list('blockers')
@@ -196,7 +342,7 @@ class _SystemViewState extends State<SystemView> {
         const SectionHeader(
           title: 'Aktualizacja OTA',
           description:
-              'Wysyłanie do endpointu /update z tą samą kontrolą PIN i limitem pliku co WWW.',
+              'Tylko podpisane pakiety AquaCYD dopasowane do tego sterownika.',
         ),
         Card(
           child: Padding(
@@ -228,41 +374,260 @@ class _SystemViewState extends State<SystemView> {
                   ],
                 ),
                 const SizedBox(height: 16),
-                OutlinedButton.icon(
-                  onPressed: uploading || !widget.session.supportsFirmwareUpload
-                      ? null
-                      : _pickFirmware,
-                  icon: const Icon(Icons.folder_open_rounded),
-                  label: Text(
-                    !widget.session.supportsFirmwareUpload
-                        ? 'OTA wymaga połączenia Wi-Fi'
-                        : firmware == null
-                        ? 'Wybierz plik firmware.bin'
-                        : firmware!.name,
-                  ),
+                StatusBanner(
+                  icon: widget.session.supportsFirmwareUpload
+                      ? Icons.verified_user_rounded
+                      : Icons.lock_rounded,
+                  title: widget.session.supportsFirmwareUpload
+                      ? 'Bezpieczne OTA gotowe'
+                      : 'Aktualizacja zablokowana',
+                  message:
+                      widget.session.firmwareUpdateBlockReason ??
+                      'Aplikacja sprawdzi format, wariant sprzętu, wersję, '
+                          'identyfikator klucza, rozmiar oraz SHA-256 przed '
+                          'wysłaniem. Podpis RSA zweryfikuje sterownik przed '
+                          'zapisem obrazu.',
+                  isError: !widget.session.supportsFirmwareUpload,
                 ),
-                if (uploading || uploadProgress > 0) ...[
-                  const SizedBox(height: 12),
-                  LinearProgressIndicator(value: uploadProgress),
-                  const SizedBox(height: 6),
-                  Text('${(uploadProgress * 100).toStringAsFixed(0)}%'),
-                ],
                 const SizedBox(height: 12),
-                FilledButton.icon(
+                if (releaseStatus.phase == FirmwareReleasePhase.checking) ...[
+                  const LinearProgressIndicator(),
+                  const SizedBox(height: 8),
+                  const Text('Sprawdzanie najnowszego wydania firmware…'),
+                  const SizedBox(height: 12),
+                ],
+                if (availableRelease != null) ...[
+                  DecoratedBox(
+                    decoration: BoxDecoration(
+                      color: Theme.of(context).colorScheme.primaryContainer,
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                    child: Padding(
+                      padding: const EdgeInsets.all(16),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Row(
+                            children: [
+                              const Icon(Icons.new_releases_rounded),
+                              const SizedBox(width: 10),
+                              Expanded(
+                                child: Text(
+                                  'Dostępny firmware '
+                                  '${availableRelease.version}',
+                                  style: Theme.of(context).textTheme.titleMedium
+                                      ?.copyWith(fontWeight: FontWeight.w900),
+                                ),
+                              ),
+                            ],
+                          ),
+                          const SizedBox(height: 8),
+                          Text(
+                            '${availableRelease.target.label} · '
+                            '${availableRelease.formattedSize}',
+                          ),
+                          if (availableRelease.notes.trim().isNotEmpty) ...[
+                            const SizedBox(height: 8),
+                            Text(
+                              availableRelease.notes.trim(),
+                              maxLines: 3,
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                          ],
+                          const SizedBox(height: 14),
+                          FilledButton.icon(
+                            onPressed: releaseActionable && !otaActive
+                                ? _installAvailableRelease
+                                : null,
+                            icon: releaseTransferring
+                                ? const SizedBox.square(
+                                    dimension: 18,
+                                    child: CircularProgressIndicator(
+                                      strokeWidth: 2,
+                                    ),
+                                  )
+                                : const Icon(
+                                    Icons.download_for_offline_rounded,
+                                  ),
+                            label: Text(
+                              releaseStatus.phase ==
+                                      FirmwareReleasePhase.readyToInstall
+                                  ? 'Zainstaluj pobrany pakiet'
+                                  : releaseCanceling
+                                  ? 'Anulowanie…'
+                                  : releaseStatus.phase ==
+                                        FirmwareReleasePhase.failed
+                                  ? 'Spróbuj ponownie'
+                                  : 'Pobierz i zainstaluj',
+                            ),
+                          ),
+                          if (releaseTransferring)
+                            TextButton(
+                              onPressed: releaseDownloading
+                                  ? widget.session.cancelFirmwareDownload
+                                  : null,
+                              child: Text(
+                                releaseCanceling
+                                    ? 'Anulowanie pobierania…'
+                                    : 'Anuluj pobieranie',
+                              ),
+                            ),
+                        ],
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+                ] else if (releaseStatus.phase ==
+                    FirmwareReleasePhase.upToDate) ...[
+                  const StatusBanner(
+                    icon: Icons.check_circle_outline_rounded,
+                    title: 'Firmware jest aktualny',
+                    message:
+                        'Na GitHubie nie ma nowszej zgodnej wersji dla tego sterownika.',
+                    isError: false,
+                  ),
+                  const SizedBox(height: 12),
+                ],
+                OutlinedButton.icon(
                   onPressed:
-                      firmware == null ||
-                          uploading ||
-                          !widget.session.supportsFirmwareUpload
+                      otaActive ||
+                          !widget.session.supportsFirmwareUpload ||
+                          releaseStatus.phase == FirmwareReleasePhase.checking
                       ? null
-                      : _upload,
-                  icon: uploading
-                      ? const SizedBox.square(
-                          dimension: 18,
-                          child: CircularProgressIndicator(strokeWidth: 2),
-                        )
-                      : const Icon(Icons.cloud_upload_rounded),
-                  label: Text(uploading ? 'Wysyłanie OTA…' : 'Wgraj firmware'),
+                      : () => widget.session.checkForFirmwareUpdates(
+                          manual: true,
+                        ),
+                  icon: const Icon(Icons.refresh_rounded),
+                  label: const Text('Sprawdź aktualizacje firmware'),
                 ),
+                const SizedBox(height: 8),
+                ExpansionTile(
+                  tilePadding: EdgeInsets.zero,
+                  childrenPadding: const EdgeInsets.only(bottom: 4),
+                  title: const Text('Instalacja z pliku .aqfw'),
+                  subtitle: const Text(
+                    'Opcja serwisowa dla pakietu pobranego wcześniej.',
+                  ),
+                  children: [
+                    OutlinedButton.icon(
+                      onPressed:
+                          otaActive || !widget.session.supportsFirmwareUpload
+                          ? null
+                          : _pickFirmware,
+                      icon: const Icon(Icons.folder_open_rounded),
+                      label: Text(
+                        !widget.session.supportsFirmwareUpload
+                            ? 'Bezpieczne OTA jest niedostępne'
+                            : firmware == null
+                            ? 'Wybierz podpisany pakiet .aqfw'
+                            : firmware!.name,
+                      ),
+                    ),
+                    if (firmwarePackage != null) ...[
+                      const SizedBox(height: 12),
+                      DecoratedBox(
+                        decoration: BoxDecoration(
+                          color: Theme.of(
+                            context,
+                          ).colorScheme.surfaceContainerHighest,
+                          borderRadius: BorderRadius.circular(12),
+                        ),
+                        child: Padding(
+                          padding: const EdgeInsets.all(14),
+                          child: Column(
+                            children: [
+                              InfoRow(
+                                label: 'Wersja docelowa',
+                                value: firmwarePackage!.firmwareVersion,
+                              ),
+                              InfoRow(
+                                label: 'Wariant sprzętu',
+                                value: firmwarePackage!.target.label,
+                              ),
+                              InfoRow(
+                                label: 'Wersja zabezpieczeń',
+                                value: '${firmwarePackage!.securityVersion}',
+                              ),
+                              InfoRow(
+                                label: 'Podpis wydawniczy',
+                                value: firmwarePackage!.keyId,
+                              ),
+                              InfoRow(
+                                label: 'SHA-256',
+                                value: firmwarePackage!.shortDigest,
+                              ),
+                            ],
+                          ),
+                        ),
+                      ),
+                    ],
+                    const SizedBox(height: 12),
+                    FilledButton.icon(
+                      onPressed:
+                          firmwarePackage == null ||
+                              otaActive ||
+                              !widget.session.supportsFirmwareUpload
+                          ? null
+                          : _upload,
+                      icon: otaActive
+                          ? const SizedBox.square(
+                              dimension: 18,
+                              child: CircularProgressIndicator(strokeWidth: 2),
+                            )
+                          : const Icon(Icons.cloud_upload_rounded),
+                      label: const Text('Sprawdź i zainstaluj plik'),
+                    ),
+                  ],
+                ),
+                if (otaActive || progress > 0) ...[
+                  const SizedBox(height: 12),
+                  LinearProgressIndicator(
+                    value:
+                        updateStatus.phase == FirmwareUpdatePhase.validating ||
+                            (otaActive && progress <= 0)
+                        ? null
+                        : progress,
+                  ),
+                  const SizedBox(height: 6),
+                  Text(
+                    updateStatus.phase == FirmwareUpdatePhase.validating
+                        ? 'Weryfikowanie pakietu…'
+                        : releaseCanceling
+                        ? 'Anulowanie pobierania…'
+                        : releaseDownloading
+                        ? 'Pobieranie ${(progress * 100).toStringAsFixed(0)}%'
+                        : '${(progress * 100).toStringAsFixed(0)}%',
+                  ),
+                ],
+                if (otaMessage != null && otaMessage.isNotEmpty) ...[
+                  const SizedBox(height: 12),
+                  StatusBanner(
+                    icon:
+                        updateStatus.isError ||
+                            releaseStatus.phase == FirmwareReleasePhase.failed
+                        ? Icons.error_outline_rounded
+                        : updateStatus.phase ==
+                                  FirmwareUpdatePhase.awaitingRestart ||
+                              releaseStatus.phase ==
+                                  FirmwareReleasePhase.awaitingRestart
+                        ? Icons.restart_alt_rounded
+                        : Icons.info_outline_rounded,
+                    title:
+                        updateStatus.isError ||
+                            releaseStatus.phase == FirmwareReleasePhase.failed
+                        ? 'Aktualizacja nie powiodła się'
+                        : updateStatus.phase ==
+                                  FirmwareUpdatePhase.awaitingRestart ||
+                              releaseStatus.phase ==
+                                  FirmwareReleasePhase.awaitingRestart
+                        ? 'Pakiet przyjęty'
+                        : 'Stan aktualizacji',
+                    message: otaMessage,
+                    isError:
+                        updateStatus.isError ||
+                        releaseStatus.phase == FirmwareReleasePhase.failed,
+                  ),
+                ],
               ],
             ),
           ),
@@ -317,11 +682,6 @@ class _SystemViewState extends State<SystemView> {
             ),
           ),
         ),
-        if (message != null)
-          Padding(
-            padding: const EdgeInsets.only(top: 10),
-            child: Text(message!),
-          ),
       ],
     );
   }

@@ -1,6 +1,7 @@
 #include <limits.h>
 #include <math.h>
 #include <stdint.h>
+#include <stdio.h>
 #include <string.h>
 
 #include <unity.h>
@@ -9,9 +10,11 @@
 #include "aquarium_schedule.h"
 #include "admin_session.h"
 #include "aquael_light_controller.h"
+#include "ble_pairing_policy.h"
 #include "control_modes.h"
 #include "dev_simulator.h"
 #include "idempotency_ledger.h"
+#include "ota_package.h"
 #include "ota_safety_policy.h"
 #include "web_activity_tracker.h"
 #include "wifi_retry_policy.h"
@@ -393,6 +396,244 @@ static void test_ota_preflight_and_pending_verify_policy() {
         static_cast<uint8_t>(unhealthy.evaluate(1000U, false, 8000U)));
 }
 
+static void test_ble_pairing_passkey_rotates_and_expires() {
+    aquarium::BlePairingPolicy policy;
+    const uint32_t first =
+        policy.begin(7U, 1U, 0xFFFFFF00UL, 12345U);
+    TEST_ASSERT_GREATER_OR_EQUAL_UINT32(
+        aquarium::BlePairingPolicy::kMinimumPasskey,
+        first);
+    TEST_ASSERT_LESS_OR_EQUAL_UINT32(
+        aquarium::BlePairingPolicy::kMaximumPasskey,
+        first);
+    TEST_ASSERT_EQUAL_UINT32(
+        first,
+        policy.displayed_passkey(0xFFFFFF00UL + 1000U));
+
+    aquarium::BlePairingAttemptState expired = {};
+    const uint32_t expiry =
+        0xFFFFFF00UL +
+        aquarium::BlePairingPolicy::kAttemptTimeoutMs;
+    TEST_ASSERT_FALSE(policy.expire(expiry - 1U, &expired));
+    TEST_ASSERT_TRUE(policy.expire(expiry, &expired));
+    TEST_ASSERT_EQUAL_UINT16(7U, expired.connection_handle);
+    TEST_ASSERT_EQUAL_UINT32(1U, expired.generation);
+    TEST_ASSERT_EQUAL_UINT32(first, expired.passkey);
+    TEST_ASSERT_EQUAL_UINT32(0U, policy.displayed_passkey(expiry));
+
+    const uint32_t second =
+        policy.begin(9U, 2U, expiry + 1U, 12345U);
+    TEST_ASSERT_NOT_EQUAL(first, second);
+    TEST_ASSERT_FALSE(policy.complete(9U, 1U));
+    TEST_ASSERT_EQUAL_UINT32(
+        second,
+        policy.displayed_passkey(expiry + 2U));
+    TEST_ASSERT_TRUE(policy.complete(9U, 2U));
+    TEST_ASSERT_EQUAL_UINT32(
+        0U,
+        policy.displayed_passkey(expiry + 2U));
+    TEST_ASSERT_EQUAL_UINT32(
+        0U,
+        policy.begin(
+            aquarium::BlePairingPolicy::kInvalidConnectionHandle,
+            3U,
+            0U,
+            1U));
+}
+
+static void test_ota_finalize_order_and_boot_recovery_are_fail_safe() {
+    using aquarium::OtaBootRecovery;
+    using aquarium::OtaFinalizeStep;
+
+    TEST_ASSERT_EQUAL_UINT8(
+        static_cast<uint8_t>(OtaFinalizeStep::MarkNativeValid),
+        static_cast<uint8_t>(
+            aquarium::next_ota_finalize_step(true, true)));
+    // A failed native mark-valid leaves both flags unchanged, so persistence
+    // cannot be attempted and the native step is retried.
+    TEST_ASSERT_EQUAL_UINT8(
+        static_cast<uint8_t>(OtaFinalizeStep::MarkNativeValid),
+        static_cast<uint8_t>(
+            aquarium::next_ota_finalize_step(true, true)));
+    // After native success, a failed NVS write leaves persistent_pending set
+    // and retries persistence without repeating the native operation.
+    TEST_ASSERT_EQUAL_UINT8(
+        static_cast<uint8_t>(OtaFinalizeStep::PersistAcceptedState),
+        static_cast<uint8_t>(
+            aquarium::next_ota_finalize_step(false, true)));
+    TEST_ASSERT_EQUAL_UINT8(
+        static_cast<uint8_t>(OtaFinalizeStep::Complete),
+        static_cast<uint8_t>(
+            aquarium::next_ota_finalize_step(false, false)));
+
+    TEST_ASSERT_EQUAL_UINT8(
+        static_cast<uint8_t>(OtaBootRecovery::TrackPendingBoot),
+        static_cast<uint8_t>(
+            aquarium::evaluate_ota_boot_recovery(true, true, false)));
+    TEST_ASSERT_EQUAL_UINT8(
+        static_cast<uint8_t>(OtaBootRecovery::FinalizeAcceptedState),
+        static_cast<uint8_t>(
+            aquarium::evaluate_ota_boot_recovery(true, false, false)));
+    TEST_ASSERT_EQUAL_UINT8(
+        static_cast<uint8_t>(OtaBootRecovery::ClearAbortedState),
+        static_cast<uint8_t>(
+            aquarium::evaluate_ota_boot_recovery(true, false, true)));
+    TEST_ASSERT_EQUAL_UINT8(
+        static_cast<uint8_t>(OtaBootRecovery::None),
+        static_cast<uint8_t>(
+            aquarium::evaluate_ota_boot_recovery(false, true, false)));
+}
+
+static void write_u16_le(uint8_t *target, uint16_t value) {
+    target[0] = static_cast<uint8_t>(value & 0xFFU);
+    target[1] = static_cast<uint8_t>((value >> 8U) & 0xFFU);
+}
+
+static void write_u32_le(uint8_t *target, uint32_t value) {
+    target[0] = static_cast<uint8_t>(value & 0xFFU);
+    target[1] = static_cast<uint8_t>((value >> 8U) & 0xFFU);
+    target[2] = static_cast<uint8_t>((value >> 16U) & 0xFFU);
+    target[3] = static_cast<uint8_t>((value >> 24U) & 0xFFU);
+}
+
+static void build_valid_ota_header(uint8_t *header,
+                                   aquarium::OtaPackageTarget target,
+                                   const char *version,
+                                   uint32_t security_version) {
+    memset(header, 0, aquarium::kOtaPackageHeaderBytes);
+    memcpy(header, "AQCYDOTA", 8U);
+    write_u16_le(header + 8U, aquarium::kOtaPackageFormatVersion);
+    write_u16_le(
+        header + 10U,
+        static_cast<uint16_t>(aquarium::kOtaPackageHeaderBytes));
+    header[12U] = aquarium::kOtaPackageAlgorithmRsa3072PssSha256;
+    header[13U] = static_cast<uint8_t>(target);
+    write_u32_le(header + 16U, 1724576U);
+    write_u32_le(header + 20U, security_version);
+    for (uint8_t index = 0U; index < 32U; ++index) {
+        header[24U + index] = static_cast<uint8_t>(index + 1U);
+    }
+    snprintf(reinterpret_cast<char *>(header + 56U), 16U, "%s", version);
+    snprintf(reinterpret_cast<char *>(header + 72U), 16U, "%s", "aquacyd-cyd");
+    memcpy(header + 88U, "9470c281de5f898f", 16U);
+    snprintf(
+        reinterpret_cast<char *>(header + 104U),
+        20U,
+        "%s",
+        "fae2a25e95e66141e36");
+    write_u16_le(
+        header + 124U,
+        aquarium::kOtaPackageMinimumBootloaderVersion);
+    for (size_t index = aquarium::kOtaPackageSignedMetadataBytes;
+         index < aquarium::kOtaPackageHeaderBytes;
+         ++index) {
+        header[index] = static_cast<uint8_t>((index % 251U) + 1U);
+    }
+}
+
+static void test_ota_package_header_and_policy_accept_valid_release() {
+    uint8_t header[aquarium::kOtaPackageHeaderBytes] = {};
+    build_valid_ota_header(
+        header, aquarium::OtaPackageTarget::Ili9341, "5.1.0", 1U);
+    aquarium::OtaPackageMetadata metadata = {};
+    TEST_ASSERT_EQUAL_UINT8(
+        static_cast<uint8_t>(aquarium::OtaPackageValidation::Valid),
+        static_cast<uint8_t>(aquarium::parse_ota_package_header(
+            header, sizeof(header), &metadata)));
+    TEST_ASSERT_EQUAL_STRING("5.1.0", metadata.firmware_version);
+    TEST_ASSERT_EQUAL_STRING("aquacyd-cyd", metadata.product_id);
+    TEST_ASSERT_EQUAL_STRING("9470c281de5f898f", metadata.key_id);
+    TEST_ASSERT_EQUAL_UINT32(1724576U, metadata.image_bytes);
+    TEST_ASSERT_EQUAL_UINT8(
+        static_cast<uint8_t>(aquarium::OtaPackageValidation::Valid),
+        static_cast<uint8_t>(aquarium::validate_ota_package_metadata(
+            metadata,
+            aquarium::OtaPackageTarget::Ili9341,
+            "5.0.0",
+            1U,
+            aquarium::kOtaPackageMinimumBootloaderVersion,
+            "9470c281de5f898f",
+            1966080U)));
+}
+
+static void test_ota_package_rejects_wrong_target_downgrade_and_security_rollback() {
+    uint8_t header[aquarium::kOtaPackageHeaderBytes] = {};
+    build_valid_ota_header(
+        header, aquarium::OtaPackageTarget::St7789, "4.9.9", 1U);
+    aquarium::OtaPackageMetadata metadata = {};
+    TEST_ASSERT_EQUAL_UINT8(
+        static_cast<uint8_t>(aquarium::OtaPackageValidation::Valid),
+        static_cast<uint8_t>(aquarium::parse_ota_package_header(
+            header, sizeof(header), &metadata)));
+    TEST_ASSERT_EQUAL_UINT8(
+        static_cast<uint8_t>(aquarium::OtaPackageValidation::WrongTarget),
+        static_cast<uint8_t>(aquarium::validate_ota_package_metadata(
+            metadata,
+            aquarium::OtaPackageTarget::Ili9341,
+            "5.0.0",
+            1U,
+            1U,
+            "9470c281de5f898f",
+            1966080U)));
+    metadata.target = aquarium::OtaPackageTarget::Ili9341;
+    TEST_ASSERT_EQUAL_UINT8(
+        static_cast<uint8_t>(aquarium::OtaPackageValidation::DowngradeBlocked),
+        static_cast<uint8_t>(aquarium::validate_ota_package_metadata(
+            metadata,
+            aquarium::OtaPackageTarget::Ili9341,
+            "5.0.0",
+            1U,
+            1U,
+            "9470c281de5f898f",
+            1966080U)));
+    snprintf(metadata.firmware_version, sizeof(metadata.firmware_version), "%s", "5.1.0");
+    TEST_ASSERT_EQUAL_UINT8(
+        static_cast<uint8_t>(
+            aquarium::OtaPackageValidation::SecurityRollbackBlocked),
+        static_cast<uint8_t>(aquarium::validate_ota_package_metadata(
+            metadata,
+            aquarium::OtaPackageTarget::Ili9341,
+            "5.0.0",
+            2U,
+            1U,
+            "9470c281de5f898f",
+            1966080U)));
+}
+
+static void test_ota_package_rejects_noncanonical_or_truncated_headers() {
+    uint8_t header[aquarium::kOtaPackageHeaderBytes] = {};
+    build_valid_ota_header(
+        header, aquarium::OtaPackageTarget::Ili9341, "5.1.0", 1U);
+    aquarium::OtaPackageMetadata metadata = {};
+    TEST_ASSERT_EQUAL_UINT8(
+        static_cast<uint8_t>(aquarium::OtaPackageValidation::HeaderTooShort),
+        static_cast<uint8_t>(aquarium::parse_ota_package_header(
+            header, sizeof(header) - 1U, &metadata)));
+    header[0] ^= 0x01U;
+    TEST_ASSERT_EQUAL_UINT8(
+        static_cast<uint8_t>(aquarium::OtaPackageValidation::InvalidMagic),
+        static_cast<uint8_t>(aquarium::parse_ota_package_header(
+            header, sizeof(header), &metadata)));
+    header[0] ^= 0x01U;
+    header[127U] = 1U;
+    TEST_ASSERT_EQUAL_UINT8(
+        static_cast<uint8_t>(aquarium::OtaPackageValidation::InvalidFlags),
+        static_cast<uint8_t>(aquarium::parse_ota_package_header(
+            header, sizeof(header), &metadata)));
+}
+
+static void test_semantic_version_comparison_is_canonical_and_overflow_safe() {
+    TEST_ASSERT_EQUAL_INT(0, aquarium::compare_semantic_versions("5.1.0", "5.1.0"));
+    TEST_ASSERT_EQUAL_INT(1, aquarium::compare_semantic_versions("5.10.0", "5.9.9"));
+    TEST_ASSERT_EQUAL_INT(-1, aquarium::compare_semantic_versions("4.9.9", "5.0.0"));
+    TEST_ASSERT_EQUAL_INT(
+        INT_MIN,
+        aquarium::compare_semantic_versions("05.1.0", "5.1.0"));
+    TEST_ASSERT_EQUAL_INT(
+        INT_MIN,
+        aquarium::compare_semantic_versions("4294967296.0.0", "5.1.0"));
+}
+
 static void apply_aquael_decision(aquarium::AquaelLightController &controller,
                                   uint32_t now_ms) {
     const aquarium::AquaelDriveDecision decision = controller.poll(now_ms);
@@ -582,6 +823,12 @@ int main(int, char **) {
     RUN_TEST(test_admin_session_rate_limit_token_and_expiry);
     RUN_TEST(test_admin_session_lockout_survives_millis_wrap);
     RUN_TEST(test_ota_preflight_and_pending_verify_policy);
+    RUN_TEST(test_ble_pairing_passkey_rotates_and_expires);
+    RUN_TEST(test_ota_finalize_order_and_boot_recovery_are_fail_safe);
+    RUN_TEST(test_ota_package_header_and_policy_accept_valid_release);
+    RUN_TEST(test_ota_package_rejects_wrong_target_downgrade_and_security_rollback);
+    RUN_TEST(test_ota_package_rejects_noncanonical_or_truncated_headers);
+    RUN_TEST(test_semantic_version_comparison_is_canonical_and_overflow_safe);
     RUN_TEST(test_aquael_profile_calibrates_then_cycles_without_blocking);
     RUN_TEST(test_aquael_front_and_rear_state_is_independent);
     RUN_TEST(test_aquael_quick_power_cycle_advances_and_long_off_resets_day);

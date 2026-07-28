@@ -50,7 +50,8 @@ W chronionym środowisku wydania mobilnego:
 
 W chronionym środowisku firmware:
 
-- `FIRMWARE_SIGNING_KEY_BASE64` — prywatny klucz Ed25519 PEM zakodowany Base64.
+- `FIRMWARE_SIGNING_KEY_BASE64` — prywatny klucz RSA-3072 PEM zakodowany Base64,
+  zgodny z publicznym kluczem `security/firmware-signing-public.pem`.
 
 W chronionym środowisku `aquacyd-hil`:
 
@@ -80,30 +81,43 @@ Zmiana gotowego pliku wymaga nowego numeru wersji i tagu.
 ## Wydanie firmware
 
 1. Zakończ test na obu profilach ekranu oraz na stanowisku HIL.
-2. Utwórz tag `firmware-vX.Y.Z`.
-3. Workflow ponownie wykonuje testy natywne, sprawdza wygenerowane assety WWW i
-   kompiluje oba buildy produkcyjne.
-4. Nazwy binariów i sumy SHA-256 sprawdza `scripts/validate_release.py`.
-5. Oba obrazy i manifest są podpisywane Ed25519, a sygnatury są natychmiast
-   weryfikowane kluczem publicznym.
-6. Release zawiera `.bin`, `.sig`, manifest, `SHA256SUMS`, publiczny klucz
-   kontrolny oraz fingerprint klucza.
+2. Zwiększ `FirmwareInfo::VERSION` w `include/config.h`. Jeśli wydanie wycofuje
+   starszy, poprawnie podpisany obraz, zwiększ również
+   `FirmwareInfo::SECURITY_VERSION`.
+3. Po scaleniu zmian do `main` utwórz chroniony tag `firmware-vX.Y.Z` zgodny
+   dokładnie z `FirmwareInfo::VERSION`. Workflow odrzuca tag, którego commit
+   nie jest osiągalny z aktualnego `origin/main`.
+4. Workflow ponownie wykonuje testy natywne, kontroluje trust anchor, sprawdza
+   wygenerowane assety WWW i kompiluje oba buildy produkcyjne.
+5. Każdy finalny obraz jest podpisywany przez `espsecure` jako Secure Boot v2,
+   natychmiast weryfikowany kluczem publicznym i pakowany do `.aqfw`.
+6. Narzędzie wydaniowe sprawdza podpis metadanych RSA-PSS/SHA-256, target,
+   wersję, `securityVersion`, zgodność bootloadera, długość i SHA-256. Następnie
+   workflow wyciąga payload z `.aqfw`, porównuje go bajt w bajt z podpisanym
+   obrazem i ponownie weryfikuje podpis Secure Boot v2.
+7. Manifest jest podpisywany tym samym chronionym kluczem. Release zawiera po
+   jednym `*-sbv2.bin` i `.aqfw` dla ILI9341 oraz ST7789, `SHA256SUMS`,
+   `release-manifest.json`, jego podpis, publiczny klucz kontrolny i fingerprint.
 
-Docelowo firmware urządzenia musi ufać wcześniej wbudowanemu kluczowi, a nie
-kluczowi pobranemu obok pliku release. Publiczny plik w release służy operatorowi
-do porównania fingerprintu.
+Firmware weryfikuje `.aqfw` wyłącznie względem trust anchora skompilowanego w
+urządzeniu. Publiczny plik dołączony do release służy operatorowi do audytu i
+nie może zastąpić wbudowanego klucza.
 
-Aktualny firmware nie ma jeszcze provisionowanego klucza i nie weryfikuje
-Ed25519 na urządzeniu. Publikowane sygnatury umożliwiają niezależną weryfikację
-i audyt artefaktu, ale nie upoważniają do automatycznego zdalnego OTA. Do czasu
-wdrożenia Secure Boot v2 obraz wolno wgrywać tylko z zaufanej sieci po ręcznym
-sprawdzeniu SHA-256; szczegóły opisuje
-[PRODUCTION_SECURITY.md](PRODUCTION_SECURITY.md).
+Weryfikacja `.aqfw` zapewnia ochronę OTA na poziomie aplikacji także przed
+sprzętowym provisioningiem. Secure Boot v2 w ROM i Flash Encryption działają
+jednak dopiero na płytkach bezpiecznie provisionowanych w fabryce; workflow
+wydania nie zapisuje eFuse. Pełna procedura, fingerprint klucza i bramki
+bezpieczeństwa są opisane w
+[FIRMWARE_SIGNING_AND_PROVISIONING.md](FIRMWARE_SIGNING_AND_PROVISIONING.md).
 
 ## Walidacja lokalna
 
 ```powershell
 python scripts/validate_release.py --self-test
+python scripts/validate_release.py --tag firmware-v5.1.0 --print-firmware-contract
+python scripts/verify_firmware_trust.py
+python tools/firmware_package.py self-test
+python scripts/audit_esp32_security.py --self-test
 python tools/hil/runner.py --self-test
 python tools/hil/runner.py --dry-run
 actionlint
@@ -112,4 +126,7 @@ npm run test:api
 pio test --environment native
 ```
 
-Dry-run nie tworzy plików i nie wykonuje żądań sieciowych.
+Self-test i dry-run nie zapisują eFuse ani nie wysyłają żądań do urządzenia.
+Odczyt stanu konkretnego ESP32 wykonuje
+`python scripts/audit_esp32_security.py --port COMx`; skrypt nie zawiera żadnej
+operacji zapisu lub przepalania eFuse.

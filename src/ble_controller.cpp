@@ -4,10 +4,16 @@
 #include <freertos/queue.h>
 #include <freertos/task.h>
 
+#include "ble_pairing_policy.h"
 #include "config.h"
+#include "ble_controller.h"
 #include "gui_app.h"
 
 namespace {
+
+static_assert(
+    CONFIG_BT_NIMBLE_MAX_CONNECTIONS == 1,
+    "The controller security model requires exactly one BLE connection.");
 
 constexpr char BLE_DEVICE_NAME[] = "cydAkwarium";
 constexpr char BLE_SERVICE_UUID[] = "7c4a0001-6e8d-4f84-9f3f-2c3a0a0c0001";
@@ -23,6 +29,8 @@ constexpr uint32_t BLE_STATUS_INTERVAL_MS = 2000UL;
 constexpr uint32_t BLE_NOTIFY_GAP_MS = 12UL;
 constexpr UBaseType_t BLE_COMMAND_QUEUE_LENGTH = 2U;
 constexpr size_t BLE_MESSAGE_BUFFER_BYTES = 8192U;
+constexpr uint16_t BLE_INVALID_CONN_HANDLE = 0xFFFFU;
+constexpr uint32_t BLE_BOND_RESET_GRACE_MS = 250U;
 
 enum class CallbackError : uint8_t {
     None = 0U,
@@ -31,12 +39,19 @@ enum class CallbackError : uint8_t {
     InvalidFragment = 3U
 };
 
+struct BleSession {
+    uint16_t conn_handle;
+    uint32_t generation;
+};
+
 struct BleQueuedCommand {
+    BleSession session;
     char json[BLE_COMMAND_MAX_BYTES + 1U];
 };
 
 struct IncomingAssembly {
     bool active;
+    BleSession session;
     uint16_t message_id;
     uint8_t part_count;
     uint8_t next_part;
@@ -45,15 +60,215 @@ struct IncomingAssembly {
     char json[BLE_COMMAND_MAX_BYTES + 1U];
 };
 
+struct CallbackFailure {
+    CallbackError error;
+    BleSession session;
+};
+
 QueueHandle_t command_queue = nullptr;
+NimBLEServer *ble_server = nullptr;
 NimBLECharacteristic *events_characteristic = nullptr;
-volatile bool client_connected = false;
-volatile CallbackError pending_callback_error = CallbackError::None;
+volatile bool ble_initialized = false;
+volatile bool forget_bonds_requested = false;
+portMUX_TYPE ble_session_mux = portMUX_INITIALIZER_UNLOCKED;
+portMUX_TYPE ble_pairing_mux = portMUX_INITIALIZER_UNLOCKED;
+bool client_connected = false;
+uint16_t active_conn_handle = BLE_INVALID_CONN_HANDLE;
+uint32_t active_conn_generation = 0U;
+uint32_t next_conn_generation = 1U;
+CallbackFailure pending_callback_failure = {
+    CallbackError::None,
+    {BLE_INVALID_CONN_HANDLE, 0U}};
+aquarium::BlePairingPolicy pairing_policy;
+volatile bool bond_reset_pending = false;
+uint32_t bond_reset_at_ms = 0U;
 uint16_t outgoing_message_id = 1U;
 IncomingAssembly incoming = {};
 BleQueuedCommand processing_command = {};
 BleQueuedCommand callback_command = {};
+BleSession processing_session = {BLE_INVALID_CONN_HANDLE, 0U};
 char outgoing_json[BLE_MESSAGE_BUFFER_BYTES] = {};
+
+bool session_is_valid(const BleSession &session) {
+    return session.conn_handle != BLE_INVALID_CONN_HANDLE &&
+           session.generation != 0U;
+}
+
+bool sessions_match(const BleSession &left, const BleSession &right) {
+    return left.conn_handle == right.conn_handle &&
+           left.generation == right.generation;
+}
+
+BleSession active_session_snapshot(bool require_authenticated) {
+    BleSession session = {BLE_INVALID_CONN_HANDLE, 0U};
+    portENTER_CRITICAL(&ble_session_mux);
+    if (active_conn_handle != BLE_INVALID_CONN_HANDLE &&
+        (!require_authenticated || client_connected)) {
+        session.conn_handle = active_conn_handle;
+        session.generation = active_conn_generation;
+    }
+    portEXIT_CRITICAL(&ble_session_mux);
+    return session;
+}
+
+bool active_handle_matches(uint16_t conn_handle) {
+    bool matches = false;
+    portENTER_CRITICAL(&ble_session_mux);
+    matches = active_conn_handle == conn_handle &&
+              active_conn_generation != 0U;
+    portEXIT_CRITICAL(&ble_session_mux);
+    return matches;
+}
+
+bool active_secured_session_matches(const BleSession &session) {
+    if (!session_is_valid(session)) {
+        return false;
+    }
+    bool matches = false;
+    portENTER_CRITICAL(&ble_session_mux);
+    matches = client_connected &&
+              active_conn_handle == session.conn_handle &&
+              active_conn_generation == session.generation;
+    portEXIT_CRITICAL(&ble_session_mux);
+    return matches;
+}
+
+bool claim_connection(uint16_t conn_handle, BleSession *claimed_session) {
+    if (claimed_session == nullptr ||
+        conn_handle == BLE_INVALID_CONN_HANDLE) {
+        return false;
+    }
+    bool claimed = false;
+    portENTER_CRITICAL(&ble_session_mux);
+    if (active_conn_handle == BLE_INVALID_CONN_HANDLE) {
+        uint32_t generation = next_conn_generation++;
+        if (generation == 0U) {
+            generation = next_conn_generation++;
+        }
+        if (next_conn_generation == 0U) {
+            next_conn_generation = 1U;
+        }
+        active_conn_handle = conn_handle;
+        active_conn_generation = generation;
+        client_connected = false;
+        claimed_session->conn_handle = conn_handle;
+        claimed_session->generation = generation;
+        claimed = true;
+    }
+    portEXIT_CRITICAL(&ble_session_mux);
+    return claimed;
+}
+
+bool set_active_connection_secured(uint16_t conn_handle, bool secured) {
+    bool active = false;
+    portENTER_CRITICAL(&ble_session_mux);
+    if (active_conn_handle == conn_handle &&
+        active_conn_generation != 0U) {
+        client_connected = secured;
+        active = true;
+    }
+    portEXIT_CRITICAL(&ble_session_mux);
+    return active;
+}
+
+bool release_connection(uint16_t conn_handle) {
+    bool released = false;
+    portENTER_CRITICAL(&ble_session_mux);
+    if (active_conn_handle == conn_handle &&
+        active_conn_generation != 0U) {
+        client_connected = false;
+        active_conn_handle = BLE_INVALID_CONN_HANDLE;
+        active_conn_generation = 0U;
+        released = true;
+    }
+    portEXIT_CRITICAL(&ble_session_mux);
+    return released;
+}
+
+uint32_t begin_pairing_attempt(const BleSession &session,
+                               uint32_t now_ms) {
+    if (!session_is_valid(session)) {
+        return 0U;
+    }
+    uint32_t passkey = 0U;
+    portENTER_CRITICAL(&ble_pairing_mux);
+    passkey = pairing_policy.begin(
+        session.conn_handle,
+        session.generation,
+        now_ms,
+        esp_random());
+    portEXIT_CRITICAL(&ble_pairing_mux);
+    return passkey;
+}
+
+uint32_t pairing_passkey_snapshot(uint32_t now_ms) {
+    uint32_t passkey = 0U;
+    portENTER_CRITICAL(&ble_pairing_mux);
+    passkey = pairing_policy.displayed_passkey(now_ms);
+    portEXIT_CRITICAL(&ble_pairing_mux);
+    return passkey;
+}
+
+void complete_pairing_attempt(const BleSession &session) {
+    if (!session_is_valid(session)) {
+        return;
+    }
+    portENTER_CRITICAL(&ble_pairing_mux);
+    pairing_policy.complete(session.conn_handle, session.generation);
+    portEXIT_CRITICAL(&ble_pairing_mux);
+}
+
+void clear_pairing_attempt() {
+    portENTER_CRITICAL(&ble_pairing_mux);
+    pairing_policy.clear();
+    portEXIT_CRITICAL(&ble_pairing_mux);
+}
+
+bool take_expired_pairing_attempt(
+    uint32_t now_ms,
+    aquarium::BlePairingAttemptState *expired_attempt) {
+    bool expired = false;
+    portENTER_CRITICAL(&ble_pairing_mux);
+    expired = pairing_policy.expire(now_ms, expired_attempt);
+    portEXIT_CRITICAL(&ble_pairing_mux);
+    return expired;
+}
+
+BleSession mark_active_connection_unsecured() {
+    BleSession session = {BLE_INVALID_CONN_HANDLE, 0U};
+    portENTER_CRITICAL(&ble_session_mux);
+    if (active_conn_handle != BLE_INVALID_CONN_HANDLE &&
+        active_conn_generation != 0U) {
+        client_connected = false;
+        session.conn_handle = active_conn_handle;
+        session.generation = active_conn_generation;
+    }
+    portEXIT_CRITICAL(&ble_session_mux);
+    return session;
+}
+
+void record_callback_failure(CallbackError error,
+                             const BleSession &session) {
+    if (error == CallbackError::None || !session_is_valid(session)) {
+        return;
+    }
+    portENTER_CRITICAL(&ble_session_mux);
+    pending_callback_failure.error = error;
+    pending_callback_failure.session = session;
+    portEXIT_CRITICAL(&ble_session_mux);
+}
+
+CallbackFailure take_callback_failure() {
+    CallbackFailure failure = {};
+    portENTER_CRITICAL(&ble_session_mux);
+    failure = pending_callback_failure;
+    pending_callback_failure.error = CallbackError::None;
+    pending_callback_failure.session = {
+        BLE_INVALID_CONN_HANDLE,
+        0U};
+    portEXIT_CRITICAL(&ble_session_mux);
+    return failure;
+}
 
 bool json_scalar_terminated(const char *cursor) {
     if (cursor == nullptr) {
@@ -69,6 +284,7 @@ bool json_scalar_terminated(const char *cursor) {
 
 void reset_incoming() {
     incoming.active = false;
+    incoming.session = {BLE_INVALID_CONN_HANDLE, 0U};
     incoming.message_id = 0U;
     incoming.part_count = 0U;
     incoming.next_part = 0U;
@@ -157,18 +373,29 @@ bool extract_json_bool(const char *json, const char *key, bool *out) {
     return false;
 }
 
-bool enqueue_command(const char *json, size_t length) {
+bool enqueue_command(const char *json,
+                     size_t length,
+                     const BleSession &session) {
     if (command_queue == nullptr || json == nullptr || length == 0U ||
-        length > BLE_COMMAND_MAX_BYTES || memchr(json, '\0', length) != nullptr) {
+        length > BLE_COMMAND_MAX_BYTES ||
+        memchr(json, '\0', length) != nullptr ||
+        !session_is_valid(session)) {
         return false;
     }
+    callback_command.session = session;
     memcpy(callback_command.json, json, length);
     callback_command.json[length] = '\0';
     return xQueueSend(command_queue, &callback_command, 0) == pdTRUE;
 }
 
 void send_json(const char *json) {
-    if (!client_connected || events_characteristic == nullptr || json == nullptr) {
+    const BleSession target_session =
+        session_is_valid(processing_session)
+            ? processing_session
+            : active_session_snapshot(true);
+    if (!active_secured_session_matches(target_session) ||
+        events_characteristic == nullptr ||
+        json == nullptr) {
         return;
     }
     const size_t length = strlen(json);
@@ -199,8 +426,19 @@ void send_json(const char *json) {
         frame[2] = part_index;
         frame[3] = part_count;
         memcpy(frame + 4U, json + offset, payload_length);
-        events_characteristic->setValue(frame, payload_length + 4U);
-        events_characteristic->notify();
+        if (!active_secured_session_matches(target_session)) {
+            return;
+        }
+        if (!events_characteristic->notify(
+                frame,
+                payload_length + 4U,
+                target_session.conn_handle)) {
+            Serial.printf(
+                "BLE: notify failed for handle=%u generation=%lu.\n",
+                static_cast<unsigned>(target_session.conn_handle),
+                static_cast<unsigned long>(target_session.generation));
+            return;
+        }
         vTaskDelay(pdMS_TO_TICKS(BLE_NOTIFY_GAP_MS));
     }
 }
@@ -496,27 +734,128 @@ void process_command(const BleQueuedCommand &queued) {
 
 class ControllerServerCallbacks final : public NimBLEServerCallbacks {
 public:
-    void onConnect(NimBLEServer *, NimBLEConnInfo &) override {
-        client_connected = true;
+    void onConnect(NimBLEServer *server, NimBLEConnInfo &conn_info) override {
+        const uint16_t conn_handle = conn_info.getConnHandle();
+        BleSession claimed_session = {BLE_INVALID_CONN_HANDLE, 0U};
+        if (bond_reset_pending ||
+            server->getConnectedCount() > 1U ||
+            !claim_connection(conn_handle, &claimed_session)) {
+            Serial.printf(
+                "BLE: rejecting additional connection handle=%u.\n",
+                static_cast<unsigned>(conn_handle));
+            server->disconnect(conn_handle, BLE_ERR_REM_USER_CONN_TERM);
+            return;
+        }
+
+        NimBLEDevice::stopAdvertising();
         reset_incoming();
+        if (!conn_info.isBonded()) {
+            const uint32_t passkey =
+                begin_pairing_attempt(claimed_session, millis());
+            if (passkey == 0U) {
+                gui_app_update_ble_pairing(0U, 3U);
+                server->disconnect(
+                    conn_handle,
+                    BLE_ERR_REM_USER_CONN_TERM);
+                return;
+            }
+        } else {
+            clear_pairing_attempt();
+        }
+        if (!NimBLEDevice::startSecurity(conn_handle)) {
+            complete_pairing_attempt(claimed_session);
+            gui_app_update_ble_pairing(0U, 3U);
+            server->disconnect(conn_handle, BLE_ERR_REM_USER_CONN_TERM);
+        }
     }
 
-    void onDisconnect(NimBLEServer *, NimBLEConnInfo &, int) override {
-        client_connected = false;
+    void onDisconnect(NimBLEServer *server,
+                      NimBLEConnInfo &conn_info,
+                      int) override {
+        const BleSession disconnected_session =
+            active_session_snapshot(false);
+        if (!release_connection(conn_info.getConnHandle())) {
+            return;
+        }
+        complete_pairing_attempt(disconnected_session);
         reset_incoming();
-        NimBLEDevice::startAdvertising();
+        gui_app_update_ble_pairing(0U, 0U);
+        if (!bond_reset_pending &&
+            server->getConnectedCount() == 0U) {
+            NimBLEDevice::startAdvertising();
+        }
+    }
+
+    uint32_t onPassKeyDisplay() override {
+        const uint32_t passkey = pairing_passkey_snapshot(millis());
+        if (passkey == 0U) {
+            gui_app_update_ble_pairing(0U, 3U);
+            return 0U;
+        }
+        gui_app_update_ble_pairing(passkey, 1U);
+        return passkey;
+    }
+
+    void onAuthenticationComplete(NimBLEConnInfo &conn_info) override {
+        const uint16_t conn_handle = conn_info.getConnHandle();
+        const BleSession authenticated_session =
+            active_session_snapshot(false);
+        const bool secured =
+            !bond_reset_pending &&
+            conn_info.isEncrypted() &&
+            conn_info.isAuthenticated() &&
+            conn_info.isBonded() &&
+            conn_info.getSecKeySize() >= 16U;
+        if (!set_active_connection_secured(conn_handle, secured)) {
+            if (ble_server != nullptr) {
+                ble_server->disconnect(
+                    conn_handle,
+                    BLE_ERR_REM_USER_CONN_TERM);
+            }
+            return;
+        }
+
+        complete_pairing_attempt(authenticated_session);
+        gui_app_update_ble_pairing(0U, secured ? 2U : 3U);
+        if (!secured && ble_server != nullptr) {
+            ble_server->disconnect(
+                conn_handle,
+                BLE_ERR_REM_USER_CONN_TERM);
+        }
     }
 };
 
 class CommandCharacteristicCallbacks final : public NimBLECharacteristicCallbacks {
 public:
-    void onWrite(NimBLECharacteristic *characteristic, NimBLEConnInfo &) override {
+    void onWrite(NimBLECharacteristic *characteristic,
+                 NimBLEConnInfo &conn_info) override {
         if (characteristic == nullptr || command_queue == nullptr) {
+            return;
+        }
+        const uint16_t conn_handle = conn_info.getConnHandle();
+        const BleSession session = active_session_snapshot(true);
+        if (bond_reset_pending ||
+            !session_is_valid(session) ||
+            session.conn_handle != conn_handle ||
+            !conn_info.isEncrypted() ||
+            !conn_info.isAuthenticated() ||
+            !conn_info.isBonded() ||
+            conn_info.getSecKeySize() < 16U) {
+            if (active_handle_matches(conn_handle)) {
+                reset_incoming();
+            }
+            if (ble_server != nullptr) {
+                ble_server->disconnect(
+                    conn_handle,
+                    BLE_ERR_REM_USER_CONN_TERM);
+            }
             return;
         }
         const std::string value = characteristic->getValue();
         if (value.empty()) {
-            pending_callback_error = CallbackError::InvalidCommand;
+            record_callback_failure(
+                CallbackError::InvalidCommand,
+                session);
             return;
         }
 
@@ -524,17 +863,23 @@ public:
             value.size() >= 2U && value.front() == '{' && value.back() == '}';
         if (unframed_json) {
             reset_incoming();
-            pending_callback_error = enqueue_command(value.data(), value.size())
-                                         ? CallbackError::None
-                                         : (value.size() > BLE_COMMAND_MAX_BYTES
-                                                ? CallbackError::InvalidCommand
-                                                : CallbackError::QueueFull);
+            const bool queued =
+                enqueue_command(value.data(), value.size(), session);
+            if (!queued) {
+                record_callback_failure(
+                    value.size() > BLE_COMMAND_MAX_BYTES
+                        ? CallbackError::InvalidCommand
+                        : CallbackError::QueueFull,
+                    session);
+            }
             return;
         }
 
         if (value.size() <= 4U) {
             reset_incoming();
-            pending_callback_error = CallbackError::InvalidFragment;
+            record_callback_failure(
+                CallbackError::InvalidFragment,
+                session);
             return;
         }
         const uint8_t *bytes = reinterpret_cast<const uint8_t *>(value.data());
@@ -548,7 +893,9 @@ public:
         if (part_count == 0U || part_count > BLE_COMMAND_MAX_PARTS ||
             part_index >= part_count || payload_length > BLE_FRAME_PAYLOAD_BYTES) {
             reset_incoming();
-            pending_callback_error = CallbackError::InvalidFragment;
+            record_callback_failure(
+                CallbackError::InvalidFragment,
+                session);
             return;
         }
         if (incoming.active && now_ms - incoming.last_fragment_ms > BLE_FRAGMENT_TIMEOUT_MS) {
@@ -557,14 +904,19 @@ public:
         if (part_index == 0U) {
             reset_incoming();
             incoming.active = true;
+            incoming.session = session;
             incoming.message_id = message_id;
             incoming.part_count = part_count;
         }
-        if (!incoming.active || incoming.message_id != message_id ||
+        if (!incoming.active ||
+            !sessions_match(incoming.session, session) ||
+            incoming.message_id != message_id ||
             incoming.part_count != part_count || incoming.next_part != part_index ||
             incoming.length + payload_length > BLE_COMMAND_MAX_BYTES) {
             reset_incoming();
-            pending_callback_error = CallbackError::InvalidFragment;
+            record_callback_failure(
+                CallbackError::InvalidFragment,
+                session);
             return;
         }
         memcpy(incoming.json + incoming.length, bytes + 4U, payload_length);
@@ -574,9 +926,14 @@ public:
 
         if (incoming.next_part == incoming.part_count) {
             incoming.json[incoming.length] = '\0';
-            const bool queued = enqueue_command(incoming.json, incoming.length);
+            const bool queued =
+                enqueue_command(incoming.json, incoming.length, session);
             reset_incoming();
-            pending_callback_error = queued ? CallbackError::None : CallbackError::QueueFull;
+            if (!queued) {
+                record_callback_failure(
+                    CallbackError::QueueFull,
+                    session);
+            }
         }
     }
 };
@@ -596,16 +953,37 @@ void controller_ble_task(void *) {
 
     NimBLEDevice::init(BLE_DEVICE_NAME);
     NimBLEDevice::setMTU(185U);
-    NimBLEServer *server = NimBLEDevice::createServer();
-    server->setCallbacks(new ControllerServerCallbacks());
-    NimBLEService *service = server->createService(BLE_SERVICE_UUID);
+    NimBLEDevice::setSecurityAuth(true, true, true);
+    NimBLEDevice::setSecurityIOCap(BLE_HS_IO_DISPLAY_ONLY);
+    NimBLEDevice::setSecurityInitKey(
+        BLE_SM_PAIR_KEY_DIST_ENC | BLE_SM_PAIR_KEY_DIST_ID);
+    NimBLEDevice::setSecurityRespKey(
+        BLE_SM_PAIR_KEY_DIST_ENC | BLE_SM_PAIR_KEY_DIST_ID);
+    // Keeping the library sentinel makes it request the passkey through our
+    // callback, where the random code is also safely forwarded to the UI task.
+    NimBLEDevice::setSecurityPasskey(123456U);
+    ble_server = NimBLEDevice::createServer();
+    ble_server->advertiseOnDisconnect(false);
+    ble_server->setCallbacks(new ControllerServerCallbacks());
+    NimBLEService *service = ble_server->createService(BLE_SERVICE_UUID);
     NimBLECharacteristic *command = service->createCharacteristic(
-        BLE_COMMAND_UUID, NIMBLE_PROPERTY::WRITE | NIMBLE_PROPERTY::WRITE_NR);
+        BLE_COMMAND_UUID,
+        NIMBLE_PROPERTY::WRITE |
+            NIMBLE_PROPERTY::WRITE_NR |
+            NIMBLE_PROPERTY::WRITE_ENC |
+            NIMBLE_PROPERTY::WRITE_AUTHEN);
     command->setCallbacks(new CommandCharacteristicCallbacks());
     events_characteristic = service->createCharacteristic(
-        BLE_EVENTS_UUID, NIMBLE_PROPERTY::READ | NIMBLE_PROPERTY::NOTIFY);
+        BLE_EVENTS_UUID,
+        NIMBLE_PROPERTY::READ |
+            NIMBLE_PROPERTY::NOTIFY |
+            NIMBLE_PROPERTY::READ_ENC |
+            NIMBLE_PROPERTY::READ_AUTHEN);
     NimBLECharacteristic *info = service->createCharacteristic(
-        BLE_INFO_UUID, NIMBLE_PROPERTY::READ);
+        BLE_INFO_UUID,
+        NIMBLE_PROPERTY::READ |
+            NIMBLE_PROPERTY::READ_ENC |
+            NIMBLE_PROPERTY::READ_AUTHEN);
     char info_json[384];
     snprintf(
         info_json,
@@ -614,8 +992,9 @@ void controller_ble_task(void *) {
         "\"protocol\":2,\"apiVersions\":[1,2],"
         "\"maxCommand\":4096,\"maxParts\":32,"
         "\"capabilitiesOp\":\"capabilities\",\"auth\":\"short_lived_token\","
-        "\"security\":{\"linkEncryption\":false,\"bonding\":false,"
-        "\"mitmProtection\":false}}",
+        "\"security\":{\"linkEncryption\":true,\"bonding\":true,"
+        "\"mitmProtection\":true,\"secureConnections\":true,"
+        "\"minimumKeySize\":16}}",
         FirmwareInfo::VERSION);
     info->setValue(info_json);
 
@@ -625,27 +1004,108 @@ void controller_ble_task(void *) {
     advertising->enableScanResponse(true);
     advertising->setPreferredParams(0x06U, 0x12U);
     advertising->start();
-    Serial.println("BLE: cydAkwarium GATT protocol v2 ready.");
+    ble_initialized = true;
+    Serial.printf(
+        "BLE: secure GATT v2 ready; persisted bonds=%d.\n",
+        NimBLEDevice::getNumBonds());
 
     uint32_t last_status_ms = 0U;
     for (;;) {
-        const CallbackError callback_error = pending_callback_error;
-        if (callback_error != CallbackError::None) {
-            pending_callback_error = CallbackError::None;
-            if (callback_error == CallbackError::QueueFull) {
+        const uint32_t now_ms = millis();
+        aquarium::BlePairingAttemptState expired_pairing = {};
+        if (take_expired_pairing_attempt(
+                now_ms,
+                &expired_pairing)) {
+            gui_app_update_ble_pairing(0U, 3U);
+            const BleSession active_session =
+                mark_active_connection_unsecured();
+            if (ble_server != nullptr &&
+                session_is_valid(active_session) &&
+                active_session.conn_handle ==
+                    expired_pairing.connection_handle) {
+                ble_server->disconnect(
+                    active_session.conn_handle,
+                    BLE_ERR_REM_USER_CONN_TERM);
+            }
+        }
+        if (forget_bonds_requested) {
+            forget_bonds_requested = false;
+            bond_reset_pending = true;
+            bond_reset_at_ms = now_ms + BLE_BOND_RESET_GRACE_MS;
+            clear_pairing_attempt();
+            NimBLEDevice::stopAdvertising();
+            const BleSession active_session =
+                mark_active_connection_unsecured();
+            if (ble_server != nullptr &&
+                session_is_valid(active_session) &&
+                !ble_server->disconnect(
+                    active_session.conn_handle,
+                    BLE_ERR_REM_USER_CONN_TERM)) {
+                Serial.printf(
+                    "BLE: disconnect retry scheduled for handle=%u.\n",
+                    static_cast<unsigned>(active_session.conn_handle));
+            }
+        }
+        if (bond_reset_pending &&
+            static_cast<int32_t>(now_ms - bond_reset_at_ms) >= 0) {
+            if (ble_server != nullptr &&
+                ble_server->getConnectedCount() > 0U) {
+                const BleSession active_session =
+                    mark_active_connection_unsecured();
+                if (session_is_valid(active_session)) {
+                    ble_server->disconnect(
+                        active_session.conn_handle,
+                        BLE_ERR_REM_USER_CONN_TERM);
+                } else {
+                    const NimBLEConnInfo peer = ble_server->getPeerInfo(0U);
+                    ble_server->disconnect(
+                        peer.getConnHandle(),
+                        BLE_ERR_REM_USER_CONN_TERM);
+                }
+                bond_reset_at_ms =
+                    now_ms + BLE_BOND_RESET_GRACE_MS;
+                continue;
+            }
+            const bool deleted = NimBLEDevice::deleteAllBonds();
+            gui_app_update_ble_pairing(0U, deleted ? 0U : 3U);
+            Serial.printf(
+                "BLE: bond reset %s; remaining=%d.\n",
+                deleted ? "completed" : "failed",
+                NimBLEDevice::getNumBonds());
+            bond_reset_pending = false;
+            NimBLEDevice::startAdvertising();
+        }
+        const CallbackFailure callback_failure =
+            take_callback_failure();
+        if (callback_failure.error != CallbackError::None &&
+            active_secured_session_matches(callback_failure.session)) {
+            processing_session = callback_failure.session;
+            if (callback_failure.error == CallbackError::QueueFull) {
                 send_response(0, {false, "queue_full", "Kolejka komend BLE jest pelna."});
-            } else if (callback_error == CallbackError::InvalidFragment) {
+            } else if (callback_failure.error ==
+                       CallbackError::InvalidFragment) {
                 send_response(0, {false, "invalid_fragment", "Nieprawidlowa sekwencja ramek BLE."});
             } else {
                 send_response(0, {false, "invalid_command", "Nieprawidlowy rozmiar komendy BLE."});
             }
+            processing_session = {BLE_INVALID_CONN_HANDLE, 0U};
         }
         if (xQueueReceive(command_queue, &processing_command, pdMS_TO_TICKS(50U)) == pdTRUE) {
-            process_command(processing_command);
+            if (active_secured_session_matches(
+                    processing_command.session)) {
+                processing_session = processing_command.session;
+                process_command(processing_command);
+                processing_session = {
+                    BLE_INVALID_CONN_HANDLE,
+                    0U};
+            }
+            processing_command.session = {
+                BLE_INVALID_CONN_HANDLE,
+                0U};
             processing_command.json[0] = '\0';
         }
-        const uint32_t now_ms = millis();
-        if (client_connected && now_ms - last_status_ms >= BLE_STATUS_INTERVAL_MS) {
+        if (session_is_valid(active_session_snapshot(true)) &&
+            now_ms - last_status_ms >= BLE_STATUS_INTERVAL_MS) {
             last_status_ms = now_ms;
             send_legacy_status();
         }
@@ -653,6 +1113,18 @@ void controller_ble_task(void *) {
 }
 
 } // namespace
+
+bool ble_controller_request_forget_bonds() {
+    if (!ble_initialized) {
+        return false;
+    }
+    forget_bonds_requested = true;
+    return true;
+}
+
+int ble_controller_bond_count() {
+    return ble_initialized ? NimBLEDevice::getNumBonds() : 0;
+}
 
 extern "C" void initVariant(void) {
     const BaseType_t created = xTaskCreatePinnedToCore(

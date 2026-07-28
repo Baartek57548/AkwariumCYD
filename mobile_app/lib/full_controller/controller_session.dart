@@ -6,9 +6,100 @@ import 'package:flutter/foundation.dart';
 import 'controller_api.dart';
 import 'connection_health.dart';
 import 'data_access.dart';
+import 'firmware_package.dart';
+import 'firmware_release_service.dart';
 import 'history_data.dart';
 
 enum ControllerSessionKind { wifi, bluetooth, offline, development }
+
+enum FirmwareUpdatePhase {
+  idle,
+  validating,
+  uploading,
+  awaitingRestart,
+  succeeded,
+  failed,
+}
+
+class FirmwareUpdateStatus {
+  const FirmwareUpdateStatus({
+    required this.phase,
+    required this.progress,
+    required this.message,
+    this.package,
+    this.errorCode,
+  });
+
+  const FirmwareUpdateStatus.idle()
+    : phase = FirmwareUpdatePhase.idle,
+      progress = 0,
+      message = '',
+      package = null,
+      errorCode = null;
+
+  final FirmwareUpdatePhase phase;
+  final double progress;
+  final String message;
+  final FirmwarePackage? package;
+  final String? errorCode;
+
+  bool get isActive =>
+      phase == FirmwareUpdatePhase.validating ||
+      phase == FirmwareUpdatePhase.uploading;
+  bool get isError => phase == FirmwareUpdatePhase.failed;
+}
+
+enum FirmwareReleasePhase {
+  idle,
+  checking,
+  upToDate,
+  available,
+  downloading,
+  canceling,
+  readyToInstall,
+  installing,
+  awaitingRestart,
+  failed,
+}
+
+class FirmwareReleaseStatus {
+  const FirmwareReleaseStatus({
+    required this.phase,
+    this.release,
+    this.package,
+    this.progress = 0,
+    this.message,
+    this.isManual = false,
+  });
+
+  const FirmwareReleaseStatus.idle()
+    : phase = FirmwareReleasePhase.idle,
+      release = null,
+      package = null,
+      progress = 0,
+      message = null,
+      isManual = false;
+
+  final FirmwareReleasePhase phase;
+  final FirmwareRelease? release;
+  final FirmwarePackage? package;
+  final double progress;
+  final String? message;
+  final bool isManual;
+
+  bool get isBusy =>
+      phase == FirmwareReleasePhase.checking ||
+      phase == FirmwareReleasePhase.downloading ||
+      phase == FirmwareReleasePhase.canceling ||
+      phase == FirmwareReleasePhase.installing;
+  bool get hasUpdate =>
+      phase == FirmwareReleasePhase.available ||
+      phase == FirmwareReleasePhase.downloading ||
+      phase == FirmwareReleasePhase.canceling ||
+      phase == FirmwareReleasePhase.readyToInstall ||
+      phase == FirmwareReleasePhase.installing ||
+      phase == FirmwareReleasePhase.awaitingRestart;
+}
 
 class ControllerSession extends ChangeNotifier {
   static const Duration _onlinePollInterval = Duration(seconds: 3);
@@ -16,6 +107,9 @@ class ControllerSession extends ChangeNotifier {
   static const Duration _heartbeatInterval = Duration(seconds: 5);
   static const Duration _commandFreshnessLimit = Duration(seconds: 15);
   static const Duration _adminSessionTimeout = Duration(minutes: 5);
+  static const Duration _firmwareReleaseRefreshInterval = Duration(hours: 6);
+  static const Duration _firmwareReleaseRetryBase = Duration(seconds: 30);
+  static const Duration _firmwareReleaseRetryMaximum = Duration(minutes: 30);
   static const int _offlineFailureThreshold = 3;
   static const int _maximumCachedArchives = 2;
   static const int _maximumArchiveBytes = 8 * 1024 * 1024;
@@ -42,8 +136,10 @@ class ControllerSession extends ChangeNotifier {
     ControllerRemoteApi api, {
     JsonMap? initialStatus,
     DateTime? cachedAt,
+    FirmwareReleaseRepository? firmwareReleaseRepository,
   }) : kind = ControllerSessionKind.wifi,
        _api = api,
+       _firmwareReleaseRepository = firmwareReleaseRepository,
        _offlineMode = false,
        _status = initialStatus ?? _createOfflineStatus() {
     _lastUpdate = cachedAt;
@@ -55,16 +151,19 @@ class ControllerSession extends ChangeNotifier {
     DateTime? cachedAt,
   }) : kind = ControllerSessionKind.bluetooth,
        _api = api,
+       _firmwareReleaseRepository = null,
        _offlineMode = false,
        _status = initialStatus ?? _createOfflineStatus() {
     _lastUpdate = cachedAt;
   }
 
-  ControllerSession.development()
-    : kind = ControllerSessionKind.development,
-      _api = null,
-      _offlineMode = false,
-      _status = _createDevelopmentStatus() {
+  ControllerSession.development({
+    FirmwareReleaseRepository? firmwareReleaseRepository,
+  }) : kind = ControllerSessionKind.development,
+       _api = null,
+       _firmwareReleaseRepository = firmwareReleaseRepository,
+       _offlineMode = false,
+       _status = _createDevelopmentStatus() {
     _capabilities = _createDevelopmentCapabilities();
     _logs = _createDevelopmentLogs();
     _diagnostics = _createDevelopmentDiagnostics();
@@ -73,6 +172,7 @@ class ControllerSession extends ChangeNotifier {
   ControllerSession.offline({JsonMap? cachedStatus, DateTime? cachedAt})
     : kind = ControllerSessionKind.offline,
       _api = null,
+      _firmwareReleaseRepository = null,
       _offlineMode = true,
       _status = cachedStatus == null || cachedStatus.isEmpty
           ? _createOfflineStatus()
@@ -83,6 +183,7 @@ class ControllerSession extends ChangeNotifier {
 
   final ControllerSessionKind kind;
   final ControllerRemoteApi? _api;
+  final FirmwareReleaseRepository? _firmwareReleaseRepository;
   final bool _offlineMode;
   JsonMap _status;
   JsonMap _capabilities = <String, dynamic>{};
@@ -94,6 +195,7 @@ class ControllerSession extends ChangeNotifier {
   Timer? _developmentTimer;
   Timer? _webSessionTimer;
   Timer? _adminSessionTimer;
+  Timer? _firmwareReleaseRetryTimer;
   Future<void>? _connectOperation;
   Future<void>? _refreshOperation;
   Future<void>? _heartbeatOperation;
@@ -104,6 +206,16 @@ class ControllerSession extends ChangeNotifier {
   DateTime? _adminTokenExpiresAt;
   String? _error;
   String? _activeAction;
+  FirmwareUpdateStatus _firmwareUpdateStatus =
+      const FirmwareUpdateStatus.idle();
+  FirmwareReleaseStatus _firmwareReleaseStatus =
+      const FirmwareReleaseStatus.idle();
+  Future<void>? _firmwareReleaseCheckOperation;
+  Future<FirmwarePackage>? _firmwareReleaseDownloadOperation;
+  FirmwareDownloadCancellationToken? _firmwareDownloadCancellationToken;
+  Uint8List? _downloadedFirmwareBytes;
+  int _firmwareDownloadGeneration = 0;
+  int _firmwareReleaseCheckFailures = 0;
   bool _connected = false;
   bool _appActive = true;
   bool _automaticReconnect = true;
@@ -133,14 +245,14 @@ class ControllerSession extends ChangeNotifier {
   bool get automaticReconnect => _automaticReconnect;
   bool get busy => _busyOperations > 0;
   bool get isAdmin =>
-      _adminPin != null &&
-      (_adminToken == null ||
-          (_adminTokenExpiresAt?.isAfter(DateTime.now()) ?? false));
+      _validAdminToken != null || (_adminToken == null && _adminPin != null);
   String? get error => _error;
   DateTime? get lastUpdate => _lastUpdate;
   Duration? get roundTrip => _lastRoundTrip;
   ControllerConnectionPhase get connectionPhase => _connectionPhase;
   String? get activeAction => _activeAction;
+  FirmwareUpdateStatus get firmwareUpdateStatus => _firmwareUpdateStatus;
+  FirmwareReleaseStatus get firmwareReleaseStatus => _firmwareReleaseStatus;
   bool isActionPending(String name) => _activeAction == name;
   JsonMap get status => _status;
   JsonMap get capabilities => Map<String, dynamic>.unmodifiable(_capabilities);
@@ -163,9 +275,27 @@ class ControllerSession extends ChangeNotifier {
     roundTrip: _lastRoundTrip,
     lastSync: _lastUpdate,
   );
-  bool get supportsFirmwareUpload =>
-      isSimulation ||
-      (canIssueCommands && (_api?.supportsFirmwareUpload ?? false));
+  bool get supportsFirmwareUpload => firmwareUpdateBlockReason == null;
+  String? get firmwareUpdateBlockReason {
+    if (isDevelopment) return null;
+    if (isBluetooth) return 'Aktualizacja firmware wymaga połączenia Wi-Fi.';
+    if (!canIssueCommands) {
+      return commandBlockReason ?? 'Sterownik nie jest gotowy do aktualizacji.';
+    }
+    if (!(_api?.supportsFirmwareUpload ?? false)) {
+      return 'Ten transport nie obsługuje aktualizacji firmware.';
+    }
+    if (protocolVersion < 2 || !supportsFeature('safeOta')) {
+      return 'Sterownik nie obsługuje bezpiecznych pakietów OTA.';
+    }
+    try {
+      _firmwareValidationContext();
+      return null;
+    } on ControllerApiException catch (error) {
+      return error.message;
+    }
+  }
+
   bool get supportsFileDownload =>
       _offlineMode || isSimulation || (_api?.supportsFileDownload ?? false);
   bool get isLegacyBluetooth =>
@@ -262,6 +392,7 @@ class ControllerSession extends ChangeNotifier {
         _lastRoundTrip = Duration.zero;
         _connectionPhase = ControllerConnectionPhase.online;
         _startDevelopmentTicker();
+        _startAutomaticFirmwareReleaseCheck();
         return;
       }
 
@@ -272,6 +403,7 @@ class ControllerSession extends ChangeNotifier {
       );
       if (!_connected) return;
       await _discoverProtocolCapabilities();
+      _startAutomaticFirmwareReleaseCheck();
 
       if (_api.supportsWebSession) {
         await _sendWebSessionHeartbeat();
@@ -408,7 +540,11 @@ class ControllerSession extends ChangeNotifier {
       _webSessionTimer = null;
       _developmentTimer?.cancel();
       _developmentTimer = null;
+      _firmwareReleaseRetryTimer?.cancel();
+      _firmwareReleaseRetryTimer = null;
+      final tokenToRevoke = _validAdminToken;
       _clearAdminSession();
+      _revokeAdminSessionBestEffort(tokenToRevoke);
       _notifySafely();
       return;
     }
@@ -421,13 +557,24 @@ class ControllerSession extends ChangeNotifier {
     if (isDevelopment) {
       _startDevelopmentTicker();
       _tickDevelopment();
+      _startAutomaticFirmwareReleaseCheck();
       return;
     }
 
     if (_connectionPhase == ControllerConnectionPhase.online) {
-      unawaited(refresh(reportBusy: false).whenComplete(_schedulePoll));
+      unawaited(
+        refresh(reportBusy: false).whenComplete(() {
+          _schedulePoll();
+          _startAutomaticFirmwareReleaseCheck();
+        }),
+      );
     } else if (_automaticReconnect) {
-      unawaited(connect(reportBusy: false).whenComplete(_schedulePoll));
+      unawaited(
+        connect(reportBusy: false).whenComplete(() {
+          _schedulePoll();
+          _startAutomaticFirmwareReleaseCheck();
+        }),
+      );
     } else {
       _pollTimer?.cancel();
       _pollTimer = null;
@@ -478,6 +625,7 @@ class ControllerSession extends ChangeNotifier {
     if (_disposed ||
         !_appActive ||
         isDevelopment ||
+        _firmwareUpdateStatus.isActive ||
         (!_automaticReconnect &&
             _connectionPhase != ControllerConnectionPhase.online)) {
       return;
@@ -513,6 +661,7 @@ class ControllerSession extends ChangeNotifier {
     if (_disposed ||
         !_appActive ||
         isDevelopment ||
+        _firmwareUpdateStatus.isActive ||
         !_connected ||
         _connectionPhase != ControllerConnectionPhase.online ||
         !_api!.supportsWebSession) {
@@ -527,6 +676,8 @@ class ControllerSession extends ChangeNotifier {
 
   void _recordConnectionFailure(String message) {
     if (_disposed) return;
+    _firmwareReleaseRetryTimer?.cancel();
+    _firmwareReleaseRetryTimer = null;
     _failedPolls += 1;
     _connected = false;
     _error = message;
@@ -636,8 +787,20 @@ class ControllerSession extends ChangeNotifier {
           message: 'Bezpieczna sesja administratora jest aktywna.',
         );
       } on ControllerApiException catch (error) {
-        if (!_canFallbackToLegacyAuthentication(error)) rethrow;
+        if (!_allowsLegacyPinFallback ||
+            !_canFallbackToLegacyAuthentication(error)) {
+          rethrow;
+        }
       }
+    }
+    if (!_allowsLegacyPinFallback) {
+      throw const ControllerApiException(
+        code: 'secure_session_required',
+        statusCode: 401,
+        message:
+            'Sterownik nie zezwala na logowanie PIN-em w starszym protokole. '
+            'Wymagana jest bezpieczna sesja administratora.',
+      );
     }
     final result = await api.authenticate(normalized);
     _activateAdminSession(normalized);
@@ -645,9 +808,19 @@ class ControllerSession extends ChangeNotifier {
     return result;
   }
 
-  void logout() {
+  Future<void> logout() async {
+    final token = _validAdminToken;
+    final api = _api;
     _clearAdminSession();
-    notifyListeners();
+    _notifySafely();
+    if (!isDevelopment && token != null && api is ControllerProtocolV2Api) {
+      try {
+        await (api as ControllerProtocolV2Api).revokeSession(token);
+      } on Object {
+        // Wylogowanie lokalne musi zakończyć się także po utracie połączenia.
+        // Token po stronie sterownika ma dodatkowo krótki czas ważności.
+      }
+    }
   }
 
   Future<ControllerActionResult> action(
@@ -663,7 +836,6 @@ class ControllerSession extends ChangeNotifier {
       );
     }
     _requireLiveController();
-    final pin = _requirePin();
     if (_activeAction != null) {
       throw ControllerApiException(
         code: 'action_in_progress',
@@ -677,11 +849,18 @@ class ControllerSession extends ChangeNotifier {
     try {
       final api = _api;
       final token = _validAdminToken;
+      final authorization = isDevelopment
+          ? (sessionToken: null, legacyPin: _requirePin())
+          : _protectedRequestAuthorization();
       final protocolV2Api = api is ControllerProtocolV2Api
           ? api as ControllerProtocolV2Api
           : null;
       final result = isDevelopment
-          ? _performDevelopmentAction(normalizedName, payload, pin)
+          ? _performDevelopmentAction(
+              normalizedName,
+              payload,
+              authorization.legacyPin!,
+            )
           : token != null &&
                 protocolV2Api != null &&
                 _protocolV2Actions.contains(normalizedName)
@@ -691,7 +870,12 @@ class ControllerSession extends ChangeNotifier {
               token: token,
               payload: payload,
             )
-          : await api!.action(normalizedName, payload: payload, pin: pin);
+          : await api!.action(
+              normalizedName,
+              payload: payload,
+              sessionToken: authorization.sessionToken,
+              legacyPin: authorization.legacyPin,
+            );
       if (refreshAfter) {
         if (isDevelopment) {
           _lastUpdate = DateTime.now();
@@ -714,11 +898,18 @@ class ControllerSession extends ChangeNotifier {
 
   Future<void> loadLogs() async {
     _requireLiveController();
-    final pin = _requirePin();
     _beginBusy();
     _notifySafely();
     try {
-      _logs = isDevelopment ? _logs : await _api!.logs(pin);
+      if (isDevelopment) {
+        _requirePin();
+      } else {
+        final authorization = _protectedRequestAuthorization();
+        _logs = await _api!.logs(
+          sessionToken: authorization.sessionToken,
+          legacyPin: authorization.legacyPin,
+        );
+      }
     } on ControllerApiException catch (error) {
       if (error.isAuthenticationError) _clearAdminSession();
       rethrow;
@@ -730,13 +921,19 @@ class ControllerSession extends ChangeNotifier {
 
   Future<void> scanBuses() async {
     _requireLiveController();
-    final pin = _requirePin();
     _beginBusy();
     _notifySafely();
     try {
-      _diagnostics = isDevelopment
-          ? _createDevelopmentDiagnostics()
-          : await _api!.busDiagnostics(pin);
+      if (isDevelopment) {
+        _requirePin();
+        _diagnostics = _createDevelopmentDiagnostics();
+      } else {
+        final authorization = _protectedRequestAuthorization();
+        _diagnostics = await _api!.busDiagnostics(
+          sessionToken: authorization.sessionToken,
+          legacyPin: authorization.legacyPin,
+        );
+      }
     } on ControllerApiException catch (error) {
       if (error.isAuthenticationError) _clearAdminSession();
       rethrow;
@@ -949,17 +1146,446 @@ class ControllerSession extends ChangeNotifier {
 
   Future<void> setBrowserTime() async {
     _requireLiveController();
-    final pin = _requirePin();
     if (isDevelopment) {
+      _requirePin();
       _applyDevelopmentClock(DateTime.now());
       notifyListeners();
       return;
     }
+    final authorization = _protectedRequestAuthorization();
     await _api!.setBrowserTime(
       DateTime.now().millisecondsSinceEpoch ~/ 1000,
-      pin,
+      sessionToken: authorization.sessionToken,
+      legacyPin: authorization.legacyPin,
     );
     await refresh(reportBusy: false);
+  }
+
+  void _startAutomaticFirmwareReleaseCheck() {
+    if (_disposed ||
+        !_appActive ||
+        _firmwareReleaseRepository == null ||
+        !supportsFirmwareUpload ||
+        _hasCachedFirmwareReleasePackage ||
+        _firmwareReleaseStatus.phase == FirmwareReleasePhase.downloading ||
+        _firmwareReleaseStatus.phase == FirmwareReleasePhase.canceling ||
+        _firmwareReleaseStatus.phase == FirmwareReleasePhase.installing) {
+      return;
+    }
+    _firmwareReleaseRetryTimer?.cancel();
+    _firmwareReleaseRetryTimer = null;
+    unawaited(checkForFirmwareUpdates());
+  }
+
+  Future<void> checkForFirmwareUpdates({bool manual = false}) {
+    final running = _firmwareReleaseCheckOperation;
+    if (running != null) return running;
+    if (_hasCachedFirmwareReleasePackage) return Future<void>.value();
+    _firmwareReleaseRetryTimer?.cancel();
+    _firmwareReleaseRetryTimer = null;
+    late final Future<void> operation;
+    operation = _performFirmwareReleaseCheck(manual: manual).whenComplete(() {
+      if (identical(_firmwareReleaseCheckOperation, operation)) {
+        _firmwareReleaseCheckOperation = null;
+      }
+    });
+    _firmwareReleaseCheckOperation = operation;
+    return operation;
+  }
+
+  Future<void> _performFirmwareReleaseCheck({required bool manual}) async {
+    final repository = _firmwareReleaseRepository;
+    if (repository == null) {
+      if (manual) {
+        _emitFirmwareRelease(
+          FirmwareReleasePhase.failed,
+          message: 'Automatyczne sprawdzanie firmware jest niedostępne.',
+          isManual: true,
+        );
+      }
+      return;
+    }
+    if (_firmwareUpdateStatus.isActive ||
+        _firmwareReleaseStatus.phase == FirmwareReleasePhase.downloading ||
+        _firmwareReleaseStatus.phase == FirmwareReleasePhase.canceling ||
+        _firmwareReleaseStatus.phase == FirmwareReleasePhase.installing ||
+        _hasCachedFirmwareReleasePackage) {
+      return;
+    }
+
+    FirmwarePackageValidationContext context;
+    try {
+      context = _firmwareValidationContext();
+    } on ControllerApiException catch (error) {
+      _emitFirmwareRelease(
+        manual ? FirmwareReleasePhase.failed : FirmwareReleasePhase.idle,
+        message: manual ? error.message : null,
+        isManual: manual,
+      );
+      _scheduleFirmwareReleaseCheck(failed: true);
+      return;
+    }
+
+    final previousStatus = _firmwareReleaseStatus;
+    _emitFirmwareRelease(
+      FirmwareReleasePhase.checking,
+      release: previousStatus.release,
+      package: previousStatus.package,
+      progress: previousStatus.progress,
+      message: 'Sprawdzanie wydań firmware na GitHubie…',
+      isManual: manual,
+    );
+    try {
+      final release = await repository.fetchLatestFirmwareRelease(
+        context.expectedTarget,
+      );
+      if (release == null ||
+          FirmwarePackageParser.compareSemanticVersions(
+                release.version,
+                context.currentVersion,
+              ) <=
+              0) {
+        _downloadedFirmwareBytes = null;
+        _emitFirmwareRelease(
+          FirmwareReleasePhase.upToDate,
+          message: 'Sterownik ma najnowszą dostępną wersję firmware.',
+          isManual: manual,
+        );
+        _scheduleFirmwareReleaseCheck(failed: false);
+        return;
+      }
+      _downloadedFirmwareBytes = null;
+      _emitFirmwareRelease(
+        FirmwareReleasePhase.available,
+        release: release,
+        message:
+            'Dostępny firmware ${release.version} dla '
+            '${release.target.label}.',
+        isManual: manual,
+      );
+      _scheduleFirmwareReleaseCheck(failed: false);
+    } on FirmwareReleaseException catch (error) {
+      _handleFirmwareReleaseCheckFailure(
+        previousStatus,
+        manual: manual,
+        message: error.message,
+      );
+    } on FirmwarePackageException catch (error) {
+      _handleFirmwareReleaseCheckFailure(
+        previousStatus,
+        manual: manual,
+        message: error.message,
+      );
+    } on Object {
+      _handleFirmwareReleaseCheckFailure(
+        previousStatus,
+        manual: manual,
+        message: 'Nie udało się sprawdzić dostępności firmware.',
+      );
+    }
+  }
+
+  void _handleFirmwareReleaseCheckFailure(
+    FirmwareReleaseStatus previousStatus, {
+    required bool manual,
+    required String message,
+  }) {
+    if (manual) {
+      _emitFirmwareRelease(
+        FirmwareReleasePhase.failed,
+        release: previousStatus.release,
+        package: previousStatus.package,
+        progress: previousStatus.progress,
+        message: message,
+        isManual: true,
+      );
+    } else if (previousStatus.phase != FirmwareReleasePhase.checking &&
+        previousStatus.phase != FirmwareReleasePhase.idle) {
+      _emitFirmwareRelease(
+        previousStatus.phase,
+        release: previousStatus.release,
+        package: previousStatus.package,
+        progress: previousStatus.progress,
+        message: previousStatus.message,
+      );
+    } else {
+      _emitFirmwareRelease(FirmwareReleasePhase.idle);
+    }
+    _scheduleFirmwareReleaseCheck(failed: true);
+  }
+
+  void _scheduleFirmwareReleaseCheck({required bool failed}) {
+    _firmwareReleaseRetryTimer?.cancel();
+    _firmwareReleaseRetryTimer = null;
+    if (_disposed ||
+        !_appActive ||
+        _firmwareReleaseRepository == null ||
+        !supportsFirmwareUpload ||
+        _hasCachedFirmwareReleasePackage ||
+        _firmwareReleaseStatus.phase == FirmwareReleasePhase.downloading ||
+        _firmwareReleaseStatus.phase == FirmwareReleasePhase.canceling ||
+        _firmwareReleaseStatus.phase == FirmwareReleasePhase.installing) {
+      return;
+    }
+
+    final Duration delay;
+    if (failed) {
+      _firmwareReleaseCheckFailures = min(
+        _firmwareReleaseCheckFailures + 1,
+        16,
+      );
+      final exponent = min(_firmwareReleaseCheckFailures - 1, 6);
+      final milliseconds = min(
+        _firmwareReleaseRetryMaximum.inMilliseconds,
+        _firmwareReleaseRetryBase.inMilliseconds * (1 << exponent),
+      );
+      delay = Duration(milliseconds: milliseconds);
+    } else {
+      _firmwareReleaseCheckFailures = 0;
+      delay = _firmwareReleaseRefreshInterval;
+    }
+
+    _firmwareReleaseRetryTimer = Timer(delay, () {
+      _firmwareReleaseRetryTimer = null;
+      _startAutomaticFirmwareReleaseCheck();
+    });
+  }
+
+  bool get _hasCachedFirmwareReleasePackage {
+    final release = _firmwareReleaseStatus.release;
+    final package = _firmwareReleaseStatus.package;
+    final bytes = _downloadedFirmwareBytes;
+    return release != null &&
+        package != null &&
+        bytes != null &&
+        identical(package.bytes, bytes) &&
+        package.firmwareVersion == release.version &&
+        package.target == release.target;
+  }
+
+  Future<FirmwarePackage> downloadAvailableFirmware() {
+    final running = _firmwareReleaseDownloadOperation;
+    if (running != null) return running;
+    _firmwareReleaseRetryTimer?.cancel();
+    _firmwareReleaseRetryTimer = null;
+    final cancellationToken = FirmwareDownloadCancellationToken();
+    final generation = ++_firmwareDownloadGeneration;
+    _firmwareDownloadCancellationToken = cancellationToken;
+    late final Future<FirmwarePackage> operation;
+    operation =
+        _performFirmwareReleaseDownload(
+          generation: generation,
+          cancellationToken: cancellationToken,
+        ).whenComplete(() {
+          cancellationToken.cancel();
+          if (identical(_firmwareReleaseDownloadOperation, operation)) {
+            _firmwareReleaseDownloadOperation = null;
+          }
+          if (identical(
+            _firmwareDownloadCancellationToken,
+            cancellationToken,
+          )) {
+            _firmwareDownloadCancellationToken = null;
+          }
+        });
+    _firmwareReleaseDownloadOperation = operation;
+    return operation;
+  }
+
+  Future<FirmwarePackage> _performFirmwareReleaseDownload({
+    required int generation,
+    required FirmwareDownloadCancellationToken cancellationToken,
+  }) async {
+    final repository = _firmwareReleaseRepository;
+    final release = _firmwareReleaseStatus.release;
+    if (repository == null || release == null) {
+      throw const ControllerApiException(
+        code: 'firmware_release_unavailable',
+        message: 'Nie wybrano dostępnego wydania firmware.',
+      );
+    }
+    if (!supportsFirmwareUpload) {
+      throw ControllerApiException(
+        code: 'ota_unavailable',
+        message:
+            firmwareUpdateBlockReason ??
+            'Sterownik nie jest gotowy do aktualizacji.',
+      );
+    }
+    if (_hasCachedFirmwareReleasePackage) {
+      final package = _firmwareReleaseStatus.package!;
+      _emitFirmwareRelease(
+        FirmwareReleasePhase.readyToInstall,
+        release: release,
+        package: package,
+        progress: 1,
+        message:
+            'Integralność i zgodność pakietu są sprawdzone. '
+            'Podpis RSA zweryfikuje sterownik przed instalacją.',
+      );
+      return package;
+    }
+
+    _emitFirmwareRelease(
+      FirmwareReleasePhase.downloading,
+      release: release,
+      progress: 0,
+      message: 'Pobieranie podpisanego pakietu z GitHuba…',
+    );
+    try {
+      final bytes = await repository.downloadFirmwarePackage(
+        release: release,
+        onProgress: (progress) {
+          if (!_canReportFirmwareDownloadProgress(
+            generation,
+            cancellationToken,
+          )) {
+            return;
+          }
+          _emitFirmwareRelease(
+            FirmwareReleasePhase.downloading,
+            release: release,
+            progress: progress.clamp(0.0, 1.0),
+            message: 'Pobieranie podpisanego pakietu z GitHuba…',
+          );
+        },
+        cancellationToken: cancellationToken,
+      );
+      if (!_ownsFirmwareDownload(generation, cancellationToken) ||
+          cancellationToken.isCanceled) {
+        throw const FirmwareReleaseException(
+          code: 'download_canceled',
+          message: 'Pobieranie firmware zostało anulowane.',
+        );
+      }
+
+      final package = inspectFirmwarePackage(bytes, release.asset.name);
+      if (package.firmwareVersion != release.version ||
+          package.target != release.target) {
+        throw const ControllerApiException(
+          code: 'release_package_mismatch',
+          message: 'Pobrany pakiet nie odpowiada wybranemu wydaniu.',
+        );
+      }
+      _downloadedFirmwareBytes = bytes;
+      _emitFirmwareRelease(
+        FirmwareReleasePhase.readyToInstall,
+        release: release,
+        package: package,
+        progress: 1,
+        message:
+            'Integralność i zgodność pakietu są sprawdzone. '
+            'Podpis RSA zweryfikuje sterownik przed instalacją.',
+      );
+      return package;
+    } on FirmwareReleaseException catch (error) {
+      if (_ownsFirmwareDownload(generation, cancellationToken)) {
+        _downloadedFirmwareBytes = null;
+        _emitFirmwareRelease(
+          error.code == 'download_canceled'
+              ? FirmwareReleasePhase.available
+              : FirmwareReleasePhase.failed,
+          release: release,
+          message: error.message,
+        );
+      }
+      throw ControllerApiException(code: error.code, message: error.message);
+    } on ControllerApiException catch (error) {
+      if (_ownsFirmwareDownload(generation, cancellationToken)) {
+        _downloadedFirmwareBytes = null;
+        _emitFirmwareRelease(
+          FirmwareReleasePhase.failed,
+          release: release,
+          message: error.message,
+        );
+      }
+      rethrow;
+    } on Object {
+      const error = ControllerApiException(
+        code: 'firmware_download_failed',
+        message: 'Nie udało się bezpiecznie pobrać firmware.',
+      );
+      if (_ownsFirmwareDownload(generation, cancellationToken)) {
+        _downloadedFirmwareBytes = null;
+        _emitFirmwareRelease(
+          FirmwareReleasePhase.failed,
+          release: release,
+          message: error.message,
+        );
+      }
+      throw error;
+    }
+  }
+
+  bool _ownsFirmwareDownload(
+    int generation,
+    FirmwareDownloadCancellationToken cancellationToken,
+  ) {
+    return !_disposed &&
+        generation == _firmwareDownloadGeneration &&
+        identical(_firmwareDownloadCancellationToken, cancellationToken);
+  }
+
+  bool _canReportFirmwareDownloadProgress(
+    int generation,
+    FirmwareDownloadCancellationToken cancellationToken,
+  ) {
+    return _ownsFirmwareDownload(generation, cancellationToken) &&
+        !cancellationToken.isCanceled &&
+        _firmwareReleaseStatus.phase == FirmwareReleasePhase.downloading;
+  }
+
+  void cancelFirmwareDownload() {
+    if (_firmwareReleaseStatus.phase == FirmwareReleasePhase.downloading) {
+      final cancellationToken = _firmwareDownloadCancellationToken;
+      _emitFirmwareRelease(
+        FirmwareReleasePhase.canceling,
+        release: _firmwareReleaseStatus.release,
+        package: _firmwareReleaseStatus.package,
+        progress: _firmwareReleaseStatus.progress,
+        message: 'Anulowanie pobierania firmware…',
+      );
+      cancellationToken?.cancel();
+    }
+  }
+
+  void _emitFirmwareRelease(
+    FirmwareReleasePhase phase, {
+    FirmwareRelease? release,
+    FirmwarePackage? package,
+    double progress = 0,
+    String? message,
+    bool isManual = false,
+  }) {
+    if (_disposed) return;
+    _firmwareReleaseStatus = FirmwareReleaseStatus(
+      phase: phase,
+      release: release,
+      package: package,
+      progress: progress,
+      message: message,
+      isManual: isManual,
+    );
+    _notifySafely();
+  }
+
+  FirmwarePackage inspectFirmwarePackage(Uint8List bytes, String fileName) {
+    try {
+      return FirmwarePackageParser.parse(
+        bytes,
+        fileName: fileName,
+        context: _firmwareValidationContext(),
+        maximumImageBytes: ControllerApi.maximumFirmwareImageBytes,
+      );
+    } on FirmwarePackageException catch (error) {
+      throw ControllerApiException(code: error.code, message: error.message);
+    }
+  }
+
+  void clearFirmwareUpdateStatus() {
+    if (_firmwareUpdateStatus.isActive) return;
+    _firmwareUpdateStatus = const FirmwareUpdateStatus.idle();
+    _notifySafely();
   }
 
   Future<ControllerActionResult> uploadFirmware(
@@ -968,28 +1594,253 @@ class ControllerSession extends ChangeNotifier {
     void Function(int sent, int total)? onProgress,
   }) async {
     _requireLiveController();
-    final pin = _requirePin();
-    if (isDevelopment) {
-      if (bytes.isEmpty || !fileName.toLowerCase().endsWith('.bin')) {
-        throw const ControllerApiException(
-          code: 'invalid_firmware',
-          message: 'Wybierz niepusty plik firmware .bin.',
+    final pendingRefresh = _refreshOperation;
+    if (pendingRefresh != null) await pendingRefresh;
+    final pendingHeartbeat = _heartbeatOperation;
+    if (pendingHeartbeat != null) await pendingHeartbeat;
+    _requireLiveController();
+    if (_firmwareUpdateStatus.isActive || _activeAction != null) {
+      throw ControllerApiException(
+        code: 'action_in_progress',
+        message: _activeAction == null
+            ? 'Aktualizacja firmware jest już wykonywana.'
+            : 'Polecenie $_activeAction jest już wykonywane.',
+      );
+    }
+    final blocked = firmwareUpdateBlockReason;
+    if (blocked != null) {
+      throw ControllerApiException(code: 'ota_unavailable', message: blocked);
+    }
+
+    final selectedRelease = _firmwareReleaseStatus.release;
+    final installingDownloadedRelease =
+        selectedRelease != null &&
+        identical(bytes, _downloadedFirmwareBytes) &&
+        fileName == selectedRelease.asset.name;
+    final sessionToken = isDevelopment ? null : _requireAdminToken();
+    if (isDevelopment) _requirePin();
+    _activeAction = 'firmware_update';
+    _beginBusy();
+    _pollTimer?.cancel();
+    _pollTimer = null;
+    _webSessionTimer?.cancel();
+    _webSessionTimer = null;
+    _firmwareUpdateStatus = const FirmwareUpdateStatus(
+      phase: FirmwareUpdatePhase.validating,
+      progress: 0,
+      message: 'Sprawdzanie integralności i zgodności pakietu…',
+    );
+    if (installingDownloadedRelease) {
+      _emitFirmwareRelease(
+        FirmwareReleasePhase.installing,
+        release: selectedRelease,
+        package: _firmwareReleaseStatus.package,
+        progress: 0,
+        message: 'Instalowanie pakietu po kontroli integralności i zgodności…',
+      );
+    }
+    _notifySafely();
+
+    try {
+      final package = inspectFirmwarePackage(bytes, fileName);
+      _firmwareUpdateStatus = FirmwareUpdateStatus(
+        phase: FirmwareUpdatePhase.uploading,
+        progress: 0,
+        message: 'Wysyłanie sprawdzonego pakietu do sterownika…',
+        package: package,
+      );
+      _notifySafely();
+
+      if (isDevelopment) {
+        onProgress?.call(bytes.length, bytes.length);
+        _firmwareUpdateStatus = FirmwareUpdateStatus(
+          phase: FirmwareUpdatePhase.succeeded,
+          progress: 1,
+          message: 'Aktualizacja OTA została zasymulowana w trybie DEV.',
+          package: package,
+        );
+        return const ControllerActionResult(
+          success: true,
+          code: 'dev_simulated',
+          message: 'Aktualizacja OTA została zasymulowana w trybie DEV.',
         );
       }
-      onProgress?.call(bytes.length, bytes.length);
-      return const ControllerActionResult(
-        success: true,
-        code: 'dev_simulated',
-        message: 'Aktualizacja OTA została zasymulowana w trybie DEV.',
+
+      final result = await _api!.uploadFirmware(
+        bytes,
+        fileName,
+        sessionToken!,
+        onProgress: (sent, total) {
+          final progress = total <= 0 ? 0.0 : (sent / total).clamp(0.0, 1.0);
+          _firmwareUpdateStatus = FirmwareUpdateStatus(
+            phase: FirmwareUpdatePhase.uploading,
+            progress: progress,
+            message: 'Wysyłanie sprawdzonego pakietu do sterownika…',
+            package: package,
+          );
+          _notifySafely();
+          onProgress?.call(sent, total);
+        },
+      );
+      _firmwareUpdateStatus = FirmwareUpdateStatus(
+        phase: FirmwareUpdatePhase.awaitingRestart,
+        progress: 1,
+        message: result.message.isEmpty
+            ? 'Sterownik zweryfikował podpis pakietu i uruchamia nowy firmware.'
+            : result.message,
+        package: package,
+      );
+      if (installingDownloadedRelease) {
+        _emitFirmwareRelease(
+          FirmwareReleasePhase.awaitingRestart,
+          release: selectedRelease,
+          package: package,
+          progress: 1,
+          message: 'Firmware przyjęty. Sterownik uruchamia się ponownie.',
+        );
+      }
+      _clearAdminSession();
+      return result;
+    } on ControllerApiException catch (error) {
+      if (error.isAuthenticationError) _clearAdminSession();
+      _firmwareUpdateStatus = FirmwareUpdateStatus(
+        phase: FirmwareUpdatePhase.failed,
+        progress: 0,
+        message: error.message,
+        errorCode: error.code,
+      );
+      if (installingDownloadedRelease) {
+        _emitFirmwareRelease(
+          FirmwareReleasePhase.failed,
+          release: selectedRelease,
+          package: _firmwareReleaseStatus.package,
+          message: error.message,
+        );
+      }
+      rethrow;
+    } on Object {
+      const error = ControllerApiException(
+        code: 'ota_internal_error',
+        message: 'Nie udało się bezpiecznie przygotować aktualizacji.',
+      );
+      _firmwareUpdateStatus = const FirmwareUpdateStatus(
+        phase: FirmwareUpdatePhase.failed,
+        progress: 0,
+        message: 'Nie udało się bezpiecznie przygotować aktualizacji.',
+        errorCode: 'ota_internal_error',
+      );
+      if (installingDownloadedRelease) {
+        _emitFirmwareRelease(
+          FirmwareReleasePhase.failed,
+          release: selectedRelease,
+          package: _firmwareReleaseStatus.package,
+          message: error.message,
+        );
+      }
+      throw error;
+    } finally {
+      _activeAction = null;
+      _endBusy();
+      _notifySafely();
+      if (!isDevelopment && !_disposed) {
+        _schedulePoll(const Duration(seconds: 3));
+      }
+    }
+  }
+
+  FirmwarePackageValidationContext _firmwareValidationContext() {
+    if (isDevelopment) {
+      return const FirmwarePackageValidationContext(
+        expectedTarget: FirmwareTarget.ili9341,
+        currentVersion: '0.0.0',
+        minimumSecurityVersion: 0,
+        bootloaderVersion: 0xffff,
+        maximumImageBytes: ControllerApi.maximumFirmwareImageBytes,
       );
     }
-    if (!_api!.supportsFirmwareUpload) {
+
+    final ota = _capabilities.section('ota');
+    if (ota.isEmpty) {
       throw const ControllerApiException(
-        code: 'transport_unsupported',
-        message: 'Aktualizacja OTA wymaga połączenia Wi-Fi.',
+        code: 'ota_capabilities_missing',
+        message: 'Sterownik nie udostępnił parametrów bezpiecznego OTA.',
       );
     }
-    return _api.uploadFirmware(bytes, fileName, pin, onProgress: onProgress);
+    final advertisedProduct = ota.text('productId');
+    if (advertisedProduct != FirmwarePackageParser.productId) {
+      throw const ControllerApiException(
+        code: 'ota_product_mismatch',
+        message: 'Nie można potwierdzić zgodności produktu sterownika.',
+      );
+    }
+    final advertisedKeyId = ota.text('keyId');
+    if (advertisedKeyId != FirmwarePackageParser.trustedKeyId) {
+      throw const ControllerApiException(
+        code: 'ota_trust_anchor_mismatch',
+        message: 'Sterownik używa innego klucza zaufania dla firmware.',
+      );
+    }
+
+    final target = FirmwareTarget.fromCode(
+      ota.text(
+        'target',
+        _capabilities
+            .section('hardware')
+            .text('panel', _status.section('firmware').text('target')),
+      ),
+    );
+    if (target == null) {
+      throw const ControllerApiException(
+        code: 'ota_target_unknown',
+        message: 'Sterownik nie podał wariantu wyświetlacza dla firmware.',
+      );
+    }
+
+    final currentVersion = _capabilities.text(
+      'firmwareVersion',
+      _status.section('firmware').text('version'),
+    );
+    try {
+      FirmwarePackageParser.compareSemanticVersions(
+        currentVersion,
+        currentVersion,
+      );
+    } on FirmwarePackageException {
+      throw const ControllerApiException(
+        code: 'ota_version_unknown',
+        message: 'Sterownik nie podał poprawnej bieżącej wersji firmware.',
+      );
+    }
+
+    if (!ota.containsKey('minimumSecurityVersion') ||
+        !ota.containsKey('bootloaderVersion')) {
+      throw const ControllerApiException(
+        code: 'ota_security_contract_missing',
+        message: 'Sterownik nie podał wersji zabezpieczeń lub bootloadera.',
+      );
+    }
+    final minimumSecurityVersion = ota.integer('minimumSecurityVersion', -1);
+    final bootloaderVersion = ota.integer('bootloaderVersion', -1);
+    final updatePartitionBytes = ota.integer('updatePartitionBytes', -1);
+    if (minimumSecurityVersion < 0 ||
+        bootloaderVersion < 1 ||
+        updatePartitionBytes < 1) {
+      throw const ControllerApiException(
+        code: 'ota_security_contract_invalid',
+        message: 'Sterownik podał nieprawidłowe parametry bezpieczeństwa OTA.',
+      );
+    }
+
+    return FirmwarePackageValidationContext(
+      expectedTarget: target,
+      currentVersion: currentVersion,
+      minimumSecurityVersion: minimumSecurityVersion,
+      bootloaderVersion: bootloaderVersion,
+      maximumImageBytes: min(
+        updatePartitionBytes,
+        ControllerApi.maximumFirmwareImageBytes,
+      ),
+    );
   }
 
   String _requirePin() {
@@ -1012,6 +1863,51 @@ class ControllerSession extends ChangeNotifier {
     return pin;
   }
 
+  String _requireAdminToken() {
+    final token = _validAdminToken;
+    if (token == null) {
+      if (_adminToken != null) _clearAdminSession();
+      throw const ControllerApiException(
+        code: 'secure_session_required',
+        statusCode: 401,
+        message:
+            'Bezpieczna aktualizacja wymaga ponownego logowania '
+            'administratora.',
+      );
+    }
+    _armAdminSessionTimeout();
+    return token;
+  }
+
+  ({String? sessionToken, String? legacyPin}) _protectedRequestAuthorization() {
+    if (isBluetooth) {
+      return (sessionToken: null, legacyPin: _requirePin());
+    }
+    final token = _validAdminToken;
+    if (token != null) {
+      _armAdminSessionTimeout();
+      return (sessionToken: token, legacyPin: null);
+    }
+    if (_adminToken != null) {
+      _clearAdminSession();
+      throw const ControllerApiException(
+        code: 'session_expired',
+        statusCode: 401,
+        message: 'Sesja administratora wygasła. Zaloguj się ponownie.',
+      );
+    }
+    if (_allowsLegacyPinFallback) {
+      return (sessionToken: null, legacyPin: _requirePin());
+    }
+    throw const ControllerApiException(
+      code: 'secure_session_required',
+      statusCode: 401,
+      message:
+          'Ta operacja wymaga bezpiecznej sesji administratora. '
+          'Zaloguj się ponownie.',
+    );
+  }
+
   void _requireLiveController() {
     if (canIssueCommands) return;
     throw ControllerApiException(
@@ -1031,6 +1927,40 @@ class ControllerSession extends ChangeNotifier {
       return null;
     }
     return token;
+  }
+
+  bool get _allowsLegacyPinFallback {
+    if (isLegacyBluetooth) return true;
+    if (_api is! ControllerProtocolV2Api) return true;
+    final auth = _capabilities.section('auth');
+    if (auth['pinFallbackV1'] == true ||
+        _capabilities['pinFallbackV1'] == true) {
+      return true;
+    }
+    if (auth['pinFallbackV1'] == false ||
+        _capabilities['pinFallbackV1'] == false ||
+        protocolVersion >= 2) {
+      return false;
+    }
+    if (!_capabilityDiscoveryAttempted) return false;
+
+    final reportedVersion = _status
+        .section('firmware')
+        .text(
+          'version',
+          _status.text('firmwareVersion', _status.text('version')),
+        )
+        .trim();
+    if (reportedVersion.isEmpty) return false;
+    try {
+      return FirmwarePackageParser.compareSemanticVersions(
+            reportedVersion,
+            '5.1.0',
+          ) <
+          0;
+    } on FirmwarePackageException {
+      return false;
+    }
   }
 
   static bool _canFallbackToLegacyAuthentication(ControllerApiException error) {
@@ -1056,7 +1986,7 @@ class ControllerSession extends ChangeNotifier {
     String pin, {
     ControllerAdminSession? secureSession,
   }) {
-    _adminPin = pin;
+    _adminPin = secureSession == null || isBluetooth ? pin : null;
     _adminToken = secureSession?.token;
     _adminTokenExpiresAt = secureSession?.expiresAt;
     _armAdminSessionTimeout();
@@ -1079,6 +2009,24 @@ class ControllerSession extends ChangeNotifier {
     _adminTokenExpiresAt = null;
     _logs = <String, dynamic>{};
     _diagnostics = <String, dynamic>{};
+  }
+
+  void _revokeAdminSessionBestEffort(String? token) {
+    final api = _api;
+    if (_disposed ||
+        isDevelopment ||
+        token == null ||
+        api is! ControllerProtocolV2Api) {
+      return;
+    }
+    unawaited(() async {
+      try {
+        await (api as ControllerProtocolV2Api).revokeSession(token);
+      } on Object {
+        // Lifecycle nie może blokować zamknięcia widoku. Serwerowy token ma
+        // krótki TTL, a jawne unieważnienie jest próbą best-effort.
+      }
+    }());
   }
 
   Future<void> _sendWebSessionHeartbeat() {
@@ -2158,6 +3106,17 @@ class ControllerSession extends ChangeNotifier {
       'lightCycleOffMs': 1000,
       'lightResetOffMs': 6000,
     },
+    'ota': {
+      'target': 'ili9341',
+      'productId': FirmwarePackageParser.productId,
+      'keyId': FirmwarePackageParser.trustedKeyId,
+      'bootloaderVersion': 1,
+      'minimumSecurityVersion': 0,
+      'updatePartitionBytes': 1966080,
+      'rollbackAvailable': true,
+      'pendingVerify': false,
+      'state': 'valid',
+    },
     'targets': _timedOverrideTargets.toList(growable: false),
   };
 
@@ -2226,7 +3185,11 @@ class ControllerSession extends ChangeNotifier {
   @override
   void dispose() {
     if (_disposed) return;
+    _revokeAdminSessionBestEffort(_validAdminToken);
     _disposed = true;
+    _firmwareDownloadGeneration++;
+    _firmwareDownloadCancellationToken?.cancel();
+    _firmwareDownloadCancellationToken = null;
     _pollTimer?.cancel();
     _pollTimer = null;
     _developmentTimer?.cancel();
@@ -2235,10 +3198,14 @@ class ControllerSession extends ChangeNotifier {
     _webSessionTimer = null;
     _adminSessionTimer?.cancel();
     _adminSessionTimer = null;
+    _firmwareReleaseRetryTimer?.cancel();
+    _firmwareReleaseRetryTimer = null;
     _adminPin = null;
     _adminToken = null;
     _adminTokenExpiresAt = null;
+    _downloadedFirmwareBytes = null;
     _historyArchiveCache.clear();
+    _firmwareReleaseRepository?.dispose();
 
     final api = _api;
     if (!isDevelopment && api != null && api.supportsWebSession) {

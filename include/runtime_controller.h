@@ -52,4 +52,11 @@ bool runtime_controller_start(void);
  */
 bool runtime_controller_take_latest(RuntimeTelemetry *out);
 
+/**
+ * Verifies that the Core 0 task is alive and still publishes telemetry.
+ * Missing optional sensors do not make the firmware unhealthy.
+ */
+bool runtime_controller_is_healthy(uint32_t now_ms,
+                                   uint32_t maximum_heartbeat_age_ms);
+
 #endif // AQUARIUM_RUNTIME_CONTROLLER_H

@@ -8,6 +8,8 @@ struct OtaGuardStatus {
     bool pending_verify;
     bool rollback_available;
     uint32_t update_partition_bytes;
+    uint32_t minimum_security_version;
+    uint32_t pending_security_version;
     uint8_t boot_attempt;
     const char *state;
 };
@@ -25,11 +27,18 @@ void ota_guard_initialize(uint32_t now_ms);
  * expose native pending-verify state.
  */
 bool ota_guard_prepare_update(uint32_t image_bytes,
+                              uint32_t package_security_version,
                               uint32_t free_heap_bytes,
                               bool feeder_active,
                               bool configuration_backed_up,
                               char *out_code,
                               size_t out_code_size);
+
+/** Clears a prepared update after an upload, hash or signature failure. */
+void ota_guard_cancel_update();
+
+/** Monotonic software anti-rollback floor stored in NVS. */
+uint32_t ota_guard_minimum_security_version();
 
 /** Services the 30-second post-update health window without blocking. */
 void ota_guard_service(uint32_t now_ms,

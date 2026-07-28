@@ -1,5 +1,6 @@
 #include "ota_guard.h"
 
+#include "config.h"
 #include "ota_safety_policy.h"
 
 #include <Arduino.h>
@@ -13,7 +14,7 @@ namespace {
 
 constexpr char OTA_GUARD_NAMESPACE[] = "aq_ota_guard";
 constexpr char OTA_GUARD_KEY[] = "state";
-constexpr uint32_t OTA_GUARD_MAGIC = 0x3241544FUL; // OTA2
+constexpr uint32_t OTA_GUARD_MAGIC = 0x3341544FUL; // OTA3
 constexpr uint8_t OTA_GUARD_MAX_BOOT_ATTEMPTS = 3U;
 constexpr size_t PARTITION_LABEL_BYTES = 17U;
 
@@ -22,6 +23,8 @@ struct PersistentGuardState {
     bool pending;
     uint8_t boot_attempt;
     char previous_partition[PARTITION_LABEL_BYTES];
+    uint32_t pending_security_version;
+    uint32_t accepted_security_version;
     uint32_t crc32;
 };
 
@@ -32,6 +35,7 @@ bool native_pending_verify = false;
 bool rollback_available = false;
 uint32_t update_partition_bytes = 0U;
 const char *guard_state_name = "idle";
+bool state_storage_healthy = true;
 
 uint32_t crc32_bytes(const void *data, size_t length) {
     uint32_t crc = 0xFFFFFFFFUL;
@@ -79,11 +83,25 @@ bool save_state(PersistentGuardState &state) {
     return stored;
 }
 
-void clear_pending_state() {
-    persistent_state.pending = false;
-    persistent_state.boot_attempt = 0U;
-    persistent_state.previous_partition[0] = '\0';
-    save_state(persistent_state);
+bool clear_pending_state(bool accept_pending_version) {
+    PersistentGuardState next = persistent_state;
+    if (accept_pending_version &&
+        next.pending_security_version >
+            next.accepted_security_version) {
+        next.accepted_security_version =
+            next.pending_security_version;
+    }
+    next.pending = false;
+    next.boot_attempt = 0U;
+    next.previous_partition[0] = '\0';
+    next.pending_security_version = 0U;
+    if (!save_state(next)) {
+        state_storage_healthy = false;
+        return false;
+    }
+    persistent_state = next;
+    state_storage_healthy = true;
+    return true;
 }
 
 const esp_partition_t *find_previous_partition() {
@@ -127,7 +145,10 @@ void rollback_and_reboot() {
     }
     const esp_partition_t *previous = find_previous_partition();
     if (previous != nullptr && esp_ota_set_boot_partition(previous) == ESP_OK) {
-        clear_pending_state();
+        if (!clear_pending_state(false)) {
+            Serial.println(
+                "OTA_GUARD: rollback selected but state persistence failed.");
+        }
         ESP.restart();
         return;
     }
@@ -156,26 +177,60 @@ void ota_guard_initialize(uint32_t now_ms) {
         image_state == ESP_OTA_IMG_PENDING_VERIFY;
 
     memset(&persistent_state, 0, sizeof(persistent_state));
-    load_state(&persistent_state);
-    if (persistent_state.pending && running != nullptr &&
+    const bool state_loaded = load_state(&persistent_state);
+    if (!state_loaded) {
+        persistent_state.accepted_security_version =
+            FirmwareInfo::SECURITY_VERSION;
+        state_storage_healthy = save_state(persistent_state);
+    } else if (!persistent_state.pending &&
+               persistent_state.accepted_security_version <
+                   FirmwareInfo::SECURITY_VERSION) {
+        persistent_state.accepted_security_version =
+            FirmwareInfo::SECURITY_VERSION;
+        state_storage_healthy = save_state(persistent_state);
+    }
+    const bool running_matches_previous =
+        running == nullptr ||
         strncmp(running->label,
                 persistent_state.previous_partition,
-                sizeof(running->label)) != 0) {
+                sizeof(running->label)) == 0;
+    const aquarium::OtaBootRecovery boot_recovery =
+        aquarium::evaluate_ota_boot_recovery(
+            persistent_state.pending,
+            native_pending_verify,
+            running_matches_previous);
+    if (boot_recovery ==
+        aquarium::OtaBootRecovery::TrackPendingBoot) {
         if (persistent_state.boot_attempt < UINT8_MAX) {
             ++persistent_state.boot_attempt;
         }
-        save_state(persistent_state);
+        state_storage_healthy = save_state(persistent_state);
+        if (!state_storage_healthy) {
+            guard_state_name = "ota_state_write_failed";
+        }
         if (persistent_state.boot_attempt > OTA_GUARD_MAX_BOOT_ATTEMPTS) {
             rollback_and_reboot();
             return;
         }
-    } else if (persistent_state.pending && !native_pending_verify) {
-        clear_pending_state();
+    } else if (boot_recovery ==
+               aquarium::OtaBootRecovery::FinalizeAcceptedState) {
+        if (!clear_pending_state(true)) {
+            guard_state_name = "ota_state_write_failed";
+        }
+    } else if (boot_recovery ==
+               aquarium::OtaBootRecovery::ClearAbortedState) {
+        if (!clear_pending_state(false)) {
+            guard_state_name = "ota_state_write_failed";
+        }
     }
 
     const bool pending = native_pending_verify || persistent_state.pending;
     validation_policy.begin(now_ms, pending);
-    guard_state_name = pending ? "pending_verify" : "valid";
+    if (!state_storage_healthy) {
+        guard_state_name = "ota_state_write_failed";
+    } else {
+        guard_state_name = pending ? "pending_verify" : "valid";
+    }
     Serial.printf("OTA_GUARD: state=%s rollback=%s next=%lu attempt=%u\n",
                   guard_state_name,
                   rollback_available ? "yes" : "no",
@@ -184,6 +239,7 @@ void ota_guard_initialize(uint32_t now_ms) {
 }
 
 bool ota_guard_prepare_update(uint32_t image_bytes,
+                              uint32_t package_security_version,
                               uint32_t free_heap_bytes,
                               bool feeder_active,
                               bool configuration_backed_up,
@@ -191,6 +247,21 @@ bool ota_guard_prepare_update(uint32_t image_bytes,
                               size_t out_code_size) {
     if (!initialized) {
         ota_guard_initialize(millis());
+    }
+    if (!state_storage_healthy) {
+        guard_state_name = "ota_state_write_failed";
+        if (out_code != nullptr && out_code_size > 0U) {
+            snprintf(out_code, out_code_size, "%s", guard_state_name);
+        }
+        return false;
+    }
+    if (package_security_version <
+        persistent_state.accepted_security_version) {
+        guard_state_name = "security_rollback_blocked";
+        if (out_code != nullptr && out_code_size > 0U) {
+            snprintf(out_code, out_code_size, "%s", guard_state_name);
+        }
+        return false;
     }
     const aquarium::OtaPreflightResult result = aquarium::evaluate_ota_preflight({
         image_bytes,
@@ -214,22 +285,49 @@ bool ota_guard_prepare_update(uint32_t image_bytes,
         guard_state_name = "running_partition_missing";
         return false;
     }
+    const uint32_t accepted_security_version =
+        persistent_state.accepted_security_version;
     memset(&persistent_state, 0, sizeof(persistent_state));
     persistent_state.pending = true;
     persistent_state.boot_attempt = 0U;
+    persistent_state.pending_security_version = package_security_version;
+    persistent_state.accepted_security_version =
+        accepted_security_version > FirmwareInfo::SECURITY_VERSION
+            ? accepted_security_version
+            : FirmwareInfo::SECURITY_VERSION;
     snprintf(persistent_state.previous_partition,
              sizeof(persistent_state.previous_partition),
              "%s",
              running->label);
     if (!save_state(persistent_state)) {
+        state_storage_healthy = false;
         guard_state_name = "ota_state_write_failed";
         if (out_code != nullptr && out_code_size > 0U) {
             snprintf(out_code, out_code_size, "%s", guard_state_name);
         }
         return false;
     }
+    state_storage_healthy = true;
     guard_state_name = "upload_ready";
     return true;
+}
+
+void ota_guard_cancel_update() {
+    if (!initialized || !persistent_state.pending) {
+        return;
+    }
+    if (clear_pending_state(false)) {
+        guard_state_name = "upload_cancelled";
+    } else {
+        guard_state_name = "ota_state_write_failed";
+    }
+}
+
+uint32_t ota_guard_minimum_security_version() {
+    return persistent_state.accepted_security_version >
+                   FirmwareInfo::SECURITY_VERSION
+               ? persistent_state.accepted_security_version
+               : FirmwareInfo::SECURITY_VERSION;
 }
 
 void ota_guard_service(uint32_t now_ms,
@@ -241,17 +339,32 @@ void ota_guard_service(uint32_t now_ms,
     const aquarium::BootValidationDecision decision =
         validation_policy.evaluate(now_ms, runtime_ready, free_heap_bytes);
     if (decision == aquarium::BootValidationDecision::MarkValid) {
-        if (native_pending_verify) {
+        aquarium::OtaFinalizeStep finalize_step =
+            aquarium::next_ota_finalize_step(
+                native_pending_verify,
+                persistent_state.pending);
+        if (finalize_step ==
+            aquarium::OtaFinalizeStep::MarkNativeValid) {
             const esp_err_t result = esp_ota_mark_app_valid_cancel_rollback();
             if (result != ESP_OK) {
                 guard_state_name = "mark_valid_failed";
                 Serial.printf("OTA_GUARD: mark valid failed: %d\n",
                               static_cast<int>(result));
+                validation_policy.begin(now_ms, true);
                 return;
             }
+            native_pending_verify = false;
+            finalize_step = aquarium::next_ota_finalize_step(
+                native_pending_verify,
+                persistent_state.pending);
         }
-        clear_pending_state();
-        native_pending_verify = false;
+        if (finalize_step ==
+                aquarium::OtaFinalizeStep::PersistAcceptedState &&
+            !clear_pending_state(true)) {
+            guard_state_name = "ota_state_write_failed";
+            validation_policy.begin(now_ms, true);
+            return;
+        }
         guard_state_name = "valid";
         Serial.println("OTA_GUARD: new firmware validated.");
     } else if (decision == aquarium::BootValidationDecision::Rollback) {
@@ -264,6 +377,8 @@ OtaGuardStatus ota_guard_status() {
         native_pending_verify || persistent_state.pending,
         rollback_available,
         update_partition_bytes,
+        ota_guard_minimum_security_version(),
+        persistent_state.pending_security_version,
         persistent_state.boot_attempt,
         guard_state_name
     };

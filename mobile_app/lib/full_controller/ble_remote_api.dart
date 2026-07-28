@@ -111,8 +111,9 @@ class BleRemoteApi implements ControllerRemoteApi, ControllerProtocolV2Api {
   }
 
   @override
-  Future<JsonMap> logs(String pin) async {
+  Future<JsonMap> logs({String? sessionToken, String? legacyPin}) async {
     _requireV2('Logi przez BLE');
+    final pin = _requireLegacyPin(legacyPin);
     final message = await _requestData(
       expectedType: 'logs',
       command: {'op': 'logs', 'pin': pin},
@@ -121,8 +122,12 @@ class BleRemoteApi implements ControllerRemoteApi, ControllerProtocolV2Api {
   }
 
   @override
-  Future<JsonMap> busDiagnostics(String pin) async {
+  Future<JsonMap> busDiagnostics({
+    String? sessionToken,
+    String? legacyPin,
+  }) async {
     _requireV2('Diagnostyka przez BLE');
+    final pin = _requireLegacyPin(legacyPin);
     final message = await _requestData(
       expectedType: 'diagnostics',
       command: {'op': 'diagnostics', 'pin': pin},
@@ -162,14 +167,21 @@ class BleRemoteApi implements ControllerRemoteApi, ControllerProtocolV2Api {
   }
 
   @override
+  Future<void> revokeSession(String token) {
+    throw const ControllerApiException(
+      code: 'transport_unsupported',
+      message: 'Jawne unieważnienie sesji wymaga połączenia Wi-Fi.',
+    );
+  }
+
+  @override
   Future<ControllerActionResult> action(
     String action, {
     Map<String, Object?> payload = const {},
-    String? pin,
-    bool includePin = true,
+    String? sessionToken,
+    String? legacyPin,
   }) async {
-    final effectivePin = includePin ? pin : null;
-    final legacyCommand = _legacyAction(action, payload, effectivePin);
+    final legacyCommand = _legacyAction(action, payload, legacyPin);
     if (legacyCommand != null) {
       final result = await transport.sendCommand(legacyCommand);
       return _actionResult(result);
@@ -179,7 +191,7 @@ class BleRemoteApi implements ControllerRemoteApi, ControllerProtocolV2Api {
       'op': 'action',
       'name': action,
       'args': payload,
-      'pin': ?effectivePin,
+      'pin': ?legacyPin,
     });
     return _actionResult(result);
   }
@@ -216,8 +228,13 @@ class BleRemoteApi implements ControllerRemoteApi, ControllerProtocolV2Api {
   }
 
   @override
-  Future<void> setBrowserTime(int epochSeconds, String pin) async {
+  Future<void> setBrowserTime(
+    int epochSeconds, {
+    String? sessionToken,
+    String? legacyPin,
+  }) async {
     _requireV2('Synchronizacja czasu przez BLE');
+    final pin = _requireLegacyPin(legacyPin);
     final result = await transport.sendCommand({
       'op': 'action',
       'name': 'set_time',
@@ -254,6 +271,16 @@ class BleRemoteApi implements ControllerRemoteApi, ControllerProtocolV2Api {
 
   @override
   Future<void> webSession(String sessionId, String state) async {}
+
+  static String _requireLegacyPin(String? pin) {
+    if (pin == null || !RegExp(r'^\d{4,8}$').hasMatch(pin)) {
+      throw const ControllerApiException(
+        code: 'pin_required',
+        message: 'Ta operacja BLE wymaga poprawnego PIN-u administratora.',
+      );
+    }
+    return pin;
+  }
 
   Future<JsonMap> _requestData({
     required String expectedType,

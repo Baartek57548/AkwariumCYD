@@ -40,7 +40,9 @@ const OLED_SAVE_ACTIONS = new Set([
     'save_display',
     'save_co2',
     'save_water',
-    'save_leak'
+    'save_leak',
+    'save_relays',
+    'test_relay'
 ]);
 const PIN_GUARDED_ACTIONS = new Set([
     'feed_now',
@@ -63,7 +65,9 @@ const PIN_GUARDED_ACTIONS = new Set([
     'save_display',
     'save_co2',
     'save_water',
-    'save_leak'
+    'save_leak',
+    'save_relays',
+    'test_relay'
 ]);
 const OLED_SAVE_TITLES = {
     save_schedule: 'Zapisywanie harmonogramów',
@@ -1145,10 +1149,13 @@ async function fetchLogs(force = false) {
 
     logsRequestPromise = (async () => {
         try {
-            const pin = getAdminPinForRequest();
+            const token = getAdminTokenForRequest();
             const result = await fetchWithTimeout(
-                `${API_LOGS}?pin=${encodeURIComponent(pin)}`,
-                { cache: 'no-store' },
+                API_LOGS,
+                {
+                    cache: 'no-store',
+                    headers: { 'X-AquaCYD-Session': token }
+                },
                 API_REQUEST_TIMEOUT_MS,
                 (response) => response.ok ? response.json() : null
             );
@@ -1401,10 +1408,12 @@ function hideOledSaveAnimation() {
 let pinPromiseResolve = null;
 let pinPromiseReject = null;
 let pinModalReturnFocus = null;
-let adminSessionPin = '';
 let adminSessionStartedAtMs = 0;
+let adminSessionToken = '';
+let adminSessionExpiresAtMs = 0;
 let currentUserRole = 'guest';
 const ADMIN_PIN_PATTERN = /^\d{4,8}$/;
+const ADMIN_TOKEN_PATTERN = /^[0-9a-f]{32}$/i;
 
 function normalizePinValue(value) {
     return String(value || '').replace(/\D/g, '').slice(0, 8);
@@ -1432,9 +1441,14 @@ function setPinModalBusy(isBusy) {
     if (cancel) cancel.disabled = isBusy;
 }
 
-function setAdminSession(pin) {
-    adminSessionPin = pin;
+function setAdminSession(token, expiresInSec) {
     adminSessionStartedAtMs = Date.now();
+    adminSessionToken = String(token || '');
+    const boundedTtlSec = Math.max(
+        1,
+        Math.min(300, Math.trunc(Number(expiresInSec) || 0))
+    );
+    adminSessionExpiresAtMs = Date.now() + boundedTtlSec * 1000;
     currentUserRole = 'admin';
     applyAuthState();
     fetchStatus(true);
@@ -1442,8 +1456,9 @@ function setAdminSession(pin) {
 }
 
 function clearAdminSession() {
-    adminSessionPin = '';
     adminSessionStartedAtMs = 0;
+    adminSessionToken = '';
+    adminSessionExpiresAtMs = 0;
     currentUserRole = 'guest';
     cachedLogs = {
         normal: [],
@@ -1458,11 +1473,18 @@ function clearAdminSession() {
 }
 
 function isAdminAuthenticated() {
-    return currentUserRole === 'admin' && ADMIN_PIN_PATTERN.test(adminSessionPin);
+    const valid =
+        currentUserRole === 'admin' &&
+        ADMIN_TOKEN_PATTERN.test(adminSessionToken) &&
+        Date.now() < adminSessionExpiresAtMs;
+    if (!valid && currentUserRole === 'admin') {
+        clearAdminSession();
+    }
+    return valid;
 }
 
-function getAdminPinForRequest() {
-    return isAdminAuthenticated() ? adminSessionPin : '';
+function getAdminTokenForRequest() {
+    return isAdminAuthenticated() ? adminSessionToken : '';
 }
 
 function restorePinModalFocus() {
@@ -1544,7 +1566,7 @@ function handlePinSubmit() {
 window.promptForPin = promptForPin;
 window.handlePinCancel = handlePinCancel;
 window.handlePinSubmit = handlePinSubmit;
-window.getAdminPinForRequest = getAdminPinForRequest;
+window.getAdminTokenForRequest = getAdminTokenForRequest;
 
 function updateAuthStatusWidgets() {
     const isAdmin = isAdminAuthenticated();
@@ -1572,15 +1594,14 @@ window.isAdminAuthenticated = isAdminAuthenticated;
 window.applyAuthState = applyAuthState;
 
 async function verifyAdminPin(pin) {
-    const params = new URLSearchParams({ action: 'auth_check', pin });
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), 5000);
     let response;
     try {
-        response = await fetch(API_ACTION, {
+        response = await fetch('/api/v2/auth', {
             method: 'POST',
-            headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-            body: params.toString(),
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ pin }),
             signal: controller.signal
         });
     } catch (error) {
@@ -1602,14 +1623,23 @@ async function verifyAdminPin(pin) {
             message: await response.text()
         };
 
-    if (!response.ok || responsePayload?.success === false) {
+    const token = responsePayload?.data?.sessionToken;
+    const expiresInSec = responsePayload?.data?.expiresInSec;
+    if (!response.ok ||
+        responsePayload?.ok !== true ||
+        !ADMIN_TOKEN_PATTERN.test(String(token || '')) ||
+        !Number.isFinite(Number(expiresInSec))) {
         const error = new Error(responsePayload?.message || 'Nieprawidłowy PIN admina.');
         error.code = responsePayload?.code || 'invalid_pin';
         error.status = response.status;
         throw error;
     }
 
-    return responsePayload;
+    return {
+        ...responsePayload,
+        sessionToken: token,
+        expiresInSec: Number(expiresInSec)
+    };
 }
 
 async function loginAsAdmin() {
@@ -1626,8 +1656,8 @@ async function loginAsAdmin() {
 
         try {
             setPinModalBusy(true);
-            await verifyAdminPin(pin);
-            setAdminSession(pin);
+            const session = await verifyAdminPin(pin);
+            setAdminSession(session.sessionToken, session.expiresInSec);
             hidePinModal();
             return true;
         } catch (error) {
@@ -1648,8 +1678,28 @@ async function loginAsAdmin() {
     return false;
 }
 
-function logoutAdmin() {
+async function logoutAdmin() {
+    const token = adminSessionToken;
     clearAdminSession();
+    if (!ADMIN_TOKEN_PATTERN.test(token)) {
+        return true;
+    }
+    try {
+        const response = await fetchWithTimeout(
+            '/api/v2/logout',
+            {
+                method: 'POST',
+                cache: 'no-store',
+                headers: { 'X-AquaCYD-Session': token }
+            },
+            3500
+        );
+        return response.ok;
+    } catch (_) {
+        // The local session is cleared immediately. A failed best-effort
+        // revoke remains bounded by the controller's five-minute TTL.
+        return false;
+    }
 }
 
 window.loginAsAdmin = loginAsAdmin;
@@ -1663,7 +1713,6 @@ async function executeActionRequest(action, payload = {}, options = {}) {
         if (!isAdminAuthenticated()) {
             await loginAsAdmin();
         }
-        actionPayload.pin = adminSessionPin;
     }
 
     const showSaveAnimation = options.showSaveAnimation ?? shouldShowOledSaveAnimation(action);
@@ -1683,7 +1732,12 @@ async function executeActionRequest(action, payload = {}, options = {}) {
             API_ACTION,
             {
                 method: 'POST',
-                headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+                headers: {
+                    'Content-Type': 'application/x-www-form-urlencoded',
+                    ...(needsAdmin
+                        ? { 'X-AquaCYD-Session': getAdminTokenForRequest() }
+                        : {})
+                },
                 body: encodedBody
             },
             options.timeoutMs || API_REQUEST_TIMEOUT_MS,
@@ -1722,7 +1776,10 @@ async function executeActionRequest(action, payload = {}, options = {}) {
         }
         return responsePayload;
     } catch (error) {
-        const isPinErr = error.status === 403 ||
+        const isPinErr = error.status === 401 ||
+                         error.status === 403 ||
+                         error.code === 'session_required' ||
+                         error.code === 'session_expired' ||
                          error.code === 'invalid_pin' ||
                          error.code === 'pin_required' ||
                          String(error.message || '').toLowerCase().includes('pin');

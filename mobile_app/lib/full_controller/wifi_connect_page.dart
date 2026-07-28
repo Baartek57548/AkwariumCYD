@@ -5,6 +5,7 @@ import '../controller_preferences.dart';
 import 'controller_api.dart';
 import 'controller_session.dart';
 import 'controller_shell.dart';
+import 'firmware_release_service.dart';
 import 'widgets.dart';
 
 class WifiConnectPage extends StatefulWidget {
@@ -102,6 +103,7 @@ class _WifiConnectPageState extends State<WifiConnectPage> {
         api,
         initialStatus: status,
         cachedAt: DateTime.now(),
+        firmwareReleaseRepository: GitHubFirmwareReleaseService(),
       );
       handedOff = true;
       if (widget.returnSession) {

@@ -14,6 +14,7 @@ import 'full_controller/connection_health.dart';
 import 'full_controller/controller_api.dart';
 import 'full_controller/controller_session.dart';
 import 'full_controller/controller_shell.dart';
+import 'full_controller/firmware_release_service.dart';
 import 'full_controller/status_decoder.dart';
 import 'full_controller/wifi_connect_page.dart';
 import 'onboarding/onboarding_page.dart';
@@ -38,6 +39,7 @@ ControllerSession _defaultWifiSessionBuilder(
     ),
     initialStatus: initialStatus,
     cachedAt: cachedAt,
+    firmwareReleaseRepository: GitHubFirmwareReleaseService(),
   );
 }
 

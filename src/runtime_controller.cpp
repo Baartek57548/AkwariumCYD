@@ -41,6 +41,7 @@ uint32_t last_telemetry_ms = 0U;
 uint32_t last_mcp_poll_ms = 0U;
 uint32_t last_hal_reprobe_ms = 0U;
 uint32_t telemetry_sequence = 0U;
+volatile uint32_t io_heartbeat_ms = 0U;
 
 float ads_raw_to_voltage(int16_t raw) {
     return (static_cast<float>(raw) * 4.096f) / 32768.0f;
@@ -206,6 +207,7 @@ void io_task(void *) {
 
     for (;;) {
         const uint32_t now_ms = millis();
+        io_heartbeat_ms = now_ms;
         gui_app_service_background();
 
         // DS18B20 jest maszyną stanów i musi być serwisowany częściej niż
@@ -287,4 +289,22 @@ bool runtime_controller_take_latest(RuntimeTelemetry *out) {
     return out != nullptr &&
            telemetry_queue != nullptr &&
            xQueueReceive(telemetry_queue, out, 0U) == pdTRUE;
+}
+
+bool runtime_controller_is_healthy(uint32_t now_ms,
+                                   uint32_t maximum_heartbeat_age_ms) {
+    if (io_task_handle == nullptr ||
+        maximum_heartbeat_age_ms == 0U ||
+        io_heartbeat_ms == 0U ||
+        last_telemetry_ms == 0U) {
+        return false;
+    }
+    const eTaskState state = eTaskGetState(io_task_handle);
+    if (state == eDeleted || state == eInvalid) {
+        return false;
+    }
+    return static_cast<uint32_t>(now_ms - io_heartbeat_ms) <=
+               maximum_heartbeat_age_ms &&
+           static_cast<uint32_t>(now_ms - last_telemetry_ms) <=
+               maximum_heartbeat_age_ms;
 }

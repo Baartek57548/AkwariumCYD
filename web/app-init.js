@@ -47,19 +47,22 @@ function bindLogsControls() {
             if (!isAdminAuthenticated()) {
                 await loginAsAdmin();
             }
-            const pin = getAdminPinForRequest();
-            if (!pin) {
+            const token = getAdminTokenForRequest();
+            if (!token) {
                 throw new Error('Wymagane logowanie admina.');
             }
             const result = await fetchWithTimeout(
-                `${API_LOGS}?format=text&type=${encodeURIComponent(activeLogType)}&pin=${encodeURIComponent(pin)}`,
-                { cache: 'no-store' },
+                `${API_LOGS}?format=text&type=${encodeURIComponent(activeLogType)}`,
+                {
+                    cache: 'no-store',
+                    headers: { 'X-AquaCYD-Session': token }
+                },
                 API_REQUEST_TIMEOUT_MS,
                 (response) => response.ok ? response.text() : null
             );
             const { response, body: lines } = result;
             if (!response.ok) {
-                if (response.status === 403) {
+                if (response.status === 401 || response.status === 403) {
                     logoutAdmin();
                 }
                 throw new Error('Nie udalo sie pobrac logow z urzadzenia.');

@@ -4,6 +4,7 @@ import 'dart:io';
 import 'dart:typed_data';
 
 import '../controller_address.dart';
+import 'firmware_package.dart';
 import 'status_decoder.dart';
 
 class ControllerApiException implements Exception {
@@ -24,7 +25,10 @@ class ControllerApiException implements Exception {
       code == 'pin_invalid' ||
       code == 'pin_required' ||
       code == 'session_required' ||
-      code == 'session_expired';
+      code == 'session_expired' ||
+      code == 'session_invalid' ||
+      code == 'secure_session_required' ||
+      code == 'invalid_session_token';
 
   @override
   String toString() => message;
@@ -103,6 +107,7 @@ class ControllerAdminSession {
 abstract interface class ControllerProtocolV2Api {
   Future<Map<String, dynamic>> capabilities();
   Future<ControllerAdminSession> authenticateSession(String pin);
+  Future<void> revokeSession(String token);
   Future<ControllerActionResult> actionV2(
     String action, {
     required String commandId,
@@ -120,17 +125,24 @@ abstract interface class ControllerRemoteApi {
   Future<void> connect();
   Future<void> disconnect();
   Future<Map<String, dynamic>> status({bool includeHistory = false});
-  Future<Map<String, dynamic>> logs(String pin);
-  Future<Map<String, dynamic>> busDiagnostics(String pin);
+  Future<Map<String, dynamic>> logs({String? sessionToken, String? legacyPin});
+  Future<Map<String, dynamic>> busDiagnostics({
+    String? sessionToken,
+    String? legacyPin,
+  });
   Future<List<dynamic>> historyFiles();
   Future<ControllerActionResult> authenticate(String pin);
   Future<ControllerActionResult> action(
     String action, {
     Map<String, Object?> payload = const {},
-    String? pin,
-    bool includePin = true,
+    String? sessionToken,
+    String? legacyPin,
   });
-  Future<void> setBrowserTime(int epochSeconds, String pin);
+  Future<void> setBrowserTime(
+    int epochSeconds, {
+    String? sessionToken,
+    String? legacyPin,
+  });
   Future<Uint8List> download(
     String path, {
     Map<String, String>? queryParameters,
@@ -139,7 +151,7 @@ abstract interface class ControllerRemoteApi {
   Future<ControllerActionResult> uploadFirmware(
     Uint8List firmware,
     String fileName,
-    String pin, {
+    String sessionToken, {
     void Function(int sent, int total)? onProgress,
   });
   Future<void> webSession(String sessionId, String state);
@@ -164,7 +176,10 @@ class ControllerApi implements ControllerRemoteApi, ControllerProtocolV2Api {
 
   static const int maximumResponseBytes = 2 * 1024 * 1024;
   static const int maximumDownloadBytes = 16 * 1024 * 1024;
-  static const int maximumFirmwareBytes = 8 * 1024 * 1024;
+  static const int maximumFirmwareImageBytes =
+      FirmwarePackageParser.defaultMaximumImageBytes;
+  static const int maximumFirmwareBytes =
+      maximumFirmwareImageBytes + FirmwarePackageParser.headerBytes;
   static const int maximumHistoryFileEntries = 1024;
   static const Duration firmwareUploadDeadline = Duration(minutes: 3);
 
@@ -232,13 +247,32 @@ class ControllerApi implements ControllerRemoteApi, ControllerProtocolV2Api {
   }
 
   @override
-  Future<Map<String, dynamic>> logs(String pin) {
-    return getJson('/api/logs', queryParameters: {'pin': pin});
+  Future<Map<String, dynamic>> logs({String? sessionToken, String? legacyPin}) {
+    final headers = _authorizationHeaders(
+      sessionToken: sessionToken,
+      legacyPin: legacyPin,
+    );
+    return getJson(
+      '/api/logs',
+      queryParameters: legacyPin == null ? null : {'pin': legacyPin},
+      headers: headers,
+    );
   }
 
   @override
-  Future<Map<String, dynamic>> busDiagnostics(String pin) {
-    return getJson('/api/bus-diagnostics', queryParameters: {'pin': pin});
+  Future<Map<String, dynamic>> busDiagnostics({
+    String? sessionToken,
+    String? legacyPin,
+  }) {
+    final headers = _authorizationHeaders(
+      sessionToken: sessionToken,
+      legacyPin: legacyPin,
+    );
+    return getJson(
+      '/api/bus-diagnostics',
+      queryParameters: legacyPin == null ? null : {'pin': legacyPin},
+      headers: headers,
+    );
   }
 
   @override
@@ -279,7 +313,7 @@ class ControllerApi implements ControllerRemoteApi, ControllerProtocolV2Api {
 
   @override
   Future<ControllerActionResult> authenticate(String pin) {
-    return action('auth_check', pin: pin, includePin: true);
+    return action('auth_check', legacyPin: pin);
   }
 
   @override
@@ -311,6 +345,28 @@ class ControllerApi implements ControllerRemoteApi, ControllerProtocolV2Api {
   }
 
   @override
+  Future<void> revokeSession(String token) async {
+    final headers = _authorizationHeaders(sessionToken: token);
+    final response = await _request(
+      'POST',
+      resolve('/api/v2/logout'),
+      headers: {...headers, HttpHeaders.contentTypeHeader: 'application/json'},
+      body: utf8.encode('{}'),
+      allowRetry: false,
+    );
+    final decoded = _tryDecodeJsonObject(response.body);
+    if (!response.isSuccess || decoded?['ok'] != true) {
+      throw ControllerApiException(
+        message:
+            decoded?['message']?.toString() ??
+            'Nie udało się unieważnić sesji administratora.',
+        code: decoded?['code']?.toString() ?? 'logout_failed',
+        statusCode: response.statusCode,
+      );
+    }
+  }
+
+  @override
   Future<ControllerActionResult> actionV2(
     String actionName, {
     required String commandId,
@@ -337,7 +393,7 @@ class ControllerApi implements ControllerRemoteApi, ControllerProtocolV2Api {
         'token': token.toLowerCase(),
         ...payload,
       },
-      includePin: false,
+      sessionToken: token,
     );
   }
 
@@ -345,9 +401,13 @@ class ControllerApi implements ControllerRemoteApi, ControllerProtocolV2Api {
   Future<ControllerActionResult> action(
     String action, {
     Map<String, Object?> payload = const {},
-    String? pin,
-    bool includePin = true,
+    String? sessionToken,
+    String? legacyPin,
   }) async {
+    final headers = _authorizationHeaders(
+      sessionToken: sessionToken,
+      legacyPin: legacyPin,
+    );
     final fields = <String, String>{'action': action};
     for (final entry in payload.entries) {
       final value = entry.value;
@@ -355,14 +415,15 @@ class ControllerApi implements ControllerRemoteApi, ControllerProtocolV2Api {
         fields[entry.key] = _encodeField(value);
       }
     }
-    if (includePin && pin != null && pin.isNotEmpty) {
-      fields['pin'] = pin;
+    if (legacyPin != null) {
+      fields['pin'] = legacyPin;
     }
 
     final response = await _request(
       'POST',
       resolve('/api/action'),
-      headers: const {
+      headers: {
+        ...headers,
         HttpHeaders.contentTypeHeader: 'application/x-www-form-urlencoded',
       },
       body: utf8.encode(Uri(queryParameters: fields).query),
@@ -383,12 +444,21 @@ class ControllerApi implements ControllerRemoteApi, ControllerProtocolV2Api {
   }
 
   @override
-  Future<void> setBrowserTime(int epochSeconds, String pin) async {
-    final fields = {'epoch': '$epochSeconds', 'pin': pin};
+  Future<void> setBrowserTime(
+    int epochSeconds, {
+    String? sessionToken,
+    String? legacyPin,
+  }) async {
+    final authorizationHeaders = _authorizationHeaders(
+      sessionToken: sessionToken,
+      legacyPin: legacyPin,
+    );
+    final fields = {'epoch': '$epochSeconds', 'pin': ?legacyPin};
     final response = await _request(
       'POST',
       resolve('/settime'),
-      headers: const {
+      headers: {
+        ...authorizationHeaders,
         HttpHeaders.contentTypeHeader: 'application/x-www-form-urlencoded',
       },
       body: utf8.encode(Uri(queryParameters: fields).query),
@@ -437,20 +507,23 @@ class ControllerApi implements ControllerRemoteApi, ControllerProtocolV2Api {
   Future<ControllerActionResult> uploadFirmware(
     Uint8List firmware,
     String fileName,
-    String pin, {
+    String sessionToken, {
     void Function(int sent, int total)? onProgress,
   }) async {
-    if (firmware.isEmpty || firmware.length > maximumFirmwareBytes) {
+    if (!RegExp(r'^[a-fA-F0-9]{32}$').hasMatch(sessionToken)) {
       throw const ControllerApiException(
-        code: 'invalid_firmware_size',
-        message: 'Firmware musi mieć od 1 B do 8 MB.',
+        code: 'invalid_session_token',
+        message: 'Token sesji administratora ma nieprawidłowy format.',
       );
     }
-    if (!fileName.toLowerCase().endsWith('.bin')) {
-      throw const ControllerApiException(
-        code: 'invalid_firmware_extension',
-        message: 'Firmware musi być plikiem .bin.',
+    try {
+      FirmwarePackageParser.parse(
+        firmware,
+        fileName: fileName,
+        maximumImageBytes: maximumFirmwareImageBytes,
       );
+    } on FirmwarePackageException catch (error) {
+      throw ControllerApiException(code: error.code, message: error.message);
     }
 
     final client = _newClient();
@@ -459,7 +532,7 @@ class ControllerApi implements ControllerRemoteApi, ControllerProtocolV2Api {
         client,
         firmware,
         fileName,
-        pin,
+        sessionToken.toLowerCase(),
         onProgress,
       ).timeout(firmwareUploadDeadline);
     } on ControllerApiException {
@@ -498,7 +571,7 @@ class ControllerApi implements ControllerRemoteApi, ControllerProtocolV2Api {
     HttpClient client,
     Uint8List firmware,
     String fileName,
-    String pin,
+    String sessionToken,
     void Function(int sent, int total)? onProgress,
   ) async {
     final boundary = '----cydAkwarium${DateTime.now().microsecondsSinceEpoch}';
@@ -510,61 +583,66 @@ class ControllerApi implements ControllerRemoteApi, ControllerProtocolV2Api {
     );
     final suffix = utf8.encode('\r\n--$boundary--\r\n');
     final totalLength = prefix.length + firmware.length + suffix.length;
-    final request = await client.postUrl(resolve('/update', {'pin': pin}));
+    final request = await client.postUrl(resolve('/update'));
     request.headers.contentType = ContentType(
       'multipart',
       'form-data',
       parameters: {'boundary': boundary},
     );
+    request.headers.set('X-AquaCYD-Session', sessionToken);
+    request.headers.set(HttpHeaders.acceptHeader, 'application/json');
+    request.headers.set(HttpHeaders.cacheControlHeader, 'no-store');
     request.contentLength = totalLength;
     var sent = 0;
+    onProgress?.call(0, firmware.length);
     request.add(prefix);
-    sent += prefix.length;
-    onProgress?.call(sent, totalLength);
     const chunkSize = 32 * 1024;
     for (var offset = 0; offset < firmware.length; offset += chunkSize) {
       final end = (offset + chunkSize).clamp(0, firmware.length);
-      request.add(firmware.sublist(offset, end));
+      request.add(Uint8List.sublistView(firmware, offset, end));
       sent += end - offset;
-      onProgress?.call(sent, totalLength);
+      onProgress?.call(sent, firmware.length);
       await Future<void>.delayed(Duration.zero);
     }
     request.add(suffix);
-    sent += suffix.length;
-    onProgress?.call(sent, totalLength);
     final response = await request.close();
     final responseBytes = await _readLimited(response, maximumResponseBytes);
-    final responseText = utf8
-        .decode(responseBytes, allowMalformed: true)
-        .trim();
-    if (response.statusCode < 200 || response.statusCode >= 300) {
+    final decoded = _tryDecodeJsonObject(responseBytes);
+    if (decoded == null) {
       throw ControllerApiException(
-        message: responseText.isEmpty
-            ? 'Aktualizacja OTA nie powiodła się.'
-            : responseText,
-        code: response.statusCode == HttpStatus.forbidden
-            ? 'invalid_pin'
-            : 'ota_failed',
+        message: 'Sterownik zwrócił nieprawidłową odpowiedź OTA.',
+        code: 'invalid_ota_response',
         statusCode: response.statusCode,
       );
     }
-    return ControllerActionResult(
-      success: true,
-      code: 'ok',
-      message: responseText.isEmpty
-          ? 'Firmware został przyjęty. Sterownik uruchomi się ponownie.'
-          : responseText,
+    final responseIsSuccess =
+        response.statusCode >= HttpStatus.ok &&
+        response.statusCode < HttpStatus.multipleChoices;
+    final declaredSuccess = decoded['ok'] == true || decoded['success'] == true;
+    final result = ControllerActionResult.fromJson(
+      decoded,
+      fallbackSuccess: responseIsSuccess && declaredSuccess,
     );
+    if (!responseIsSuccess || !declaredSuccess || !result.success) {
+      throw ControllerApiException(
+        message: result.message,
+        code: decoded['code']?.toString() ?? 'ota_failed',
+        statusCode: response.statusCode,
+      );
+    }
+    return result;
   }
 
   Future<Map<String, dynamic>> getJson(
     String path, {
     Map<String, String>? queryParameters,
+    Map<String, String> headers = const {},
     bool allowRetry = true,
   }) async {
     final value = await getJsonValue(
       path,
       queryParameters: queryParameters,
+      headers: headers,
       allowRetry: allowRetry,
     );
     if (value is! Map<String, dynamic>) {
@@ -579,11 +657,13 @@ class ControllerApi implements ControllerRemoteApi, ControllerProtocolV2Api {
   Future<dynamic> getJsonValue(
     String path, {
     Map<String, String>? queryParameters,
+    Map<String, String> headers = const {},
     bool allowRetry = true,
   }) async {
     final response = await _request(
       'GET',
       resolve(path, queryParameters),
+      headers: headers,
       allowRetry: allowRetry,
     );
     if (!response.isSuccess) {
@@ -725,6 +805,40 @@ class ControllerApi implements ControllerRemoteApi, ControllerProtocolV2Api {
   HttpClient _newClient() => HttpClient()
     ..connectionTimeout = _requestDeadline
     ..idleTimeout = const Duration(seconds: 15);
+
+  static Map<String, String> _authorizationHeaders({
+    String? sessionToken,
+    String? legacyPin,
+  }) {
+    if (sessionToken != null && legacyPin != null) {
+      throw const ControllerApiException(
+        code: 'ambiguous_authorization',
+        message: 'Nie można jednocześnie wysłać tokena sesji i PIN-u.',
+      );
+    }
+    if (sessionToken != null) {
+      if (!RegExp(r'^[a-fA-F0-9]{32}$').hasMatch(sessionToken)) {
+        throw const ControllerApiException(
+          code: 'invalid_session_token',
+          message: 'Token sesji administratora ma nieprawidłowy format.',
+        );
+      }
+      return {'X-AquaCYD-Session': sessionToken.toLowerCase()};
+    }
+    if (legacyPin != null) {
+      if (!RegExp(r'^\d{4,8}$').hasMatch(legacyPin)) {
+        throw const ControllerApiException(
+          code: 'invalid_pin_format',
+          message: 'PIN musi zawierać od 4 do 8 cyfr.',
+        );
+      }
+      return const {};
+    }
+    throw const ControllerApiException(
+      code: 'session_required',
+      message: 'Wymagana jest aktywna sesja administratora.',
+    );
+  }
 
   static Future<List<int>> _readLimited(
     HttpClientResponse response,

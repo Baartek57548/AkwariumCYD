@@ -7,6 +7,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:workmanager/workmanager.dart';
 
 import '../controller_preferences.dart';
+import '../controller_address.dart';
 import '../controller_snapshot_cache.dart';
 import '../full_controller/command_center_models.dart';
 import '../full_controller/controller_api.dart';
@@ -65,24 +66,7 @@ abstract final class LocalControllerAddressPolicy {
         uri.hasFragment) {
       return false;
     }
-    final host = uri.host.toLowerCase();
-    if (host == 'localhost' || host.endsWith('.localhost')) return false;
-
-    final ip = InternetAddress.tryParse(host);
-    if (ip != null) {
-      final bytes = ip.rawAddress;
-      if (ip.type == InternetAddressType.IPv4) {
-        return bytes[0] == 10 ||
-            (bytes[0] == 172 && bytes[1] >= 16 && bytes[1] <= 31) ||
-            (bytes[0] == 192 && bytes[1] == 168) ||
-            (bytes[0] == 169 && bytes[1] == 254);
-      }
-      return (bytes[0] & 0xfe) == 0xfc ||
-          (bytes[0] == 0xfe && (bytes[1] & 0xc0) == 0x80);
-    }
-    if (host.endsWith('.local')) return true;
-    return !host.contains('.') &&
-        RegExp(r'^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$').hasMatch(host);
+    return ControllerAddress.isLocalNetworkUri(uri);
   }
 }
 

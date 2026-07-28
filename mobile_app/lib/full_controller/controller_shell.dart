@@ -347,7 +347,7 @@ class _ControllerShellState extends State<ControllerShell>
         await session.refresh(includeHistory: true);
       case _HeaderAction.admin:
         if (session.isAdmin) {
-          session.logout();
+          await session.logout();
           if (mounted) {
             _showMessage('Wylogowano administratora.', success: true);
           }

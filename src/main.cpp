@@ -28,10 +28,14 @@ namespace {
 
 constexpr uint32_t UI_LOOP_PERIOD_MS = 2U;
 constexpr uint32_t UI_MUTEX_TIMEOUT_MS = 20U;
+constexpr uint32_t OTA_HEALTH_SERVICE_MS = 500U;
+constexpr uint32_t OTA_HEARTBEAT_MAX_AGE_MS = 3000U;
 
 uint32_t last_lvgl_tick_ms = 0U;
 uint32_t last_clock_tick_ms = 0U;
 uint32_t last_status_bar_ms = 0U;
+uint32_t last_ota_health_ms = 0U;
+uint32_t last_applied_telemetry_ms = 0U;
 RuntimeTelemetry pending_telemetry = {};
 bool pending_telemetry_valid = false;
 
@@ -226,6 +230,7 @@ void setup() {
     last_lvgl_tick_ms = now_ms;
     last_clock_tick_ms = now_ms;
     last_status_bar_ms = now_ms;
+    last_ota_health_ms = now_ms;
     if (!runtime_controller_start()) {
         Serial.println("FATAL: zadanie I/O Core 0 nie wystartowało.");
     }
@@ -245,6 +250,23 @@ void loop() {
     }
     if (pending_telemetry_valid && apply_telemetry(pending_telemetry)) {
         pending_telemetry_valid = false;
+        last_applied_telemetry_ms = now_ms;
+    }
+
+    if (static_cast<uint32_t>(now_ms - last_ota_health_ms) >=
+        OTA_HEALTH_SERVICE_MS) {
+        last_ota_health_ms = now_ms;
+        const bool telemetry_applied =
+            last_applied_telemetry_ms != 0U &&
+            static_cast<uint32_t>(
+                now_ms - last_applied_telemetry_ms) <=
+                OTA_HEARTBEAT_MAX_AGE_MS;
+        const bool runtime_ready =
+            telemetry_applied &&
+            runtime_controller_is_healthy(
+                now_ms, OTA_HEARTBEAT_MAX_AGE_MS) &&
+            gui_app_runtime_ready();
+        ota_guard_service(now_ms, runtime_ready, ESP.getFreeHeap());
     }
 
     vTaskDelay(pdMS_TO_TICKS(UI_LOOP_PERIOD_MS));

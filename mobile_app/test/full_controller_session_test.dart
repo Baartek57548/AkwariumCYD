@@ -5,7 +5,11 @@ import 'package:cyd_aquarium_mobile/full_controller/connection_health.dart';
 import 'package:cyd_aquarium_mobile/full_controller/controller_api.dart';
 import 'package:cyd_aquarium_mobile/full_controller/controller_session.dart';
 import 'package:cyd_aquarium_mobile/full_controller/data_access.dart';
+import 'package:cyd_aquarium_mobile/full_controller/firmware_package.dart';
+import 'package:cyd_aquarium_mobile/full_controller/firmware_release_service.dart';
 import 'package:flutter_test/flutter_test.dart';
+
+import 'support/firmware_package_fixture.dart';
 
 void main() {
   test('development session exposes complete web-compatible status', () async {
@@ -260,6 +264,162 @@ void main() {
       expect(api.v2ActionCalls, 0);
     },
   );
+
+  test('secure firmware cannot be downgraded to PIN fallback', () async {
+    final api = _DowngradeAttemptApi();
+    final session = ControllerSession.wifi(api);
+    addTearDown(session.dispose);
+    await session.connect();
+
+    await expectLater(
+      session.login('1234'),
+      throwsA(
+        isA<ControllerApiException>().having(
+          (error) => error.code,
+          'code',
+          'unknown_endpoint',
+        ),
+      ),
+    );
+
+    expect(api.legacyAuthenticateCalls, 0);
+    expect(session.isAdmin, isFalse);
+  });
+
+  test(
+    'secure firmware upload uses the v2 token and exposes OTA state',
+    () async {
+      final api = _FakeV2RemoteApi();
+      final session = ControllerSession.wifi(api);
+      addTearDown(session.dispose);
+      await session.connect();
+      await session.login('1234');
+      final firmware = buildFirmwarePackageFixture();
+      final phases = <FirmwareUpdatePhase>[];
+      session.addListener(() {
+        phases.add(session.firmwareUpdateStatus.phase);
+      });
+
+      expect(session.supportsFirmwareUpload, isTrue);
+      final inspected = session.inspectFirmwarePackage(
+        firmware,
+        'firmware.aqfw',
+      );
+      expect(inspected.target.name, 'ili9341');
+
+      final result = await session.uploadFirmware(firmware, 'firmware.aqfw');
+
+      expect(result.success, isTrue);
+      expect(api.lastFirmwareSessionToken, '0123456789abcdef0123456789abcdef');
+      expect(phases, contains(FirmwareUpdatePhase.validating));
+      expect(phases, contains(FirmwareUpdatePhase.uploading));
+      expect(
+        session.firmwareUpdateStatus.phase,
+        FirmwareUpdatePhase.awaitingRestart,
+      );
+      expect(session.firmwareUpdateStatus.progress, 1);
+      expect(session.activeAction, isNull);
+      expect(session.busy, isFalse);
+      expect(session.isAdmin, isFalse);
+    },
+  );
+
+  test(
+    'automatically discovers, downloads and installs matching firmware release',
+    () async {
+      final api = _FakeV2RemoteApi();
+      final bytes = buildFirmwarePackageFixture();
+      final repository = _FakeFirmwareReleaseRepository(bytes);
+      final session = ControllerSession.wifi(
+        api,
+        firmwareReleaseRepository: repository,
+      );
+      await session.connect();
+      for (
+        var attempt = 0;
+        attempt < 10 &&
+            session.firmwareReleaseStatus.phase !=
+                FirmwareReleasePhase.available;
+        attempt++
+      ) {
+        await Future<void>.delayed(Duration.zero);
+      }
+
+      expect(repository.fetchCalls, 1);
+      expect(repository.requestedTarget, FirmwareTarget.ili9341);
+      expect(
+        session.firmwareReleaseStatus.phase,
+        FirmwareReleasePhase.available,
+      );
+      expect(session.firmwareReleaseStatus.release?.version, '5.1.0');
+
+      final package = await session.downloadAvailableFirmware();
+      expect(package.firmwareVersion, '5.1.0');
+      expect(repository.downloadCalls, 1);
+      expect(
+        session.firmwareReleaseStatus.phase,
+        FirmwareReleasePhase.readyToInstall,
+      );
+      final cachedPackage = session.firmwareReleaseStatus.package;
+      await session.checkForFirmwareUpdates(manual: true);
+      expect(repository.fetchCalls, 1);
+      expect(
+        session.firmwareReleaseStatus.phase,
+        FirmwareReleasePhase.readyToInstall,
+      );
+      expect(session.firmwareReleaseStatus.package, same(cachedPackage));
+
+      await session.login('1234');
+      await session.uploadFirmware(
+        package.bytes,
+        repository.release.asset.name,
+      );
+
+      expect(
+        session.firmwareReleaseStatus.phase,
+        FirmwareReleasePhase.awaitingRestart,
+      );
+      expect(api.lastFirmwareSessionToken, '0123456789abcdef0123456789abcdef');
+      session.dispose();
+      expect(repository.disposed, isTrue);
+    },
+  );
+
+  test('logout clears local state and revokes the v2 token once', () async {
+    final api = _FakeV2RemoteApi();
+    final session = ControllerSession.wifi(api);
+    addTearDown(session.dispose);
+    await session.connect();
+    await session.login('1234');
+    expect(session.isAdmin, isTrue);
+
+    final logout = session.logout();
+    expect(session.isAdmin, isFalse);
+    await logout;
+
+    expect(api.revokeCalls, 1);
+    expect(api.revokedToken, '0123456789abcdef0123456789abcdef');
+    await session.logout();
+    expect(api.revokeCalls, 1);
+  });
+
+  test(
+    'moving to background revokes the active v2 session best-effort',
+    () async {
+      final api = _FakeV2RemoteApi();
+      final session = ControllerSession.wifi(api);
+      addTearDown(session.dispose);
+      await session.connect();
+      await session.login('1234');
+
+      session.setAppActive(false);
+      expect(session.isAdmin, isFalse);
+      await Future<void>.delayed(Duration.zero);
+
+      expect(api.revokeCalls, 1);
+      expect(api.revokedToken, '0123456789abcdef0123456789abcdef');
+    },
+  );
 }
 
 class _FakeRemoteApi implements ControllerRemoteApi {
@@ -273,7 +433,9 @@ class _FakeRemoteApi implements ControllerRemoteApi {
   int connectCalls = 0;
   int statusCalls = 0;
   int actionCalls = 0;
+  int legacyAuthenticateCalls = 0;
   int heartbeatCalls = 0;
+  String? lastFirmwareSessionToken;
 
   @override
   Uri get baseUri => Uri.parse('http://192.168.4.1');
@@ -314,11 +476,13 @@ class _FakeRemoteApi implements ControllerRemoteApi {
       'device': 'AquaCYD Test',
       'network': <String, dynamic>{'rssi': -61},
       'temperature': temperature,
+      'firmware': <String, dynamic>{'version': '5.0.0'},
     };
   }
 
   @override
   Future<ControllerActionResult> authenticate(String pin) async {
+    legacyAuthenticateCalls += 1;
     return const ControllerActionResult(
       success: true,
       code: 'ok',
@@ -330,8 +494,8 @@ class _FakeRemoteApi implements ControllerRemoteApi {
   Future<ControllerActionResult> action(
     String action, {
     Map<String, Object?> payload = const {},
-    String? pin,
-    bool includePin = true,
+    String? sessionToken,
+    String? legacyPin,
   }) async {
     actionCalls += 1;
     return actionGate?.future ??
@@ -343,17 +507,26 @@ class _FakeRemoteApi implements ControllerRemoteApi {
   }
 
   @override
-  Future<Map<String, dynamic>> logs(String pin) async => <String, dynamic>{};
+  Future<Map<String, dynamic>> logs({
+    String? sessionToken,
+    String? legacyPin,
+  }) async => <String, dynamic>{};
 
   @override
-  Future<Map<String, dynamic>> busDiagnostics(String pin) async =>
-      <String, dynamic>{};
+  Future<Map<String, dynamic>> busDiagnostics({
+    String? sessionToken,
+    String? legacyPin,
+  }) async => <String, dynamic>{};
 
   @override
   Future<List<dynamic>> historyFiles() async => <dynamic>[];
 
   @override
-  Future<void> setBrowserTime(int epochSeconds, String pin) async {}
+  Future<void> setBrowserTime(
+    int epochSeconds, {
+    String? sessionToken,
+    String? legacyPin,
+  }) async {}
 
   @override
   Future<Uint8List> download(
@@ -366,9 +539,10 @@ class _FakeRemoteApi implements ControllerRemoteApi {
   Future<ControllerActionResult> uploadFirmware(
     Uint8List firmware,
     String fileName,
-    String pin, {
+    String sessionToken, {
     void Function(int sent, int total)? onProgress,
   }) async {
+    lastFirmwareSessionToken = sessionToken;
     onProgress?.call(firmware.length, firmware.length);
     return const ControllerActionResult(
       success: true,
@@ -388,18 +562,30 @@ class _FakeV2RemoteApi extends _FakeRemoteApi
   int authCalls = 0;
   int legacyActionCalls = 0;
   int v2ActionCalls = 0;
+  int revokeCalls = 0;
   String? lastAction;
   String? lastCommandId;
   String? lastToken;
+  String? revokedToken;
 
   @override
   Future<Map<String, dynamic>> capabilities() async => {
+    'firmwareVersion': '5.0.0',
     'apiVersions': [1, 2],
     'features': {
       'timedOverrides': true,
       'feedingMode': true,
       'serviceMode': true,
       'idempotency': true,
+      'safeOta': true,
+    },
+    'ota': {
+      'target': 'ili9341',
+      'productId': 'aquacyd-cyd',
+      'keyId': '9470c281de5f898f',
+      'bootloaderVersion': 1,
+      'minimumSecurityVersion': 1,
+      'updatePartitionBytes': 1966080,
     },
   };
 
@@ -416,16 +602,22 @@ class _FakeV2RemoteApi extends _FakeRemoteApi
   Future<ControllerActionResult> action(
     String action, {
     Map<String, Object?> payload = const {},
-    String? pin,
-    bool includePin = true,
+    String? sessionToken,
+    String? legacyPin,
   }) async {
     legacyActionCalls += 1;
     return super.action(
       action,
       payload: payload,
-      pin: pin,
-      includePin: includePin,
+      sessionToken: sessionToken,
+      legacyPin: legacyPin,
     );
+  }
+
+  @override
+  Future<void> revokeSession(String token) async {
+    revokeCalls += 1;
+    revokedToken = token;
   }
 
   @override
@@ -444,5 +636,97 @@ class _FakeV2RemoteApi extends _FakeRemoteApi
       code: 'ok',
       message: 'Wykonano bezpiecznie.',
     );
+  }
+}
+
+class _DowngradeAttemptApi extends _FakeV2RemoteApi {
+  @override
+  Future<Map<String, dynamic>> status({bool includeHistory = false}) async {
+    final value = await super.status(includeHistory: includeHistory);
+    value['firmware'] = <String, dynamic>{'version': '5.1.0'};
+    return value;
+  }
+
+  @override
+  Future<Map<String, dynamic>> capabilities() {
+    throw const ControllerApiException(
+      code: 'unknown_endpoint',
+      statusCode: 404,
+      message: 'Brak endpointu.',
+    );
+  }
+
+  @override
+  Future<ControllerAdminSession> authenticateSession(String pin) {
+    throw const ControllerApiException(
+      code: 'unknown_endpoint',
+      statusCode: 404,
+      message: 'Brak endpointu.',
+    );
+  }
+}
+
+class _FakeFirmwareReleaseRepository implements FirmwareReleaseRepository {
+  _FakeFirmwareReleaseRepository(this.bytes)
+    : release = FirmwareRelease(
+        version: '5.1.0',
+        tagName: 'firmware-v5.1.0',
+        title: 'AquaCYD Firmware 5.1.0',
+        notes: 'Testowe wydanie OTA.',
+        publishedAt: DateTime.utc(2026, 7, 28),
+        releasePageUri: Uri.parse(
+          'https://github.com/Baartek57548/AkwariumCYD/'
+          'releases/tag/firmware-v5.1.0',
+        ),
+        target: FirmwareTarget.ili9341,
+        asset: FirmwareReleaseAsset(
+          name: 'AquaCYD-Firmware-5.1.0-ili9341.aqfw',
+          downloadUri: Uri.parse(
+            'https://github.com/Baartek57548/AkwariumCYD/releases/'
+            'download/firmware-v5.1.0/'
+            'AquaCYD-Firmware-5.1.0-ili9341.aqfw',
+          ),
+          size: bytes.length,
+          sha256: List.filled(64, 'a').join(),
+        ),
+      );
+
+  final Uint8List bytes;
+  final FirmwareRelease release;
+  int fetchCalls = 0;
+  int downloadCalls = 0;
+  FirmwareTarget? requestedTarget;
+  bool disposed = false;
+
+  @override
+  Future<FirmwareRelease?> fetchLatestFirmwareRelease(
+    FirmwareTarget target,
+  ) async {
+    fetchCalls++;
+    requestedTarget = target;
+    return release;
+  }
+
+  @override
+  Future<Uint8List> downloadFirmwarePackage({
+    required FirmwareRelease release,
+    required void Function(double progress) onProgress,
+    required FirmwareDownloadCancellationToken cancellationToken,
+  }) async {
+    downloadCalls++;
+    if (cancellationToken.isCanceled) {
+      throw const FirmwareReleaseException(
+        code: 'download_canceled',
+        message: 'Anulowano.',
+      );
+    }
+    onProgress(0.5);
+    onProgress(1);
+    return bytes;
+  }
+
+  @override
+  void dispose() {
+    disposed = true;
   }
 }

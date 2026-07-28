@@ -2,6 +2,41 @@
 
 Wersjonowanie aplikacji jest zgodne z [Semantic Versioning](https://semver.org/).
 
+## 5.1.0 — 2026-07-28
+
+### Bezpieczeństwo połączenia
+
+- Bluetooth wymaga teraz LE Secure Connections, bondingu, ochrony MITM i klucza
+  128-bit; aplikacja nie wysyła poleceń przed zakończeniem bezpiecznego
+  parowania,
+- produkcyjny CYD generuje własny sześciocyfrowy PIN; aplikacja nie zakłada już
+  publicznego kodu fabrycznego,
+- na Androidzie dodano natywny przepływ bondingu z timeoutem, obsługą cofniętych
+  uprawnień i pełnym sprzątaniem zasobów,
+- firmware pokazuje jednorazowy kod parowania na ekranie CYD i pozwala usunąć
+  zapisane urządzenia z poziomu narzędzi serwisowych.
+
+### Bezpieczne aktualizacje
+
+- aplikacja przyjmuje wyłącznie podpisane pakiety `.aqfw`, waliduje ich wariant
+  ekranu, produkt, wersję, `securityVersion`, identyfikator klucza, rozmiar i
+  SHA-256 przed wysłaniem,
+- upload używa krótkotrwałego tokenu w nagłówku `X-AquaCYD-Session`; PIN nie jest
+  już umieszczany w adresie URL,
+- firmware weryfikuje RSA-3072/PSS, podpis obrazu Secure Boot v2 i anti-downgrade
+  przed aktywowaniem partycji aktualizacji, a po restarcie wymaga potwierdzenia
+  zdrowia obu rdzeni i interfejsu,
+- po połączeniu aplikacja automatycznie sprawdza wydania `firmware-v*`, dobiera
+  paczkę do ILI9341/ST7789 i — dopiero po zgodzie użytkownika — pobiera,
+  ponownie waliduje oraz instaluje aktualizację.
+
+### Dystrybucja
+
+- wersja aplikacji: `5.1.0+18`,
+- tag aplikacji: `mobile-v5.1.0`,
+- tag firmware: `firmware-v5.1.0`,
+- produkcyjny asset Androida: `AquaCYD-Control-5.1.0-current.apk`.
+
 ## 5.0.0 — 2026-07-26
 
 ### Nowe

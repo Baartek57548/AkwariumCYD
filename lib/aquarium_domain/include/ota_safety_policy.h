@@ -27,6 +27,26 @@ struct OtaPreflightInput {
 OtaPreflightResult evaluate_ota_preflight(const OtaPreflightInput &input);
 const char *ota_preflight_code(OtaPreflightResult result);
 
+enum class OtaFinalizeStep : uint8_t {
+    Complete = 0U,
+    MarkNativeValid = 1U,
+    PersistAcceptedState = 2U
+};
+
+OtaFinalizeStep next_ota_finalize_step(bool native_pending_verify,
+                                       bool persistent_pending);
+
+enum class OtaBootRecovery : uint8_t {
+    None = 0U,
+    TrackPendingBoot = 1U,
+    FinalizeAcceptedState = 2U,
+    ClearAbortedState = 3U
+};
+
+OtaBootRecovery evaluate_ota_boot_recovery(bool persistent_pending,
+                                            bool native_pending_verify,
+                                            bool running_matches_previous);
+
 enum class BootValidationDecision : uint8_t {
     Wait = 0U,
     MarkValid = 1U,

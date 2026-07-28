@@ -1,3 +1,5 @@
+import 'dart:io';
+
 class ControllerAddressException implements FormatException {
   const ControllerAddressException(this.message);
 
@@ -50,6 +52,11 @@ abstract final class ControllerAddress {
         'Podaj adres bazowy bez parametrów i fragmentu.',
       );
     }
+    if (uri.scheme == 'http' && !isLocalNetworkUri(uri, allowLoopback: true)) {
+      throw const ControllerAddressException(
+        'Nieszyfrowany HTTP jest dozwolony wyłącznie dla sterownika w sieci lokalnej.',
+      );
+    }
 
     final normalizedPath = uri.path == '/' || uri.path.isEmpty
         ? ''
@@ -61,5 +68,32 @@ abstract final class ControllerAddress {
     return candidate.scheme == controller.scheme &&
         candidate.host.toLowerCase() == controller.host.toLowerCase() &&
         candidate.port == controller.port;
+  }
+
+  static bool isLocalNetworkUri(Uri uri, {bool allowLoopback = false}) {
+    final host = uri.host.toLowerCase();
+    if (host.isEmpty || host == 'localhost' || host.endsWith('.localhost')) {
+      return false;
+    }
+    final ip = InternetAddress.tryParse(host);
+    if (ip != null) {
+      if (ip.isLoopback) {
+        return allowLoopback;
+      }
+      final bytes = ip.rawAddress;
+      if (ip.type == InternetAddressType.IPv4) {
+        return bytes[0] == 10 ||
+            (bytes[0] == 172 && bytes[1] >= 16 && bytes[1] <= 31) ||
+            (bytes[0] == 192 && bytes[1] == 168) ||
+            (bytes[0] == 169 && bytes[1] == 254);
+      }
+      return (bytes[0] & 0xfe) == 0xfc ||
+          (bytes[0] == 0xfe && (bytes[1] & 0xc0) == 0x80);
+    }
+    if (host.endsWith('.local')) {
+      return true;
+    }
+    return !host.contains('.') &&
+        RegExp(r'^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$').hasMatch(host);
   }
 }

@@ -158,6 +158,53 @@ test('relay renderer rejects invalid channels and escapes custom labels', async 
     expect(result.label).toContain('<img src=x');
 });
 
+test('dashboard relay test always authenticates and sends only the admin session token', async ({ page }) => {
+    await page.goto('/');
+    await waitForTelemetry(page);
+
+    await page.evaluate(() => {
+        const status = {
+            relaysConfig: {
+                relays: [{
+                    channel: 8,
+                    function: 'custom',
+                    label: 'Kanał testowy',
+                    defaultState: 'off',
+                    manualAllowed: true,
+                    pinRequired: false
+                }]
+            },
+            relays: { ch8: false }
+        };
+        window.lastStatusData = status;
+        renderRelays(status);
+        void toggleDynamicRelayAction(8);
+    });
+
+    await expect(page.locator('#pin-modal')).toBeVisible();
+    const authRequestPromise = page.waitForRequest((request) =>
+        new URL(request.url()).pathname === '/api/v2/auth'
+    );
+    const actionRequestPromise = page.waitForRequest((request) => {
+        if (new URL(request.url()).pathname !== '/api/action') return false;
+        return new URLSearchParams(request.postData() || '').get('action') === 'test_relay';
+    });
+
+    await page.locator('#pin-modal-input').fill(DEV_ADMIN_PIN);
+    await page.locator('#pin-modal-submit').click();
+
+    const authRequest = await authRequestPromise;
+    const actionRequest = await actionRequestPromise;
+    const actionUrl = new URL(actionRequest.url());
+    const actionBody = new URLSearchParams(actionRequest.postData() || '');
+    const sessionToken = await actionRequest.headerValue('X-AquaCYD-Session');
+
+    expect(new URL(authRequest.url()).pathname).toBe('/api/v2/auth');
+    expect(actionUrl.searchParams.has('pin')).toBe(false);
+    expect(actionBody.has('pin')).toBe(false);
+    expect(sessionToken).toMatch(/^[0-9a-f]{32}$/u);
+});
+
 test('keyboard PIN login unlocks every administrative section', async ({ page }) => {
     await page.goto('/');
     await waitForTelemetry(page);

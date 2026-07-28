@@ -221,16 +221,19 @@ async function fetchHardwareBusDiagnostics(force = false) {
     setCommandStatus('diag-strip-bus', 'Skanowanie...', 'I2C · UART · OneWire', 'info');
 
     try {
-        const pin = getAdminPinForRequest();
+        const token = getAdminTokenForRequest();
         const result = await fetchWithTimeout(
-            `${API_BUS_DIAGNOSTICS}?pin=${encodeURIComponent(pin)}`,
-            { cache: 'no-store' },
+            API_BUS_DIAGNOSTICS,
+            {
+                cache: 'no-store',
+                headers: { 'X-AquaCYD-Session': token }
+            },
             API_REQUEST_TIMEOUT_MS,
             (response) => response.json().catch(() => ({}))
         );
         const { response, body: payload } = result;
         if (!response.ok || payload?.ok !== true) {
-            if (response.status === 403) logoutAdmin();
+            if (response.status === 401 || response.status === 403) logoutAdmin();
             throw new Error(payload?.message || `HTTP ${response.status}`);
         }
         busDiagnosticsLastScanAtMs = Date.now();
@@ -1305,7 +1308,7 @@ async function toggleDynamicRelayAction(channel) {
                 channel: String(normalizedChannel),
                 state: String(nextState),
                 duration: "0"
-            }, { requirePin: relay.pinRequired });
+            }, { requirePin: true });
             await fetchStatus(true);
             await fetchLogs(true);
         }

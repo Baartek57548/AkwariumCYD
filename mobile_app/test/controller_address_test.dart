@@ -24,9 +24,24 @@ void main() {
         'http://user:secret@akwarium.local',
         'http://akwarium.local?pin=1234',
         'http://akwarium.local/#panel',
+        'http://example.com',
       ]) {
         expect(() => ControllerAddress.parse(value), throwsFormatException);
       }
+    });
+
+    test('allows an explicit loopback IP for local development', () {
+      expect(
+        ControllerAddress.parse('http://127.0.0.1:8080').toString(),
+        'http://127.0.0.1:8080',
+      );
+    });
+
+    test('allows a public host only over HTTPS', () {
+      expect(
+        ControllerAddress.parse('https://controller.example.com').toString(),
+        'https://controller.example.com',
+      );
     });
   });
 

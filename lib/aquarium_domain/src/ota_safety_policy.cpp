@@ -51,6 +51,32 @@ const char *ota_preflight_code(OtaPreflightResult result) {
     }
 }
 
+OtaFinalizeStep next_ota_finalize_step(bool native_pending_verify,
+                                       bool persistent_pending) {
+    if (native_pending_verify) {
+        return OtaFinalizeStep::MarkNativeValid;
+    }
+    if (persistent_pending) {
+        return OtaFinalizeStep::PersistAcceptedState;
+    }
+    return OtaFinalizeStep::Complete;
+}
+
+OtaBootRecovery evaluate_ota_boot_recovery(
+    bool persistent_pending,
+    bool native_pending_verify,
+    bool running_matches_previous) {
+    if (!persistent_pending) {
+        return OtaBootRecovery::None;
+    }
+    if (native_pending_verify) {
+        return OtaBootRecovery::TrackPendingBoot;
+    }
+    return running_matches_previous
+               ? OtaBootRecovery::ClearAbortedState
+               : OtaBootRecovery::FinalizeAcceptedState;
+}
+
 BootValidationPolicy::BootValidationPolicy()
     : pending_(false), started_ms_(0U) {
 }

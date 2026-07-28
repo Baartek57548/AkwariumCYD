@@ -21,6 +21,7 @@ class MainActivity : FlutterActivity(), DisplayManager.DisplayListener {
     private lateinit var displayManager: DisplayManager
     private var methodChannel: MethodChannel? = null
     private var appUpdateChannel: AppUpdateChannel? = null
+    private var bleBondChannel: BleBondChannel? = null
     private var requestedMode: Display.Mode? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -33,6 +34,10 @@ class MainActivity : FlutterActivity(), DisplayManager.DisplayListener {
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
         appUpdateChannel = AppUpdateChannel(
+            this,
+            flutterEngine.dartExecutor.binaryMessenger,
+        )
+        bleBondChannel = BleBondChannel(
             this,
             flutterEngine.dartExecutor.binaryMessenger,
         )
@@ -61,6 +66,8 @@ class MainActivity : FlutterActivity(), DisplayManager.DisplayListener {
         methodChannel = null
         appUpdateChannel?.dispose()
         appUpdateChannel = null
+        bleBondChannel?.dispose()
+        bleBondChannel = null
         mainHandler.removeCallbacksAndMessages(null)
         super.onDestroy()
     }
