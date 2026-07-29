@@ -40,6 +40,9 @@ final class ControllerRuntimeServices extends ChangeNotifier {
 
   static const Duration _measurementInterval = Duration(minutes: 5);
   static const Duration _reminderCheckInterval = Duration(hours: 1);
+  static const String _notificationDeliveryWarning =
+      'Alarm został zapisany, ale Android zablokował powiadomienie. '
+      'Sprawdź zgodę i kanały w ustawieniach systemowych.';
 
   Future<void>? _initialization;
   _RuntimeObservation? _pendingObservation;
@@ -150,6 +153,11 @@ final class ControllerRuntimeServices extends ChangeNotifier {
         observedAt: observation.observedAt,
         completeSnapshot: observation.completeSnapshot,
       );
+      if (report.notificationFailures > 0) {
+        _warning = _notificationDeliveryWarning;
+      } else if (_warning == _notificationDeliveryWarning) {
+        _warning = null;
+      }
       final lastMeasurement = _lastMeasurementAt;
       if (observation.completeSnapshot &&
           (lastMeasurement == null ||
@@ -222,6 +230,22 @@ final class ControllerRuntimeServices extends ChangeNotifier {
       return await alarmCenter.requestNotificationPermission();
     } on Object {
       _warning = 'System nie udostępnił uprawnienia do powiadomień.';
+      _notify();
+      return false;
+    }
+  }
+
+  Future<bool> sendTestNotification() async {
+    await initialize();
+    try {
+      await alarmCenter.showTestNotification();
+      if (_warning == _notificationDeliveryWarning) {
+        _warning = null;
+        _notify();
+      }
+      return true;
+    } on Object {
+      _warning = _notificationDeliveryWarning;
       _notify();
       return false;
     }

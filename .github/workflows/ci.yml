@@ -243,6 +243,27 @@ jobs:
           --release
           --flavor current
           --target lib/main.dart
+      - name: Verify notification icon survived release shrinking
+        shell: bash
+        run: |
+          set -euo pipefail
+          apk="mobile_app/build/app/outputs/flutter-apk/app-current-release.apk"
+          build_tools="${ANDROID_SDK_ROOT:-$ANDROID_HOME}/build-tools"
+          aapt_path="$(
+            find "$build_tools" -type f -name aapt -print |
+              sort -V |
+              tail -n 1
+          )"
+          resources="$RUNNER_TEMP/aquacyd-apk-resources.txt"
+          test -s "$apk"
+          test -x "$aapt_path"
+          "$aapt_path" dump resources "$apk" > "$resources"
+          grep -F \
+            "pl.cydakwarium.cyd_aquarium_mobile:drawable/ic_notification" \
+            "$resources" >/dev/null || {
+              echo "Release APK does not contain drawable/ic_notification" >&2
+              exit 1
+            }
       - name: Produce explicitly unsigned validation APK
         shell: bash
         run: |

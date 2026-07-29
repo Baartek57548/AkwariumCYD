@@ -151,6 +151,9 @@ final class _FakeNotificationSink implements AlarmNotificationSink {
   Future<bool> requestPermission() async => true;
 
   @override
+  Future<void> showTestNotification() async {}
+
+  @override
   Future<void> showAlarm(AlarmRecord alarm) async {
     if (failAlarm) throw StateError('Kanał powiadomień niedostępny.');
     shown.add(alarm);

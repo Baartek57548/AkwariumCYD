@@ -96,7 +96,7 @@ flutter build apk --release --flavor current --target lib/main.dart
 ```
 
 Wynik powstaje w `build/app/outputs/flutter-apk/app-current-release.apk`.
-Wydanie 5.1.0 jest publikowane jako `AquaCYD-Control-5.1.0-current.apk`.
+Wydanie 5.1.1 jest publikowane jako `AquaCYD-Control-5.1.1-current.apk`.
 
 Build release wymaga pliku `android/key.properties` z niepustymi polami:
 

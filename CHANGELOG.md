@@ -1,5 +1,28 @@
 # Changelog
 
+## mobile-v5.1.1 - 2026-07-29
+
+Poprawka produkcyjnych powiadomień systemowych aplikacji AquaCYD `5.1.1`.
+
+### What is included
+
+- Ikona `ic_notification` jest jawnie zachowywana podczas optymalizacji zasobów,
+  dzięki czemu inicjalizacja kanałów Androida nie kończy się już błędem
+  `invalid_icon`.
+- Centrum alarmów potrafi wysłać powiadomienie testowe, wykrywa cofniętą zgodę
+  lub wyłączony kanał i prowadzi bezpośrednio do ustawień aplikacji.
+- Nieudana dostawa jest widoczna w interfejsie zamiast zostać ukryta przez
+  warstwę synchronizacji.
+- CI i pipeline wydania sprawdzają gotowy APK przez `aapt`, aby brak wymaganej
+  ikony nie mógł ponownie trafić do GitHub Releases.
+
+### Verification
+
+- `flutter analyze` zakończone bez problemów.
+- Testy centrum alarmów, zgód i powiadomienia diagnostycznego zakończone
+  powodzeniem.
+- Produkcyjny asset Androida: `AquaCYD-Control-5.1.1-current.apk`.
+
 ## mobile-v5.1.0 / firmware-v5.1.0 - 2026-07-28
 
 Produkcyjne wydanie bezpieczeństwa aplikacji i firmware AquaCYD `5.1.0`.
