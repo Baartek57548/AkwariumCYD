@@ -258,9 +258,11 @@ jobs:
             cd "$output_dir"
             sha256sum --check SHA256SUMS
           )
-          echo "directory=$output_dir" >> "$GITHUB_OUTPUT"
-          echo "apk=$apk" >> "$GITHUB_OUTPUT"
-          echo "version=$version" >> "$GITHUB_OUTPUT"
+          {
+            echo "directory=$output_dir"
+            echo "apk=$apk"
+            echo "version=$version"
+          } >> "$GITHUB_OUTPUT"
       - name: Generate mobile CycloneDX SBOM
         shell: bash
         env:
@@ -646,8 +648,10 @@ jobs:
             cd "$output_dir"
             sha256sum --check SHA256SUMS
           )
-          echo "directory=$output_dir" >> "$GITHUB_OUTPUT"
-          echo "version=$version" >> "$GITHUB_OUTPUT"
+          {
+            echo "directory=$output_dir"
+            echo "version=$version"
+          } >> "$GITHUB_OUTPUT"
       - name: Create signed, deterministic SD web bundle
         shell: bash
         env:
