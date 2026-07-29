@@ -8,6 +8,8 @@ repository_root="$(
 mobile_directory="$repository_root/mobile_app"
 diagnostics_directory="$repository_root/artifacts/android-emulator"
 package_name="pl.cydakwarium.cyd_aquarium_mobile"
+runtime_directory="${RUNNER_TEMP:-${TMPDIR:-/tmp}}"
+main_apk="$runtime_directory/aquacyd-main-current-debug-$$.apk"
 
 cd "$mobile_directory"
 app_version="$(
@@ -18,17 +20,21 @@ app_version="$(
 test -n "$app_version"
 mkdir -p "$diagnostics_directory"
 
-collect_logcat() {
+collect_diagnostics_and_cleanup() {
   adb logcat -d > "$diagnostics_directory/logcat.txt" || true
+  rm -f -- "$main_apk"
 }
-trap collect_logcat EXIT
+trap collect_diagnostics_and_cleanup EXIT
 
 flutter build apk \
   --debug \
   --flavor current \
   --target lib/main.dart
 
-main_apk="build/app/outputs/flutter-apk/app-current-debug.apk"
+built_main_apk="build/app/outputs/flutter-apk/app-current-debug.apk"
+test -s "$built_main_apk"
+test -d "$runtime_directory"
+cp "$built_main_apk" "$main_apk"
 test -s "$main_apk"
 adb wait-for-device
 adb install -r -t -g "$main_apk"
