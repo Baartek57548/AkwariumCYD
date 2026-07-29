@@ -1,6 +1,6 @@
 /**
  * @file lv_conf.h
- * Configuration file for LVGL v8.3.x on ESP32 CYD
+ * Configuration file for LVGL v8.4.x on ESP32 CYD
  */
 
 #ifndef LV_CONF_H

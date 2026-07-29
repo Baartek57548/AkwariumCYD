@@ -1,0 +1,94 @@
+import java.util.Properties
+
+plugins {
+    id("com.android.application")
+    id("kotlin-android")
+    // The Flutter Gradle Plugin must be applied after the Android and Kotlin Gradle plugins.
+    id("dev.flutter.flutter-gradle-plugin")
+}
+
+val keystorePropertiesFile = rootProject.file("key.properties")
+require(keystorePropertiesFile.exists()) {
+    "Brak android/key.properties. Build release wymaga prywatnego klucza podpisu."
+}
+val keystoreProperties = Properties().apply {
+    keystorePropertiesFile.inputStream().use { load(it) }
+}
+
+fun requiredSigningProperty(name: String): String {
+    return requireNotNull(keystoreProperties.getProperty(name)) {
+        "Brak pola $name w android/key.properties."
+    }.also { value: String ->
+        require(value.isNotBlank()) { "Pole $name w android/key.properties jest puste." }
+    }
+}
+
+android {
+    namespace = "pl.cydakwarium.cyd_aquarium_mobile"
+    compileSdk = flutter.compileSdkVersion
+    ndkVersion = flutter.ndkVersion
+
+    compileOptions {
+        isCoreLibraryDesugaringEnabled = true
+        sourceCompatibility = JavaVersion.VERSION_17
+        targetCompatibility = JavaVersion.VERSION_17
+    }
+
+    kotlinOptions {
+        jvmTarget = JavaVersion.VERSION_17.toString()
+    }
+
+    defaultConfig {
+        applicationId = "pl.cydakwarium.cyd_aquarium_mobile"
+        minSdk = 24
+        targetSdk = flutter.targetSdkVersion
+        versionCode = flutter.versionCode
+        versionName = flutter.versionName
+        multiDexEnabled = true
+    }
+
+    flavorDimensions += "appMode"
+    productFlavors {
+        create("current") {
+            dimension = "appMode"
+            manifestPlaceholders["appName"] = "AquaCYD Control"
+        }
+        create("full") {
+            dimension = "appMode"
+            applicationIdSuffix = ".full"
+            manifestPlaceholders["appName"] = "AquaCYD Full"
+        }
+        create("dev") {
+            dimension = "appMode"
+            applicationIdSuffix = ".dev"
+            manifestPlaceholders["appName"] = "AquaCYD DEV"
+        }
+    }
+
+    signingConfigs {
+        create("release") {
+            keyAlias = requiredSigningProperty("keyAlias")
+            keyPassword = requiredSigningProperty("keyPassword")
+            storeFile = rootProject.file(requiredSigningProperty("storeFile"))
+            storePassword = requiredSigningProperty("storePassword")
+            enableV1Signing = true
+            enableV2Signing = true
+        }
+    }
+
+    buildTypes {
+        getByName("release") {
+            signingConfig = signingConfigs.getByName("release")
+        }
+    }
+}
+
+flutter {
+    source = "../.."
+}
+
+dependencies {
+    coreLibraryDesugaring("com.android.tools:desugar_jdk_libs:2.1.5")
+    implementation("androidx.core:core:1.17.0")
+    testImplementation("junit:junit:4.13.2")
+}

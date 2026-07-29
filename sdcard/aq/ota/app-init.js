@@ -1,4 +1,4 @@
-﻿function bindScheduleShortcuts() {
+function bindScheduleShortcuts() {
     document.getElementById('dashboard-edit-schedule-btn')?.addEventListener('click', () => {
         switchTab('harmonogramy');
     });
@@ -47,20 +47,26 @@ function bindLogsControls() {
             if (!isAdminAuthenticated()) {
                 await loginAsAdmin();
             }
-            const pin = getAdminPinForRequest();
-            if (!pin) {
+            const token = getAdminTokenForRequest();
+            if (!token) {
                 throw new Error('Wymagane logowanie admina.');
             }
-            const response = await fetch(`${API_LOGS}?format=text&type=${encodeURIComponent(activeLogType)}&pin=${encodeURIComponent(pin)}`, {
-                cache: 'no-store'
-            });
+            const result = await fetchWithTimeout(
+                `${API_LOGS}?format=text&type=${encodeURIComponent(activeLogType)}`,
+                {
+                    cache: 'no-store',
+                    headers: { 'X-AquaCYD-Session': token }
+                },
+                API_REQUEST_TIMEOUT_MS,
+                (response) => response.ok ? response.text() : null
+            );
+            const { response, body: lines } = result;
             if (!response.ok) {
-                if (response.status === 403) {
+                if (response.status === 401 || response.status === 403) {
                     logoutAdmin();
                 }
                 throw new Error('Nie udalo sie pobrac logow z urzadzenia.');
             }
-            const lines = await response.text();
             const blob = new Blob([lines], { type: 'text/plain;charset=utf-8' });
             const url = URL.createObjectURL(blob);
             const a = document.createElement('a');
@@ -86,7 +92,55 @@ function bindLogsControls() {
     });
 }
 
+function showSettingsPanel(targetId) {
+    const targetPanel = document.getElementById(targetId);
+    if (!targetPanel || !targetPanel.classList.contains('settings-panel')) {
+        return;
+    }
+
+    document.querySelectorAll('.settings-panel').forEach((panel) => {
+        const isActive = panel.id === targetId;
+        panel.classList.toggle('active', isActive);
+        panel.hidden = !isActive;
+    });
+
+    document.querySelectorAll('.settings-nav-item').forEach((button) => {
+        const isActive = button.dataset.settingsTarget === targetId;
+        button.classList.toggle('active', isActive);
+        button.setAttribute('aria-selected', isActive ? 'true' : 'false');
+        button.tabIndex = isActive ? 0 : -1;
+    });
+}
+
 function bindSettingsControls() {
+    const buttons = Array.from(document.querySelectorAll('.settings-nav-item[data-settings-target]'));
+
+    buttons.forEach((button, index) => {
+        button.setAttribute('aria-selected', button.classList.contains('active') ? 'true' : 'false');
+        button.tabIndex = button.classList.contains('active') ? 0 : -1;
+        button.addEventListener('click', () => showSettingsPanel(button.dataset.settingsTarget));
+        button.addEventListener('keydown', (event) => {
+            let nextIndex = index;
+            if (event.key === 'ArrowRight' || event.key === 'ArrowDown') {
+                nextIndex = (index + 1) % buttons.length;
+            } else if (event.key === 'ArrowLeft' || event.key === 'ArrowUp') {
+                nextIndex = (index - 1 + buttons.length) % buttons.length;
+            } else if (event.key === 'Home') {
+                nextIndex = 0;
+            } else if (event.key === 'End') {
+                nextIndex = buttons.length - 1;
+            } else {
+                return;
+            }
+
+            event.preventDefault();
+            const nextButton = buttons[nextIndex];
+            showSettingsPanel(nextButton.dataset.settingsTarget);
+            nextButton.focus();
+            nextButton.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+        });
+    });
+
     document.getElementById('save-network-btn')?.addEventListener('click', saveNetworkSettings);
     document.getElementById('start-wifi-session-btn')?.addEventListener('click', () => runWifiSessionAction('start'));
     document.getElementById('stop-wifi-session-btn')?.addEventListener('click', () => runWifiSessionAction('stop'));
@@ -95,6 +149,8 @@ function bindSettingsControls() {
     document.getElementById('save-co2-btn')?.addEventListener('click', saveCo2Settings);
     document.getElementById('save-water-btn')?.addEventListener('click', saveWaterSettings);
     document.getElementById('save-leak-btn')?.addEventListener('click', saveLeakSettings);
+    document.getElementById('sync-browser-time-btn')?.addEventListener('click', syncBrowserTime);
+    document.getElementById('sync-ntp-btn')?.addEventListener('click', syncTimeWithNtp);
     document.getElementById('restart-device-btn')?.addEventListener('click', () => {
         runDeviceAction(
             'restart_device',
@@ -115,15 +171,17 @@ function bindAuthControls() {
     document.getElementById('admin-login-btn')?.addEventListener('click', async () => {
         try {
             await loginAsAdmin();
+            showToast('Zalogowano', 'Dostęp administracyjny jest aktywny w tej karcie.', 'success', 3000);
         } catch (error) {
             if (error?.code !== 'admin_login_cancelled' && error?.code !== 'pin_replaced') {
-                alert(error?.message || 'Nie udaĹ‚o siÄ™ zalogowaÄ‡ admina.');
+                showToast('Nie udało się zalogować', error?.message || 'Sterownik odrzucił próbę logowania.', 'error', 5000);
             }
         }
     });
 
     document.getElementById('admin-logout-btn')?.addEventListener('click', () => {
         logoutAdmin();
+        showToast('Wylogowano', 'Panel wrócił do bezpiecznego trybu podglądu.', 'info', 2800);
     });
 }
 
@@ -134,30 +192,18 @@ function bindDashboardControls() {
     document.getElementById('relay-plant-toggle')?.addEventListener('click', () => toggleRelayQuickAction('plant'));
     document.getElementById('relay-heater-toggle')?.addEventListener('click', () => toggleRelayQuickAction('heater'));
     document.getElementById('relay-aeration-toggle')?.addEventListener('click', () => toggleRelayQuickAction('aeration'));
+    document.getElementById('bus-scan-refresh')?.addEventListener('click', () => fetchHardwareBusDiagnostics(true));
 }
 
 function bindPinModalEvents() {
     const modal = document.getElementById('pin-modal');
     if (!modal) return;
 
-    const keypad = modal.querySelector('.pin-keypad');
-    keypad?.addEventListener('click', (event) => {
-        const keyBtn = event.target.closest('.pin-key');
-        if (!keyBtn) return;
+    const form = document.getElementById('pin-modal-form');
+    const input = document.getElementById('pin-modal-input');
 
-        const val = keyBtn.getAttribute('data-val');
-        const input = document.getElementById('pin-modal-input');
-        if (!input) return;
-
-        if (val === 'C') {
-            input.value = '';
-        } else if (val === 'OK') {
-            window.handlePinSubmit();
-        } else if (val !== null && val !== undefined) {
-            if (input.value.length < 8) {
-                input.value = `${input.value}${val}`.replace(/\D/g, '').slice(0, 8);
-            }
-        }
+    input?.addEventListener('input', () => {
+        input.value = input.value.replace(/\D/g, '').slice(0, 8);
     });
 
     const cancelBtn = document.getElementById('pin-modal-cancel');
@@ -165,30 +211,57 @@ function bindPinModalEvents() {
         window.handlePinCancel();
     });
 
-    const submitBtn = document.getElementById('pin-modal-submit');
-    submitBtn?.addEventListener('click', () => {
+    form?.addEventListener('submit', (event) => {
+        event.preventDefault();
         window.handlePinSubmit();
     });
 
     document.addEventListener('keydown', (event) => {
         if (modal.style.display !== 'flex') return;
-        const input = document.getElementById('pin-modal-input');
-        if (!input) return;
-
-        if (event.key >= '0' && event.key <= '9') {
-            if (input.value.length < 8) {
-                input.value += event.key;
-            }
-            event.preventDefault();
-        } else if (event.key === 'Backspace') {
-            input.value = input.value.slice(0, -1);
-            event.preventDefault();
-        } else if (event.key === 'Escape') {
+        if (event.key === 'Escape') {
             window.handlePinCancel();
             event.preventDefault();
-        } else if (event.key === 'Enter') {
-            window.handlePinSubmit();
+            return;
+        }
+        if (event.key !== 'Tab') return;
+
+        const focusable = Array.from(modal.querySelectorAll(
+            'button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])'
+        )).filter((element) => element.offsetParent !== null);
+        if (focusable.length === 0) {
             event.preventDefault();
+            return;
+        }
+
+        const first = focusable[0];
+        const last = focusable[focusable.length - 1];
+        if (event.shiftKey && document.activeElement === first) {
+            event.preventDefault();
+            last.focus();
+        } else if (!event.shiftKey && document.activeElement === last) {
+            event.preventDefault();
+            first.focus();
+        }
+    });
+}
+
+function bindConnectionControls() {
+    const refreshButton = document.getElementById('connection-refresh-btn');
+    refreshButton?.addEventListener('click', async () => {
+        if (refreshButton.dataset.busy === '1') {
+            return;
+        }
+
+        setElementBusy(refreshButton, true);
+        try {
+            const refreshed = await fetchStatus(true);
+            if (refreshed) {
+                showToast('Dane odświeżone', 'Sterownik przesłał aktualną telemetrię.', 'success', 2800);
+            } else {
+                showToast('Brak odpowiedzi', 'Automatyczne ponawianie połączenia pozostaje aktywne.', 'warning', 4200);
+            }
+        } finally {
+            setElementBusy(refreshButton, false);
         }
     });
 }
@@ -229,7 +302,7 @@ function initDirtyTracking() {
         const eventName = el?.type === 'checkbox' ? 'change' : 'change';
         el?.addEventListener(eventName, () => {
             el.dataset.dirty = '1';
-            setLeakStatus('Masz niezapisane zmiany zabezpieczeĹ„.', 'muted');
+            setLeakStatus('Masz niezapisane zmiany zabezpieczeń.', 'muted');
         });
     });
 }
@@ -251,17 +324,20 @@ document.addEventListener('DOMContentLoaded', () => {
     bindAuthControls();
     bindDashboardControls();
     bindPinModalEvents();
+    bindConnectionControls();
     initDisplaySettingsListeners();
     applyAuthState();
     document.getElementById('upload-btn')?.addEventListener('click', uploadFirmwarePackage);
 
-    setSettingsNetworkStatus('Zmiany SSID i haseĹ‚ sÄ… stosowane przy kolejnej sesji WiFi.', 'muted');
-    setTemperatureStatus('Sterowanie grzaĹ‚kÄ… jest synchronizowane ze sterownikiem.', 'muted');
-    setDeviceActionStatus('Akcje administracyjne wymagajÄ… potwierdzenia.', 'muted');
+    setSettingsNetworkStatus('Zmiany SSID i haseł są stosowane przy kolejnej sesji WiFi.', 'muted');
+    setTemperatureStatus('Sterowanie grzałką jest synchronizowane ze sterownikiem.', 'muted');
+    setDeviceActionStatus('Akcje administracyjne wymagają potwierdzenia.', 'muted');
 
+    initConnectionMonitoring();
+    startWebSessionHeartbeat();
     startEventStream();
     startPollingFallback();
-    fetchStatus(true);
+    fetchStatus(true, true);
     fetchLogs(true);
     renderLogs();
 });

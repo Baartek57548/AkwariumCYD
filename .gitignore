@@ -3,3 +3,11 @@
 .vscode/c_cpp_properties.json
 .vscode/launch.json
 .vscode/ipch
+node_modules/
+playwright-report/
+test-results/
+artifacts/
+.secrets/
+__pycache__/
+*.py[cod]
+flutter_*.log

@@ -4,6 +4,8 @@
 #include "hal_i2c_bus.h"
 
 #include <Wire.h>
+#include <freertos/FreeRTOS.h>
+#include <freertos/task.h>
 
 namespace {
 
@@ -20,8 +22,45 @@ constexpr uint16_t CFG_COMP_DISABLED = 0x0003;
 constexpr float ADS1115_FSR_VOLTS = 4.096f;
 constexpr float ADS1115_COUNTS = 32768.0f;
 constexpr uint32_t ADS1115_CONVERSION_TIMEOUT_MS = 20;
+constexpr uint32_t ADS1115_RETRY_BASE_MS = 500UL;
+constexpr uint32_t ADS1115_RETRY_MAX_MS = 30000UL;
 
 bool adc_present = false;
+uint8_t adc_consecutive_errors = 0U;
+uint32_t adc_next_probe_ms = 0U;
+
+bool deadline_reached(uint32_t now_ms, uint32_t deadline_ms)
+{
+    return static_cast<int32_t>(now_ms - deadline_ms) >= 0;
+}
+
+uint32_t retry_delay_ms(uint8_t consecutive_errors)
+{
+    const uint8_t shift = consecutive_errors > 6U
+                              ? 6U
+                              : static_cast<uint8_t>(
+                                    consecutive_errors > 0U ? consecutive_errors - 1U : 0U);
+    const uint32_t delay_ms = ADS1115_RETRY_BASE_MS << shift;
+    return delay_ms < ADS1115_RETRY_MAX_MS
+               ? delay_ms
+               : ADS1115_RETRY_MAX_MS;
+}
+
+void record_failure_locked(uint32_t now_ms)
+{
+    adc_present = false;
+    if (adc_consecutive_errors < UINT8_MAX) {
+        ++adc_consecutive_errors;
+    }
+    adc_next_probe_ms = now_ms + retry_delay_ms(adc_consecutive_errors);
+}
+
+void record_success_locked()
+{
+    adc_present = true;
+    adc_consecutive_errors = 0U;
+    adc_next_probe_ms = 0U;
+}
 
 bool write_register_locked(uint8_t reg, uint16_t value)
 {
@@ -60,6 +99,22 @@ bool probe_locked()
     return Wire.endTransmission() == 0;
 }
 
+bool probe_if_due_locked(uint32_t now_ms, bool force)
+{
+    if (adc_present) {
+        return true;
+    }
+    if (!force && !deadline_reached(now_ms, adc_next_probe_ms)) {
+        return false;
+    }
+    if (probe_locked()) {
+        record_success_locked();
+        return true;
+    }
+    record_failure_locked(now_ms);
+    return false;
+}
+
 bool channel_valid(uint8_t ch)
 {
     return ch <= static_cast<uint8_t>(HwConfig::ADC_SPARE);
@@ -80,35 +135,47 @@ uint16_t config_for_channel(uint8_t ch)
 
 bool hal_adc_init(void)
 {
-    adc_present = false;
-
     if (!hal_i2c_bus_lock(HwConfig::I2C_MUTEX_TIMEOUT_MS)) {
         return false;
     }
 
-    adc_present = probe_locked();
+    adc_present = false;
+    adc_consecutive_errors = 0U;
+    adc_next_probe_ms = 0U;
+    const bool present = probe_if_due_locked(millis(), true);
     hal_i2c_bus_unlock();
-    return adc_present;
+    return present;
 }
 
 bool hal_adc_is_present(void)
 {
-    return adc_present;
+    if (!hal_i2c_bus_lock(HwConfig::I2C_MUTEX_TIMEOUT_MS)) {
+        return false;
+    }
+    const bool present = probe_if_due_locked(millis(), false);
+    hal_i2c_bus_unlock();
+    return present;
 }
 
 bool hal_adc_read_raw(uint8_t ch, int16_t *out)
 {
-    if (out == nullptr || !channel_valid(ch) || !adc_present) {
+    if (out == nullptr || !channel_valid(ch)) {
         return false;
     }
 
     if (!hal_i2c_bus_lock(HwConfig::I2C_MUTEX_TIMEOUT_MS)) {
+        return false;
+    }
+
+    const uint32_t now_ms = millis();
+    if (!probe_if_due_locked(now_ms, false)) {
+        hal_i2c_bus_unlock();
         return false;
     }
 
     bool ok = write_register_locked(REG_CONFIG, config_for_channel(ch));
     uint16_t cfg = 0;
-    const uint32_t started_ms = millis();
+    const uint32_t started_ms = now_ms;
     while (ok) {
         ok = read_register_locked(REG_CONFIG, &cfg);
         if (!ok || (cfg & CFG_OS_SINGLE) != 0) {
@@ -118,7 +185,7 @@ bool hal_adc_read_raw(uint8_t ch, int16_t *out)
             ok = false;
             break;
         }
-        delay(1);
+        vTaskDelay(pdMS_TO_TICKS(1U));
     }
 
     uint16_t raw = 0;
@@ -128,8 +195,9 @@ bool hal_adc_read_raw(uint8_t ch, int16_t *out)
 
     if (ok) {
         *out = static_cast<int16_t>(raw);
+        record_success_locked();
     } else {
-        adc_present = false;
+        record_failure_locked(millis());
     }
 
     hal_i2c_bus_unlock();

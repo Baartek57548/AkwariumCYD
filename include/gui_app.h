@@ -4,9 +4,31 @@
 #include <Arduino.h>
 
 /**
+ * @brief Inicjalizuje rekurencyjną blokadę chroniącą LVGL i wspólny stan GUI.
+ *
+ * Funkcję należy wywołać przed lv_init() i przed uruchomieniem zadań
+ * komunikacyjnych. Wszystkie wywołania LVGL spoza właściciela UI muszą używać
+ * tej samej blokady.
+ */
+bool gui_app_sync_init(void);
+
+/** @brief Przejmuje blokadę GUI na maksymalnie timeout_ms. */
+bool gui_app_lock(uint32_t timeout_ms);
+
+/** @brief Zwalnia blokadę przejętą przez bieżące zadanie. */
+void gui_app_unlock(void);
+
+/**
  * @brief Inicjalizuje i tworzy układ graficzny LVGL (Status Bar + Zakładki).
  */
 void gui_app_init(void);
+
+/**
+ * @brief Obsługuje Wi-Fi, HTTP, OTA i nieblokujące sekwencje wyjść.
+ *
+ * Funkcja jest przeznaczona dla zadania I/O przypiętego do rdzenia 0.
+ */
+void gui_app_service_background(void);
 
 void gui_app_handle_ota_portal(void);
 
@@ -16,6 +38,15 @@ void gui_app_handle_ota_portal(void);
  * @param rssi Siła sygnału w dBm.
  */
 void gui_app_update_wifi(int state, int rssi);
+
+/**
+ * Publishes the BLE pairing state from Core 0 without touching LVGL there.
+ * The UI task renders the six-digit passkey and result on its next refresh.
+ *
+ * @param passkey Six-digit code for state=1, otherwise ignored.
+ * @param state 0=idle, 1=display passkey, 2=paired, 3=failed.
+ */
+void gui_app_update_ble_pairing(uint32_t passkey, uint8_t state);
 
 /**
  * @brief Skonsolidowana funkcja aktualizacji metryk interfejsu (wywoływana co 1s).
@@ -40,6 +71,11 @@ void gui_app_update_ldr(int ldr_value, bool valid = true);
 void gui_app_update_system_info(uint32_t free_heap, uint32_t uptime_sec);
 
 /**
+ * @brief Odświeża wyłącznie kompaktowy pasek czasu, IP, wieku danych i uptime.
+ */
+void gui_app_update_status_bar(uint32_t uptime_sec);
+
+/**
  * @brief Aktualizuje panel deweloperski i moduly opcjonalne rzeczywistymi odczytami HAL.
  */
 void gui_app_update_sensor_debug(int ldr_value,
@@ -59,5 +95,118 @@ void gui_app_update_sensor_debug(int ldr_value,
  * @return true jesli wlaczony, false w przeciwnym wypadku.
  */
 bool gui_app_is_dev_mode(void);
+
+/**
+ * @brief Informuje, czy panel WWW jest aktywnie uzywany i lokalny ekran jest w trybie WiFi-focus.
+ */
+bool gui_app_is_web_focus_active(void);
+
+/**
+ * Returns true only after configuration and the essential LVGL tree are
+ * initialized. Used by the post-OTA health gate before marking an image valid.
+ */
+bool gui_app_runtime_ready(void);
+
+struct GuiBleSnapshot {
+    uint8_t protocol_version;
+    bool developer_mode;
+    uint32_t uptime_seconds;
+    uint32_t free_heap_bytes;
+    float temperature;
+    bool temperature_valid;
+    float target_temperature;
+    float ph;
+    bool ph_valid;
+    float ec;
+    bool ec_valid;
+    int ldr;
+    bool ldr_valid;
+    uint16_t alarm_flags;
+    bool water_level_high;
+    bool leak_detected;
+    bool light_on;
+    bool plant_light_on;
+    bool filter_on;
+    bool heater_on;
+    bool aeration_on;
+};
+
+struct GuiBleCommandResult {
+    bool success;
+    const char *code;
+    const char *message;
+};
+
+struct GuiV2AuthResult {
+    bool success;
+    const char *code;
+    const char *message;
+    uint32_t expires_in_seconds;
+    uint32_t retry_after_seconds;
+};
+
+/**
+ * @brief Tworzy spójny, stałorozmiarowy obraz telemetrii dla transportu BLE.
+ * @return false przed zakończeniem inicjalizacji konfiguracji GUI.
+ */
+bool gui_app_ble_snapshot(GuiBleSnapshot *out);
+
+/**
+ * @brief Zmienia bezpieczny podzbiór wyjść sterownika po autoryzacji PIN-em.
+ */
+GuiBleCommandResult gui_app_ble_set_output(const char *target, bool state, const char *pin);
+
+/**
+ * @brief Uruchamia pojedynczą dawkę karmnika po autoryzacji PIN-em.
+ */
+GuiBleCommandResult gui_app_ble_feed(const char *pin);
+
+/**
+ * @brief Serializuje kompletny status sterownika w formacie zgodnym z API WWW.
+ *
+ * Funkcja nie alokuje pamieci dynamicznie. Zwraca false, gdy bufor jest zbyt
+ * maly albo konfiguracja sterownika nie zostala jeszcze zainicjalizowana.
+ */
+bool gui_app_ble_full_status_json(char *out, size_t out_size);
+
+/** @brief Serializuje logi panelu WWW do komunikatu protokolu BLE v2. */
+bool gui_app_ble_logs_json(char *out, size_t out_size, const char *pin);
+
+/** @brief Serializuje podstawowa diagnostyke magistral do BLE v2. */
+bool gui_app_ble_diagnostics_json(char *out, size_t out_size, const char *pin);
+
+/**
+ * @brief Wykonuje akcje panelu WWW przeslana jako JSON protokolu BLE v2.
+ *
+ * @param action Nazwa akcji zgodna z endpointem /api/action.
+ * @param command_json Pelna komenda JSON zawierajaca obiekt args.
+ * @param pin PIN administratora.
+ */
+GuiBleCommandResult gui_app_ble_action(const char *action,
+                                       const char *command_json,
+                                       const char *pin);
+
+/** @brief Issues a bounded, short-lived admin token after PIN rate limiting. */
+GuiV2AuthResult gui_app_v2_auth(const char *pin,
+                                char *out_token,
+                                size_t out_token_size);
+
+/**
+ * Executes an idempotent protocol-v2 action using a valid short-lived token.
+ * Legacy protocol-v1 entry points remain available separately with PIN auth.
+ */
+GuiBleCommandResult gui_app_v2_action(const char *action,
+                                      const char *command_json,
+                                      const char *pin,
+                                      const char *token,
+                                      const char *command_id,
+                                      bool *out_duplicate,
+                                      char *out_replay_code,
+                                      size_t out_replay_code_size,
+                                      char *out_replay_message,
+                                      size_t out_replay_message_size);
+
+/** @brief Serializes the common HTTP/BLE protocol-v2 capability document. */
+bool gui_app_v2_capabilities_json(char *out, size_t out_size);
 
 #endif // GUI_APP_H

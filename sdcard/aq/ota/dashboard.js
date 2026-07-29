@@ -1,3 +1,257 @@
+const API_BUS_DIAGNOSTICS = '/api/bus-diagnostics';
+const I2C_DEVICE_TYPES = Object.freeze({
+    mcp23017: {
+        name: 'MCP23017',
+        role: 'Ekspander GPIO: przekaźniki oraz wejścia bezpieczeństwa.',
+        certainty: 'Skonfigurowany w firmware'
+    },
+    gpio_expander: {
+        name: 'Ekspander GPIO',
+        role: 'Możliwy MCP23017 albo PCF8574. Adres nie rozstrzyga typu układu.',
+        certainty: 'Identyfikacja prawdopodobna'
+    },
+    ads1115: {
+        name: 'ADS1115',
+        role: 'Przetwornik ADC dla pH, EC i wejść analogowych.',
+        certainty: 'Skonfigurowany w firmware'
+    },
+    oled: {
+        name: 'Wyświetlacz OLED',
+        role: 'Możliwy sterownik SSD1306 albo SH1106.',
+        certainty: 'Identyfikacja prawdopodobna'
+    },
+    current_pwm_sensor: {
+        name: 'Czujnik lub sterownik',
+        role: 'Możliwy INA219, PCA9685 albo czujnik SHT.',
+        certainty: 'Adres współdzielony przez wiele układów'
+    },
+    sht3x: {
+        name: 'Czujnik SHT3x',
+        role: 'Prawdopodobny czujnik temperatury i wilgotności.',
+        certainty: 'Identyfikacja prawdopodobna'
+    },
+    eeprom: {
+        name: 'Pamięć EEPROM',
+        role: 'Prawdopodobna pamięć z rodziny AT24Cxx.',
+        certainty: 'Identyfikacja prawdopodobna'
+    },
+    rtc_or_imu: {
+        name: 'RTC lub IMU',
+        role: 'Możliwy DS3231/DS1307 albo MPU6050.',
+        certainty: 'Adres współdzielony przez wiele układów'
+    },
+    environmental: {
+        name: 'Czujnik środowiskowy',
+        role: 'Możliwy BMP280, BME280 albo BME680.',
+        certainty: 'Identyfikacja prawdopodobna'
+    },
+    unknown: {
+        name: 'Nieznane urządzenie',
+        role: 'Adres odpowiada, ale moduł nie występuje w mapie projektu.',
+        certainty: 'Typ nierozpoznany'
+    }
+});
+
+const ONEWIRE_DEVICE_TYPES = Object.freeze({
+    ds1990_serial: { name: 'DS1990 / DS2401', role: 'Elektroniczny identyfikator lub numer seryjny.' },
+    ds18s20: { name: 'DS18S20', role: 'Czujnik temperatury OneWire.' },
+    ds1822: { name: 'DS1822', role: 'Czujnik temperatury OneWire.' },
+    ds18b20: { name: 'DS18B20', role: 'Cyfrowy czujnik temperatury akwarium.' },
+    ds2423_counter: { name: 'DS2423', role: 'Licznik impulsów z pamięcią.' },
+    ds2438_battery: { name: 'DS2438', role: 'Monitor napięcia, temperatury i akumulatora.' },
+    ds2431_eeprom: { name: 'DS2431', role: 'Pamięć EEPROM OneWire.' },
+    max31850: { name: 'MAX31850', role: 'Przetwornik termopary OneWire.' },
+    unknown: { name: 'Nieznane urządzenie', role: 'Rodzina ROM nie występuje w mapie projektu.' }
+});
+
+let busDiagnosticsInFlight = false;
+let busDiagnosticsLastScanAtMs = 0;
+let lastTopbarMarkup = '';
+let lastRelayMarkup = null;
+let lastScheduleSummaryMarkup = '';
+let lastTemperatureChartSignature = '';
+const dynamicRelayActionsInFlight = new Set();
+
+function normalizeI2cDevices(payload) {
+    if (!Array.isArray(payload?.devices)) return [];
+    return payload.devices.slice(0, 16).map((device) => {
+        const numericAddress = Number(device?.address);
+        const address = Number.isInteger(numericAddress) && numericAddress >= 0x08 && numericAddress <= 0x77
+            ? numericAddress
+            : null;
+        const type = Object.prototype.hasOwnProperty.call(I2C_DEVICE_TYPES, device?.type)
+            ? device.type
+            : 'unknown';
+        return {
+            address,
+            hex: address === null ? '--' : `0x${address.toString(16).toUpperCase().padStart(2, '0')}`,
+            type,
+            configured: Boolean(device?.configured)
+        };
+    }).filter((device) => device.address !== null);
+}
+
+function i2cDeviceCountLabel(count) {
+    if (count === 1) return '1 urządzenie';
+    if (count >= 2 && count <= 4) return `${count} urządzenia`;
+    return `${count} urządzeń`;
+}
+
+function normalizeOneWireDevices(payload) {
+    if (!Array.isArray(payload?.oneWire?.devices)) return [];
+    return payload.oneWire.devices.slice(0, 8).map((device) => {
+        const type = Object.prototype.hasOwnProperty.call(ONEWIRE_DEVICE_TYPES, device?.type)
+            ? device.type
+            : 'unknown';
+        return {
+            rom: String(device?.rom || '').toUpperCase().replace(/[^0-9A-F-]/g, '').slice(0, 23),
+            family: Number(device?.family),
+            type,
+            crcValid: device?.crcValid === true
+        };
+    }).filter((device) => device.rom.length > 0);
+}
+
+function setBusState(id, text, tone) {
+    const element = document.getElementById(id);
+    if (!element) return;
+    element.textContent = text;
+    element.dataset.tone = tone;
+}
+
+function renderHardwareBusDiagnostics(payload) {
+    const devices = normalizeI2cDevices(payload);
+    const oneWireDevices = normalizeOneWireDevices(payload);
+    const sda = Number(payload?.sda);
+    const scl = Number(payload?.scl);
+    const frequencyHz = Number(payload?.frequencyHz);
+    const scanMs = Number(payload?.scanMs);
+    const i2cList = document.getElementById('i2c-device-list');
+    const oneWireList = document.getElementById('onewire-device-list');
+    const status = document.getElementById('bus-scan-status');
+    const uart = Array.isArray(payload?.uart?.ports) ? payload.uart.ports[0] : null;
+
+    setText('i2c-sda-pin', Number.isInteger(sda) ? `GPIO ${sda}` : '--');
+    setText('i2c-scl-pin', Number.isInteger(scl) ? `GPIO ${scl}` : '--');
+    setText('i2c-frequency', Number.isFinite(frequencyHz) ? `${Math.round(frequencyHz / 1000)} kHz` : '--');
+    setText('i2c-device-count', i2cDeviceCountLabel(devices.length));
+    setBusState('i2c-bus-state', devices.length ? 'AKTYWNA' : 'BRAK URZĄDZEŃ', devices.length ? 'ok' : 'warn');
+
+    if (i2cList) {
+        i2cList.innerHTML = devices.length
+            ? devices.map((device) => {
+                const info = I2C_DEVICE_TYPES[device.type] || I2C_DEVICE_TYPES.unknown;
+                return `<article class="bus-device-card" data-configured="${device.configured ? 'true' : 'false'}">
+                    <div class="bus-device-head">
+                        <span class="bus-address">${escapeHtml(device.hex)}</span>
+                        <span class="bus-confidence">${device.configured ? 'KONFIGURACJA' : 'WYKRYTO'}</span>
+                    </div>
+                    <strong>${escapeHtml(info.name)}</strong>
+                    <p>${escapeHtml(info.role)}</p>
+                    <small>${escapeHtml(info.certainty)}</small>
+                </article>`;
+            }).join('')
+            : '<div class="bus-empty-state">Nie wykryto urządzeń odpowiadających na adresach 0x08-0x77.</div>';
+    }
+
+    const uartActive = uart?.active === true;
+    setText('uart-port', Number.isInteger(Number(uart?.port)) ? `UART${Number(uart.port)}` : '--');
+    setText('uart-tx-pin', Number.isInteger(Number(uart?.tx)) ? `GPIO ${Number(uart.tx)}` : '--');
+    setText('uart-rx-pin', Number.isInteger(Number(uart?.rx)) ? `GPIO ${Number(uart.rx)}` : '--');
+    setText('uart-baud', Number.isFinite(Number(uart?.baud)) ? `${Number(uart.baud).toLocaleString('pl-PL')} bps` : '--');
+    setText('uart-format', uart?.format || '--');
+    setBusState('uart-bus-state', uartActive ? 'AKTYWNA' : 'NIEAKTYWNA', uartActive ? 'ok' : 'warn');
+
+    const oneWirePin = Number(payload?.oneWire?.dataPin);
+    const oneWireScanMs = Number(payload?.oneWire?.scanMs);
+    setText('onewire-data-pin', Number.isInteger(oneWirePin) ? `GPIO ${oneWirePin}` : '--');
+    setText('onewire-device-count', i2cDeviceCountLabel(oneWireDevices.length));
+    setBusState('onewire-bus-state', oneWireDevices.length ? 'AKTYWNA' : 'BRAK URZĄDZEŃ', oneWireDevices.length ? 'ok' : 'warn');
+    if (oneWireList) {
+        oneWireList.innerHTML = oneWireDevices.length
+            ? oneWireDevices.map((device) => {
+                const info = ONEWIRE_DEVICE_TYPES[device.type] || ONEWIRE_DEVICE_TYPES.unknown;
+                return `<article class="bus-device-card" data-configured="${device.type === 'ds18b20' ? 'true' : 'false'}">
+                    <div class="bus-device-head">
+                        <span class="bus-address bus-rom">${escapeHtml(device.rom)}</span>
+                        <span class="bus-confidence">${device.crcValid ? 'CRC OK' : 'CRC BŁĄD'}</span>
+                    </div>
+                    <strong>${escapeHtml(info.name)}</strong>
+                    <p>${escapeHtml(info.role)}</p>
+                    <small>Rodzina 0x${Number.isInteger(device.family) ? device.family.toString(16).toUpperCase().padStart(2, '0') : '--'}</small>
+                </article>`;
+            }).join('')
+            : '<div class="bus-empty-state">Nie wykryto urządzeń OneWire. Sprawdź rezystor podciągający 4,7 kΩ i połączenie GPIO 17.</div>';
+    }
+
+    if (status) {
+        const i2cDuration = Number.isFinite(scanMs) ? `${Math.max(0, Math.round(scanMs))} ms` : '--';
+        const oneWireDuration = Number.isFinite(oneWireScanMs) ? `${Math.max(0, Math.round(oneWireScanMs))} ms` : '--';
+        status.textContent = payload?.simulated
+            ? `Tryb DEV: symulowane magistrale. I2C ${i2cDuration}, OneWire ${oneWireDuration}.`
+            : `Diagnostyka sprzętowa zakończona. I2C ${i2cDuration}, OneWire ${oneWireDuration}.`;
+        status.dataset.tone = devices.length || oneWireDevices.length ? 'ok' : 'warn';
+    }
+
+    window.lastI2cScanData = { ...payload, devices };
+    window.lastBusDiagnosticsData = { ...payload, devices, oneWire: { ...payload.oneWire, devices: oneWireDevices } };
+    setCommandStatus(
+        'diag-strip-bus',
+        `${devices.length} I2C · ${oneWireDevices.length} OneWire`,
+        uartActive ? `UART${Number(uart.port)} · ${Number(uart.baud).toLocaleString('pl-PL')} bps` : 'UART nieaktywny',
+        devices.length || oneWireDevices.length || uartActive ? 'ok' : 'warn'
+    );
+}
+
+async function fetchHardwareBusDiagnostics(force = false) {
+    if (!isAdminAuthenticated() || busDiagnosticsInFlight) return;
+    if (!force && window.lastBusDiagnosticsData && Date.now() - busDiagnosticsLastScanAtMs < 10000) {
+        renderHardwareBusDiagnostics(window.lastBusDiagnosticsData);
+        return;
+    }
+
+    const button = document.getElementById('bus-scan-refresh');
+    const status = document.getElementById('bus-scan-status');
+    busDiagnosticsInFlight = true;
+    if (button) button.disabled = true;
+    if (status) {
+        status.textContent = 'Skanowanie I2C i OneWire oraz odczyt konfiguracji UART...';
+        status.dataset.tone = 'info';
+    }
+    setCommandStatus('diag-strip-bus', 'Skanowanie...', 'I2C · UART · OneWire', 'info');
+
+    try {
+        const token = getAdminTokenForRequest();
+        const result = await fetchWithTimeout(
+            API_BUS_DIAGNOSTICS,
+            {
+                cache: 'no-store',
+                headers: { 'X-AquaCYD-Session': token }
+            },
+            API_REQUEST_TIMEOUT_MS,
+            (response) => response.json().catch(() => ({}))
+        );
+        const { response, body: payload } = result;
+        if (!response.ok || payload?.ok !== true) {
+            if (response.status === 401 || response.status === 403) logoutAdmin();
+            throw new Error(payload?.message || `HTTP ${response.status}`);
+        }
+        busDiagnosticsLastScanAtMs = Date.now();
+        renderHardwareBusDiagnostics(payload);
+    } catch (error) {
+        if (status) {
+            status.textContent = `Błąd diagnostyki magistral: ${error.message}`;
+            status.dataset.tone = 'danger';
+        }
+        setCommandStatus('diag-strip-bus', 'Błąd magistral', error.message, 'danger');
+    } finally {
+        busDiagnosticsInFlight = false;
+        if (button) button.disabled = false;
+    }
+}
+
+window.fetchHardwareBusDiagnostics = fetchHardwareBusDiagnostics;
+
 function normalizeFeedResultCode(code) {
     const raw = String(code || '').trim().toLowerCase();
     if (raw.startsWith('feed_')) {
@@ -49,6 +303,7 @@ function hideFeedModal() {
     }
     if (modal) {
         modal.style.display = 'none';
+        modal.setAttribute('aria-hidden', 'true');
     }
 }
 
@@ -68,6 +323,8 @@ function showFeedModalState(kind, title, message, autoHideMs = 0) {
     }
 
     modal.style.display = 'flex';
+    modal.setAttribute('aria-hidden', 'false');
+    modal.setAttribute('aria-live', kind === 'error' ? 'assertive' : 'polite');
     text.textContent = title;
     subtext.textContent = message;
 
@@ -109,11 +366,28 @@ function createSvgEl(tag, attrs = {}) {
     return el;
 }
 
-function buildActiveBadge(iconClass, label, tone) {
+function buildActiveBadge(iconClass, label, tone, tier = '') {
+    const tierClass = tier ? ` tier-${tier}` : '';
+    const tierAttr = tier ? ` data-tier="${escapeHtml(tier)}"` : '';
     return `
-        <div class="status-badge status-badge-${tone}">
+        <div class="status-badge status-badge-${tone}${tierClass}"${tierAttr}>
             ${getLocalIconMarkup(iconClass)}
             <span>${escapeHtml(label)}</span>
+        </div>`;
+}
+
+function buildBackendConnectionBadge() {
+    const connected = Boolean(window.backendConnected);
+    const state = connected ? 'online' : 'offline';
+    const tone = connected ? 'success' : 'danger';
+    const label = connected ? 'Sterownik online' : 'Sterownik offline';
+    const ariaLabel = connected
+        ? 'Stan połączenia: sterownik odpowiada'
+        : 'Stan połączenia: brak odpowiedzi sterownika, trwa ponawianie';
+
+    return `
+        <div id="backend-connection-status" class="status-badge status-badge-${tone} backend-connection-status" data-state="${state}" aria-label="${ariaLabel}">
+            <span id="backend-connection-label">${label}</span>
         </div>`;
 }
 
@@ -121,16 +395,225 @@ function buildModuleBadge(iconClass, label, active, activeTone) {
     return buildActiveBadge(iconClass, label, active ? activeTone : 'muted');
 }
 
+function normalizeDigitalSensorState(value) {
+    if (typeof value === 'boolean') {
+        return { valid: true, active: value };
+    }
+
+    if (typeof value === 'number' && Number.isFinite(value)) {
+        return { valid: true, active: value !== 0 };
+    }
+
+    if (typeof value === 'string') {
+        const normalized = value.trim().toLowerCase();
+        if (['1', 'true', 'on', 'high', 'active', 'alarm', 'detected'].includes(normalized)) {
+            return { valid: true, active: true };
+        }
+        if (['0', 'false', 'off', 'low', 'inactive', 'ok', 'dry', 'none'].includes(normalized)) {
+            return { valid: true, active: false };
+        }
+    }
+
+    return { valid: false, active: false };
+}
+
+function buildLeakSafetyBadge(data) {
+    const modules = data.modules || {};
+    const sensors = data.sensors || {};
+    const leakEnabledState = normalizeDigitalSensorState(modules.leak_enabled);
+    const leakEnabled = leakEnabledState.valid ? leakEnabledState.active : !!modules.leak_enabled;
+
+    if (!leakEnabled) {
+        return buildActiveBadge('fa-shield-halved', 'Wyciek: OFF', 'danger', 'safety');
+    }
+
+    const leakState = normalizeDigitalSensorState(sensors.leak_detected);
+    if (!leakState.valid) {
+        return buildActiveBadge('fa-triangle-exclamation', 'Wyciek: brak MCP', 'danger', 'safety');
+    }
+
+    return buildActiveBadge(
+        leakState.active ? 'fa-triangle-exclamation' : 'fa-shield-halved',
+        leakState.active ? 'Wyciek: ALARM' : 'Wyciek: OK',
+        'danger',
+        'safety'
+    );
+}
+
+function getSystemSafetyAndMode(data) {
+    const sensors = data.sensors || {};
+    const temperature = data.temperature || {};
+    const schedule = data.schedule || {};
+    const eco = data.eco || {};
+    
+    const isConnected = window.backendConnected;
+    if (!isConnected) {
+        return {
+            safety: 'offline',
+            safetyLabel: 'BRAK POŁĄCZENIA',
+            safetyDesc: 'Nie można połączyć się ze sterownikiem ESP32.',
+            safetyIcon: 'fa-triangle-exclamation',
+            mode: 'OFFLINE',
+            modeLabel: 'OFFLINE'
+        };
+    }
+    
+    const criticalCount = Math.max(
+        cachedLogs?.critical?.length || 0,
+        Math.trunc(Number(cachedLogs?.counts?.critical) || 0)
+    );
+    const leakState = normalizeDigitalSensorState(sensors.leak_detected);
+    const isLeak = leakState.valid && leakState.active;
+    
+    const tempValue = toFiniteNumber(temperature.current ?? sensors.temp_c);
+    const tempValid = isSensorValid(data, 'temp', tempValue) && isValidTemperature(tempValue);
+    
+    const mcpOk = sensors.mcp_ok ?? data.system?.mcpConnected ?? data.system?.i2cConnected ?? true;
+    
+    let isAlarm = criticalCount > 0 || isLeak || !tempValid || mcpOk === false;
+    let alarmMsg = '';
+    if (isLeak) alarmMsg = 'WYKRYTO WYCIEK WODY! Zawory CO2 i dolewki zablokowane.';
+    else if (!tempValid) alarmMsg = 'Błąd czujnika temperatury DS18B20! Grzałka wyłączona.';
+    else if (mcpOk === false) alarmMsg = 'Błąd ekspandera I2C (MCP23017/PCF8574)!';
+    else if (criticalCount > 0) alarmMsg = 'Aktywne alarmy krytyczne w logach.';
+
+    if (isAlarm) {
+        return {
+            safety: 'alarm',
+            safetyLabel: 'ALARM KRYTYCZNY',
+            safetyDesc: alarmMsg,
+            safetyIcon: 'fa-circle-exclamation',
+            mode: 'EMERGENCY',
+            modeLabel: 'AWARIA'
+        };
+    }
+    
+    const isService = data.config?.dev_mode;
+    if (isService) {
+        return {
+            safety: 'service',
+            safetyLabel: 'TRYB SERWISOWY',
+            safetyDesc: 'Urządzenie jest w trybie serwisowym (DEV). Automatyka może być ograniczona.',
+            safetyIcon: 'fa-screwdriver-wrench',
+            mode: 'SERVICE',
+            modeLabel: 'SERWIS'
+        };
+    }
+    
+    const isFeeding = data.feeding?.active;
+    if (isFeeding) {
+        return {
+            safety: 'warn',
+            safetyLabel: 'KARMIENIE W TOKU',
+            safetyDesc: 'Trwa dozowanie pokarmu. Filtry i napowietrzanie wyciszone.',
+            safetyIcon: 'fa-fish',
+            mode: 'FEEDING',
+            modeLabel: 'KARMIENIE'
+        };
+    }
+    
+    const batteryPercent = toFiniteNumber(data.battery?.percent);
+    const isLowBattery = batteryPercent !== null && batteryPercent <= 15;
+    
+    const targetTemp = toFiniteNumber(temperature.target);
+    const hyst = toFiniteNumber(temperature.hysteresis);
+    let isTempWarn = false;
+    if (tempValid && targetTemp !== null && hyst !== null) {
+        if (Math.abs(tempValue - targetTemp) > 2.0) {
+            isTempWarn = true;
+        }
+    }
+    
+    const lightMode = modeValue(schedule.lightMode);
+    const filterMode = modeValue(schedule.filterMode);
+    const airMode = modeValue(schedule.airMode);
+    const heaterMode = modeValue(schedule.heaterMode);
+    const isManualMode = lightMode !== 0 || filterMode !== 0 || airMode !== 0 || heaterMode !== 0;
+
+    if (isLowBattery || isTempWarn) {
+        let warnMsg = isLowBattery ? 'Niski poziom baterii RTC.' : 'Temperatura wody poza bezpiecznym zakresem.';
+        return {
+            safety: 'warn',
+            safetyLabel: 'OSTRZEŻENIE',
+            safetyDesc: warnMsg,
+            safetyIcon: 'fa-triangle-exclamation',
+            mode: isManualMode ? 'MANUAL' : (eco.enabled ? 'ECO' : 'AUTO'),
+            modeLabel: isManualMode ? 'RĘCZNY' : (eco.enabled ? 'ECO' : 'AUTO')
+        };
+    }
+    
+    const isNight = schedule.lightMode === 0 && schedule.dayStartHour !== undefined && schedule.dayEndHour !== undefined && (() => {
+        const now = getCurrentClockDate();
+        const hr = now.getHours();
+        const min = now.getMinutes();
+        const start = schedule.dayStartHour * 60 + schedule.dayStartMin;
+        const end = schedule.dayEndHour * 60 + schedule.dayEndMin;
+        const current = hr * 60 + min;
+        if (start < end) {
+            return current < start || current > end;
+        } else {
+            return current < start && current > end;
+        }
+    })();
+    
+    const activeMode = isManualMode ? 'MANUAL' : (isNight ? 'NIGHT' : (eco.enabled ? 'ECO' : 'AUTO'));
+    const activeModeLabel = isManualMode ? 'RĘCZNY' : (isNight ? 'NOCNY' : (eco.enabled ? 'ECO' : 'AUTO'));
+    
+    return {
+        safety: 'ok',
+        safetyLabel: 'SYSTEM BEZPIECZNY',
+        safetyDesc: 'Wszystkie parametry w normie. Automatyka działa poprawnie.',
+        safetyIcon: 'fa-circle-check',
+        mode: activeMode,
+        modeLabel: activeModeLabel
+    };
+}
+
 function renderTopbarActiveModules(data) {
     const container = document.getElementById('topbar-active-list');
     if (!container) return;
 
     const network = data.network || {};
+    const safetyInfo = getSystemSafetyAndMode(data);
 
-    container.innerHTML = [
-        buildModuleBadge('fa-satellite-dish', 'AP', !!network.apMode, 'success'),
-        buildModuleBadge('fa-wifi', 'STA', !!network.staConnected, 'success')
+    let safetyTone = 'success';
+    if (safetyInfo.safety === 'warn') safetyTone = 'warn';
+    else if (safetyInfo.safety === 'alarm') safetyTone = 'danger';
+    else if (safetyInfo.safety === 'service') safetyTone = 'info';
+    else if (safetyInfo.safety === 'offline') safetyTone = 'muted';
+
+    const safetyBadge = buildActiveBadge(safetyInfo.safetyIcon, safetyInfo.safetyLabel, safetyTone);
+    
+    let modeTone = 'info';
+    if (safetyInfo.mode === 'MANUAL') modeTone = 'warn';
+    else if (safetyInfo.mode === 'FEEDING') modeTone = 'success';
+    else if (safetyInfo.mode === 'EMERGENCY') modeTone = 'danger';
+    else if (safetyInfo.mode === 'NIGHT') modeTone = 'muted';
+    else if (safetyInfo.mode === 'ECO') modeTone = 'success';
+    
+    const modeIcon = safetyInfo.mode === 'AUTO' ? 'fa-robot' :
+                     safetyInfo.mode === 'MANUAL' ? 'fa-sliders' :
+                     safetyInfo.mode === 'SERVICE' ? 'fa-screwdriver-wrench' :
+                     safetyInfo.mode === 'FEEDING' ? 'fa-fish' :
+                     safetyInfo.mode === 'EMERGENCY' ? 'fa-triangle-exclamation' :
+                     safetyInfo.mode === 'NIGHT' ? 'fa-moon' : 'fa-leaf';
+
+    const modeBadge = buildActiveBadge(modeIcon, `Tryb: ${safetyInfo.modeLabel}`, modeTone);
+
+    const wifiBadge = network.staConnected
+        ? buildModuleBadge('fa-wifi', 'STA', true, 'success')
+        : (network.apMode ? buildModuleBadge('fa-satellite-dish', 'AP', true, 'success') : buildActiveBadge('fa-wifi', 'Offline', 'muted'));
+
+    const markup = [
+        buildBackendConnectionBadge(),
+        safetyBadge,
+        modeBadge,
+        wifiBadge
     ].join('');
+    if (markup !== lastTopbarMarkup) {
+        container.innerHTML = markup;
+        lastTopbarMarkup = markup;
+    }
 }
 
 function renderTemperatureCard(temperature) {
@@ -247,68 +730,94 @@ function renderNetworkCard(network) {
     const staConnecting = !!network?.staConnecting;
     const serviceMode = !!network?.serviceMode;
     const serviceModePending = !!network?.serviceModePending;
+    const retryCooldownMs = toFiniteNumber(network?.staRetryCooldownMs);
     const statusText = serviceModePending
         ? 'START WIFI...'
+        : (retryCooldownMs !== null && retryCooldownMs > 0
+        ? 'ROUTER PELNY'
         : (staConnecting
         ? 'LACZENIE...'
         : (staConnected && apMode
             ? 'AP + STA'
             : (staConnected
                 ? 'STA ONLINE'
-                : (apMode ? 'TRYB AP' : (serviceMode ? 'SESJA WIFI' : 'RADIO OFF')))));
+                : (apMode ? 'TRYB AP' : (serviceMode ? 'SESJA WIFI' : 'RADIO OFF'))))));
     const ssidText = staConnected || staConnecting
         ? (network?.staSsid || network?.configuredStaSsid || '-')
         : (apMode ? (network?.configuredApSsid || network?.ssid || '-') : '-');
 
     setText('network-status', statusText);
     setText('network-ssid', ssidText);
-    setText('network-last-seen', formatEpoch(network?.staLastConnectedEpoch, { fallback: 'Brak historii' }));
+    setText(
+        'network-last-seen',
+        retryCooldownMs !== null && retryCooldownMs > 0
+            ? `Ponowienie za ${formatCountdown(retryCooldownMs)}`
+            : formatEpoch(network?.staLastConnectedEpoch, { fallback: 'Brak historii' })
+    );
 
     card.classList.remove('network-online', 'network-aponly', 'network-offline', 'network-connecting');
     const transitional = serviceModePending || staConnecting ||
         (serviceMode && !staConnected && !apMode);
-    card.classList.add(transitional
+    card.classList.add(retryCooldownMs !== null && retryCooldownMs > 0
+        ? 'network-offline'
+        : (transitional
         ? 'network-connecting'
-        : (staConnected ? 'network-online' : (apMode ? 'network-aponly' : 'network-offline')));
+        : (staConnected ? 'network-online' : (apMode ? 'network-aponly' : 'network-offline'))));
 }
 
-async function toggleRelayQuickAction(kind) {
-    let actionName = '';
-    let payload = {};
-    let relayValue = false;
-    let buttonId = `relay-${kind}-toggle`;
-    let idleLabel = 'Włącz';
-
-    if (kind === 'light') {
-        relayValue = !!lastStatusData?.relays?.light;
-        actionName = 'set_light';
-        payload = { state: relayValue ? '0' : '1' };
-        idleLabel = relayValue ? 'Wyłącz' : 'Włącz';
-    } else if (kind === 'filter') {
-        relayValue = !!lastStatusData?.relays?.pump;
-        actionName = 'set_filter';
-        payload = { state: relayValue ? '0' : '1' };
-        idleLabel = relayValue ? 'Wyłącz' : 'Włącz';
-    } else if (kind === 'plant') {
-        relayValue = !!lastStatusData?.relays?.plantLight;
-        actionName = 'save_schedule';
-        payload = { plantLightMode: relayValue ? 2 : 1 };
-        idleLabel = relayValue ? 'Wyłącz' : 'Włącz';
-    } else if (kind === 'heater') {
-        relayValue = !!lastStatusData?.relays?.heater;
-        actionName = 'save_schedule';
-        payload = { heaterMode: relayValue ? 1 : 0 };
-        idleLabel = relayValue ? 'Wyłącz' : 'Włącz';
-    } else if (kind === 'aeration') {
-        relayValue = !!lastStatusData?.relays?.aeration;
-        actionName = 'save_schedule';
-        payload = { aerationMode: relayValue ? 2 : 1 };
-        idleLabel = relayValue ? 'Wyłącz' : 'Włącz';
-    } else {
-        return;
+function isHeaterAutomationEnabled(data) {
+    const mode = Number(data?.schedule?.heaterMode ?? data?.temperature?.heaterMode);
+    if (Number.isFinite(mode)) {
+        return mode !== 1;
     }
+    return data?.modules?.heater_enabled !== false;
+}
 
-    const button = document.getElementById(buttonId);
+function relayQuickButtonLabel(active) {
+    return active ? 'Wyłącz' : 'Włącz';
+}
+
+const RELAY_QUICK_ACTIONS = {
+    light: {
+        buttonId: 'relay-light-toggle',
+        actionName: 'set_light1',
+        isActive: (data) => !!(data?.relays?.light1 ?? data?.relays?.light),
+        buildPayload: (active) => ({ state: active ? '0' : '1' })
+    },
+    filter: {
+        buttonId: 'relay-filter-toggle',
+        actionName: 'set_filter',
+        isActive: (data) => !!data?.relays?.pump,
+        buildPayload: (active) => ({ state: active ? '0' : '1' })
+    },
+    plant: {
+        buttonId: 'relay-plant-toggle',
+        actionName: 'set_light2',
+        isActive: (data) => !!(data?.relays?.light2 ?? data?.relays?.plantLight),
+        buildPayload: (active) => ({ state: active ? '0' : '1' })
+    },
+    heater: {
+        buttonId: 'relay-heater-toggle',
+        actionName: 'set_heater',
+        isActive: isHeaterAutomationEnabled,
+        buildPayload: (active) => ({ state: active ? '0' : '1' })
+    },
+    aeration: {
+        buttonId: 'relay-aeration-toggle',
+        actionName: 'set_aeration',
+        isActive: (data) => !!data?.relays?.aeration,
+        buildPayload: (active) => ({ state: active ? '0' : '1' })
+    }
+};
+
+async function toggleRelayQuickAction(kind) {
+    const config = RELAY_QUICK_ACTIONS[kind];
+    if (!config) return;
+
+    const relayValue = config.isActive(lastStatusData || {});
+    const payload = config.buildPayload(relayValue);
+    const idleLabel = relayQuickButtonLabel(relayValue);
+    const button = document.getElementById(config.buttonId);
     if (!button || button.dataset.busy === '1') return;
 
     button.dataset.busy = '1';
@@ -316,7 +825,7 @@ async function toggleRelayQuickAction(kind) {
     button.textContent = 'Zapisywanie...';
 
     try {
-        await sendAction(actionName, payload);
+        await sendAction(config.actionName, payload);
         await fetchStatus(true);
         await fetchLogs(true);
     } catch (error) {
@@ -330,13 +839,7 @@ async function toggleRelayQuickAction(kind) {
         button.dataset.busy = '0';
         button.disabled = false;
         if (!button.title) {
-            let isNowActive = false;
-            if (kind === 'light') isNowActive = !!lastStatusData?.relays?.light;
-            else if (kind === 'filter') isNowActive = !!lastStatusData?.relays?.pump;
-            else if (kind === 'plant') isNowActive = !!lastStatusData?.relays?.plantLight;
-            else if (kind === 'heater') isNowActive = !!lastStatusData?.relays?.heater;
-            else if (kind === 'aeration') isNowActive = !!lastStatusData?.relays?.aeration;
-            button.textContent = isNowActive ? 'Wyłącz' : 'Włącz';
+            button.textContent = relayQuickButtonLabel(config.isActive(lastStatusData || {}));
         }
     }
 }
@@ -418,6 +921,28 @@ function getDashboardWorkRange(data) {
     );
 }
 
+function dashboardAquaelProfileCode(value) {
+    const normalized = String(value ?? '').trim().toLowerCase();
+    if (normalized === '1' || normalized === 'daybreak' || normalized === 'dawn' || normalized === 'sunrise') {
+        return 'daybreak';
+    }
+    if (normalized === '2' || normalized === 'night' || normalized === 'moon') {
+        return 'night';
+    }
+    return 'day';
+}
+
+function dashboardAquaelProfileLabel(data, key, legacyProfileKey) {
+    const flat = data.schedule || {};
+    const nested = data.schedules?.[key];
+    const code = dashboardAquaelProfileCode(
+        nested?.profile ?? nested?.profileLabel ?? flat[`${legacyProfileKey}Name`] ?? flat[legacyProfileKey]
+    );
+    if (code === 'daybreak') return 'DAYBREAK';
+    if (code === 'night') return 'NIGHT';
+    return 'DAY';
+}
+
 function renderWaterQualityCard(data) {
     const sensors = data.sensors || {};
     const modules = data.modules || {};
@@ -458,8 +983,8 @@ function isSensorValid(data, name, value) {
 
 function countActiveRelays(relays) {
     return [
-        relays?.light,
-        relays?.plantLight,
+        relays?.light1 ?? relays?.light,
+        relays?.light2 ?? relays?.plantLight,
         relays?.pump,
         relays?.heater,
         relays?.aeration
@@ -494,6 +1019,27 @@ function describeSleepBlockers(data) {
 }
 
 function renderStatusCommandStrips(data) {
+    const safetyInfo = getSystemSafetyAndMode(data);
+    const safetyBar = document.getElementById('global-safety-bar');
+    const safetyIcon = document.getElementById('global-safety-icon');
+    const safetyTitle = document.getElementById('global-safety-title');
+    const safetyDesc = document.getElementById('global-safety-desc');
+    
+    if (safetyBar) {
+        safetyBar.className = `global-safety-bar status-${safetyInfo.safety}`;
+        if (safetyIcon && safetyIcon.dataset.icon !== safetyInfo.safetyIcon) {
+            const iconMarkup = getLocalIconMarkup ? getLocalIconMarkup(safetyInfo.safetyIcon) : `<i class="fa-solid ${safetyInfo.safetyIcon}"></i>`;
+            safetyIcon.innerHTML = iconMarkup;
+            safetyIcon.dataset.icon = safetyInfo.safetyIcon;
+        }
+        if (safetyTitle) {
+            safetyTitle.textContent = `Stan systemu: ${safetyInfo.safetyLabel}`;
+        }
+        if (safetyDesc) {
+            safetyDesc.textContent = safetyInfo.safetyDesc;
+        }
+    }
+
     const sensors = data.sensors || {};
     const temperature = data.temperature || {};
     const relays = data.relays || {};
@@ -573,12 +1119,20 @@ function renderStatusCommandStrips(data) {
         `Najwiekszy blok: ${largestHeapKb}`,
         freeHeap !== null && freeHeap < 32000 ? 'warn' : 'ok'
     );
-    const clockValid = !!data.clock?.valid || !!formatControllerClock(data.clock || {});
+    const busDiagnostics = window.lastBusDiagnosticsData;
+    const i2cDevices = Array.isArray(busDiagnostics?.devices) ? busDiagnostics.devices : null;
+    const oneWireDevices = Array.isArray(busDiagnostics?.oneWire?.devices) ? busDiagnostics.oneWire.devices : null;
+    const uartPort = Array.isArray(busDiagnostics?.uart?.ports) ? busDiagnostics.uart.ports[0] : null;
+    const mcpResponding = sensors.mcp_ok === true || system.mcpConnected === true;
     setCommandStatus(
         'diag-strip-bus',
-        network.staConnected ? 'STA online' : (network.apMode ? 'AP aktywne' : 'Radio OFF'),
-        `${clockValid ? 'czas OK' : 'czas brak'} / ${network.lastTimeSyncStatus || 'NTP --'}`,
-        clockValid || network.staConnected || network.apMode ? 'ok' : 'warn'
+        i2cDevices && oneWireDevices
+            ? `${i2cDevices.length} I2C · ${oneWireDevices.length} OneWire`
+            : (mcpResponding ? 'MCP 0x20' : 'Nie skanowano'),
+        uartPort?.active
+            ? `UART${Number(uartPort.port)} · ${Number(uartPort.baud).toLocaleString('pl-PL')} bps`
+            : (mcpResponding ? 'Ekspander odpowiada; pełna diagnostyka po otwarciu zakładki' : 'I2C · UART · OneWire'),
+        i2cDevices && oneWireDevices ? 'ok' : (mcpResponding ? 'ok' : 'neutral')
     );
 
     const batteryPercent = toFiniteNumber(data.battery?.percent);
@@ -618,15 +1172,234 @@ function setRelayCard(relayId, state, meta) {
     const card = document.getElementById(`relay-${relayId}`);
     const stateEl = document.getElementById(`relay-${relayId}-state`);
     const metaEl = document.getElementById(`relay-${relayId}-meta`);
-    if (!card || !stateEl || !metaEl) return;
+    if (!card || !metaEl) return;
 
     card.classList.remove('relay-on', 'relay-off', 'relay-standby');
     card.classList.add(`relay-${state}`);
-    stateEl.textContent = state.toUpperCase();
+    if (stateEl) {
+        stateEl.textContent = state.toUpperCase();
+    }
     metaEl.textContent = meta;
 }
 
-function renderRelays(data) {
+const RELAY_FUNCTIONS_INFO = {
+    none: { label: "Brak / nieużywany", icon: "fa-xmark" },
+    filter: { label: "Filtr", icon: "fa-filter" },
+    heater: { label: "Grzałka", icon: "fa-temperature-half" },
+    main_light: { label: "Świetlówka przednia", icon: "fa-lightbulb" },
+    plant_light: { label: "Świetlówka tylna", icon: "fa-lightbulb" },
+    aeration: { label: "Napowietrzanie", icon: "fa-wind" },
+    co2: { label: "CO2", icon: "fa-cloud" },
+    water_dosing: { label: "Dolewka wody (ATO)", icon: "fa-droplet" },
+    feeder: { label: "Karmnik", icon: "fa-fish" },
+    circulation_pump: { label: "Pompa obiegowa", icon: "fa-rotate-right" },
+    uv_lamp: { label: "Lampa UV", icon: "fa-sun" },
+    reserve: { label: "Rezerwa", icon: "fa-sliders" },
+    custom: { label: "Własna nazwa", icon: "fa-sliders" }
+};
+
+function normalizeRelayChannel(value) {
+    const channel = Number(value);
+    return Number.isInteger(channel) && channel >= 1 && channel <= 8 ? channel : null;
+}
+
+function getRelayState(relay, data) {
+    const relays = data?.relays || {};
+    const channel = normalizeRelayChannel(relay?.channel);
+    const func = relay.function;
+
+    // 1. Try channel-based state
+    if (channel !== null && relays[`ch${channel}`] !== undefined) {
+        return !!relays[`ch${channel}`];
+    }
+    if (channel !== null && relays[String(channel)] !== undefined) {
+        return !!relays[String(channel)];
+    }
+
+    // 2. Try function-based state
+    if (relays[func] !== undefined) {
+        return !!relays[func];
+    }
+
+    // 3. Try legacy mapping
+    const legacyMap = {
+        filter: 'pump',
+        heater: 'heater',
+        main_light: 'light',
+        plant_light: 'plantLight',
+        aeration: 'aeration'
+    };
+    const legacyKey = legacyMap[func];
+    if (legacyKey && relays[legacyKey] !== undefined) {
+        return !!relays[legacyKey];
+    }
+
+    return false;
+}
+
+async function toggleDynamicRelayAction(channel) {
+    const normalizedChannel = normalizeRelayChannel(channel);
+    if (normalizedChannel === null) {
+        showToast('Nieprawidłowy kanał', 'Sterownik przesłał numer kanału spoza zakresu 1–8.', 'error', 5000);
+        return;
+    }
+    if (dynamicRelayActionsInFlight.has(normalizedChannel)) {
+        showToast('Polecenie w toku', `Kanał ${normalizedChannel} czeka na potwierdzenie sterownika.`, 'warning', 2800);
+        return;
+    }
+
+    const status = window.lastStatusData || {};
+    const config = status.relaysConfig;
+    if (!config || !Array.isArray(config.relays)) return;
+
+    const relay = config.relays.find((item) => normalizeRelayChannel(item?.channel) === normalizedChannel);
+    if (!relay) return;
+
+    if (relay.manualAllowed === false) {
+        showToast(
+            'Sterowanie zablokowane',
+            'Ręczne przełączenie tego kanału jest zablokowane przez konfigurację bezpieczeństwa.',
+            'warning',
+            4800
+        );
+        return;
+    }
+
+    const active = getRelayState(relay, status);
+    const nextState = active ? 0 : 1;
+
+    // Zabezpieczenie dwufazowe i potwierdzenie
+    let confirmMsg = "";
+    if (relay.function === 'filter' && active) {
+        confirmMsg = "Czy na pewno chcesz wyłączyć filtr? Spowoduje to zatrzymanie obiegu biologicznego w akwarium!";
+    } else if (relay.function === 'heater' && !active) {
+        confirmMsg = "Czy na pewno chcesz ręcznie włączyć grzałkę? Monitoruj temperaturę wody, aby nie przegrzać zbiornika.";
+    } else if (relay.function === 'co2' && !active) {
+        confirmMsg = "Czy na pewno chcesz ręcznie włączyć CO2? Zbyt wysokie stężenie może być niebezpieczne dla ryb.";
+    } else if (relay.function === 'water_dosing' && !active) {
+        confirmMsg = "Czy na pewno chcesz ręcznie włączyć dolewkę wody?";
+    }
+
+    if (confirmMsg && !confirm(confirmMsg)) {
+        return;
+    }
+
+    const btn = document.getElementById(`relay-${normalizedChannel}-toggle`);
+    dynamicRelayActionsInFlight.add(normalizedChannel);
+    if (btn) {
+        setElementBusy(btn, true);
+        btn.textContent = "Zapis...";
+    }
+
+    try {
+        const legacyMap = {
+            filter: 'filter',
+            main_light: 'light',
+            plant_light: 'plant',
+            heater: 'heater',
+            aeration: 'aeration'
+        };
+
+        const legacyKind = legacyMap[relay.function];
+        if (legacyKind) {
+            await toggleRelayQuickAction(legacyKind);
+        } else {
+            await sendAction("test_relay", {
+                channel: String(normalizedChannel),
+                state: String(nextState),
+                duration: "0"
+            }, { requirePin: true });
+            await fetchStatus(true);
+            await fetchLogs(true);
+        }
+    } catch (error) {
+        console.warn("Błąd przełączania przekaźnika:", error);
+    } finally {
+        dynamicRelayActionsInFlight.delete(normalizedChannel);
+        const currentButton = document.getElementById(`relay-${normalizedChannel}-toggle`);
+        if (currentButton) {
+            setElementBusy(currentButton, false);
+            // renderRelays will update text/state soon, but set correct text just in case
+            currentButton.textContent = active ? 'Włącz' : 'Wyłącz';
+        }
+    }
+}
+
+function buildRelayRowHtml(relay, data, isCore) {
+    const channel = normalizeRelayChannel(relay?.channel);
+    if (channel === null) {
+        return '';
+    }
+    const active = getRelayState(relay, data);
+    const stateClass = active ? 'relay-on' : 'relay-off';
+    const stateText = active ? 'ON' : 'OFF';
+    
+    const info = RELAY_FUNCTIONS_INFO[relay.function] || { label: relay.label, icon: 'fa-sliders' };
+    const label = relay.function === 'custom' ? (relay.label || 'Urządzenie własne') : info.label;
+    const icon = info.icon;
+
+    let metaText = 'Automatyka';
+    const schedule = data.schedule || {};
+    
+    if (relay.function === 'main_light') {
+        const lightMode = modeValue(schedule.lightMode);
+        const workRange = getDashboardWorkRange(data);
+        metaText = lightMode === 1 ? 'Zawsze włączone' : (lightMode === 2 ? 'Ręcznie wyłączone' : workRange.label);
+        metaText = `${metaText} / ${dashboardAquaelProfileLabel(data, 'light', 'lightProfile')}`;
+    } else if (relay.function === 'plant_light') {
+        const plantRange = dashboardScheduleRange(
+            data,
+            'plant_light',
+            {
+                mode: 'plantLightMode',
+                startHour: 'plantStartHour',
+                startMin: 'plantStartMin',
+                endHour: 'plantEndHour',
+                endMin: 'plantEndMin'
+            },
+            { startHour: 12, startMin: 0, endHour: 18, endMin: 0 }
+        );
+        metaText = describeDashboardRange(plantRange, { on: 'Zawsze włączone', off: 'Wyłączone' });
+        metaText = `${metaText} / ${dashboardAquaelProfileLabel(data, 'plant_light', 'plantLightProfile')}`;
+    } else if (relay.function === 'filter') {
+        const filterMode = modeValue(schedule.filterMode);
+        metaText = filterMode === 1 ? 'Zawsze włączony' : (filterMode === 2 ? 'Ręcznie wyłączony' : formatRange(schedule.filterStartHour, schedule.filterStartMin, schedule.filterEndHour, schedule.filterEndMin));
+    } else if (relay.function === 'heater') {
+        const heaterMode = modeValue(schedule.heaterMode);
+        metaText = active ? 'Dogrzewanie aktywne' : (heaterMode === 1 ? 'Wyłączona' : `Cel ${formatTemperature(data.temperature?.target)}`);
+    } else if (relay.function === 'aeration') {
+        const airMode = modeValue(schedule.airMode);
+        const relays = data.relays || {};
+        const aerationPercent = clamp(Number(relays.aerationPercent || 0), 0, 100);
+        metaText = active ? `Otwarcie ${aerationPercent}%` : (airMode === 1 ? 'Zawsze aktywne' : (airMode === 2 ? 'Ręcznie wyłączone' : formatRange(schedule.airStartHour, schedule.airStartMin, schedule.airEndHour, schedule.airEndMin)));
+    } else {
+        if (relay.defaultState === 'auto') {
+            metaText = 'Tryb automatyczny';
+        } else {
+            metaText = relay.defaultState === 'on' ? 'Domyślnie ON' : 'Domyślnie OFF';
+        }
+    }
+
+    const primaryClass = isCore ? ' relay-primary-item' : '';
+    const busy = dynamicRelayActionsInFlight.has(channel);
+
+    return `
+    <div class="relay-row-item${primaryClass} ${stateClass}" id="relay-${channel}">
+        <div class="relay-row-info">
+            <span class="relay-row-icon">${getLocalIconMarkup ? getLocalIconMarkup(icon) : `<i class="fa-solid ${icon}"></i>`}</span>
+            <div>
+                <div class="relay-row-name-line">
+                    <div class="relay-row-name">${escapeHtml(label)}</div>
+                    <span id="relay-${channel}-state" class="relay-row-state">${stateText}</span>
+                </div>
+                <div class="relay-row-meta" id="relay-${channel}-meta">${escapeHtml(metaText)}</div>
+            </div>
+        </div>
+        <button id="relay-${channel}-toggle" class="btn btn-secondary relay-row-btn" type="button" data-admin-only="true" data-relay-channel="${channel}" aria-pressed="${active ? 'true' : 'false'}" aria-busy="${busy ? 'true' : 'false'}"${busy ? ' disabled' : ''}>Przełącz</button>
+    </div>`;
+}
+
+function renderRelaysLegacy(data) {
     const schedule = data.schedule || {};
     const relays = data.relays || {};
     const aerationPercent = clamp(Number(relays.aerationPercent || 0), 0, 100);
@@ -648,8 +1421,8 @@ function renderRelays(data) {
     const airMode = modeValue(schedule.airMode);
     const heaterMode = modeValue(schedule.heaterMode);
 
-    const lightState = relays.light ? 'on' : (lightMode === 2 ? 'off' : 'standby');
-    const plantState = relays.plantLight ? 'on' : (plantRange.mode === 'zawsze_wylaczone' ? 'off' : 'standby');
+    const lightState = (relays.light1 ?? relays.light) ? 'on' : (lightMode === 2 ? 'off' : 'standby');
+    const plantState = (relays.light2 ?? relays.plantLight) ? 'on' : (plantRange.mode === 'zawsze_wylaczone' ? 'off' : 'standby');
     const filterState = relays.pump ? 'on' : (filterMode === 2 ? 'off' : 'standby');
     const heaterState = relays.heater ? 'on' : (heaterMode === 1 ? 'off' : 'standby');
     const aerationState = aerationPercent > 0 ? 'on' : (airMode === 2 ? 'off' : 'standby');
@@ -687,18 +1460,95 @@ function renderRelays(data) {
     setText('relay-count', `${activeCount} / 5 aktywne`);
 
     const toggles = {
-        light: relays.light,
+        light: relays.light1 ?? relays.light,
         filter: relays.pump,
-        plant: relays.plantLight,
-        heater: relays.heater,
+        plant: relays.light2 ?? relays.plantLight,
+        heater: isHeaterAutomationEnabled(data),
         aeration: relays.aeration
     };
 
     for (const [key, active] of Object.entries(toggles)) {
         const btn = document.getElementById(`relay-${key}-toggle`);
         if (btn && btn.dataset.busy !== '1') {
-            btn.textContent = active ? 'Wyłącz' : 'Włącz';
+            btn.textContent = relayQuickButtonLabel(!!active);
         }
+    }
+}
+
+function renderRelays(data) {
+    const config = data.relaysConfig || window.lastStatusData?.relaysConfig;
+    if (!config || !Array.isArray(config.relays)) {
+        renderRelaysLegacy(data);
+        return;
+    }
+
+    const container = document.querySelector('.relays-section');
+    if (!container) return;
+
+    const activeRelays = config.relays
+        .filter((relay) => normalizeRelayChannel(relay?.channel) !== null && relay.function !== 'none')
+        .slice(0, 8);
+    const coreFuncs = ['main_light', 'filter', 'plant_light'];
+    const coreRelays = activeRelays.filter(r => coreFuncs.includes(r.function));
+    const extendedRelays = activeRelays.filter(r => !coreFuncs.includes(r.function));
+
+    const onCount = activeRelays.filter(r => getRelayState(r, data)).length;
+    setText('relay-count', `${onCount} / ${activeRelays.length} aktywne`);
+
+    let html = '';
+
+    if (coreRelays.length > 0) {
+        html += `
+        <div class="relay-core-group tier-group" data-tier="core" aria-label="Sterowanie podstawowe">
+            <div class="relay-group-heading">
+                <span class="tier-badge" data-tier="core">Rdzeń</span>
+                <span class="relay-group-label">Podstawowe</span>
+            </div>
+            <div class="relay-core-grid">
+                ${coreRelays.map(r => buildRelayRowHtml(r, data, true)).join('')}
+            </div>
+        </div>`;
+    }
+
+    if (extendedRelays.length > 0) {
+        html += `
+        <details class="relay-automation-group tier-group" data-tier="extended" open>
+            <summary>
+                <span class="relay-automation-summary">
+                    <span class="tier-badge" data-tier="extended">Rozszerzone</span>
+                    <strong>Automatyka rozszerzona</strong>
+                    <small>Harmonogramy, progi i opcjonalne osprzetowanie</small>
+                </span>
+                <i class="fa-solid fa-chevron-down"></i>
+            </summary>
+            <div class="relay-automation-list">
+                ${extendedRelays.map(r => buildRelayRowHtml(r, data, false)).join('')}
+            </div>
+        </details>`;
+    }
+
+    if (html !== lastRelayMarkup) {
+        const focusedId = container.contains(document.activeElement) ? document.activeElement?.id : '';
+        container.innerHTML = html;
+        lastRelayMarkup = html;
+
+        if (focusedId) {
+            document.getElementById(focusedId)?.focus({ preventScroll: true });
+        }
+        if (typeof applyAuthState === 'function') {
+            applyAuthState();
+        }
+    }
+
+    if (container.dataset.relayActionsBound !== '1') {
+        container.dataset.relayActionsBound = '1';
+        container.addEventListener('click', (event) => {
+            const button = event.target.closest('button[data-relay-channel]');
+            if (!button || !container.contains(button)) {
+                return;
+            }
+            toggleDynamicRelayAction(button.dataset.relayChannel);
+        });
     }
 }
 
@@ -740,7 +1590,7 @@ function renderTodaySchedule(data) {
             })
         },
         {
-            label: 'Światło główne',
+            label: 'Świetlówka przednia',
             value: modeValue(schedule.lightMode) === 1
                 ? 'Zawsze włączone'
                 : (modeValue(schedule.lightMode) === 2
@@ -748,7 +1598,7 @@ function renderTodaySchedule(data) {
                     : workRange.label)
         },
         {
-            label: 'Światło roślinne',
+            label: 'Świetlówka tylna',
             value: describeDashboardRange(plantRange, {
                 on: 'Zawsze włączone',
                 off: 'Wyłączone'
@@ -774,7 +1624,7 @@ function renderTodaySchedule(data) {
             label: 'Grzałka',
             value: modeValue(schedule.heaterMode) === 1
                 ? 'Wyłączona'
-                : `Auto progowe ${workRange.label}`
+                : 'Auto progowe 24/7'
         },
         {
             label: 'Karmienie',
@@ -782,11 +1632,15 @@ function renderTodaySchedule(data) {
         }
     ];
 
-    list.innerHTML = items.map((item) => `
+    const markup = items.map((item) => `
         <div class="schedule-summary-item">
             <span>${escapeHtml(item.label)}</span>
             <strong>${escapeHtml(item.value)}</strong>
         </div>`).join('');
+    if (markup !== lastScheduleSummaryMarkup) {
+        list.innerHTML = markup;
+        lastScheduleSummaryMarkup = markup;
+    }
 }
 
 function renderFeederCard(data) {
@@ -868,6 +1722,11 @@ function formatChartTemperature(value, digits = 1) {
     return `${Number(value).toFixed(digits)}\u00B0C`;
 }
 
+function formatChartTemperatureDelta(value) {
+    const numeric = Number(value);
+    return Number.isFinite(numeric) ? `${Math.abs(numeric).toFixed(1)}\u00B0C` : '--.-\u00B0C';
+}
+
 function buildSmoothChartPath(coords) {
     if (!coords.length) return '';
     if (coords.length === 1) {
@@ -888,315 +1747,6 @@ function buildSmoothChartPath(coords) {
         path += ` C ${cp1x.toFixed(2)} ${cp1y.toFixed(2)} ${cp2x.toFixed(2)} ${cp2y.toFixed(2)} ${p2.x.toFixed(2)} ${p2.y.toFixed(2)}`;
     }
     return path;
-}
-
-function renderTemperatureChartSummary(summary, points, target, hysteresis, guidesVisible) {
-    if (!summary) return;
-
-    const latest = points[points.length - 1];
-    const badges = [
-        `<span class="temp-chart-pill temp-chart-pill-live">Ostatni <strong>${escapeHtml(latest.valueLabel)}</strong></span>`
-    ];
-
-    if (target !== null) {
-        badges.push(`<span class="temp-chart-pill">Cel <strong>${escapeHtml(formatChartTemperature(target))}</strong></span>`);
-        if (hysteresis > 0) {
-            const lower = formatChartTemperature(target - hysteresis);
-            const upper = formatChartTemperature(target + hysteresis);
-            badges.push(
-                `<span class="temp-chart-pill ${guidesVisible ? '' : 'temp-chart-pill-warning'}">Pasmo <strong>${escapeHtml(`${lower} - ${upper}`)}</strong>${guidesVisible ? '' : ' poza wykresem'}</span>`
-            );
-        }
-    }
-
-    summary.innerHTML = badges.join('');
-}
-
-function renderTemperatureChart(temperature) {
-    const svg = document.getElementById('temperature-chart-svg');
-    const empty = document.getElementById('temperature-chart-empty');
-    const summary = document.getElementById('temperature-chart-summary');
-    if (!svg || !empty) return;
-
-    const rawHistory = Array.isArray(temperature?.history) ? temperature.history : [];
-    const historyCapacity = Math.max(1, Math.round(toFiniteNumber(temperature?.historyCapacity) ?? 20));
-    const historyIntervalMinutes = Math.max(1, Math.round(toFiniteNumber(temperature?.historyIntervalMinutes) ?? 10));
-    const points = rawHistory
-        .map((item, index) => ({
-            value: toFiniteNumber(item?.value),
-            epoch: toFiniteNumber(item?.epoch),
-            index
-        }))
-        .filter((item) => isValidTemperature(item.value))
-        .slice(-historyCapacity)
-        .map((item, index, arr) => ({
-            value: item.value,
-            epoch: item.epoch,
-            valueLabel: formatChartTemperature(item.value, 2),
-            timeLabel: formatEpoch(item.epoch, {
-                fallback: `Pomiar ${index + 1} z ${arr.length}`,
-                includeDate: false,
-                includeSeconds: false
-            })
-        }));
-
-    setText('temperature-chart-meta', `${points.length || 0} / ${historyCapacity} pomiarow co ${historyIntervalMinutes} min`);
-    setText('temperature-chart-start', points.length ? points[0].timeLabel : 'Najstarszy pomiar');
-    setText('temperature-chart-end', points.length ? points[points.length - 1].timeLabel : 'Teraz');
-    svg.innerHTML = '';
-    if (summary) summary.innerHTML = '';
-    hideChartTooltip();
-
-    if (points.length === 0) {
-        empty.hidden = false;
-        return;
-    }
-
-    empty.hidden = true;
-
-    const width = 960;
-    const height = 320;
-    const padding = { top: 18, right: 34, bottom: 34, left: 58 };
-    const plotWidth = width - padding.left - padding.right;
-    const plotHeight = height - padding.top - padding.bottom;
-    const target = toFiniteNumber(temperature?.target);
-    const hysteresis = Math.abs(toFiniteNumber(temperature?.hysteresis) ?? 0);
-
-    let minValue = Math.min(...points.map((point) => point.value));
-    let maxValue = Math.max(...points.map((point) => point.value));
-    if (!Number.isFinite(minValue) || !Number.isFinite(maxValue)) {
-        minValue = 20;
-        maxValue = 30;
-    }
-    if (Math.abs(maxValue - minValue) < 0.6) {
-        maxValue += 0.3;
-        minValue -= 0.3;
-    }
-
-    const dataSpan = Math.max(0.6, maxValue - minValue);
-    const basePad = Math.max(0.18, dataSpan * 0.18);
-    minValue -= basePad;
-    maxValue += basePad;
-
-    let guidesVisible = false;
-    if (target !== null) {
-        const guideMin = hysteresis > 0 ? target - hysteresis : target;
-        const guideMax = hysteresis > 0 ? target + hysteresis : target;
-        const guideGap = Math.max(0, minValue - guideMax, guideMin - maxValue);
-        guidesVisible = guideGap <= Math.max(0.65, dataSpan * 0.85);
-
-        if (guidesVisible) {
-            const guidePad = Math.max(0.12, dataSpan * 0.08);
-            minValue = Math.min(minValue, guideMin - guidePad);
-            maxValue = Math.max(maxValue, guideMax + guidePad);
-        }
-    }
-
-    renderTemperatureChartSummary(summary, points, target, hysteresis, guidesVisible);
-
-    const xFor = (index) => padding.left + (points.length === 1 ? plotWidth / 2 : (index / (points.length - 1)) * plotWidth);
-    const yFor = (value) => padding.top + ((maxValue - value) / (maxValue - minValue)) * plotHeight;
-
-    const defs = createSvgEl('defs');
-    const gradient = createSvgEl('linearGradient', {
-        id: 'chart-area-gradient',
-        x1: '0%',
-        y1: '0%',
-        x2: '0%',
-        y2: '100%'
-    });
-    const startStop = createSvgEl('stop', { offset: '0%', 'stop-color': '#22d3ee', 'stop-opacity': '0.2' });
-    const endStop = createSvgEl('stop', { offset: '100%', 'stop-color': '#22d3ee', 'stop-opacity': '0.015' });
-    gradient.appendChild(startStop);
-    gradient.appendChild(endStop);
-    defs.appendChild(gradient);
-    svg.appendChild(defs);
-
-    svg.appendChild(createSvgEl('rect', {
-        x: padding.left,
-        y: padding.top,
-        width: plotWidth,
-        height: plotHeight,
-        rx: 18,
-        class: 'chart-plot-frame'
-    }));
-
-    if (target !== null && guidesVisible && hysteresis > 0) {
-        const upperY = yFor(target + hysteresis);
-        const lowerY = yFor(target - hysteresis);
-        svg.appendChild(createSvgEl('rect', {
-            x: padding.left,
-            y: Math.min(upperY, lowerY),
-            width: plotWidth,
-            height: Math.max(2, Math.abs(lowerY - upperY)),
-            rx: 14,
-            class: 'chart-band'
-        }));
-    }
-
-    const gridSteps = 4;
-    for (let i = 0; i <= gridSteps; i += 1) {
-        const ratio = i / gridSteps;
-        const y = padding.top + ratio * plotHeight;
-        const value = maxValue - ratio * (maxValue - minValue);
-        svg.appendChild(createSvgEl('line', {
-            x1: padding.left,
-            y1: y,
-            x2: padding.left + plotWidth,
-            y2: y,
-            class: 'chart-grid-line'
-        }));
-        const label = createSvgEl('text', {
-            x: 6,
-            y: y + 4,
-            class: 'chart-grid-label'
-        });
-        label.textContent = formatChartTemperature(value);
-        svg.appendChild(label);
-    }
-
-    if (target !== null && guidesVisible) {
-        const targetY = yFor(target);
-        svg.appendChild(createSvgEl('line', {
-            x1: padding.left,
-            y1: targetY,
-            x2: padding.left + plotWidth,
-            y2: targetY,
-            class: 'chart-target-line'
-        }));
-        const targetLabel = createSvgEl('text', {
-            x: padding.left + plotWidth + 10,
-            y: targetY + 4,
-            class: 'chart-guide-label'
-        });
-        targetLabel.textContent = `Cel ${target.toFixed(1)}°C`;
-        svg.appendChild(targetLabel);
-
-        if (hysteresis > 0) {
-            const upper = target + hysteresis;
-            const lower = target - hysteresis;
-            [upper, lower].forEach((value, index) => {
-                const lineY = yFor(value);
-                svg.appendChild(createSvgEl('line', {
-                    x1: padding.left,
-                    y1: lineY,
-                    x2: padding.left + plotWidth,
-                    y2: lineY,
-                    class: 'chart-hysteresis-line'
-                }));
-                const guide = createSvgEl('text', {
-                    x: padding.left + plotWidth + 10,
-                    y: lineY + 4,
-                    class: 'chart-guide-label hysteresis'
-                });
-                guide.textContent = `${index === 0 ? 'H +' : 'H -'} ${value.toFixed(1)}°C`;
-                svg.appendChild(guide);
-            });
-        }
-    }
-
-    const coords = points.map((point, index) => ({
-        x: xFor(index),
-        y: yFor(point.value)
-    }));
-    const pathData = buildSmoothChartPath(coords);
-    const firstCoord = coords[0];
-    const lastCoord = coords[coords.length - 1];
-    const areaData = `${pathData} L ${lastCoord.x.toFixed(2)} ${(padding.top + plotHeight).toFixed(2)} L ${firstCoord.x.toFixed(2)} ${(padding.top + plotHeight).toFixed(2)} Z`;
-    svg.appendChild(createSvgEl('path', { d: areaData, class: 'chart-area' }));
-    svg.appendChild(createSvgEl('path', { d: pathData, class: 'chart-line' }));
-    svg.appendChild(createSvgEl('circle', {
-        cx: lastCoord.x,
-        cy: lastCoord.y,
-        r: 10,
-        class: 'chart-point-current'
-    }));
-
-    points.forEach((point, index) => {
-        const { x, y } = coords[index];
-
-        const circle = createSvgEl('circle', {
-            cx: x,
-            cy: y,
-            r: index === points.length - 1 ? 5 : 4,
-            class: 'chart-point'
-        });
-        const title = createSvgEl('title');
-        title.textContent = `${point.valueLabel} - ${point.timeLabel}`;
-        circle.appendChild(title);
-        svg.appendChild(circle);
-
-        const hit = createSvgEl('circle', {
-            cx: x,
-            cy: y,
-            r: 13,
-            tabindex: 0,
-            class: 'chart-point-hit'
-        });
-        hit.addEventListener('mouseenter', (event) => showChartTooltip(event.clientX, event.clientY, point));
-        hit.addEventListener('mousemove', (event) => showChartTooltip(event.clientX, event.clientY, point));
-        hit.addEventListener('mouseleave', hideChartTooltip);
-        hit.addEventListener('focus', () => {
-            const rect = svg.getBoundingClientRect();
-            showChartTooltip(rect.left + x, rect.top + y, point);
-        });
-        hit.addEventListener('blur', hideChartTooltip);
-        svg.appendChild(hit);
-    });
-}
-
-function formatChartTemperatureDelta(value, digits = 1) {
-    const numeric = Number(value);
-    return `${numeric > 0 ? '+' : ''}${numeric.toFixed(digits)}\u00B0C`;
-}
-
-function estimateChartChipWidth(text) {
-    return Math.max(88, Math.round(String(text || '').length * 7.1 + 24));
-}
-
-function appendChartChip(svg, options) {
-    const {
-        x,
-        y,
-        text,
-        tone = 'neutral',
-        anchor = 'start',
-        bounds = null
-    } = options || {};
-
-    if (!svg || !text) return null;
-
-    const height = 24;
-    const width = estimateChartChipWidth(text);
-    let left = anchor === 'end' ? x - width : x;
-    let top = y;
-
-    if (bounds) {
-        left = clamp(left, bounds.minX, bounds.maxX - width);
-        top = clamp(top, bounds.minY, bounds.maxY - height);
-    }
-
-    const group = createSvgEl('g', { class: `chart-chip chart-chip-${tone}` });
-    const background = createSvgEl('rect', {
-        x: left,
-        y: top,
-        width,
-        height,
-        rx: 12,
-        class: 'chart-chip-bg'
-    });
-    const label = createSvgEl('text', {
-        x: left + 12,
-        y: top + height / 2,
-        class: 'chart-chip-text'
-    });
-    label.setAttribute('dominant-baseline', 'middle');
-    label.textContent = text;
-
-    group.appendChild(background);
-    group.appendChild(label);
-    svg.appendChild(group);
-    return group;
 }
 
 function describeTemperatureTrend(points) {
@@ -1523,13 +2073,6 @@ function renderTemperatureSnapshot(svg, points, target, hysteresis, domain, layo
     const span = Math.max(0.1, domain.maxValue - domain.minValue);
     const valueToX = (value) => rail.startX + ((value - domain.minValue) / span) * (rail.endX - rail.startX);
     const currentX = valueToX(latest.value);
-    const chipBounds = {
-        minX: rail.startX - 8,
-        maxX: rail.endX + 8,
-        minY: padding.top + 8,
-        maxY: height - padding.bottom - 8
-    };
-
     appendTemperatureChartDefs(svg);
     appendTemperatureChartFrame(svg, padding, plotWidth, plotHeight);
 
@@ -1711,14 +2254,6 @@ function renderTemperatureSnapshot(svg, points, target, hysteresis, domain, layo
         class: 'chart-point-core'
     }));
 
-    appendChartChip(svg, {
-        x: currentX - (stacked ? 52 : 58),
-        y: rail.y - (stacked ? 66 : 88),
-        text: `Teraz ${latest.valueLabel}`,
-        tone: 'live',
-        bounds: chipBounds
-    });
-
     const currentHit = createSvgEl('circle', {
         cx: currentX,
         cy: rail.y,
@@ -1749,12 +2284,6 @@ function renderTemperatureTrendChart(svg, points, target, hysteresis, domain, la
     const compact = !!layout.compact;
     const xFor = (index) => padding.left + (points.length === 1 ? plotWidth / 2 : (index / (points.length - 1)) * plotWidth);
     const yFor = (value) => padding.top + ((maxValue - value) / (maxValue - minValue)) * plotHeight;
-    const chipBounds = {
-        minX: padding.left + 8,
-        maxX: padding.left + plotWidth - 8,
-        minY: padding.top + 8,
-        maxY: padding.top + plotHeight - 8
-    };
     const targetVisible = target !== null && target >= minValue && target <= maxValue;
 
     appendTemperatureChartDefs(svg);
@@ -1807,14 +2336,6 @@ function renderTemperatureTrendChart(svg, points, target, hysteresis, domain, la
             y2: targetY,
             class: 'chart-target-line'
         }));
-        appendChartChip(svg, {
-            x: padding.left + plotWidth - 12,
-            y: targetY - 30,
-            text: `Cel ${formatChartTemperature(target)}`,
-            tone: 'target',
-            anchor: 'end',
-            bounds: chipBounds
-        });
     }
 
     const coords = points.map((point, index) => ({
@@ -1824,7 +2345,6 @@ function renderTemperatureTrendChart(svg, points, target, hysteresis, domain, la
     const pathData = buildSmoothChartPath(coords);
     const firstCoord = coords[0];
     const lastCoord = coords[coords.length - 1];
-    const latestPoint = points[points.length - 1];
     const areaData = `${pathData} L ${lastCoord.x.toFixed(2)} ${(padding.top + plotHeight).toFixed(2)} L ${firstCoord.x.toFixed(2)} ${(padding.top + plotHeight).toFixed(2)} Z`;
 
     svg.appendChild(createSvgEl('path', { d: areaData, class: 'chart-area' }));
@@ -1840,19 +2360,6 @@ function renderTemperatureTrendChart(svg, points, target, hysteresis, domain, la
             class: 'chart-focus-line'
         }));
     }
-
-    const latestChipAnchor = lastCoord.x > padding.left + plotWidth * 0.72 ? 'end' : 'start';
-    const latestChipY = lastCoord.y < padding.top + (compact ? 50 : 42)
-        ? lastCoord.y + (compact ? 16 : 12)
-        : lastCoord.y - (compact ? 30 : 34);
-    appendChartChip(svg, {
-        x: latestChipAnchor === 'end' ? lastCoord.x - 14 : lastCoord.x + 14,
-        y: latestChipY,
-        text: `Teraz ${latestPoint.valueLabel}`,
-        tone: 'live',
-        anchor: latestChipAnchor,
-        bounds: chipBounds
-    });
 
     svg.appendChild(createSvgEl('circle', {
         cx: lastCoord.x,
@@ -1968,6 +2475,22 @@ function renderTemperatureChart(temperature) {
             })
         }));
 
+    const target = toFiniteNumber(temperature?.target);
+    const hysteresis = Math.abs(toFiniteNumber(temperature?.hysteresis) ?? 0);
+    const shellWidth = Math.round(shell?.clientWidth || 0);
+    const chartSignature = [
+        shellWidth,
+        historyCapacity,
+        historyIntervalMinutes,
+        target ?? '',
+        hysteresis,
+        points.map((point) => `${point.epoch ?? ''}:${point.value}`).join('|')
+    ].join(';');
+    if (chartSignature === lastTemperatureChartSignature) {
+        return;
+    }
+    lastTemperatureChartSignature = chartSignature;
+
     svg.innerHTML = '';
     if (summary) summary.innerHTML = '';
     if (note) {
@@ -1997,8 +2520,6 @@ function renderTemperatureChart(temperature) {
 
     empty.hidden = true;
 
-    const target = toFiniteNumber(temperature?.target);
-    const hysteresis = Math.abs(toFiniteNumber(temperature?.hysteresis) ?? 0);
     const snapshotMode = points.length < snapshotThreshold;
     const layout = getTemperatureChartLayout(shell ? shell.clientWidth : 0, snapshotMode);
     const domain = buildTemperatureDomain(points, target, hysteresis, snapshotMode);
@@ -2039,6 +2560,9 @@ function renderDashboard(data) {
     renderDiagnosticsPanel(data);
     if (typeof renderModulesTab === 'function') {
         renderModulesTab(data);
+    }
+    if (typeof window.renderRelayModuleOverview === 'function') {
+        window.renderRelayModuleOverview(data);
     }
     renderScheduleEditor(data);
     renderRelays(data);

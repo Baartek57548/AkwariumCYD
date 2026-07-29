@@ -1,0 +1,326 @@
+import 'dart:async';
+
+import 'package:flutter/material.dart';
+
+import 'connection_health.dart';
+import 'controller_session.dart';
+
+class ControllerConnectionHealthBar extends StatefulWidget {
+  const ControllerConnectionHealthBar({super.key, required this.session});
+
+  final ControllerSession session;
+
+  @override
+  State<ControllerConnectionHealthBar> createState() =>
+      _ControllerConnectionHealthBarState();
+}
+
+class _ControllerConnectionHealthBarState
+    extends State<ControllerConnectionHealthBar>
+    with WidgetsBindingObserver {
+  Timer? _ageTimer;
+  bool _detailsExpanded = false;
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addObserver(this);
+    widget.session.addListener(_onSessionChanged);
+    _startAgeTimer();
+  }
+
+  void _startAgeTimer() {
+    _ageTimer?.cancel();
+    _ageTimer = Timer.periodic(const Duration(seconds: 15), (_) {
+      if (mounted) setState(() {});
+    });
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) {
+      _startAgeTimer();
+    } else {
+      _ageTimer?.cancel();
+      _ageTimer = null;
+    }
+  }
+
+  @override
+  void didUpdateWidget(ControllerConnectionHealthBar oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (identical(oldWidget.session, widget.session)) return;
+    oldWidget.session.removeListener(_onSessionChanged);
+    widget.session.addListener(_onSessionChanged);
+  }
+
+  void _onSessionChanged() {
+    if (mounted) setState(() {});
+  }
+
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    _ageTimer?.cancel();
+    widget.session.removeListener(_onSessionChanged);
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final health = widget.session.connectionHealth;
+    final colors = Theme.of(context).colorScheme;
+    final tone = switch (health.phase) {
+      ControllerConnectionPhase.online => colors.primary,
+      ControllerConnectionPhase.connecting => colors.tertiary,
+      ControllerConnectionPhase.reconnecting => colors.tertiary,
+      ControllerConnectionPhase.offline =>
+        widget.session.isOfflineMode ? colors.outline : colors.error,
+    };
+    final detail = switch (health.phase) {
+      ControllerConnectionPhase.connecting =>
+        widget.session.hasCachedSnapshot
+            ? 'Łączenie w tle · ostatnie dane są dostępne'
+            : 'Trwa łączenie — aplikacja pozostaje dostępna',
+      ControllerConnectionPhase.online =>
+        'Synchronizacja ${health.ageLabel(DateTime.now())}',
+      ControllerConnectionPhase.reconnecting =>
+        widget.session.automaticReconnect
+            ? 'Łączenie w tle · ostatnie dane zachowane'
+            : 'Ostatnie dane zachowane · autołączenie wyłączone',
+      ControllerConnectionPhase.offline =>
+        widget.session.isOfflineMode
+            ? widget.session.hasCachedSnapshot
+                  ? 'Ostatnie dane są dostępne lokalnie'
+                  : 'Aplikacja działa bez urządzenia'
+            : widget.session.automaticReconnect
+            ? 'Sterownik nie odpowiada · ponawiam w tle'
+            : 'Sterownik nie odpowiada · autołączenie wyłączone',
+    };
+
+    return Semantics(
+      container: true,
+      label: 'Stan połączenia: ${health.phaseLabel}. $detail.',
+      child: Material(
+        color: colors.surfaceContainerLow,
+        child: DecoratedBox(
+          decoration: BoxDecoration(
+            border: Border(bottom: BorderSide(color: colors.outlineVariant)),
+          ),
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(14, 6, 6, 6),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                _StatusSummary(
+                  health: health,
+                  detail: detail,
+                  tone: tone,
+                  busy: widget.session.busy,
+                  canRetry: !widget.session.isOfflineMode,
+                  detailsExpanded: _detailsExpanded,
+                  onRetry: () => unawaited(widget.session.connect()),
+                  onToggleDetails: () {
+                    setState(() => _detailsExpanded = !_detailsExpanded);
+                  },
+                ),
+                if (_detailsExpanded) ...[
+                  const SizedBox(height: 6),
+                  Divider(height: 1, color: colors.outlineVariant),
+                  const SizedBox(height: 10),
+                  Padding(
+                    padding: const EdgeInsets.fromLTRB(22, 0, 8, 6),
+                    child: _ConnectionMetrics(health: health),
+                  ),
+                ],
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _StatusSummary extends StatelessWidget {
+  const _StatusSummary({
+    required this.health,
+    required this.detail,
+    required this.tone,
+    required this.busy,
+    required this.canRetry,
+    required this.detailsExpanded,
+    required this.onRetry,
+    required this.onToggleDetails,
+  });
+
+  final ControllerConnectionHealth health;
+  final String detail;
+  final Color tone;
+  final bool busy;
+  final bool canRetry;
+  final bool detailsExpanded;
+  final VoidCallback onRetry;
+  final VoidCallback onToggleDetails;
+
+  @override
+  Widget build(BuildContext context) {
+    final colors = Theme.of(context).colorScheme;
+    return Row(
+      children: [
+        Container(
+          width: 12,
+          height: 12,
+          decoration: BoxDecoration(
+            color: tone,
+            shape: BoxShape.circle,
+            boxShadow: [
+              BoxShadow(color: tone.withValues(alpha: 0.35), blurRadius: 8),
+            ],
+          ),
+        ),
+        const SizedBox(width: 10),
+        Expanded(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                'Sterownik ${health.phaseLabel.toLowerCase()}',
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(fontWeight: FontWeight.w800),
+              ),
+              Text(
+                detail,
+                maxLines: 2,
+                overflow: TextOverflow.ellipsis,
+                style: Theme.of(
+                  context,
+                ).textTheme.bodySmall?.copyWith(color: colors.onSurfaceVariant),
+              ),
+            ],
+          ),
+        ),
+        if (!health.isOnline && canRetry) ...[
+          const SizedBox(width: 4),
+          IconButton(
+            onPressed: busy ? null : onRetry,
+            tooltip: 'Połącz ponownie',
+            icon: busy
+                ? const SizedBox.square(
+                    dimension: 20,
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  )
+                : const Icon(Icons.refresh_rounded),
+          ),
+        ],
+        IconButton(
+          key: const Key('connection-details-button'),
+          onPressed: onToggleDetails,
+          tooltip: detailsExpanded
+              ? 'Ukryj szczegóły połączenia'
+              : 'Pokaż szczegóły połączenia',
+          icon: Icon(
+            detailsExpanded
+                ? Icons.keyboard_arrow_up_rounded
+                : Icons.info_outline_rounded,
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+class _ConnectionMetrics extends StatelessWidget {
+  const _ConnectionMetrics({required this.health});
+
+  final ControllerConnectionHealth health;
+
+  @override
+  Widget build(BuildContext context) {
+    final textScale = MediaQuery.textScalerOf(context).scale(1);
+    final vertical = textScale > 1.6;
+    final items = <Widget>[
+      _HealthMetric(
+        icon: _signalIcon(health.signalBars),
+        label: 'Sygnał',
+        value: health.rssi == null ? '—' : '${health.rssi} dBm',
+        tooltip: health.signalLabel,
+      ),
+      _HealthMetric(
+        icon: Icons.speed_rounded,
+        label: 'Ping',
+        value: health.roundTrip == null
+            ? '—'
+            : '${health.roundTrip!.inMilliseconds} ms',
+      ),
+      _HealthMetric(
+        icon: Icons.schedule_rounded,
+        label: 'Synchronizacja',
+        value: health.ageLabel(DateTime.now()),
+      ),
+    ];
+
+    if (vertical) {
+      return Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          for (var index = 0; index < items.length; index++) ...[
+            items[index],
+            if (index != items.length - 1) const SizedBox(height: 6),
+          ],
+        ],
+      );
+    }
+    return Wrap(spacing: 18, runSpacing: 8, children: items);
+  }
+
+  static IconData _signalIcon(int bars) => switch (bars) {
+    4 => Icons.signal_wifi_4_bar_rounded,
+    3 => Icons.network_wifi_3_bar_rounded,
+    2 => Icons.network_wifi_2_bar_rounded,
+    1 => Icons.network_wifi_1_bar_rounded,
+    _ => Icons.signal_wifi_off_rounded,
+  };
+}
+
+class _HealthMetric extends StatelessWidget {
+  const _HealthMetric({
+    required this.icon,
+    required this.label,
+    required this.value,
+    this.tooltip,
+  });
+
+  final IconData icon;
+  final String label;
+  final String value;
+  final String? tooltip;
+
+  @override
+  Widget build(BuildContext context) {
+    final colors = Theme.of(context).colorScheme;
+    final content = Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Icon(icon, size: 18, color: colors.primary),
+        const SizedBox(width: 7),
+        Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              label,
+              style: Theme.of(
+                context,
+              ).textTheme.labelSmall?.copyWith(color: colors.onSurfaceVariant),
+            ),
+            Text(value, style: const TextStyle(fontWeight: FontWeight.w700)),
+          ],
+        ),
+      ],
+    );
+    return tooltip == null
+        ? content
+        : Tooltip(message: tooltip!, child: content);
+  }
+}

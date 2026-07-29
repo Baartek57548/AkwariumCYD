@@ -2,9 +2,19 @@
 const API_ACTION = '/api/action';
 const API_LOGS = '/api/logs';
 const API_EVENTS = '/api/events';
+const API_WEB_SESSION = '/api/web-session';
 const API_OTA = '/update';
 const API_SETTIME = '/settime';
 const LOGS_PAGE_SIZE = 10;
+const WEB_SESSION_HEARTBEAT_MS = 5000;
+const API_REQUEST_TIMEOUT_MS = 6500;
+const STATUS_POLL_ONLINE_MS = 3000;
+const STATUS_POLL_HIDDEN_MS = 15000;
+const STATUS_POLL_MAX_BACKOFF_MS = 30000;
+const STATUS_OFFLINE_FAILURE_THRESHOLD = 3;
+const CONNECTION_STALE_AFTER_MS = 10000;
+const MAX_TOASTS = 4;
+const ENABLE_EVENT_STREAM = false;
 
 let backendConnected = false;
 let activeLogType = 'normal';
@@ -17,7 +27,23 @@ let logsPage = { normal: 0, critical: 0 };
 let deviceClockBaseDate = null;
 let deviceClockSyncedAtMs = 0;
 let lastStatusData = null;
-const OLED_SAVE_ACTIONS = new Set(['save_schedule', 'save_network', 'set_light', 'set_filter', 'save_display', 'save_co2', 'save_water', 'save_leak']);
+const OLED_SAVE_ACTIONS = new Set([
+    'save_schedule',
+    'save_network',
+    'set_light',
+    'set_light1',
+    'set_light2',
+    'set_filter',
+    'set_plant',
+    'set_heater',
+    'set_aeration',
+    'save_display',
+    'save_co2',
+    'save_water',
+    'save_leak',
+    'save_relays',
+    'test_relay'
+]);
 const PIN_GUARDED_ACTIONS = new Set([
     'feed_now',
     'clear_critical_logs',
@@ -30,6 +56,8 @@ const PIN_GUARDED_ACTIONS = new Set([
     'save_temperature',
     'sync_time_ntp',
     'set_light',
+    'set_light1',
+    'set_light2',
     'set_filter',
     'set_plant',
     'set_heater',
@@ -37,17 +65,49 @@ const PIN_GUARDED_ACTIONS = new Set([
     'save_display',
     'save_co2',
     'save_water',
-    'save_leak'
+    'save_leak',
+    'save_relays',
+    'test_relay'
 ]);
 const OLED_SAVE_TITLES = {
-    save_schedule: 'Zapisywanie harmonogramow',
-    save_network: 'Zapisywanie ustawien WiFi',
-    set_light: 'Zapisywanie stanu swiatla',
+    save_schedule: 'Zapisywanie harmonogramów',
+    save_network: 'Zapisywanie ustawień WiFi',
+    set_light: 'Zapisywanie stanu światła',
+    set_light1: 'Zapisywanie światła 1',
+    set_light2: 'Zapisywanie światła 2',
     set_filter: 'Zapisywanie stanu filtra',
-    save_display: 'Zapisywanie ustawieĹ„ ekranu',
+    set_plant: 'Zapisywanie światła 2',
+    set_heater: 'Zapisywanie grzałki',
+    set_aeration: 'Zapisywanie napowietrzania',
+    save_display: 'Zapisywanie ustawień ekranu',
     save_co2: 'Zapisywanie automatyki CO2',
     save_water: 'Zapisywanie automatycznej dolewki',
-    save_leak: 'Zapisywanie zabezpieczeĹ„'
+    save_leak: 'Zapisywanie zabezpieczeń'
+};
+const ACTION_SUCCESS_MESSAGES = {
+    feed_now: 'Karmnik przyjął polecenie.',
+    clear_critical_logs: 'Logi krytyczne zostały wyczyszczone.',
+    restart_device: 'Polecenie restartu zostało wysłane.',
+    factory_reset: 'Reset fabryczny został zlecony.',
+    save_schedule: 'Harmonogramy zostały zapisane.',
+    save_network: 'Ustawienia sieci zostały zapisane.',
+    wifi_session_start: 'Sesja Wi-Fi jest uruchamiana.',
+    wifi_session_stop: 'Sesja Wi-Fi jest zatrzymywana.',
+    save_temperature: 'Ustawienia temperatury zostały zapisane.',
+    sync_time_ntp: 'Synchronizacja czasu została zlecona.',
+    set_light: 'Stan światła został zapisany.',
+    set_light1: 'Stan światła 1 został zapisany.',
+    set_light2: 'Stan światła 2 został zapisany.',
+    set_filter: 'Stan filtra został zapisany.',
+    set_plant: 'Stan światła roślinnego został zapisany.',
+    set_heater: 'Stan grzałki został zapisany.',
+    set_aeration: 'Stan napowietrzania został zapisany.',
+    save_display: 'Ustawienia ekranu zostały zapisane.',
+    save_co2: 'Automatyka CO₂ została zapisana.',
+    save_water: 'Automatyczna dolewka została zapisana.',
+    save_leak: 'Zabezpieczenia zostały zapisane.',
+    test_relay: 'Polecenie przekaźnika zostało wykonane.',
+    save_relays: 'Mapa przekaźników została zapisana.'
 };
 let oledSaveOverlayActiveCount = 0;
 let oledSaveOverlayShownAtMs = 0;
@@ -56,6 +116,22 @@ let eventStream = null;
 let eventStreamConnected = false;
 let statusPollingTimer = null;
 let logsPollingTimer = null;
+let connectionFreshnessTimer = null;
+let statusRequestPromise = null;
+let logsRequestPromise = null;
+let statusPollEnabled = false;
+let statusFailureCount = 0;
+let lastStatusReceivedAtMs = 0;
+let lastStatusRoundTripMs = null;
+let latestAppliedStatusSequence = 0;
+let statusRequestSequence = 0;
+const pendingActions = new Map();
+let connectionLifecycleBound = false;
+let webSessionId = '';
+let webSessionTimer = null;
+let webSessionClosing = false;
+let webSessionListenersBound = false;
+let webSessionRequestPending = false;
 let feedActionState = {
     awaitingResponse: false,
     awaitingCompletion: false,
@@ -333,12 +409,12 @@ function formatRange(startHour, startMinute, endHour, endMinute) {
     return `${formatTime(startHour, startMinute)} - ${formatTime(endHour, endMinute)}`;
 }
 
-function formatTemperature(value, digits = 1, fallback = '--.-Â°C') {
+function formatTemperature(value, digits = 1, fallback = '--.-°C') {
     const numeric = toFiniteNumber(value);
     if (numeric === null) {
         return fallback;
     }
-    return `${numeric.toFixed(digits)}Â°C`;
+    return `${numeric.toFixed(digits)}°C`;
 }
 
 function formatEpoch(epoch, options = {}) {
@@ -446,22 +522,28 @@ function setInlineStatus(id, message, tone = 'muted') {
     const el = document.getElementById(id);
     if (!el) return;
 
-    el.textContent = message;
-    if (tone === 'success') {
-        el.style.color = 'var(--accent-cyan)';
-    } else if (tone === 'error') {
-        el.style.color = '#ef4444';
-    } else if (tone === 'warning') {
-        el.style.color = 'var(--warning-color)';
-    } else {
-        el.style.color = 'var(--text-muted)';
+    const text = String(message ?? '');
+    const color = tone === 'success'
+        ? 'var(--accent-cyan)'
+        : (tone === 'error'
+            ? '#ef4444'
+            : (tone === 'warning' ? 'var(--warning-color)' : 'var(--text-muted)'));
+    if (el.textContent !== text) {
+        el.textContent = text;
+    }
+    if (el.dataset.tone !== tone) {
+        el.dataset.tone = tone;
+    }
+    if (el.style.color !== color) {
+        el.style.color = color;
     }
 }
 
 function setText(id, value) {
     const el = document.getElementById(id);
-    if (el) {
-        el.textContent = value;
+    const text = String(value ?? '');
+    if (el && el.textContent !== text) {
+        el.textContent = text;
     }
 }
 
@@ -472,11 +554,15 @@ function setCommandStatus(valueId, value, detail = '', tone = 'neutral') {
     }
 
     const safeTone = ['ok', 'warn', 'danger', 'info', 'neutral'].includes(tone) ? tone : 'neutral';
-    valueEl.textContent = value;
+    const valueText = String(value ?? '');
+    if (valueEl.textContent !== valueText) {
+        valueEl.textContent = valueText;
+    }
 
     const detailEl = document.getElementById(`${valueId}-detail`);
-    if (detailEl) {
-        detailEl.textContent = detail;
+    const detailText = String(detail ?? '');
+    if (detailEl && detailEl.textContent !== detailText) {
+        detailEl.textContent = detailText;
     }
 
     const card = valueEl.closest('.view-command-card');
@@ -495,15 +581,17 @@ function mapInlineToneToCommandTone(tone) {
 
 function setValue(id, value) {
     const el = document.getElementById(id);
-    if (el) {
-        el.value = value;
+    const nextValue = String(value ?? '');
+    if (el && el.value !== nextValue) {
+        el.value = nextValue;
     }
 }
 
 function setDisabled(id, disabled) {
     const el = document.getElementById(id);
-    if (el) {
-        el.disabled = disabled;
+    const nextDisabled = Boolean(disabled);
+    if (el && el.disabled !== nextDisabled) {
+        el.disabled = nextDisabled;
     }
 }
 
@@ -551,10 +639,228 @@ function formatCountdownMs(value) {
 }
 
 function describeRequestError(error, fallback = 'nieznany blad') {
+    if (error?.code === 'request_timeout') {
+        return 'sterownik nie odpowiedział w wymaganym czasie';
+    }
+    if (error?.code === 'action_in_progress') {
+        return 'to polecenie jest już wykonywane';
+    }
     if (error?.message) {
         return error.message;
     }
     return fallback;
+}
+
+function setElementBusy(element, busy) {
+    if (!(element instanceof HTMLElement)) {
+        return;
+    }
+
+    const isBusy = Boolean(busy);
+    element.dataset.busy = isBusy ? '1' : '0';
+    element.setAttribute('aria-busy', isBusy ? 'true' : 'false');
+    if ('disabled' in element) {
+        element.disabled = isBusy;
+    }
+}
+
+function removeToast(toast) {
+    if (!(toast instanceof HTMLElement)) {
+        return;
+    }
+    if (toast._dismissTimer) {
+        clearTimeout(toast._dismissTimer);
+        toast._dismissTimer = null;
+    }
+    toast.classList.add('toast-leaving');
+    setTimeout(() => toast.remove(), 180);
+}
+
+function showToast(title, message = '', tone = 'info', durationMs = 4200) {
+    const region = document.getElementById('toast-region');
+    if (!region) {
+        return null;
+    }
+
+    const safeTone = ['success', 'error', 'warning', 'info'].includes(tone) ? tone : 'info';
+    const toast = document.createElement('article');
+    const copy = document.createElement('div');
+    const heading = document.createElement('strong');
+    const body = document.createElement('span');
+    const closeButton = document.createElement('button');
+
+    toast.className = `app-toast app-toast-${safeTone}`;
+    toast.setAttribute('role', safeTone === 'error' ? 'alert' : 'status');
+    toast.dataset.tone = safeTone;
+    copy.className = 'app-toast-copy';
+    heading.textContent = String(title || (safeTone === 'error' ? 'Błąd' : 'Informacja'));
+    body.textContent = String(message || '');
+    closeButton.className = 'app-toast-close';
+    closeButton.type = 'button';
+    closeButton.setAttribute('aria-label', 'Zamknij powiadomienie');
+    closeButton.textContent = '×';
+    closeButton.addEventListener('click', () => removeToast(toast), { once: true });
+
+    copy.append(heading, body);
+    toast.append(copy, closeButton);
+    region.appendChild(toast);
+
+    while (region.children.length > MAX_TOASTS) {
+        const oldest = region.firstElementChild;
+        if (oldest?._dismissTimer) {
+            clearTimeout(oldest._dismissTimer);
+        }
+        oldest?.remove();
+    }
+
+    const timeout = clamp(Math.trunc(Number(durationMs) || 4200), 1800, 12000);
+    toast._dismissTimer = setTimeout(() => removeToast(toast), timeout);
+    return toast;
+}
+
+function createRequestError(message, code, status = 0) {
+    const error = new Error(message);
+    error.code = code;
+    error.status = status;
+    return error;
+}
+
+async function fetchWithTimeout(
+    resource,
+    options = {},
+    timeoutMs = API_REQUEST_TIMEOUT_MS,
+    readResponse = null
+) {
+    if (typeof AbortController !== 'function') {
+        const response = await fetch(resource, options);
+        if (typeof readResponse !== 'function') {
+            return response;
+        }
+        return {
+            response,
+            body: await readResponse(response)
+        };
+    }
+
+    const controller = new AbortController();
+    const parentSignal = options.signal;
+    const abortFromParent = () => controller.abort(parentSignal?.reason);
+    if (parentSignal?.aborted) {
+        abortFromParent();
+    } else {
+        parentSignal?.addEventListener('abort', abortFromParent, { once: true });
+    }
+
+    let timedOut = false;
+    const timeout = setTimeout(() => {
+        timedOut = true;
+        controller.abort();
+    }, Math.max(1000, Number(timeoutMs) || API_REQUEST_TIMEOUT_MS));
+
+    try {
+        const response = await fetch(resource, { ...options, signal: controller.signal });
+        if (typeof readResponse !== 'function') {
+            return response;
+        }
+        return {
+            response,
+            body: await readResponse(response)
+        };
+    } catch (error) {
+        if (timedOut) {
+            throw createRequestError(
+                `Przekroczono limit ${Math.round(timeoutMs / 1000)} s oczekiwania na sterownik.`,
+                'request_timeout'
+            );
+        }
+        throw error;
+    } finally {
+        clearTimeout(timeout);
+        parentSignal?.removeEventListener('abort', abortFromParent);
+    }
+}
+
+function signalQuality(rssiValue) {
+    const rssi = toFiniteNumber(rssiValue);
+    if (rssi === null) {
+        return { level: 0, label: 'Brak danych', description: 'brak pomiaru RSSI' };
+    }
+    if (rssi >= -55) {
+        return { level: 4, label: `${Math.round(rssi)} dBm`, description: 'bardzo dobry' };
+    }
+    if (rssi >= -67) {
+        return { level: 3, label: `${Math.round(rssi)} dBm`, description: 'dobry' };
+    }
+    if (rssi >= -75) {
+        return { level: 2, label: `${Math.round(rssi)} dBm`, description: 'średni' };
+    }
+    return { level: 1, label: `${Math.round(rssi)} dBm`, description: 'słaby' };
+}
+
+function formatDataAge(ageMs) {
+    if (!Number.isFinite(ageMs) || ageMs < 0) {
+        return 'Oczekiwanie';
+    }
+    if (ageMs < 1500) {
+        return 'Przed chwilą';
+    }
+    if (ageMs < 60000) {
+        return `${Math.floor(ageMs / 1000)} s temu`;
+    }
+    return `${Math.floor(ageMs / 60000)} min temu`;
+}
+
+function updateConnectionHealth() {
+    const shell = document.getElementById('connection-health');
+    if (!shell) {
+        return;
+    }
+
+    const now = Date.now();
+    const ageMs = lastStatusReceivedAtMs > 0 ? Math.max(0, now - lastStatusReceivedAtMs) : Number.POSITIVE_INFINITY;
+    const hasData = lastStatusReceivedAtMs > 0;
+    let state = 'connecting';
+    let title = 'Nawiązywanie połączenia';
+    let detail = 'Pierwszy odczyt telemetrii jest w toku.';
+
+    if (statusFailureCount >= STATUS_OFFLINE_FAILURE_THRESHOLD) {
+        state = 'offline';
+        title = 'Sterownik offline';
+        detail = `Brak odpowiedzi. Automatyczne ponowienie: próba ${statusFailureCount + 1}.`;
+    } else if (statusFailureCount > 0) {
+        state = 'reconnecting';
+        title = 'Ponawianie połączenia';
+        detail = `Nieudane próby: ${statusFailureCount}. Ostatnie dane pozostają widoczne.`;
+    } else if (hasData && ageMs > CONNECTION_STALE_AFTER_MS) {
+        state = 'stale';
+        title = 'Dane wymagają odświeżenia';
+        detail = 'Sterownik ostatnio odpowiedział, ale telemetria jest już nieaktualna.';
+    } else if (hasData) {
+        state = 'online';
+        title = 'Sterownik online';
+        detail = 'Telemetria jest aktualna, a panel odświeża ją automatycznie.';
+    }
+
+    shell.dataset.state = state;
+    document.body.dataset.connectionState = state;
+    setText('connection-health-title', title);
+    setText('connection-health-detail', detail);
+    setText('connection-latency', lastStatusRoundTripMs === null ? '-- ms' : `${Math.round(lastStatusRoundTripMs)} ms`);
+    setText('connection-last-update', formatDataAge(ageMs));
+
+    const freshness = document.getElementById('connection-freshness');
+    if (freshness) {
+        freshness.dataset.state = hasData && ageMs <= CONNECTION_STALE_AFTER_MS ? 'fresh' : (hasData ? 'stale' : 'waiting');
+    }
+
+    const quality = signalQuality(lastStatusData?.network?.rssi);
+    const signal = document.getElementById('connection-signal');
+    if (signal) {
+        signal.dataset.level = String(quality.level);
+        signal.setAttribute('aria-label', `Sygnał Wi-Fi: ${quality.label}, ${quality.description}`);
+        signal.title = quality.description;
+    }
+    setText('connection-signal-label', quality.label);
 }
 
 function updateClock() {
@@ -569,16 +875,65 @@ function updateClock() {
     }
 }
 
-function setBackendState(isConnected) {
-    backendConnected = isConnected;
-    const statusEl = document.getElementById('logs-status');
-    if (statusEl) {
-        statusEl.textContent = isConnected ? 'Polaczono z backendem ESP32.' : 'Brak odpowiedzi sterownika.';
+function updateBackendConnectionIndicator(isConnected, stateChanged) {
+    const indicator = document.getElementById('backend-connection-status');
+    const label = document.getElementById('backend-connection-label');
+    const announcer = document.getElementById('backend-connection-announcer');
+    const connected = Boolean(isConnected);
+    const state = connected ? 'online' : 'offline';
+    const text = connected ? 'Sterownik online' : 'Sterownik offline';
+
+    if (indicator) {
+        indicator.dataset.state = state;
+        indicator.classList.remove('status-badge-success', 'status-badge-muted', 'status-badge-danger');
+        indicator.classList.add(connected ? 'status-badge-success' : 'status-badge-danger');
+        indicator.setAttribute('aria-label', connected
+            ? 'Stan połączenia: sterownik odpowiada'
+            : 'Stan połączenia: brak odpowiedzi sterownika, trwa ponawianie');
+        indicator.title = connected
+            ? `Ostatnia odpowiedź: ${new Date().toLocaleTimeString('pl-PL')}`
+            : 'Panel zachowuje ostatnie dane i ponawia połączenie automatycznie.';
     }
-    if (!isConnected) {
+    if (label) {
+        if (label.textContent !== text) {
+            label.textContent = text;
+        }
+    }
+    if (stateChanged && announcer) {
+        announcer.textContent = connected
+            ? 'Połączenie ze sterownikiem zostało przywrócone.'
+            : 'Utracono połączenie ze sterownikiem. Panel ponawia próbę automatycznie.';
+    }
+}
+
+function setBackendState(isConnected) {
+    const connected = Boolean(isConnected);
+    const currentIndicatorState = document.getElementById('backend-connection-status')?.dataset.state || '';
+    const stateChanged = backendConnected !== connected ||
+        (connected && currentIndicatorState !== 'online') ||
+        (!connected && currentIndicatorState !== 'offline');
+
+    backendConnected = connected;
+    window.backendConnected = connected;
+    document.body.dataset.backendState = connected ? 'online' : 'offline';
+    updateBackendConnectionIndicator(connected, stateChanged);
+    updateConnectionHealth();
+
+    const statusEl = document.getElementById('logs-status');
+    const statusText = connected ? 'Połączono ze sterownikiem ESP32.' : 'Brak odpowiedzi sterownika.';
+    if (statusEl && statusEl.textContent !== statusText) {
+        statusEl.textContent = statusText;
+    }
+    if (!connected) {
         setCommandStatus('dashboard-strip-state', 'Offline', 'Brak odpowiedzi sterownika', 'danger');
         setCommandStatus('ota-strip-link', 'Offline', 'Brak aktywnej odpowiedzi HTTP', 'warn');
         setCommandStatus('diag-strip-bus', 'Offline', 'Status zostanie odswiezony po powrocie ESP32', 'warn');
+        if (lastStatusData && typeof renderStatusCommandStrips === 'function') {
+            renderStatusCommandStrips(lastStatusData);
+        }
+        if (lastStatusData && typeof renderTopbarActiveModules === 'function') {
+            renderTopbarActiveModules(lastStatusData);
+        }
     }
 }
 
@@ -599,93 +954,362 @@ function mergeTemperaturePayload(previousTemperature, nextTemperature) {
     return merged;
 }
 
-function applyStatusPayload(data) {
+function applyStatusPayload(data, sequence = 0) {
     if (!data || typeof data !== 'object') {
-        return;
+        return false;
+    }
+    if (sequence > 0 && sequence < latestAppliedStatusSequence) {
+        return false;
     }
 
+    const nextTemperature = mergeTemperaturePayload(lastStatusData?.temperature, data.temperature);
+    if (Array.isArray(nextTemperature?.history) && nextTemperature.history.length > 1440) {
+        nextTemperature.history = nextTemperature.history.slice(-1440);
+    }
     const mergedData = {
         ...data,
-        temperature: mergeTemperaturePayload(lastStatusData?.temperature, data.temperature)
+        temperature: nextTemperature
     };
 
+    latestAppliedStatusSequence = Math.max(latestAppliedStatusSequence, sequence);
+    lastStatusData = mergedData;
+    window.lastStatusData = mergedData;
     setBackendState(true);
+
     if (typeof window.applyPortalThemeFromStatus === 'function') {
         window.applyPortalThemeFromStatus(mergedData);
     }
     syncClockFromController(mergedData.clock);
     renderDashboard(mergedData);
+    updateConnectionHealth();
 
     if (window.ChartsApp && typeof window.ChartsApp.updateData === 'function' && mergedData.temperature) {
         window.ChartsApp.updateData(mergedData.temperature);
     }
+    return true;
 }
 
-async function fetchStatus(force = false) {
-    if (eventStreamConnected && !force) {
-        return;
+function createWebSessionId() {
+    const bytes = new Uint8Array(8);
+    if (window.crypto && typeof window.crypto.getRandomValues === 'function') {
+        window.crypto.getRandomValues(bytes);
+        return `w${Array.from(bytes, (byte) => byte.toString(16).padStart(2, '0')).join('')}`;
+    }
+    const fallback = `${Date.now().toString(36)}${Math.floor(Math.random() * 0xFFFFFF).toString(36)}`;
+    return `w${fallback}`.slice(0, 17);
+}
+
+function getWebSessionId() {
+    if (/^[A-Za-z0-9_-]{6,24}$/.test(webSessionId)) {
+        return webSessionId;
     }
 
     try {
-        const response = await fetch(force ? `${API_STATUS}?history=1` : API_STATUS, {
-            cache: 'no-store'
-        });
-        if (!response.ok) throw new Error('status http');
-        const data = await response.json();
-        applyStatusPayload(data);
-    } catch (_) {
-        if (!eventStreamConnected) {
-            setBackendState(false);
+        const stored = window.sessionStorage?.getItem('aqWebSessionId') || '';
+        if (/^[A-Za-z0-9_-]{6,24}$/.test(stored)) {
+            webSessionId = stored;
+            return webSessionId;
         }
+    } catch (_) {}
+
+    webSessionId = createWebSessionId();
+    try {
+        window.sessionStorage?.setItem('aqWebSessionId', webSessionId);
+    } catch (_) {}
+    return webSessionId;
+}
+
+function sendWebSessionHeartbeat(state = 'active', useBeacon = false) {
+    const params = new URLSearchParams({
+        sid: getWebSessionId(),
+        state
+    });
+
+    if (useBeacon && navigator.sendBeacon) {
+        try {
+            navigator.sendBeacon(API_WEB_SESSION, params);
+            return;
+        } catch (_) {}
     }
+
+    if (state === 'active' && webSessionRequestPending) {
+        return;
+    }
+    if (state === 'active') {
+        webSessionRequestPending = true;
+    }
+    fetchWithTimeout(`${API_WEB_SESSION}?${params.toString()}`, {
+        method: 'GET',
+        cache: 'no-store',
+        keepalive: state !== 'active'
+    }, 4000)
+        .catch(() => {})
+        .finally(() => {
+            if (state === 'active') {
+                webSessionRequestPending = false;
+            }
+        });
+}
+
+function closeWebSession() {
+    if (webSessionClosing) {
+        return;
+    }
+    webSessionClosing = true;
+    if (webSessionTimer) {
+        clearInterval(webSessionTimer);
+        webSessionTimer = null;
+    }
+    sendWebSessionHeartbeat('close', true);
+}
+
+function startWebSessionHeartbeat() {
+    webSessionClosing = false;
+    sendWebSessionHeartbeat('active');
+    if (!webSessionTimer) {
+        webSessionTimer = setInterval(() => {
+            if (!webSessionClosing) {
+                sendWebSessionHeartbeat('active');
+            }
+        }, WEB_SESSION_HEARTBEAT_MS);
+    }
+
+    if (!webSessionListenersBound) {
+        webSessionListenersBound = true;
+        window.addEventListener('pagehide', closeWebSession);
+        window.addEventListener('beforeunload', closeWebSession);
+        window.addEventListener('pageshow', () => {
+            if (webSessionClosing) {
+                webSessionClosing = false;
+                startWebSessionHeartbeat();
+            }
+        });
+        document.addEventListener('visibilitychange', () => {
+            if (document.visibilityState === 'visible' && !webSessionClosing) {
+                sendWebSessionHeartbeat('active');
+            }
+        });
+    }
+}
+
+async function fetchStatus(force = false, includeHistory = false) {
+    if (eventStreamConnected && !force) {
+        return true;
+    }
+    if (statusRequestPromise) {
+        return statusRequestPromise;
+    }
+
+    const sequence = ++statusRequestSequence;
+    statusRequestPromise = (async () => {
+        const startedAt = performance.now();
+        try {
+            const result = await fetchWithTimeout(
+                includeHistory ? `${API_STATUS}?history=1` : API_STATUS,
+                { cache: 'no-store' },
+                API_REQUEST_TIMEOUT_MS,
+                (response) => response.ok ? response.json() : null
+            );
+            const { response, body: data } = result;
+            if (!response.ok) {
+                throw createRequestError(`Status HTTP ${response.status}.`, 'status_http', response.status);
+            }
+            lastStatusRoundTripMs = Math.max(0, performance.now() - startedAt);
+            lastStatusReceivedAtMs = Date.now();
+            statusFailureCount = 0;
+            applyStatusPayload(data, sequence);
+            return true;
+        } catch (error) {
+            statusFailureCount += 1;
+            const noUsableData = lastStatusReceivedAtMs <= 0;
+            if (!eventStreamConnected && (noUsableData || statusFailureCount >= STATUS_OFFLINE_FAILURE_THRESHOLD)) {
+                setBackendState(false);
+            } else {
+                updateConnectionHealth();
+            }
+            return false;
+        } finally {
+            statusRequestPromise = null;
+        }
+    })();
+
+    return statusRequestPromise;
 }
 
 async function fetchLogs(force = false) {
     if (eventStreamConnected && !force) {
-        return;
+        return true;
     }
     if (!isAdminAuthenticated()) {
-        return;
+        return false;
+    }
+    if (logsRequestPromise) {
+        return logsRequestPromise;
     }
 
-    try {
-        const pin = getAdminPinForRequest();
-        const response = await fetch(`${API_LOGS}?pin=${encodeURIComponent(pin)}`, { cache: 'no-store' });
-        if (!response.ok) {
-            if (response.status === 403) {
-                logoutAdmin();
+    logsRequestPromise = (async () => {
+        try {
+            const token = getAdminTokenForRequest();
+            const result = await fetchWithTimeout(
+                API_LOGS,
+                {
+                    cache: 'no-store',
+                    headers: { 'X-AquaCYD-Session': token }
+                },
+                API_REQUEST_TIMEOUT_MS,
+                (response) => response.ok ? response.json() : null
+            );
+            const { response, body: logs } = result;
+            if (!response.ok) {
+                if (response.status === 403) {
+                    logoutAdmin();
+                }
+                throw createRequestError(`Logi HTTP ${response.status}.`, 'logs_http', response.status);
             }
-            throw new Error('logs http');
+            applyLogsPayload(logs);
+            return true;
+        } catch (_) {
+            return false;
+        } finally {
+            logsRequestPromise = null;
         }
-        const logs = await response.json();
-        applyLogsPayload(logs);
-    } catch (_) {
-        // keep last admin logs
+    })();
+
+    return logsRequestPromise;
+}
+
+function statusPollDelay() {
+    if (document.visibilityState !== 'visible') {
+        return STATUS_POLL_HIDDEN_MS;
     }
+    if (statusFailureCount <= 0) {
+        return STATUS_POLL_ONLINE_MS;
+    }
+    const backoff = STATUS_POLL_ONLINE_MS * (2 ** Math.min(statusFailureCount - 1, 4));
+    const jitter = 0.9 + (Math.random() * 0.2);
+    return Math.min(STATUS_POLL_MAX_BACKOFF_MS, Math.round(backoff * jitter));
+}
+
+function scheduleStatusPoll(delayMs = statusPollDelay()) {
+    if (!statusPollEnabled || eventStreamConnected) {
+        return;
+    }
+    if (statusPollingTimer) {
+        clearTimeout(statusPollingTimer);
+    }
+    statusPollingTimer = setTimeout(async () => {
+        statusPollingTimer = null;
+        await fetchStatus(false);
+        scheduleStatusPoll();
+    }, Math.max(250, Number(delayMs) || STATUS_POLL_ONLINE_MS));
+}
+
+function scheduleLogsPoll(delayMs = 5000) {
+    if (!statusPollEnabled || eventStreamConnected) {
+        return;
+    }
+    if (logsPollingTimer) {
+        clearTimeout(logsPollingTimer);
+    }
+    logsPollingTimer = setTimeout(async () => {
+        logsPollingTimer = null;
+        if (document.visibilityState === 'visible') {
+            await fetchLogs(false);
+        }
+        scheduleLogsPoll(document.visibilityState === 'visible' ? 5000 : STATUS_POLL_HIDDEN_MS);
+    }, Math.max(1000, Number(delayMs) || 5000));
 }
 
 function stopPollingFallback() {
+    statusPollEnabled = false;
     if (statusPollingTimer) {
-        clearInterval(statusPollingTimer);
+        clearTimeout(statusPollingTimer);
         statusPollingTimer = null;
     }
     if (logsPollingTimer) {
-        clearInterval(logsPollingTimer);
+        clearTimeout(logsPollingTimer);
         logsPollingTimer = null;
     }
 }
 
 function startPollingFallback() {
-    if (!statusPollingTimer) {
-        statusPollingTimer = setInterval(() => fetchStatus(false), 3000);
+    statusPollEnabled = true;
+    if (!statusPollingTimer && !eventStreamConnected) {
+        scheduleStatusPoll(STATUS_POLL_ONLINE_MS);
     }
-    if (!logsPollingTimer) {
-        logsPollingTimer = setInterval(() => fetchLogs(false), 5000);
+    if (!logsPollingTimer && !eventStreamConnected) {
+        scheduleLogsPoll(5000);
     }
 }
 
+function initConnectionMonitoring() {
+    if (!connectionFreshnessTimer) {
+        connectionFreshnessTimer = setInterval(updateConnectionHealth, 1000);
+    }
+    updateConnectionHealth();
+
+    if (connectionLifecycleBound) {
+        return;
+    }
+    connectionLifecycleBound = true;
+
+    document.addEventListener('visibilitychange', () => {
+        if (!statusPollEnabled || eventStreamConnected) {
+            return;
+        }
+        if (document.visibilityState === 'visible') {
+            const stale = lastStatusReceivedAtMs <= 0 ||
+                Date.now() - lastStatusReceivedAtMs > STATUS_POLL_ONLINE_MS;
+            if (stale) {
+                fetchStatus(true);
+            }
+            scheduleStatusPoll(STATUS_POLL_ONLINE_MS);
+            scheduleLogsPoll(5000);
+        } else {
+            scheduleStatusPoll(STATUS_POLL_HIDDEN_MS);
+            scheduleLogsPoll(STATUS_POLL_HIDDEN_MS);
+        }
+    });
+
+    window.addEventListener('online', () => {
+        updateConnectionHealth();
+        showToast('Zmiana stanu sieci', 'Sprawdzam bezpośrednie połączenie ze sterownikiem.', 'info', 2600);
+        fetchStatus(true);
+        scheduleStatusPoll(STATUS_POLL_ONLINE_MS);
+    });
+
+    window.addEventListener('offline', () => {
+        showToast(
+            'Łączność systemowa ograniczona',
+            'Stan lokalnego sterownika nadal jest weryfikowany bezpośrednio przez HTTP.',
+            'warning',
+            5200
+        );
+        fetchStatus(true);
+        scheduleStatusPoll(STATUS_POLL_ONLINE_MS);
+    });
+
+    window.addEventListener('pagehide', () => {
+        if (statusPollingTimer) {
+            clearTimeout(statusPollingTimer);
+            statusPollingTimer = null;
+        }
+        if (logsPollingTimer) {
+            clearTimeout(logsPollingTimer);
+            logsPollingTimer = null;
+        }
+    });
+
+    window.addEventListener('pageshow', () => {
+        if (!eventStreamConnected) {
+            startPollingFallback();
+            fetchStatus(true);
+        }
+    });
+}
+
 function startEventStream() {
-    if (eventStream || !('EventSource' in window)) {
+    if (!ENABLE_EVENT_STREAM || eventStream || !('EventSource' in window)) {
         startPollingFallback();
         return;
     }
@@ -751,7 +1375,7 @@ function showOledSaveAnimation(action) {
 
     oledSaveOverlayActiveCount += 1;
     title.textContent = OLED_SAVE_TITLES[action] || 'Zapisywanie danych';
-    subtext.textContent = 'Sterownik synchronizuje konfiguracje i pokazuje zapis na OLED.';
+    subtext.textContent = 'Wysyłam zmianę do ESP32 i czekam na potwierdzenie sterownika.';
 
     if (oledSaveOverlayActiveCount === 1) {
         overlay.style.display = 'flex';
@@ -773,7 +1397,7 @@ function hideOledSaveAnimation() {
     }
 
     const elapsedMs = Date.now() - oledSaveOverlayShownAtMs;
-    const delayMs = Math.max(0, 900 - elapsedMs);
+    const delayMs = Math.max(0, 300 - elapsedMs);
     oledSaveOverlayHideTimer = setTimeout(() => {
         overlay.style.display = 'none';
         overlay.setAttribute('aria-hidden', 'true');
@@ -783,10 +1407,13 @@ function hideOledSaveAnimation() {
 
 let pinPromiseResolve = null;
 let pinPromiseReject = null;
-let adminSessionPin = '';
+let pinModalReturnFocus = null;
 let adminSessionStartedAtMs = 0;
+let adminSessionToken = '';
+let adminSessionExpiresAtMs = 0;
 let currentUserRole = 'guest';
 const ADMIN_PIN_PATTERN = /^\d{4,8}$/;
+const ADMIN_TOKEN_PATTERN = /^[0-9a-f]{32}$/i;
 
 function normalizePinValue(value) {
     return String(value || '').replace(/\D/g, '').slice(0, 8);
@@ -794,18 +1421,34 @@ function normalizePinValue(value) {
 
 function setPinModalError(message) {
     const errorEl = document.getElementById('pin-modal-error');
+    const input = document.getElementById('pin-modal-input');
     if (!errorEl) return;
-    if (message) {
-        errorEl.textContent = message;
-        errorEl.style.display = 'block';
-    } else {
-        errorEl.style.display = 'none';
-    }
+    const hasError = Boolean(message);
+    errorEl.textContent = hasError ? message : '';
+    errorEl.hidden = !hasError;
+    input?.setAttribute('aria-invalid', hasError ? 'true' : 'false');
 }
 
-function setAdminSession(pin) {
-    adminSessionPin = pin;
+function setPinModalBusy(isBusy) {
+    const input = document.getElementById('pin-modal-input');
+    const submit = document.getElementById('pin-modal-submit');
+    const cancel = document.getElementById('pin-modal-cancel');
+    if (input) input.disabled = isBusy;
+    if (submit) {
+        submit.disabled = isBusy;
+        submit.textContent = isBusy ? 'Sprawdzam...' : 'OK';
+    }
+    if (cancel) cancel.disabled = isBusy;
+}
+
+function setAdminSession(token, expiresInSec) {
     adminSessionStartedAtMs = Date.now();
+    adminSessionToken = String(token || '');
+    const boundedTtlSec = Math.max(
+        1,
+        Math.min(300, Math.trunc(Number(expiresInSec) || 0))
+    );
+    adminSessionExpiresAtMs = Date.now() + boundedTtlSec * 1000;
     currentUserRole = 'admin';
     applyAuthState();
     fetchStatus(true);
@@ -813,8 +1456,9 @@ function setAdminSession(pin) {
 }
 
 function clearAdminSession() {
-    adminSessionPin = '';
     adminSessionStartedAtMs = 0;
+    adminSessionToken = '';
+    adminSessionExpiresAtMs = 0;
     currentUserRole = 'guest';
     cachedLogs = {
         normal: [],
@@ -829,11 +1473,36 @@ function clearAdminSession() {
 }
 
 function isAdminAuthenticated() {
-    return currentUserRole === 'admin' && ADMIN_PIN_PATTERN.test(adminSessionPin);
+    const valid =
+        currentUserRole === 'admin' &&
+        ADMIN_TOKEN_PATTERN.test(adminSessionToken) &&
+        Date.now() < adminSessionExpiresAtMs;
+    if (!valid && currentUserRole === 'admin') {
+        clearAdminSession();
+    }
+    return valid;
 }
 
-function getAdminPinForRequest() {
-    return isAdminAuthenticated() ? adminSessionPin : '';
+function getAdminTokenForRequest() {
+    return isAdminAuthenticated() ? adminSessionToken : '';
+}
+
+function restorePinModalFocus() {
+    const target = pinModalReturnFocus;
+    pinModalReturnFocus = null;
+    if (!(target instanceof HTMLElement) || !target.isConnected || target.disabled || target.offsetParent === null) {
+        return;
+    }
+    requestAnimationFrame(() => target.focus());
+}
+
+function hidePinModal() {
+    const modal = document.getElementById('pin-modal');
+    if (modal) {
+        modal.style.display = 'none';
+        modal.setAttribute('aria-hidden', 'true');
+    }
+    restorePinModalFocus();
 }
 
 function promptForPin(errorMessage = '') {
@@ -844,6 +1513,11 @@ function promptForPin(errorMessage = '') {
         return Promise.reject(new Error('PIN modal HTML elements not found'));
     }
 
+    const wasOpen = modal.style.display === 'flex';
+    if (!wasOpen && document.activeElement instanceof HTMLElement) {
+        pinModalReturnFocus = document.activeElement;
+    }
+
     if (pinPromiseReject) {
         pinPromiseReject(new Error('pin_replaced'));
         pinPromiseReject = null;
@@ -851,9 +1525,12 @@ function promptForPin(errorMessage = '') {
     }
 
     input.value = '';
+    setPinModalBusy(false);
     setPinModalError(errorMessage);
     modal.style.display = 'flex';
+    modal.setAttribute('aria-hidden', 'false');
     input.focus();
+    input.select();
 
     return new Promise((resolve, reject) => {
         pinPromiseResolve = resolve;
@@ -862,8 +1539,7 @@ function promptForPin(errorMessage = '') {
 }
 
 function handlePinCancel() {
-    const modal = document.getElementById('pin-modal');
-    if (modal) modal.style.display = 'none';
+    hidePinModal();
     if (pinPromiseReject) {
         pinPromiseReject(new Error('pin_cancelled'));
         pinPromiseReject = null;
@@ -877,7 +1553,7 @@ function handlePinSubmit() {
     const val = normalizePinValue(input.value);
     input.value = val;
     if (!ADMIN_PIN_PATTERN.test(val)) {
-        setPinModalError('PIN admina musi mieÄ‡ od 4 do 8 cyfr.');
+        setPinModalError('PIN admina musi mieć od 4 do 8 cyfr.');
         return;
     }
     if (pinPromiseResolve) {
@@ -890,21 +1566,16 @@ function handlePinSubmit() {
 window.promptForPin = promptForPin;
 window.handlePinCancel = handlePinCancel;
 window.handlePinSubmit = handlePinSubmit;
-window.getAdminPinForRequest = getAdminPinForRequest;
+window.getAdminTokenForRequest = getAdminTokenForRequest;
 
 function updateAuthStatusWidgets() {
     const isAdmin = isAdminAuthenticated();
     setCommandStatus(
         'ota-strip-pin',
-        isAdmin ? 'Admin' : 'GoĹ›Ä‡',
-        isAdmin ? 'Sesja administratora aktywna' : 'Zaloguj admina przed OTA',
+        isAdmin ? 'Admin' : 'Gość',
+        isAdmin ? 'Dostęp administracyjny aktywny' : 'Zaloguj admina przed OTA',
         isAdmin ? 'ok' : 'warn'
     );
-
-    const roleLabel = document.getElementById('auth-role-label');
-    if (roleLabel) {
-        roleLabel.textContent = isAdmin ? 'Tryb: admin' : 'Tryb: goĹ›Ä‡';
-    }
 }
 
 function applyAuthState() {
@@ -923,12 +1594,26 @@ window.isAdminAuthenticated = isAdminAuthenticated;
 window.applyAuthState = applyAuthState;
 
 async function verifyAdminPin(pin) {
-    const params = new URLSearchParams({ action: 'auth_check', pin });
-    const response = await fetch(API_ACTION, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-        body: params.toString()
-    });
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 5000);
+    let response;
+    try {
+        response = await fetch('/api/v2/auth', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ pin }),
+            signal: controller.signal
+        });
+    } catch (error) {
+        if (error?.name === 'AbortError') {
+            const timeoutError = new Error('Sterownik nie odpowiedział na logowanie w ciągu 5 sekund.');
+            timeoutError.code = 'auth_timeout';
+            throw timeoutError;
+        }
+        throw error;
+    } finally {
+        clearTimeout(timeout);
+    }
     const contentType = response.headers.get('content-type') || '';
     const responsePayload = contentType.includes('application/json')
         ? await response.json()
@@ -938,14 +1623,23 @@ async function verifyAdminPin(pin) {
             message: await response.text()
         };
 
-    if (!response.ok || responsePayload?.success === false) {
-        const error = new Error(responsePayload?.message || 'NieprawidĹ‚owy PIN admina.');
+    const token = responsePayload?.data?.sessionToken;
+    const expiresInSec = responsePayload?.data?.expiresInSec;
+    if (!response.ok ||
+        responsePayload?.ok !== true ||
+        !ADMIN_TOKEN_PATTERN.test(String(token || '')) ||
+        !Number.isFinite(Number(expiresInSec))) {
+        const error = new Error(responsePayload?.message || 'Nieprawidłowy PIN admina.');
         error.code = responsePayload?.code || 'invalid_pin';
         error.status = response.status;
         throw error;
     }
 
-    return responsePayload;
+    return {
+        ...responsePayload,
+        sessionToken: token,
+        expiresInSec: Number(expiresInSec)
+    };
 }
 
 async function loginAsAdmin() {
@@ -961,32 +1655,57 @@ async function loginAsAdmin() {
         }
 
         try {
-            await verifyAdminPin(pin);
-            setAdminSession(pin);
-            const modal = document.getElementById('pin-modal');
-            if (modal) modal.style.display = 'none';
+            setPinModalBusy(true);
+            const session = await verifyAdminPin(pin);
+            setAdminSession(session.sessionToken, session.expiresInSec);
+            hidePinModal();
             return true;
         } catch (error) {
             clearAdminSession();
-            message = attempt >= 1
-                ? 'BĹ‚Ä™dny PIN admina. PozostaĹ‚a ostatnia prĂłba.'
-                : 'BĹ‚Ä™dny PIN admina. SprĂłbuj ponownie.';
+            const connectionError = error?.code === 'auth_timeout' || !error?.status;
+            message = connectionError
+                ? (error?.message || 'Brak odpowiedzi sterownika. Spróbuj ponownie.')
+                : (attempt >= 1
+                    ? 'Błędny PIN admina. Pozostała ostatnia próba.'
+                    : 'Błędny PIN admina. Spróbuj ponownie.');
             if (attempt === 2) {
                 throw error;
             }
+        } finally {
+            setPinModalBusy(false);
         }
     }
     return false;
 }
 
-function logoutAdmin() {
+async function logoutAdmin() {
+    const token = adminSessionToken;
     clearAdminSession();
+    if (!ADMIN_TOKEN_PATTERN.test(token)) {
+        return true;
+    }
+    try {
+        const response = await fetchWithTimeout(
+            '/api/v2/logout',
+            {
+                method: 'POST',
+                cache: 'no-store',
+                headers: { 'X-AquaCYD-Session': token }
+            },
+            3500
+        );
+        return response.ok;
+    } catch (_) {
+        // The local session is cleared immediately. A failed best-effort
+        // revoke remains bounded by the controller's five-minute TTL.
+        return false;
+    }
 }
 
 window.loginAsAdmin = loginAsAdmin;
 window.logoutAdmin = logoutAdmin;
 
-async function sendAction(action, payload = {}, options = {}) {
+async function executeActionRequest(action, payload = {}, options = {}) {
     const actionPayload = { ...payload };
     const needsAdmin = options.requirePin ?? PIN_GUARDED_ACTIONS.has(action);
 
@@ -994,7 +1713,6 @@ async function sendAction(action, payload = {}, options = {}) {
         if (!isAdminAuthenticated()) {
             await loginAsAdmin();
         }
-        actionPayload.pin = adminSessionPin;
     }
 
     const showSaveAnimation = options.showSaveAnimation ?? shouldShowOledSaveAnimation(action);
@@ -1006,48 +1724,85 @@ async function sendAction(action, payload = {}, options = {}) {
 
     try {
         const params = new URLSearchParams({ action, ...actionPayload });
-        const response = await fetch(API_ACTION, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-            body: params.toString()
-        });
-
-        const contentType = response.headers.get('content-type') || '';
-        let responsePayload;
-
-        if (contentType.includes('application/json')) {
-            responsePayload = await response.json();
-        } else {
-            const responseText = await response.text();
-            responsePayload = {
-                success: response.ok,
-                code: responseText || (response.ok ? 'ok' : 'request_failed'),
-                message: responseText || ''
-            };
+        const encodedBody = params.toString();
+        if (encodedBody.length > 8192) {
+            throw createRequestError('Polecenie przekracza limit 8 KB.', 'request_too_large');
         }
+        const result = await fetchWithTimeout(
+            API_ACTION,
+            {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/x-www-form-urlencoded',
+                    ...(needsAdmin
+                        ? { 'X-AquaCYD-Session': getAdminTokenForRequest() }
+                        : {})
+                },
+                body: encodedBody
+            },
+            options.timeoutMs || API_REQUEST_TIMEOUT_MS,
+            async (response) => {
+                const contentType = response.headers.get('content-type') || '';
+                if (contentType.includes('application/json')) {
+                    return response.json();
+                }
+                const responseText = await response.text();
+                return {
+                    success: response.ok,
+                    code: responseText || (response.ok ? 'ok' : 'request_failed'),
+                    message: responseText || ''
+                };
+            }
+        );
+        const { response, body: responsePayload } = result;
 
         if (!response.ok || responsePayload?.success === false) {
-            const error = new Error(responsePayload?.message || responsePayload?.code || 'request_failed');
-            error.code = responsePayload?.code || 'request_failed';
-            error.status = response.status;
+            const error = createRequestError(
+                responsePayload?.message || responsePayload?.code || 'Nie udało się wykonać polecenia.',
+                responsePayload?.code || 'request_failed',
+                response.status
+            );
             error.payload = responsePayload;
             throw error;
         }
 
+        if (options.notifySuccess !== false) {
+            showToast(
+                'Polecenie wykonane',
+                options.successMessage || ACTION_SUCCESS_MESSAGES[action] || responsePayload?.message || 'Sterownik potwierdził zmianę.',
+                'success',
+                3200
+            );
+        }
         return responsePayload;
     } catch (error) {
-        const isPinErr = error.status === 403 ||
+        const isPinErr = error.status === 401 ||
+                         error.status === 403 ||
+                         error.code === 'session_required' ||
+                         error.code === 'session_expired' ||
                          error.code === 'invalid_pin' ||
                          error.code === 'pin_required' ||
                          String(error.message || '').toLowerCase().includes('pin');
 
         if (needsAdmin && isPinErr) {
             clearAdminSession();
-            const authError = new Error('Sesja admina wygasĹ‚a albo PIN zostaĹ‚ odrzucony. Zaloguj siÄ™ ponownie.');
-            authError.code = 'admin_required';
+            const authError = createRequestError(
+                'Dostęp admina wygasł albo PIN został odrzucony. Zaloguj się ponownie.',
+                'admin_required',
+                error.status
+            );
+            if (options.notifyError !== false) {
+                showToast('Brak autoryzacji', authError.message, 'error', 5200);
+            }
             throw authError;
         }
 
+        if (error?.code === 'request_timeout') {
+            setTimeout(() => fetchStatus(true), 250);
+        }
+        if (options.notifyError !== false && error?.code !== 'admin_login_cancelled') {
+            showToast('Nie wykonano polecenia', describeRequestError(error), 'error', 5200);
+        }
         throw error;
     } finally {
         if (saveAnimationShown) {
@@ -1068,10 +1823,12 @@ function setMobileNavOpen(isOpen) {
         return;
     }
 
+    const wasOpen = sidebar.classList.contains('mobile-open');
     sidebar.classList.toggle('mobile-open', open);
     backdrop.classList.toggle('visible', open);
     backdrop.setAttribute('aria-hidden', open ? 'false' : 'true');
     toggle.setAttribute('aria-expanded', open ? 'true' : 'false');
+    toggle.setAttribute('aria-label', open ? 'Zamknij menu' : 'Otwórz menu');
     document.body.classList.toggle('nav-open', open);
 
     if (toggleLabel) {
@@ -1082,6 +1839,60 @@ function setMobileNavOpen(isOpen) {
         toggleIcon.className = open ? 'fa-solid fa-xmark' : 'fa-solid fa-bars';
         renderLocalIcon(toggleIcon);
     }
+
+    if (window.innerWidth <= 960 && open && !wasOpen) {
+        requestAnimationFrame(() => {
+            const activeLink = sidebar.querySelector('.nav-item.active a');
+            const firstVisibleControl = Array.from(sidebar.querySelectorAll('a[href], button:not([disabled])'))
+                .find((element) => element.offsetParent !== null);
+            (activeLink || firstVisibleControl)?.focus();
+        });
+    } else if (window.innerWidth <= 960 && !open && wasOpen) {
+        toggle.focus();
+    }
+}
+
+async function sendAction(action, payload = {}, options = {}) {
+    const normalizedAction = String(action || '').trim();
+    if (!/^[a-z][a-z0-9_]{1,47}$/.test(normalizedAction)) {
+        throw createRequestError('Nieprawidłowa nazwa polecenia.', 'invalid_action');
+    }
+
+    const lockKey = String(options.lockKey || normalizedAction);
+    if (pendingActions.has(lockKey)) {
+        const error = createRequestError('To polecenie jest już wykonywane.', 'action_in_progress');
+        if (options.notifyError !== false) {
+            showToast('Polecenie w toku', error.message, 'warning', 2800);
+        }
+        throw error;
+    }
+
+    const focusedElement = document.activeElement;
+    const triggerElement = options.triggerElement instanceof HTMLElement
+        ? options.triggerElement
+        : (focusedElement instanceof HTMLButtonElement ? focusedElement : null);
+    setElementBusy(triggerElement, true);
+
+    const operation = executeActionRequest(normalizedAction, payload, options);
+    pendingActions.set(lockKey, operation);
+    try {
+        return await operation;
+    } finally {
+        if (pendingActions.get(lockKey) === operation) {
+            pendingActions.delete(lockKey);
+        }
+        setElementBusy(triggerElement, false);
+    }
+}
+
+function updateMobileCurrentView(tabId) {
+    const currentView = document.getElementById('mobile-current-view');
+    if (!currentView) return;
+
+    const activeNav = Array.from(document.querySelectorAll('.nav-item[data-target]'))
+        .find((nav) => nav.getAttribute('data-target') === tabId);
+    const label = activeNav?.querySelector('a')?.textContent?.trim();
+    currentView.textContent = label || 'Panel sterownika';
 }
 
 function initMobileNavigation() {
@@ -1111,10 +1922,33 @@ function initMobileNavigation() {
     document.addEventListener('keydown', (event) => {
         if (event.key === 'Escape') {
             setMobileNavOpen(false);
+            return;
+        }
+
+        if (event.key === 'Tab' && window.innerWidth <= 960 && sidebar.classList.contains('mobile-open')) {
+            const focusable = Array.from(sidebar.querySelectorAll(
+                'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), [tabindex]:not([tabindex="-1"])'
+            )).filter((element) => element.offsetParent !== null);
+            if (focusable.length === 0) {
+                event.preventDefault();
+                toggle.focus();
+                return;
+            }
+
+            const first = focusable[0];
+            const last = focusable[focusable.length - 1];
+            if (event.shiftKey && document.activeElement === first) {
+                event.preventDefault();
+                last.focus();
+            } else if (!event.shiftKey && document.activeElement === last) {
+                event.preventDefault();
+                first.focus();
+            }
         }
     });
 
     setMobileNavOpen(false);
+    updateMobileCurrentView(document.querySelector('.view-section.active')?.id || 'dashboard');
 }
 
 function initNavigation() {
@@ -1165,21 +1999,38 @@ function switchTab(tabId, updateHash = true) {
         return;
     }
 
+    const previousTabId = document.querySelector('.view-section.active')?.id || '';
     const navItems = document.querySelectorAll('.nav-item');
-    navItems.forEach((nav) => nav.classList.remove('active'));
+    navItems.forEach((nav) => {
+        nav.classList.remove('active');
+        nav.querySelector('a')?.removeAttribute('aria-current');
+    });
 
     const activeNav = Array.from(navItems).find((nav) => nav.getAttribute('data-target') === tabId);
     if (activeNav) {
         activeNav.classList.add('active');
+        activeNav.querySelector('a')?.setAttribute('aria-current', 'page');
     }
 
     const sections = document.querySelectorAll('.view-section');
-    sections.forEach((section) => section.classList.remove('active'));
+    sections.forEach((section) => {
+        const isActive = section.id === tabId;
+        section.classList.toggle('active', isActive);
+        section.setAttribute('aria-hidden', isActive ? 'false' : 'true');
+    });
 
     if (targetSection) {
-        targetSection.classList.add('active');
+        document.body.dataset.activeView = tabId;
+        updateMobileCurrentView(tabId);
         if (updateHash) {
             updateLocationHash(tabId);
+        }
+        if (previousTabId && previousTabId !== tabId) {
+            const label = activeNav?.querySelector('a')?.textContent?.trim() || tabId;
+            const announcer = document.getElementById('view-announcer');
+            if (announcer) {
+                announcer.textContent = `Otwarty widok: ${label}.`;
+            }
         }
     }
 
@@ -1191,5 +2042,10 @@ function switchTab(tabId, updateHash = true) {
         requestAnimationFrame(renderAllCharts);
     }
 
+    if (tabId === 'diag' && typeof fetchHardwareBusDiagnostics === 'function') {
+        requestAnimationFrame(() => fetchHardwareBusDiagnostics(false));
+    }
+
     setMobileNavOpen(false);
 }
+
