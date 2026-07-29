@@ -402,7 +402,7 @@ jobs:
           disable-animations: true
           working-directory: mobile_app
           script: |
-            set -euo pipefail
+            set -eu
             package_name="pl.cydakwarium.cyd_aquarium_mobile"
             app_version="$(
               sed -n 's/^version: \([0-9][0-9.]*\)+[0-9][0-9]*$/\1/p' \

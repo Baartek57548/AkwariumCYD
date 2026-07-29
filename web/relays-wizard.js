@@ -208,11 +208,16 @@
         if (detailElement) detailElement.textContent = detail;
     }
 
+    let moduleMessageHoldUntil = 0;
+
     function setModuleMessage(message, tone = 'neutral') {
         const element = document.getElementById('module-map-warning');
         if (!element) return;
         element.textContent = message;
         element.setAttribute('data-tone', tone);
+        // Telemetria odświeża mapę cyklicznie. Zachowaj komunikat po jawnej
+        // akcji użytkownika wystarczająco długo, aby dało się go przeczytać.
+        moduleMessageHoldUntil = Date.now() + 6000;
     }
 
     function validateRelayMap(relays = relaysConfig.relays) {
@@ -261,7 +266,10 @@
         }
 
         const warningElement = document.getElementById('module-map-warning');
-        if (warningElement) {
+        if (
+            warningElement &&
+            (warnings.length || Date.now() >= moduleMessageHoldUntil)
+        ) {
             warningElement.textContent = warnings.length ? warnings.join(' ') : 'Mapa kanałów jest spójna z profilem bezpieczeństwa firmware.';
             warningElement.setAttribute('data-tone', warnings.length ? 'warn' : 'ok');
         }
