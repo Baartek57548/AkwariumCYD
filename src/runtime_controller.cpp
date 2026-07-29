@@ -7,6 +7,9 @@
 #include "hal_adc.h"
 #include "hal_mcp23017.h"
 #include "hal_onewire_bus.h"
+#include "sensor_calibration.h"
+#include "sensor_calibration_store.h"
+#include "runtime_safety.h"
 
 #include <freertos/FreeRTOS.h>
 #include <freertos/queue.h>
@@ -42,17 +45,11 @@ uint32_t last_mcp_poll_ms = 0U;
 uint32_t last_hal_reprobe_ms = 0U;
 uint32_t telemetry_sequence = 0U;
 volatile uint32_t io_heartbeat_ms = 0U;
+aquarium::MedianFilter ph_filter;
+aquarium::MedianFilter ec_filter;
 
 float ads_raw_to_voltage(int16_t raw) {
     return (static_cast<float>(raw) * 4.096f) / 32768.0f;
-}
-
-float ph_from_voltage(float voltage) {
-    if (!isfinite(voltage) || voltage < -0.05f || voltage > 4.20f) {
-        return NAN;
-    }
-    const float ph = 4.0f + (voltage / 4.096f) * 6.0f;
-    return (isfinite(ph) && ph >= 0.0f && ph <= 14.0f) ? ph : NAN;
 }
 
 void publish_sample(SensorId id, float value, bool valid, uint32_t now_ms) {
@@ -93,6 +90,9 @@ void refresh_temperature_snapshot(RuntimeTelemetry &frame, uint32_t now_ms) {
     frame.temperature_c = temperature.celsius;
     frame.temperature_present = temperature.present;
     frame.temperature_valid = temperature.valid;
+    frame.temperature_stale = temperature.stale;
+    frame.temperature_age_ms = temperature.age_ms;
+    frame.temperature_error_count = temperature.error_count;
 }
 
 void sample_developer_mode(RuntimeTelemetry &frame, uint32_t now_ms) {
@@ -105,6 +105,9 @@ void sample_developer_mode(RuntimeTelemetry &frame, uint32_t now_ms) {
     frame.temperature_c = sample.temperatureC;
     frame.temperature_present = true;
     frame.temperature_valid = isfinite(sample.temperatureC);
+    frame.temperature_stale = false;
+    frame.temperature_age_ms = 0U;
+    frame.temperature_error_count = 0U;
     frame.ldr_value = constrain(sample.ldr, 0, 4095);
     frame.ldr_valid = true;
     frame.adc_present = true;
@@ -143,21 +146,41 @@ void sample_physical_sensors(RuntimeTelemetry &frame, uint32_t now_ms) {
     frame.ph_valid = false;
     frame.ec_valid = false;
     if (frame.adc_present) {
+        const aquarium::SensorCalibration calibration =
+            sensor_calibration_store_snapshot();
         int16_t raw = 0;
         if (hal_adc_read_raw(HwConfig::ADC_PH, &raw)) {
-            frame.ph_raw = raw;
-            frame.ph_voltage = ads_raw_to_voltage(raw);
-            frame.ph_value = ph_from_voltage(frame.ph_voltage);
-            frame.ph_valid = isfinite(frame.ph_value);
+            const int16_t filtered = static_cast<int16_t>(
+                lroundf(ph_filter.push(raw)));
+            frame.ph_raw = filtered;
+            frame.ph_voltage =
+                ads_raw_to_voltage(filtered);
+            frame.ph_value =
+                aquarium::calibrate_ph(filtered, calibration);
+            frame.ph_valid =
+                ph_filter.size() ==
+                    aquarium::kSensorMedianWindow &&
+                isfinite(frame.ph_value);
         }
         if (hal_adc_read_raw(HwConfig::ADC_EC, &raw)) {
-            frame.ec_raw = raw;
-            frame.ec_voltage = ads_raw_to_voltage(raw);
-            frame.ec_value = frame.ec_voltage;
-            frame.ec_valid = isfinite(frame.ec_voltage) &&
-                             frame.ec_voltage >= -0.05f &&
-                             frame.ec_voltage <= 4.20f;
+            const int16_t filtered = static_cast<int16_t>(
+                lroundf(ec_filter.push(raw)));
+            frame.ec_raw = filtered;
+            frame.ec_voltage =
+                ads_raw_to_voltage(filtered);
+            frame.ec_value = aquarium::calibrate_ec(
+                filtered,
+                frame.temperature_c,
+                frame.temperature_valid,
+                calibration);
+            frame.ec_valid =
+                ec_filter.size() ==
+                    aquarium::kSensorMedianWindow &&
+                isfinite(frame.ec_value);
         }
+    } else {
+        ph_filter.reset();
+        ec_filter.reset();
     }
 
     if (static_cast<uint32_t>(now_ms - last_mcp_poll_ms) >= MCP_POLL_INTERVAL_MS) {
@@ -202,12 +225,15 @@ void publish_telemetry(RuntimeTelemetry &frame, uint32_t now_ms) {
 }
 
 void io_task(void *) {
+    runtime_safety_register_current_task(RuntimeSafetyTask::Io);
     TickType_t next_wake = xTaskGetTickCount();
     RuntimeTelemetry frame = latest;
 
     for (;;) {
         const uint32_t now_ms = millis();
         io_heartbeat_ms = now_ms;
+        runtime_safety_heartbeat(
+            RuntimeSafetyTask::Io, now_ms, ESP.getFreeHeap());
         gui_app_service_background();
 
         // DS18B20 jest maszyną stanów i musi być serwisowany częściej niż
@@ -245,12 +271,18 @@ bool runtime_controller_prepare_hardware(void) {
     }
     const bool adc_ok = hal_adc_init();
     const bool temperature_ok = hal_temperature_init();
+    const bool calibration_ok = sensor_calibration_store_initialize();
 
-    Serial.printf("HAL: MCP23017=%s ADS1115=%s DS18B20=%s\n",
+    Serial.printf("HAL: MCP23017=%s ADS1115=%s DS18B20=%s CAL=%s\n",
                   mcp_ok ? "OK" : "BRAK",
                   adc_ok ? "OK" : "BRAK",
-                  temperature_ok ? "OK" : "BRAK");
+                  temperature_ok ? "OK" : "BRAK",
+                  calibration_ok ? "OK" : "BLAD");
     return mcp_ok || adc_ok || temperature_ok;
+}
+
+uint32_t runtime_controller_last_heartbeat_ms(void) {
+    return io_heartbeat_ms;
 }
 
 bool runtime_controller_start(void) {

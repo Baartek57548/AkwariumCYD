@@ -12,6 +12,7 @@
 #include "hal_onewire_bus.h"
 #include "hal_sd.h"
 #include "admin_session.h"
+#include "alarm_event_queue.h"
 #include "aquael_light_controller.h"
 #include "aquarium_automation.h"
 #include "aquarium_schedule.h"
@@ -19,9 +20,13 @@
 #include "dev_simulator.h"
 #include "idempotency_ledger.h"
 #include "ota_guard.h"
+#include "remote_alarm_relay.h"
 #include "secure_ota.h"
+#include "sensor_calibration_store.h"
+#include "runtime_safety.h"
 #include "web_activity_tracker.h"
 #include "wifi_retry_policy.h"
+#include "wifi_credential_store.h"
 
 #include <Preferences.h>
 #include <SD.h>
@@ -164,6 +169,8 @@ constexpr uint32_t UI_RUNTIME_MODAL_MIN_FREE = 12000UL;
 constexpr uint32_t UI_RUNTIME_BIGGEST_MIN = 4096UL;
 constexpr uint32_t UI_RUNTIME_HARDWARE_MIN_FREE = 6000UL;
 constexpr uint32_t UI_RUNTIME_HARDWARE_MIN_LARGEST = 2048UL;
+constexpr uint32_t SENSOR_FRAME_STALE_MS = 3500UL;
+constexpr uint32_t ACTUATOR_FAILURE_HOLD_MS = 5000UL;
 constexpr size_t WIFI_PASSWORD_MAX_LEN = 64;
 constexpr char WIFI_PROFILE_DIR[] = "/aq/config/wifi";
 constexpr uint16_t OTA_PORTAL_HTTP_PORT = 80;
@@ -381,33 +388,26 @@ static UiRuntimeState runtime = {
 
 struct SensorDebugSnapshot {
     int ldrValue;
+    bool temperaturePresent;
+    bool temperatureStale;
+    uint32_t temperatureAgeMs;
+    uint32_t temperatureErrorCount;
     bool adcPresent;
     bool phValid;
     int16_t phRaw;
     float phVoltage;
+    float phValue;
     bool ecValid;
     int16_t ecRaw;
     float ecVoltage;
+    float ecValue;
     bool mcpPresent;
     bool mcpValid;
     uint16_t mcpState;
     uint32_t updatedMs;
 };
 
-static SensorDebugSnapshot sensor_debug = {
-    0,
-    false,
-    false,
-    0,
-    0.0f,
-    false,
-    0,
-    0.0f,
-    false,
-    false,
-    0,
-    0
-};
+static SensorDebugSnapshot sensor_debug = {};
 
 struct GuiLogEntry {
     uint32_t ts;
@@ -459,6 +459,11 @@ static GuiLogEntry gui_logs_important[GUI_LOG_CAPACITY] = {};
 static uint8_t gui_logs_normal_count = 0;
 static uint8_t gui_logs_important_count = 0;
 static McpOutputState mcp_outputs = {};
+static unsigned int current_alarm_flags = aquarium::AlarmNone;
+static aquarium::AlarmStabilityFilter alarm_stability_filter;
+static bool actuator_write_failed = false;
+static uint32_t actuator_write_failure_ms = 0U;
+static uint32_t actuator_write_error_count = 0U;
 static uint32_t history_archive_last_write_ms = 0;
 static bool history_archive_has_written = false;
 static bool controller_clock_reliable = false;
@@ -468,6 +473,152 @@ static bool feeder_start_pending = false;
 static uint32_t feeder_pulse_deadline_ms = 0U;
 static uint32_t last_feed_epoch = 0;
 static char last_feed_result[16] = "none";
+
+static void secure_clear_gui_buffer(
+    void *buffer, size_t length) {
+    volatile uint8_t *bytes =
+        static_cast<volatile uint8_t *>(buffer);
+    while (length-- > 0U) {
+        *bytes++ = 0U;
+    }
+}
+
+static void record_actuator_write_result(bool success) {
+    const uint32_t now_ms = millis();
+    if (!success) {
+        actuator_write_failed = true;
+        actuator_write_failure_ms = now_ms == 0U ? 1U : now_ms;
+        if (actuator_write_error_count < UINT32_MAX) {
+            ++actuator_write_error_count;
+        }
+        return;
+    }
+    if (actuator_write_failed &&
+        static_cast<uint32_t>(now_ms - actuator_write_failure_ms) >=
+            ACTUATOR_FAILURE_HOLD_MS) {
+        actuator_write_failed = false;
+    }
+}
+
+static unsigned int configured_alarm_sensor_mask() {
+    unsigned int required = aquarium::AlarmSensorTemperature;
+    if (cfg.showPhSensor || cfg.enableCo2) {
+        required |= aquarium::AlarmSensorPh;
+    }
+    if (cfg.enableEc) {
+        required |= aquarium::AlarmSensorEc;
+    }
+    if (cfg.enableWaterLevel) {
+        required |= aquarium::AlarmSensorWaterLevel;
+    }
+    if (cfg.enableLeak) {
+        required |= aquarium::AlarmSensorLeak;
+    }
+    return required;
+}
+
+static unsigned int evaluate_live_alarm_flags(float temperature,
+                                              bool temperature_valid,
+                                              float ph,
+                                              bool ph_valid) {
+    const uint32_t now_ms = millis();
+    const bool frame_stale =
+        sensor_debug.updatedMs == 0U ||
+        static_cast<uint32_t>(now_ms - sensor_debug.updatedMs) >
+            SENSOR_FRAME_STALE_MS;
+    const unsigned int required = configured_alarm_sensor_mask();
+    unsigned int present = aquarium::AlarmNone;
+    unsigned int stale = aquarium::AlarmNone;
+
+    if (sensor_debug.temperaturePresent) {
+        present |= aquarium::AlarmSensorTemperature;
+        if (sensor_debug.temperatureStale ||
+            !temperature_valid ||
+            sensor_debug.temperatureAgeMs > SENSOR_FRAME_STALE_MS ||
+            frame_stale) {
+            stale |= aquarium::AlarmSensorTemperature;
+        }
+    }
+    if (sensor_debug.adcPresent) {
+        present |= aquarium::AlarmSensorPh |
+                   aquarium::AlarmSensorEc;
+        if ((required & aquarium::AlarmSensorPh) != 0U &&
+            (!sensor_debug.phValid || !ph_valid || frame_stale)) {
+            stale |= aquarium::AlarmSensorPh;
+        }
+        if ((required & aquarium::AlarmSensorEc) != 0U &&
+            (!sensor_debug.ecValid || frame_stale)) {
+            stale |= aquarium::AlarmSensorEc;
+        }
+    }
+    if (sensor_debug.mcpPresent) {
+        present |= aquarium::AlarmSensorWaterLevel |
+                   aquarium::AlarmSensorLeak;
+        if (!sensor_debug.mcpValid || frame_stale) {
+            if ((required & aquarium::AlarmSensorWaterLevel) != 0U) {
+                stale |= aquarium::AlarmSensorWaterLevel;
+            }
+            if ((required & aquarium::AlarmSensorLeak) != 0U) {
+                stale |= aquarium::AlarmSensorLeak;
+            }
+        }
+    }
+
+    const bool adc_required =
+        (required &
+         (aquarium::AlarmSensorPh | aquarium::AlarmSensorEc)) != 0U;
+    const bool temperature_bus_fault =
+        (required & aquarium::AlarmSensorTemperature) != 0U &&
+        sensor_debug.temperatureErrorCount > 0U &&
+        (!sensor_debug.temperaturePresent ||
+         sensor_debug.temperatureStale);
+    const bool sensor_bus_fault =
+        temperature_bus_fault ||
+        (adc_required &&
+         (!sensor_debug.adcPresent || frame_stale)) ||
+        !sensor_debug.mcpPresent ||
+        !sensor_debug.mcpValid ||
+        frame_stale;
+
+    const uint16_t water_level_mask = static_cast<uint16_t>(
+        1U << static_cast<uint8_t>(HwConfig::CH_WATER_LEVEL));
+    const uint16_t leak_mask = static_cast<uint16_t>(
+        1U << static_cast<uint8_t>(HwConfig::CH_LEAK));
+    const bool water_level_valid =
+        cfg.enableWaterLevel &&
+        sensor_debug.mcpPresent &&
+        sensor_debug.mcpValid &&
+        !frame_stale;
+    const bool leak_valid =
+        cfg.enableLeak &&
+        sensor_debug.mcpPresent &&
+        sensor_debug.mcpValid &&
+        !frame_stale;
+    const bool water_level_high =
+        water_level_valid &&
+        (sensor_debug.mcpState & water_level_mask) != 0U;
+    const bool leak_detected =
+        leak_valid &&
+        (sensor_debug.mcpState & leak_mask) != 0U;
+
+    return aquarium::evaluate_alarm_flags({
+        temperature_valid,
+        temperature,
+        (required & aquarium::AlarmSensorPh) != 0U && ph_valid,
+        ph,
+        water_level_valid,
+        water_level_high,
+        leak_valid,
+        leak_detected,
+        false,
+        NAN,
+        required,
+        present,
+        stale,
+        sensor_bus_fault,
+        actuator_write_failed
+    });
+}
 
 static lv_obj_t *pages[PAGE_COUNT];
 static lv_obj_t *nav_btns[PAGE_COUNT];
@@ -974,6 +1125,8 @@ static bool ota_http_update_failed = false;
 static bool ota_http_service_mode_owned = false;
 static bool arduino_ota_service_mode_owned = false;
 static bool ota_reboot_pending = false;
+static RuntimeFaultReason ota_reboot_reason =
+    RuntimeFaultReason::ManualRestart;
 static bool ota_shutdown_pending = false;
 static bool ota_start_pending = false;
 static bool wifi_disconnect_pending = false;
@@ -1184,6 +1337,7 @@ static void ota_portal_handle_logs();
 static void ota_portal_handle_action();
 static void ota_portal_handle_web_session();
 static void ota_portal_handle_events();
+static void ota_portal_handle_alarm_events();
 static void ota_portal_handle_settime();
 static bool is_v2_control_action(const char *action);
 static void force_safe_service_outputs();
@@ -1193,6 +1347,11 @@ static bool ble_json_read_long(const char *json,
                                long minimum,
                                long maximum,
                                long *out);
+static bool ble_json_read_float(const char *json,
+                                const char *key,
+                                float minimum,
+                                float maximum,
+                                float *out);
 static bool ble_json_read_string(const char *json,
                                  const char *key,
                                  char *out,
@@ -3734,6 +3893,7 @@ static void apply_mcp_outputs(void) {
 
     static bool error_latched = false;
     if (!ok) {
+        record_actuator_write_result(false);
         if (!error_latched) {
             add_gui_log("MCP: blad zapisu wyjsc", true);
             error_latched = true;
@@ -3741,6 +3901,7 @@ static void apply_mcp_outputs(void) {
         return;
     }
 
+    record_actuator_write_result(true);
     error_latched = false;
     mcp_outputs.initialized = true;
 }
@@ -3768,11 +3929,21 @@ static bool start_relay_test(uint8_t channel, bool state, uint32_t duration_ms) 
         relay_test_applied_mask &= static_cast<uint8_t>(~channel_mask);
         relay_test_deadline_ms[channel_index] = 0U;
         if (channel_index == static_cast<uint8_t>(HwConfig::CH_LIGHT_A)) {
-            hal_mcp_write_channel(HwConfig::CH_LIGHT_A, false);
+            const bool written =
+                hal_mcp_write_channel(HwConfig::CH_LIGHT_A, false);
+            record_actuator_write_result(written);
+            if (!written) {
+                return false;
+            }
             mcp_outputs.frontLight.reset_unknown(millis());
             mcp_outputs.light = false;
         } else if (channel_index == static_cast<uint8_t>(HwConfig::CH_LIGHT_B)) {
-            hal_mcp_write_channel(HwConfig::CH_LIGHT_B, false);
+            const bool written =
+                hal_mcp_write_channel(HwConfig::CH_LIGHT_B, false);
+            record_actuator_write_result(written);
+            if (!written) {
+                return false;
+            }
             mcp_outputs.rearLight.reset_unknown(millis());
             mcp_outputs.plantLight = false;
         }
@@ -3798,11 +3969,15 @@ static void update_relay_tests() {
             relay_test_applied_mask &= static_cast<uint8_t>(~channel_mask);
             relay_test_deadline_ms[channel] = 0U;
             if (channel == static_cast<uint8_t>(HwConfig::CH_LIGHT_A)) {
-                hal_mcp_write_channel(HwConfig::CH_LIGHT_A, false);
+                record_actuator_write_result(
+                    hal_mcp_write_channel(
+                        HwConfig::CH_LIGHT_A, false));
                 mcp_outputs.frontLight.reset_unknown(now_ms);
                 mcp_outputs.light = false;
             } else if (channel == static_cast<uint8_t>(HwConfig::CH_LIGHT_B)) {
-                hal_mcp_write_channel(HwConfig::CH_LIGHT_B, false);
+                record_actuator_write_result(
+                    hal_mcp_write_channel(
+                        HwConfig::CH_LIGHT_B, false));
                 mcp_outputs.rearLight.reset_unknown(now_ms);
                 mcp_outputs.plantLight = false;
             }
@@ -3850,7 +4025,10 @@ static void service_feeder_pulse(uint32_t now_ms) {
     }
 
     if (feeder_start_pending) {
-        if (!hal_mcp_write_channel(HwConfig::CH_FEEDER_DRIVE, true)) {
+        const bool written =
+            hal_mcp_write_channel(HwConfig::CH_FEEDER_DRIVE, true);
+        record_actuator_write_result(written);
+        if (!written) {
             finish_feeder_pulse(false, false);
             return;
         }
@@ -3865,6 +4043,7 @@ static void service_feeder_pulse(uint32_t now_ms) {
     if (static_cast<int32_t>(now_ms - feeder_pulse_deadline_ms) >= 0) {
         const bool ok =
             hal_mcp_write_channel(HwConfig::CH_FEEDER_DRIVE, false);
+        record_actuator_write_result(ok);
         finish_feeder_pulse(ok, false);
     }
 }
@@ -5412,6 +5591,10 @@ static void btn_restart_event_handler(lv_event_t *e) {
 static void restart_authorized() {
     play_system_sound(SoundType::Warning);
     Serial.println("System: Device restart requested.");
+    runtime_safety_record_restart(
+        RuntimeFaultReason::ManualRestart,
+        hal_mcp_latch_all_relays_safe());
+    ota_reboot_reason = RuntimeFaultReason::ManualRestart;
     ota_reboot_pending = true;
     ota_reboot_at_ms = millis() + 300U;
 }
@@ -5552,11 +5735,17 @@ static void btn_factory_reset_handler(lv_event_t *e) {
 
 static void factory_reset_authorized() {
     play_system_sound(SoundType::Warning);
+    runtime_safety_record_restart(
+        RuntimeFaultReason::FactoryReset,
+        hal_mcp_latch_all_relays_safe());
     if (prefs.begin("aquarium", false)) {
         prefs.clear();
         prefs.end();
     }
     device_credentials_factory_reset();
+    wifi_credential_store_clear();
+    sensor_calibration_store_reset_defaults();
+    remote_alarm_relay_clear();
     admin_sessions.clear();
     load_default_config(cfg);
     gui_app_save_settings();
@@ -5569,7 +5758,9 @@ static void factory_reset_authorized() {
 }
 
 static void clear_pending_wifi_password() {
-    memset(pending_wifi_password, 0, sizeof(pending_wifi_password));
+    secure_clear_gui_buffer(
+        pending_wifi_password,
+        sizeof(pending_wifi_password));
     pending_wifi_password_valid = false;
 }
 
@@ -5621,56 +5812,138 @@ static void write_escaped_config_value(File &file, const char *value) {
     }
 }
 
-static bool save_wifi_profile_to_sd(const char *ssid, const char *password, const char *ip, int rssi) {
-    if (ssid == nullptr || ssid[0] == '\0') {
+static bool save_wifi_profile_to_sd(
+    const char *ssid,
+    const char *password,
+    const char *ip,
+    int rssi,
+    const char *metadata_path = nullptr) {
+    if (ssid == nullptr || ssid[0] == '\0' ||
+        strnlen(ssid, WIFI_CREDENTIAL_SSID_BYTES) >=
+            WIFI_CREDENTIAL_SSID_BYTES) {
         Serial.println("WIFI_SD: skipped profile save, empty SSID.");
         return false;
     }
 
-    if (!hal_sd_is_mounted() && !hal_sd_init()) {
-        Serial.println("WIFI_SD: SD unavailable, profile not saved.");
+    if (!wifi_credential_store_save(
+            ssid, password != nullptr ? password : "")) {
+        Serial.println("WIFI_NVS: credential save failed.");
         return false;
+    }
+
+    if (!hal_sd_is_mounted() && !hal_sd_init()) {
+        Serial.println(
+            "WIFI_NVS: credential saved; SD metadata unavailable.");
+        return true;
     }
 
     if (!ensure_sd_directory("/aq") ||
         !ensure_sd_directory("/aq/config") ||
         !ensure_sd_directory(WIFI_PROFILE_DIR)) {
-        Serial.println("WIFI_SD: failed to create /aq/config/wifi.");
-        return false;
+        Serial.println(
+            "WIFI_NVS: credential saved; SD metadata directory unavailable.");
+        return true;
     }
 
-    char path[72];
-    snprintf(path, sizeof(path), "%s/profile_%08lx.cfg",
-             WIFI_PROFILE_DIR,
-             static_cast<unsigned long>(wifi_profile_hash(ssid)));
-
-    if (SD.exists(path) && !SD.remove(path)) {
-        Serial.printf("WIFI_SD: failed to replace %s\n", path);
-        return false;
+    char path[96];
+    if (metadata_path != nullptr) {
+        const size_t directory_length =
+            strlen(WIFI_PROFILE_DIR);
+        const size_t path_length =
+            strnlen(metadata_path, sizeof(path));
+        if (path_length == 0U ||
+            path_length >= sizeof(path) ||
+            strncmp(
+                metadata_path,
+                WIFI_PROFILE_DIR,
+                directory_length) != 0 ||
+            metadata_path[directory_length] != '/' ||
+            strstr(metadata_path, "..") != nullptr) {
+            Serial.println(
+                "WIFI_NVS: rejected unsafe metadata path.");
+            return true;
+        }
+        snprintf(path, sizeof(path), "%s", metadata_path);
+    } else {
+        snprintf(
+            path, sizeof(path),
+            "%s/profile_%08lx.cfg",
+            WIFI_PROFILE_DIR,
+            static_cast<unsigned long>(
+                wifi_profile_hash(ssid)));
     }
 
-    File file = SD.open(path, FILE_WRITE);
+    char temp_path[80];
+    snprintf(temp_path, sizeof(temp_path), "%s.tmp", path);
+    if (SD.exists(temp_path)) {
+        SD.remove(temp_path);
+    }
+
+    File file = SD.open(temp_path, FILE_WRITE);
     if (!file) {
-        Serial.printf("WIFI_SD: failed to open %s\n", path);
-        return false;
+        Serial.printf(
+            "WIFI_NVS: credential saved; cannot create metadata %s\n",
+            temp_path);
+        return true;
     }
 
-    file.println("format=aq-wifi-profile-v1");
-    file.println("schema_version=1");
+    file.println("format=aq-wifi-profile-v2");
+    file.println("schema_version=2");
+    file.println("credential_store=nvs");
     file.print("ssid=");
     write_escaped_config_value(file, ssid);
-    file.println();
-    file.print("password=");
-    write_escaped_config_value(file, password != nullptr ? password : "");
     file.println();
     file.print("last_ip=");
     write_escaped_config_value(file, ip != nullptr ? ip : "");
     file.println();
     file.printf("last_rssi=%d\n", rssi);
     file.printf("updated_ms=%lu\n", static_cast<unsigned long>(millis()));
+    file.flush();
     file.close();
 
-    Serial.printf("WIFI_SD: saved profile %s for SSID %s\n", path, ssid);
+    // A v1 file may contain a plaintext password. Overwrite its allocated
+    // bytes before unlinking; this is best-effort media hygiene and is not a
+    // substitute for keeping secrets off removable storage.
+    if (SD.exists(path)) {
+        File old = SD.open(path, "r+");
+        if (old && !old.isDirectory()) {
+            const size_t old_size = old.size();
+            uint8_t zeros[64] = {};
+            old.seek(0U);
+            size_t remaining = old_size;
+            while (remaining > 0U) {
+                const size_t chunk =
+                    remaining < sizeof(zeros) ? remaining : sizeof(zeros);
+                if (old.write(zeros, chunk) != chunk) {
+                    break;
+                }
+                remaining -= chunk;
+            }
+            old.flush();
+        }
+        if (old) {
+            old.close();
+        }
+        if (!SD.remove(path)) {
+            SD.remove(temp_path);
+            Serial.printf(
+                "WIFI_NVS: credential saved; cannot replace metadata %s\n",
+                path);
+            return true;
+        }
+    }
+    if (!SD.rename(temp_path, path)) {
+        SD.remove(temp_path);
+        Serial.printf(
+            "WIFI_NVS: credential saved; metadata rename failed %s\n",
+            path);
+        return true;
+    }
+
+    Serial.printf(
+        "WIFI_NVS: saved credential and sanitized metadata %s for SSID %s\n",
+        path,
+        ssid);
     return true;
 }
 
@@ -5789,6 +6062,124 @@ static bool load_wifi_profile_file(const char *path,
     return ssid[0] != '\0';
 }
 
+static void sanitize_legacy_wifi_profiles() {
+    constexpr uint8_t MAX_MIGRATIONS_PER_BOOT = 32U;
+    for (uint8_t pass = 0U;
+         pass < MAX_MIGRATIONS_PER_BOOT;
+         ++pass) {
+        File root =
+            SD.open(WIFI_PROFILE_DIR, FILE_READ);
+        if (!root || !root.isDirectory()) {
+            if (root) {
+                root.close();
+            }
+            return;
+        }
+
+        bool found = false;
+        char legacy_path[96] = {};
+        char legacy_ssid[WIFI_CREDENTIAL_SSID_BYTES] = {};
+        char legacy_password[
+            WIFI_CREDENTIAL_PASSWORD_BYTES] = {};
+        File entry = root.openNextFile();
+        while (entry) {
+            if (!entry.isDirectory()) {
+                const char *name =
+                    ota_portal_basename(entry.name());
+                if (strncmp(name, "profile_", 8U) == 0) {
+                    char path[96] = {};
+                    snprintf(
+                        path, sizeof(path), "%s/%s",
+                        WIFI_PROFILE_DIR, name);
+                    uint32_t updated_ms = 0U;
+                    char ssid[
+                        WIFI_CREDENTIAL_SSID_BYTES] = {};
+                    char password[
+                        WIFI_CREDENTIAL_PASSWORD_BYTES] = {};
+                    if (load_wifi_profile_file(
+                            path,
+                            ssid,
+                            sizeof(ssid),
+                            password,
+                            sizeof(password),
+                            &updated_ms) &&
+                        password[0] != '\0') {
+                        snprintf(
+                            legacy_path,
+                            sizeof(legacy_path),
+                            "%s",
+                            path);
+                        snprintf(
+                            legacy_ssid,
+                            sizeof(legacy_ssid),
+                            "%s",
+                            ssid);
+                        snprintf(
+                            legacy_password,
+                            sizeof(legacy_password),
+                            "%s",
+                            password);
+                        found = true;
+                    }
+                    secure_clear_gui_buffer(
+                        password, sizeof(password));
+                }
+            }
+            entry.close();
+            if (found) {
+                break;
+            }
+            entry = root.openNextFile();
+        }
+        root.close();
+
+        if (!found) {
+            secure_clear_gui_buffer(
+                legacy_password,
+                sizeof(legacy_password));
+            return;
+        }
+        const bool migrated =
+            save_wifi_profile_to_sd(
+                legacy_ssid,
+                legacy_password,
+                "",
+                0,
+                legacy_path);
+        secure_clear_gui_buffer(
+            legacy_password,
+            sizeof(legacy_password));
+        char verified_ssid[
+            WIFI_CREDENTIAL_SSID_BYTES] = {};
+        char verified_password[
+            WIFI_CREDENTIAL_PASSWORD_BYTES] = {};
+        uint32_t verified_updated_ms = 0U;
+        const bool sanitized =
+            migrated &&
+            load_wifi_profile_file(
+                legacy_path,
+                verified_ssid,
+                sizeof(verified_ssid),
+                verified_password,
+                sizeof(verified_password),
+                &verified_updated_ms) &&
+            strcmp(verified_ssid, legacy_ssid) == 0 &&
+            verified_password[0] == '\0';
+        secure_clear_gui_buffer(
+            verified_password,
+            sizeof(verified_password));
+        if (!sanitized) {
+            Serial.printf(
+                "WIFI_NVS: migration failed for %s\n",
+                legacy_path);
+            return;
+        }
+    }
+    Serial.println(
+        "WIFI_NVS: migration limit reached; "
+        "remaining profiles will be sanitized next boot.");
+}
+
 static void try_autoconnect_wifi_profile(void) {
     if (cfg.modemSleep || wifi_connected || is_connecting || wifi_ota_active) {
         return;
@@ -5798,6 +6189,28 @@ static void try_autoconnect_wifi_profile(void) {
     if (retry_cooldown_ms > 0U) {
         Serial.printf("WIFI_SD: autoconnect delayed after ASSOC_TOOMANY for %lu ms\n",
                       static_cast<unsigned long>(retry_cooldown_ms));
+        return;
+    }
+    char nvs_ssid[WIFI_CREDENTIAL_SSID_BYTES] = "";
+    char nvs_password[WIFI_PASSWORD_MAX_LEN + 1] = "";
+    if (wifi_credential_store_load_latest(
+            nvs_ssid,
+            sizeof(nvs_ssid),
+            nvs_password,
+            sizeof(nvs_password))) {
+        snprintf(selected_ssid, sizeof(selected_ssid), "%s", nvs_ssid);
+        snprintf(
+            pending_wifi_password,
+            sizeof(pending_wifi_password),
+            "%s",
+            nvs_password);
+        secure_clear_gui_buffer(
+            nvs_password, sizeof(nvs_password));
+        pending_wifi_password_valid = true;
+        begin_sta_connection(selected_ssid, pending_wifi_password);
+        Serial.printf(
+            "WIFI_NVS: autoconnect profile SSID=%s\n",
+            selected_ssid);
         return;
     }
     if (!ota_portal_sd_ready()) {
@@ -5824,25 +6237,68 @@ static void try_autoconnect_wifi_profile(void) {
                 char ssid[64];
                 char password[WIFI_PASSWORD_MAX_LEN + 1];
                 uint32_t updated = 0;
-                if (load_wifi_profile_file(path, ssid, sizeof(ssid), password, sizeof(password), &updated) &&
+                const bool profile_loaded =
+                    load_wifi_profile_file(
+                        path,
+                        ssid,
+                        sizeof(ssid),
+                        password,
+                        sizeof(password),
+                        &updated);
+                // Version 1 profiles are migrated once. The rewrite removes
+                // the password field after directory enumeration is closed.
+                if (profile_loaded && password[0] != '\0') {
+                    wifi_credential_store_save(
+                        ssid, password);
+                }
+                char secure_password[WIFI_PASSWORD_MAX_LEN + 1] = "";
+                const bool secret_loaded =
+                    profile_loaded &&
+                    wifi_credential_store_load(
+                        ssid,
+                        secure_password,
+                        sizeof(secure_password));
+                secure_clear_gui_buffer(
+                    password, sizeof(password));
+                if (secret_loaded &&
                     (best_ssid[0] == '\0' || updated >= best_updated)) {
                     snprintf(best_ssid, sizeof(best_ssid), "%s", ssid);
-                    snprintf(best_password, sizeof(best_password), "%s", password);
+                    snprintf(
+                        best_password,
+                        sizeof(best_password),
+                        "%s",
+                        secure_password);
                     best_updated = updated;
                 }
+                secure_clear_gui_buffer(
+                    secure_password,
+                    sizeof(secure_password));
             }
         }
         entry.close();
         entry = root.openNextFile();
     }
     root.close();
+    sanitize_legacy_wifi_profiles();
 
     if (best_ssid[0] == '\0') {
+        secure_clear_gui_buffer(
+            best_password, sizeof(best_password));
+        return;
+    }
+    if (!wifi_credential_store_save(
+            best_ssid, best_password)) {
+        secure_clear_gui_buffer(
+            best_password, sizeof(best_password));
+        Serial.println(
+            "WIFI_NVS: cannot select migrated profile.");
         return;
     }
 
     snprintf(selected_ssid, sizeof(selected_ssid), "%s", best_ssid);
     snprintf(pending_wifi_password, sizeof(pending_wifi_password), "%s", best_password);
+    secure_clear_gui_buffer(
+        best_password, sizeof(best_password));
     pending_wifi_password_valid = true;
     begin_sta_connection(selected_ssid, pending_wifi_password);
     Serial.printf("WIFI_SD: autoconnect profile SSID=%s\n", selected_ssid);
@@ -6622,7 +7078,7 @@ static void ota_portal_handle_status() {
     const bool api_ec_valid = sensor_debug.ecValid || cfg.devMode;
     const bool api_ldr_valid = last_ldr_valid || cfg.devMode;
     const float api_ec_mv = sensor_debug.ecValid
-                                ? sensor_debug.ecVoltage * 1000.0f
+                                ? sensor_debug.ecValue
                                 : dev_snapshot.ecConductivity;
     const int api_ldr_value = last_ldr_valid
                                   ? last_ldr_value
@@ -6666,20 +7122,7 @@ static void ota_portal_handle_status() {
     const char *water_level_json = mcp_status_valid ? (water_level_high ? "true" : "false") : "null";
     const char *leak_json = mcp_status_valid ? (leak_detected ? "true" : "false") : "null";
     const char *flow_json = mcp_status_valid ? (flow_active ? "true" : "false") : "null";
-    const unsigned int alarm_flags = cfg.devMode
-                                         ? dev_snapshot.alarmFlags
-                                         : aquarium::evaluate_alarm_flags({
-                                               api_temp_valid,
-                                               api_temp_value,
-                                               api_ph_valid,
-                                               api_ph_value,
-                                               mcp_status_valid,
-                                               water_level_high,
-                                               mcp_status_valid,
-                                               leak_detected,
-                                               false,
-                                               NAN
-                                           });
+    const unsigned int alarm_flags = current_alarm_flags;
     const EcoRuntimeStatus eco = eco_collect_status();
     const bool sd_ready_for_status = ota_portal_sd_ready();
     const uint64_t sd_total_bytes = sd_ready_for_status ? SD.totalBytes() : 0ULL;
@@ -6755,7 +7198,9 @@ static void ota_portal_handle_status() {
 
     snprintf(line, sizeof(line),
              "\"alarms\":{\"flags\":%u,\"activeCount\":%u,\"temperatureHigh\":%s,\"temperatureLow\":%s,"
-             "\"phOutOfRange\":%s,\"waterLevelLow\":%s,\"leak\":%s,\"supplyLow\":%s},",
+             "\"phOutOfRange\":%s,\"waterLevelLow\":%s,\"leak\":%s,\"supplyLow\":%s,"
+             "\"sensorMissing\":%s,\"sensorStale\":%s,\"sensorBusFault\":%s,"
+             "\"actuatorWriteFailed\":%s},",
              alarm_flags,
              aquarium::alarm_count(alarm_flags),
              (alarm_flags & aquarium::AlarmTemperatureHigh) != 0U ? "true" : "false",
@@ -6763,8 +7208,69 @@ static void ota_portal_handle_status() {
              (alarm_flags & aquarium::AlarmPhOutOfRange) != 0U ? "true" : "false",
              (alarm_flags & aquarium::AlarmWaterLevelLow) != 0U ? "true" : "false",
              (alarm_flags & aquarium::AlarmLeak) != 0U ? "true" : "false",
-             (alarm_flags & aquarium::AlarmSupplyLow) != 0U ? "true" : "false");
+             (alarm_flags & aquarium::AlarmSupplyLow) != 0U ? "true" : "false",
+             (alarm_flags & aquarium::AlarmSensorMissing) != 0U ? "true" : "false",
+             (alarm_flags & aquarium::AlarmSensorStale) != 0U ? "true" : "false",
+             (alarm_flags & aquarium::AlarmSensorBusFault) != 0U ? "true" : "false",
+             (alarm_flags & aquarium::AlarmActuatorWriteFailed) != 0U ? "true" : "false");
     ota_http_server.sendContent(line);
+
+    const aquarium::SensorCalibration calibration =
+        sensor_calibration_store_snapshot();
+    snprintf(
+        line, sizeof(line),
+        "\"calibration\":{\"version\":%u,"
+        "\"ph\":{\"lowRaw\":%d,\"lowReference\":%.3f,"
+        "\"highRaw\":%d,\"highReference\":%.3f},"
+        "\"ec\":{\"referenceRaw\":%d,\"referenceUsCm\":%.2f,"
+        "\"temperatureCoefficient\":%.5f,"
+        "\"referenceTemperatureC\":%.2f}},",
+        static_cast<unsigned>(calibration.version),
+        static_cast<int>(calibration.ph_low_raw),
+        static_cast<double>(calibration.ph_low_reference),
+        static_cast<int>(calibration.ph_high_raw),
+        static_cast<double>(calibration.ph_high_reference),
+        static_cast<int>(calibration.ec_reference_raw),
+        static_cast<double>(calibration.ec_reference_us_cm),
+        static_cast<double>(
+            calibration.ec_temperature_coefficient),
+        static_cast<double>(
+            calibration.ec_reference_temperature_c));
+    ota_http_server.sendContent(line);
+
+    const RemoteAlarmRelayStatus remote_gateway =
+        remote_alarm_relay_status();
+    snprintf(
+        line, sizeof(line),
+        "\"remoteGateway\":{\"enabled\":%s,"
+        "\"provisioned\":%s,\"taskRunning\":%s,"
+        "\"caCertificateLoaded\":%s,"
+        "\"deliveredEvents\":%lu,\"failedAttempts\":%lu,"
+        "\"lastSuccessEpoch\":%lu,\"nextRetryMs\":%lu,"
+        "\"lastError\":\"%s\",\"baseUrl\":",
+        remote_gateway.enabled ? "true" : "false",
+        remote_gateway.provisioned ? "true" : "false",
+        remote_gateway.task_running ? "true" : "false",
+        remote_gateway.ca_certificate_loaded
+            ? "true"
+            : "false",
+        static_cast<unsigned long>(
+            remote_gateway.delivered_events),
+        static_cast<unsigned long>(
+            remote_gateway.failed_attempts),
+        static_cast<unsigned long>(
+            remote_gateway.last_success_epoch),
+        static_cast<unsigned long>(
+            remote_gateway.next_retry_ms),
+        remote_alarm_relay_error_code(
+            remote_gateway.last_error));
+    ota_http_server.sendContent(line);
+    ota_portal_send_json_escaped(
+        remote_gateway.base_url);
+    ota_http_server.sendContent(",\"deviceId\":");
+    ota_portal_send_json_escaped(
+        remote_gateway.device_id);
+    ota_http_server.sendContent("},");
 
     snprintf(line, sizeof(line),
              "\"config\":{\"target_temp\":%.2f,\"temp_hysteresis\":%.2f,\"co2TargetPh\":%.2f,\"co2MaxTimeMin\":%u,\"dev_mode\":%s,"
@@ -6979,16 +7485,41 @@ static void ota_portal_handle_status() {
              gui_web_focus_blocks_local_ui() ? "true" : "false");
     ota_http_server.sendContent(line);
 
+    const RuntimeSafetyStatus safety =
+        runtime_safety_status();
+    snprintf(
+        line, sizeof(line),
+        "\"system\":{\"uptime\":%lu,\"powerMode\":\"%s\",\"resetReason\":\"%u\","
+        "\"freeHeap\":%lu,\"largestHeap\":%lu,\"minimumFreeHeap\":%lu,"
+        "\"bootId\":%lu,\"bootCount\":%lu,\"faultCount\":%lu,"
+        "\"lastFaultReason\":\"%s\",\"lastFaultUptimeMs\":%lu,"
+        "\"lastFailSafeConfirmed\":%s,\"actuatorWriteErrors\":%lu},",
+        static_cast<unsigned long>(millis() / 1000UL),
+        cfg.modemSleep ? "modem_sleep" : "normal",
+        static_cast<unsigned>(esp_reset_reason()),
+        static_cast<unsigned long>(
+            heap_caps_get_free_size(MALLOC_CAP_8BIT)),
+        static_cast<unsigned long>(
+            heap_caps_get_largest_free_block(MALLOC_CAP_8BIT)),
+        static_cast<unsigned long>(
+            safety.current_minimum_free_heap),
+        static_cast<unsigned long>(safety.boot_id),
+        static_cast<unsigned long>(safety.boot_count),
+        static_cast<unsigned long>(safety.fault_count),
+        runtime_fault_reason_code(
+            safety.last_reset.fault_reason),
+        static_cast<unsigned long>(
+            safety.last_reset.fault_uptime_ms),
+        safety.last_reset.fail_safe_confirmed
+            ? "true"
+            : "false",
+        static_cast<unsigned long>(
+            actuator_write_error_count));
+    ota_http_server.sendContent(line);
+
     snprintf(line, sizeof(line),
-             "\"system\":{\"uptime\":%lu,\"powerMode\":\"%s\",\"resetReason\":\"%u\","
-             "\"freeHeap\":%lu,\"largestHeap\":%lu},"
              "\"relays\":{\"light\":%s,\"plantLight\":%s,\"light1\":%s,\"light2\":%s,\"pump\":%s,\"heater\":%s,"
              "\"co2\":%s,\"aeration\":%s,\"waterDosing\":%s,\"aerationPercent\":%u},",
-             static_cast<unsigned long>(millis() / 1000UL),
-             cfg.modemSleep ? "modem_sleep" : "normal",
-             static_cast<unsigned>(esp_reset_reason()),
-             static_cast<unsigned long>(heap_caps_get_free_size(MALLOC_CAP_8BIT)),
-             static_cast<unsigned long>(heap_caps_get_largest_free_block(MALLOC_CAP_8BIT)),
              runtime.lightOn ? "true" : "false",
              runtime.plantLightOn ? "true" : "false",
              runtime.lightOn ? "true" : "false",
@@ -7233,6 +7764,63 @@ static bool parse_time_arg(const char *name, uint8_t *hour, uint8_t *minute) {
     return parse_time_text(value.c_str(), hour, minute);
 }
 
+static bool parse_strict_long_arg(
+    const char *name,
+    long minimum,
+    long maximum,
+    long *out) {
+    if (name == nullptr ||
+        out == nullptr ||
+        !ota_http_server.hasArg(name)) {
+        return false;
+    }
+    String value = ota_http_server.arg(name);
+    value.trim();
+    if (value.length() == 0U) {
+        return false;
+    }
+    char *end = nullptr;
+    const long parsed =
+        strtol(value.c_str(), &end, 10);
+    if (end == value.c_str() ||
+        *end != '\0' ||
+        parsed < minimum ||
+        parsed > maximum) {
+        return false;
+    }
+    *out = parsed;
+    return true;
+}
+
+static bool parse_strict_float_arg(
+    const char *name,
+    float minimum,
+    float maximum,
+    float *out) {
+    if (name == nullptr ||
+        out == nullptr ||
+        !ota_http_server.hasArg(name)) {
+        return false;
+    }
+    String value = ota_http_server.arg(name);
+    value.trim();
+    if (value.length() == 0U) {
+        return false;
+    }
+    char *end = nullptr;
+    const float parsed =
+        strtof(value.c_str(), &end);
+    if (end == value.c_str() ||
+        *end != '\0' ||
+        !isfinite(parsed) ||
+        parsed < minimum ||
+        parsed > maximum) {
+        return false;
+    }
+    *out = parsed;
+    return true;
+}
+
 static uint8_t parse_mode_arg(const char *name, uint8_t fallback) {
     if (name == nullptr || !ota_http_server.hasArg(name)) {
         return fallback;
@@ -7424,6 +8012,27 @@ static void ota_portal_handle_action() {
         ota_portal_send_action_result(false, "missing_action", "Brak parametru action.");
         return;
     }
+    if (strcmp(
+            action_name,
+            "save_remote_gateway") == 0 ||
+        strcmp(
+            action_name,
+            "set_remote_gateway_enabled") == 0 ||
+        strcmp(
+            action_name,
+            "clear_remote_gateway") == 0) {
+        secure_clear_gui_buffer(
+            request_json, sizeof(request_json));
+        ota_portal_no_cache();
+        ota_http_server.send(
+            403,
+            "application/json",
+            "{\"ok\":false,\"success\":false,"
+            "\"code\":\"secure_transport_required\","
+            "\"message\":\"Konfiguracja bramki jest dostepna "
+            "wylacznie przez zaszyfrowane i uwierzytelnione BLE.\"}");
+        return;
+    }
 
     String action(action_name);
     if (is_v2_control_action(action_name)) {
@@ -7583,6 +8192,7 @@ static void ota_portal_handle_action() {
         action == "set_aeration" ||
         action == "save_schedule" ||
         action == "save_temperature" ||
+        action == "save_calibration" ||
         action == "save_network" ||
         action == "save_display" ||
         action == "save_co2" ||
@@ -7720,6 +8330,205 @@ static void ota_portal_handle_action() {
         return;
     }
 
+    if (action == "save_calibration") {
+        char type[8] = {};
+        if (ota_http_server.hasArg("type")) {
+            ota_http_server.arg("type").toCharArray(type, sizeof(type));
+        } else if (json_request) {
+            ble_json_read_string(
+                request_json, "type", type, sizeof(type));
+        }
+        bool saved = false;
+        if (strcmp(type, "ph") == 0) {
+            long low_raw = 0L;
+            long high_raw = 0L;
+            float low_reference = 4.01f;
+            float high_reference = 6.86f;
+            bool low_raw_valid = false;
+            bool high_raw_valid = false;
+            bool low_reference_valid = true;
+            bool high_reference_valid = true;
+            if (json_request) {
+                low_raw_valid = ble_json_read_long(
+                    request_json,
+                    "lowRaw",
+                    INT16_MIN,
+                    INT16_MAX,
+                    &low_raw);
+                high_raw_valid = ble_json_read_long(
+                    request_json,
+                    "highRaw",
+                    INT16_MIN,
+                    INT16_MAX,
+                    &high_raw);
+                if (strstr(
+                        request_json,
+                        "\"lowReference\"") != nullptr) {
+                    low_reference_valid =
+                        ble_json_read_float(
+                            request_json,
+                            "lowReference",
+                            0.0f,
+                            14.0f,
+                            &low_reference);
+                }
+                if (strstr(
+                        request_json,
+                        "\"highReference\"") != nullptr) {
+                    high_reference_valid =
+                        ble_json_read_float(
+                            request_json,
+                            "highReference",
+                            0.0f,
+                            14.0f,
+                            &high_reference);
+                }
+            } else {
+                low_raw_valid =
+                    parse_strict_long_arg(
+                        "lowRaw",
+                        INT16_MIN,
+                        INT16_MAX,
+                        &low_raw);
+                high_raw_valid =
+                    parse_strict_long_arg(
+                        "highRaw",
+                        INT16_MIN,
+                        INT16_MAX,
+                        &high_raw);
+                if (ota_http_server.hasArg(
+                        "lowReference")) {
+                    low_reference_valid =
+                        parse_strict_float_arg(
+                            "lowReference",
+                            0.0f,
+                            14.0f,
+                            &low_reference);
+                }
+                if (ota_http_server.hasArg(
+                        "highReference")) {
+                    high_reference_valid =
+                        parse_strict_float_arg(
+                            "highReference",
+                            0.0f,
+                            14.0f,
+                            &high_reference);
+                }
+            }
+            saved =
+                low_raw_valid &&
+                high_raw_valid &&
+                low_reference_valid &&
+                high_reference_valid &&
+                sensor_calibration_store_save_ph(
+                    static_cast<int16_t>(low_raw),
+                    low_reference,
+                    static_cast<int16_t>(high_raw),
+                    high_reference);
+        } else if (strcmp(type, "ec") == 0) {
+            long reference_raw = 0L;
+            float reference = 1413.0f;
+            float coefficient = 0.019f;
+            float reference_temperature = 25.0f;
+            bool raw_valid = false;
+            bool reference_valid = true;
+            bool coefficient_valid = true;
+            bool temperature_valid = true;
+            if (json_request) {
+                raw_valid = ble_json_read_long(
+                    request_json,
+                    "referenceRaw",
+                    1L,
+                    INT16_MAX,
+                    &reference_raw);
+                if (strstr(
+                        request_json,
+                        "\"referenceUsCm\"") != nullptr) {
+                    reference_valid =
+                        ble_json_read_float(
+                            request_json,
+                            "referenceUsCm",
+                            1.0f,
+                            100000.0f,
+                            &reference);
+                }
+                if (strstr(
+                        request_json,
+                        "\"temperatureCoefficient\"") != nullptr) {
+                    coefficient_valid =
+                        ble_json_read_float(
+                            request_json,
+                            "temperatureCoefficient",
+                            0.0f,
+                            0.1f,
+                            &coefficient);
+                }
+                if (strstr(
+                        request_json,
+                        "\"referenceTemperatureC\"") != nullptr) {
+                    temperature_valid =
+                        ble_json_read_float(
+                            request_json,
+                            "referenceTemperatureC",
+                            0.0f,
+                            50.0f,
+                            &reference_temperature);
+                }
+            } else {
+                raw_valid =
+                    parse_strict_long_arg(
+                        "referenceRaw",
+                        1L,
+                        INT16_MAX,
+                        &reference_raw);
+                if (ota_http_server.hasArg(
+                        "referenceUsCm")) {
+                    reference_valid =
+                        parse_strict_float_arg(
+                            "referenceUsCm",
+                            1.0f,
+                            100000.0f,
+                            &reference);
+                }
+                if (ota_http_server.hasArg(
+                        "temperatureCoefficient")) {
+                    coefficient_valid =
+                        parse_strict_float_arg(
+                            "temperatureCoefficient",
+                            0.0f,
+                            0.1f,
+                            &coefficient);
+                }
+                if (ota_http_server.hasArg(
+                        "referenceTemperatureC")) {
+                    temperature_valid =
+                        parse_strict_float_arg(
+                            "referenceTemperatureC",
+                            0.0f,
+                            50.0f,
+                            &reference_temperature);
+                }
+            }
+            saved =
+                raw_valid &&
+                reference_valid &&
+                coefficient_valid &&
+                temperature_valid &&
+                sensor_calibration_store_save_ec(
+                    static_cast<int16_t>(
+                        reference_raw),
+                    reference,
+                    coefficient,
+                    reference_temperature);
+        }
+        ota_portal_send_action_result(
+            saved,
+            saved ? "calibration_saved" : "invalid_calibration",
+            saved ? "Kalibracja zostala zapisana w NVS."
+                  : "Kalibracja jest niepelna lub niepoprawna.");
+        return;
+    }
+
     if (action == "save_network") {
         char ssid[64] = "";
         char password[WIFI_PASSWORD_MAX_LEN + 1] = "";
@@ -7729,12 +8538,19 @@ static void ota_portal_handle_action() {
         if (ota_http_server.hasArg("staPassword")) {
             ota_http_server.arg("staPassword").toCharArray(password, sizeof(password));
         }
-        const bool ok = ssid[0] != '\0' && save_wifi_profile_to_sd(ssid, password, "", 0);
+        const bool ok =
+            ssid[0] != '\0' &&
+            save_wifi_profile_to_sd(ssid, password, "", 0);
+        secure_clear_gui_buffer(
+            password, sizeof(password));
         if (ok) {
             snprintf(selected_ssid, sizeof(selected_ssid), "%s", ssid);
         }
-        ota_portal_send_action_result(ok, ok ? "ok" : "wifi_profile_error",
-                                      ok ? "Profil WiFi zapisany na SD." : "Nie zapisano profilu WiFi.");
+        ota_portal_send_action_result(
+            ok,
+            ok ? "ok" : "wifi_profile_error",
+            ok ? "Profil WiFi zapisany bezpiecznie w NVS."
+               : "Nie zapisano profilu WiFi.");
         return;
     }
 
@@ -7781,6 +8597,8 @@ static void ota_portal_handle_action() {
         if (!ota_portal_require_pin()) {
             return;
         }
+        ota_reboot_reason =
+            RuntimeFaultReason::ManualRestart;
         ota_reboot_pending = true;
         ota_reboot_at_ms = millis() + 1000UL;
         ota_portal_send_action_result(true, "ok", "Restart za chwile.");
@@ -7796,6 +8614,9 @@ static void ota_portal_handle_action() {
             prefs.end();
         }
         device_credentials_factory_reset();
+        wifi_credential_store_clear();
+        sensor_calibration_store_reset_defaults();
+        remote_alarm_relay_clear();
         admin_sessions.clear();
         load_default_config(cfg);
         display_auto_brightness = true;
@@ -7810,6 +8631,8 @@ static void ota_portal_handle_action() {
         ato_timeout_latched = false;
         gui_app_save_settings();
         apply_mcp_outputs();
+        ota_reboot_reason =
+            RuntimeFaultReason::FactoryReset;
         ota_reboot_pending = true;
         ota_reboot_at_ms = millis() + 1200UL;
         ota_portal_send_action_result(true, "ok", "Konfiguracja wyczyszczona. Restart za chwile.");
@@ -8015,6 +8838,58 @@ static void ota_portal_handle_events() {
     ota_portal_no_cache();
     ota_http_server.sendHeader("Connection", "close");
     ota_http_server.send(200, "text/event-stream", "event: ready\ndata: {}\n\n");
+}
+
+static void ota_portal_handle_alarm_events() {
+    ota_portal_mark_web_activity();
+    AlarmTransitionEvent events[
+        ALARM_EVENT_QUEUE_CAPACITY] = {};
+    const size_t count =
+        alarm_event_queue_snapshot(
+            events, ALARM_EVENT_QUEUE_CAPACITY);
+
+    ota_portal_no_cache();
+    ota_http_server.setContentLength(
+        CONTENT_LENGTH_UNKNOWN);
+    ota_http_server.send(
+        200, "application/json", "");
+    char line[320];
+    snprintf(
+        line, sizeof(line),
+        "{\"schemaVersion\":1,\"activeFlags\":%u,"
+        "\"count\":%u,\"events\":[",
+        alarm_event_queue_active_flags(),
+        static_cast<unsigned>(count));
+    ota_http_server.sendContent(line);
+    for (size_t index = 0U; index < count; ++index) {
+        const AlarmTransitionEvent &event = events[index];
+        snprintf(
+            line, sizeof(line),
+            "%s{\"eventId\":\"%lu-%lu-%08lx\","
+            "\"bootId\":%lu,\"sequence\":%lu,"
+            "\"timestamp\":%lu,\"timestampReliable\":%s,"
+            "\"nonce\":%lu,\"activeFlags\":%u,"
+            "\"raisedFlags\":%u,\"clearedFlags\":%u}",
+            index == 0U ? "" : ",",
+            static_cast<unsigned long>(event.boot_id),
+            static_cast<unsigned long>(
+                event.event_sequence),
+            static_cast<unsigned long>(event.nonce),
+            static_cast<unsigned long>(event.boot_id),
+            static_cast<unsigned long>(
+                event.event_sequence),
+            static_cast<unsigned long>(
+                event.timestamp),
+            event.timestamp_reliable
+                ? "true"
+                : "false",
+            static_cast<unsigned long>(event.nonce),
+            event.active_flags,
+            event.raised_flags,
+            event.cleared_flags);
+        ota_http_server.sendContent(line);
+    }
+    ota_http_server.sendContent("]}");
 }
 
 static void ota_portal_handle_current_history_csv() {
@@ -8247,6 +9122,8 @@ static void ota_portal_handle_update_finish() {
     ota_http_server.sendHeader("Connection", "close");
     if (ota_http_update_ok) {
         ota_http_server.send(200, "application/json", "{\"ok\":true,\"message\":\"Firmware zapisany. Restart za chwile.\"}");
+        ota_reboot_reason =
+            RuntimeFaultReason::OtaUpdate;
         ota_reboot_pending = true;
         ota_reboot_at_ms = millis() + 1400UL;
         ota_portal_set_status("HTTP OTA: zapis OK, restart...", lv_color_make(16, 185, 129));
@@ -8510,6 +9387,8 @@ static void register_ota_portal_routes() {
     ota_http_server.on("/api/web-session", HTTP_GET, ota_portal_handle_web_session);
     ota_http_server.on("/api/web-session", HTTP_POST, ota_portal_handle_web_session);
     ota_http_server.on("/api/events", HTTP_GET, ota_portal_handle_events);
+    ota_http_server.on("/api/alarm-events", HTTP_GET, ota_portal_handle_alarm_events);
+    ota_http_server.on("/api/v2/alarm-events", HTTP_GET, ota_portal_handle_alarm_events);
     ota_http_server.on("/settime", HTTP_POST, ota_portal_handle_settime);
     ota_http_server.on("/api/history.csv", HTTP_GET, ota_portal_handle_current_history_csv);
     ota_http_server.on("/history.csv", HTTP_GET, ota_portal_handle_current_history_csv);
@@ -8549,6 +9428,8 @@ static bool start_mdns_service() {
 static void start_http_portal_common(bool captive_dns) {
     register_ota_portal_routes();
     ota_reboot_pending = false;
+    ota_reboot_reason =
+        RuntimeFaultReason::ManualRestart;
     ota_shutdown_pending = false;
     ota_http_update_ok = false;
     ota_http_update_failed = false;
@@ -9075,6 +9956,9 @@ static void start_ota_background() {
     });
     ArduinoOTA.onEnd([]() {
         Serial.println("\nOTA: Gotowe!");
+        runtime_safety_record_restart(
+            RuntimeFaultReason::OtaUpdate,
+            hal_mcp_latch_all_relays_safe());
         if (wifi_status_message_lbl != nullptr) {
             lv_label_set_text(wifi_status_message_lbl, "OTA: Gotowe! Restart...");
             lv_obj_set_style_text_color(wifi_status_message_lbl, lv_color_make(16, 185, 129), 0);
@@ -11518,6 +12402,9 @@ struct CalibWizardData {
     lv_obj_t *val_lbl;
     int step;
     int type; // 0 = pH, 1 = EC
+    int16_t ph_low_raw;
+    int16_t ph_high_raw;
+    int16_t ec_reference_raw;
 };
 
 static void update_calibration_value_label() {
@@ -11584,12 +12471,49 @@ static void calib_wizard_next_cb(lv_event_t *e) {
             lv_label_set_text(data->desc_lbl, "Umiesc sonde w buforze 4.01.\nPoczekaj na odczyt i kliknij Dalej.");
             update_calibration_value_label();
         } else if (data->step == 2) {
+            if (!sensor_debug.phValid) {
+                data->step = 1;
+                lv_label_set_text(
+                    data->desc_lbl,
+                    "Brak stabilnego odczytu pH 4.01.\nSprawdz sonde i sprobuj ponownie.");
+                lv_obj_set_style_text_color(
+                    data->desc_lbl, lv_color_make(239, 68, 68), 0);
+                return;
+            }
+            data->ph_low_raw = sensor_debug.phRaw;
             lv_label_set_text(data->step_lbl, "Krok 2/2: pH 6.86");
             lv_label_set_text(data->desc_lbl, "Umiesc sonde w buforze 6.86.\nPoczekaj na odczyt i kliknij Zapisz.");
+            lv_obj_set_style_text_color(
+                data->desc_lbl, theme_text_main(), 0);
             update_calibration_value_label();
             lv_label_set_text(lv_obj_get_child(data->btn_next, 0), "Zapisz");
         } else if (data->step == 3) {
-            gui_app_save_settings();
+            if (!sensor_debug.phValid) {
+                data->step = 2;
+                lv_label_set_text(
+                    data->desc_lbl,
+                    "Brak stabilnego odczytu pH 6.86.\nSprawdz sonde i sprobuj ponownie.");
+                lv_obj_set_style_text_color(
+                    data->desc_lbl, lv_color_make(239, 68, 68), 0);
+                return;
+            }
+            data->ph_high_raw = sensor_debug.phRaw;
+            if (!sensor_calibration_store_save_ph(
+                    data->ph_low_raw,
+                    4.01f,
+                    data->ph_high_raw,
+                    6.86f)) {
+                data->step = 2;
+                lv_label_set_text(
+                    data->desc_lbl,
+                    "Punkty sa zbyt blisko lub zapis NVS nie powiodl sie.");
+                lv_obj_set_style_text_color(
+                    data->desc_lbl, lv_color_make(239, 68, 68), 0);
+                add_gui_log("Kalibracja pH: odrzucone punkty lub blad NVS", true);
+                return;
+            }
+            add_gui_log("Kalibracja pH zapisana", false);
+            show_save_toast("Kalibracja pH zapisana");
             close_calib_wizard(data);
         }
     } else { // EC
@@ -11599,7 +12523,32 @@ static void calib_wizard_next_cb(lv_event_t *e) {
             update_calibration_value_label();
             lv_label_set_text(lv_obj_get_child(data->btn_next, 0), "Zapisz");
         } else if (data->step == 2) {
-            gui_app_save_settings();
+            if (!sensor_debug.ecValid) {
+                data->step = 1;
+                lv_label_set_text(
+                    data->desc_lbl,
+                    "Brak stabilnego odczytu EC.\nSprawdz sonde i sprobuj ponownie.");
+                lv_obj_set_style_text_color(
+                    data->desc_lbl, lv_color_make(239, 68, 68), 0);
+                return;
+            }
+            data->ec_reference_raw = sensor_debug.ecRaw;
+            if (!sensor_calibration_store_save_ec(
+                    data->ec_reference_raw,
+                    1413.0f,
+                    0.019f,
+                    25.0f)) {
+                data->step = 1;
+                lv_label_set_text(
+                    data->desc_lbl,
+                    "Niepoprawny punkt EC lub blad zapisu NVS.");
+                lv_obj_set_style_text_color(
+                    data->desc_lbl, lv_color_make(239, 68, 68), 0);
+                add_gui_log("Kalibracja EC: punkt odrzucony lub blad NVS", true);
+                return;
+            }
+            add_gui_log("Kalibracja EC zapisana", false);
+            show_save_toast("Kalibracja EC zapisana");
             close_calib_wizard(data);
         }
     }
@@ -11635,6 +12584,9 @@ static void open_calibration_wizard_authorized(int type) {
     data->bg_overlay = bg_overlay;
     data->step = 0;
     data->type = type;
+    data->ph_low_raw = 0;
+    data->ph_high_raw = 0;
+    data->ec_reference_raw = 0;
     lv_obj_add_event_cb(bg_overlay, calib_wizard_delete_data_cb, LV_EVENT_DELETE, data);
 
     lv_obj_t *header = lv_obj_create(bg_overlay);
@@ -13810,6 +14762,12 @@ void gui_app_init(void) {
     gui_ready = false;
     device_credentials_initialize();
     gui_app_load_settings();
+    const RuntimeSafetyStatus safety_status =
+        runtime_safety_status();
+    if (!alarm_event_queue_initialize(safety_status.boot_id)) {
+        Serial.println(
+            "ALARMS: persistent transition queue unavailable.");
+    }
     register_wifi_event_handlers();
     if (cfg.modemSleep) {
         WiFi.disconnect(true);
@@ -13936,6 +14894,11 @@ void gui_app_handle_ota_portal(void) {
     if (ota_reboot_pending &&
         static_cast<int32_t>(millis() - ota_reboot_at_ms) >= 0) {
         Serial.println("SYSTEM: restarting after an authorized request.");
+        const bool outputs_safe =
+            hal_mcp_latch_all_relays_safe();
+        runtime_safety_record_restart(
+            ota_reboot_reason,
+            outputs_safe);
         ESP.restart();
     }
     if (wifi_disconnect_pending && static_cast<int32_t>(millis() - wifi_disconnect_at_ms) >= 0) {
@@ -14487,6 +15450,62 @@ void gui_update_metrics(float temp, float ph, uint32_t free_heap, const char *ti
         }
     }
 
+    const unsigned int previous_alarm_flags =
+        current_alarm_flags;
+    const unsigned int observed_alarm_flags =
+        cfg.devMode
+            ? aquarium::dev_simulator()
+                  .latest()
+                  .alarmFlags
+            : evaluate_live_alarm_flags(
+                  temp,
+                  temp_valid,
+                  ph,
+                  ph_valid);
+    current_alarm_flags =
+        alarm_stability_filter.update(
+            observed_alarm_flags);
+    const uint32_t alarm_timestamp =
+        controller_clock_reliable
+            ? controller_unix_time()
+            : control_now_ms / 1000UL;
+    const bool alarm_queue_saved =
+        alarm_event_queue_update(
+            current_alarm_flags,
+            alarm_timestamp,
+            controller_clock_reliable);
+    if (previous_alarm_flags != current_alarm_flags) {
+        Serial.printf(
+            "ALARMS: flags 0x%04x -> 0x%04x queue=%s.\n",
+            static_cast<unsigned>(previous_alarm_flags),
+            static_cast<unsigned>(current_alarm_flags),
+            alarm_queue_saved ? "ok" : "volatile");
+        constexpr unsigned int health_alarm_mask =
+            aquarium::AlarmSensorMissing |
+            aquarium::AlarmSensorStale |
+            aquarium::AlarmSensorBusFault |
+            aquarium::AlarmActuatorWriteFailed;
+        const unsigned int raised_health =
+            current_alarm_flags &
+            ~previous_alarm_flags &
+            health_alarm_mask;
+        const unsigned int cleared_health =
+            previous_alarm_flags &
+            ~current_alarm_flags &
+            health_alarm_mask;
+        if (raised_health != 0U) {
+            add_gui_log(
+                "Sprzet: wykryto brak, stale dane lub blad wyjscia",
+                true);
+        }
+        if (cleared_health != 0U &&
+            (current_alarm_flags & health_alarm_mask) == 0U) {
+            add_gui_log(
+                "Sprzet: czujniki i wyjscia ponownie sprawne",
+                false);
+        }
+    }
+
     int wday = get_weekday(clock_day, clock_month, clock_year);
     int bit_idx = (wday == 0) ? 6 : (wday - 1);
     bool day_active = (cfg.feedDays & (1 << bit_idx)) != 0;
@@ -14640,6 +15659,8 @@ void gui_app_update_system_info(uint32_t free_heap, uint32_t uptime_sec) {
     if (gui_web_focus_blocks_local_ui()) {
         return;
     }
+    const RuntimeSafetyStatus safety =
+        runtime_safety_status();
 
     if (diag_heap_lbl != nullptr) {
         const uint32_t largest_block = heap_caps_get_largest_free_block(MALLOC_CAP_8BIT);
@@ -14649,7 +15670,13 @@ void gui_app_update_system_info(uint32_t free_heap, uint32_t uptime_sec) {
     }
 
     if (diag_restarts_lbl != nullptr) {
-        lv_label_set_text_fmt(diag_restarts_lbl, "Boot count: %lu", static_cast<unsigned long>(boot_count_val));
+        lv_label_set_text_fmt(
+            diag_restarts_lbl,
+            "Boot: %lu | awarie: %lu",
+            static_cast<unsigned long>(
+                safety.boot_count),
+            static_cast<unsigned long>(
+                safety.fault_count));
     }
 
     if (diag_reset_reason_lbl != nullptr) {
@@ -14668,7 +15695,24 @@ void gui_app_update_system_info(uint32_t free_heap, uint32_t uptime_sec) {
             case ESP_RST_SDIO: reason_str = "SDIO Reset"; break;
             default: break;
         }
-        lv_label_set_text_fmt(diag_reset_reason_lbl, "Reset: %s", reason_str);
+        const char *fault_code =
+            runtime_fault_reason_code(
+                safety.last_reset.fault_reason);
+        if (safety.last_reset.fault_reason !=
+            RuntimeFaultReason::None) {
+            lv_label_set_text_fmt(
+                diag_reset_reason_lbl,
+                "Reset: %s (%s)",
+                fault_code,
+                safety.last_reset.fail_safe_confirmed
+                    ? "safe"
+                    : "unsafe");
+        } else {
+            lv_label_set_text_fmt(
+                diag_reset_reason_lbl,
+                "Reset: %s",
+                reason_str);
+        }
     }
 
     if (diag_uptime_lbl != nullptr) {
@@ -14681,18 +15725,18 @@ void gui_app_update_system_info(uint32_t free_heap, uint32_t uptime_sec) {
                                   static_cast<unsigned long>(days),
                                   static_cast<unsigned long>(hours),
                                   static_cast<unsigned long>(minutes),
-                                  static_cast<unsigned long>(boot_count_val));
+                                  static_cast<unsigned long>(safety.boot_count));
         } else if (hours > 0) {
             lv_label_set_text_fmt(diag_uptime_lbl, "Czas: %luh %lum %lus | Boot: %lu",
                                   static_cast<unsigned long>(hours),
                                   static_cast<unsigned long>(minutes),
                                   static_cast<unsigned long>(seconds),
-                                  static_cast<unsigned long>(boot_count_val));
+                                  static_cast<unsigned long>(safety.boot_count));
         } else {
             lv_label_set_text_fmt(diag_uptime_lbl, "Czas: %lum %lus | Boot: %lu",
                                   static_cast<unsigned long>(minutes),
                                   static_cast<unsigned long>(seconds),
-                                  static_cast<unsigned long>(boot_count_val));
+                                  static_cast<unsigned long>(safety.boot_count));
         }
     }
 
@@ -14753,24 +15797,36 @@ void gui_app_update_system_info(uint32_t free_heap, uint32_t uptime_sec) {
 }
 
 void gui_app_update_sensor_debug(int ldr_value,
+                                 bool temperature_present,
+                                 bool temperature_stale,
+                                 uint32_t temperature_age_ms,
+                                 uint32_t temperature_error_count,
                                  bool adc_present,
                                  bool ph_valid,
                                  int16_t ph_raw,
                                  float ph_voltage,
+                                 float ph_value,
                                  bool ec_valid,
                                  int16_t ec_raw,
                                  float ec_voltage,
+                                 float ec_value,
                                  bool mcp_present,
                                  bool mcp_valid,
                                  uint16_t mcp_state) {
     sensor_debug.ldrValue = ldr_value;
+    sensor_debug.temperaturePresent = temperature_present;
+    sensor_debug.temperatureStale = temperature_stale;
+    sensor_debug.temperatureAgeMs = temperature_age_ms;
+    sensor_debug.temperatureErrorCount = temperature_error_count;
     sensor_debug.adcPresent = adc_present;
     sensor_debug.phValid = ph_valid;
     sensor_debug.phRaw = ph_raw;
     sensor_debug.phVoltage = ph_voltage;
+    sensor_debug.phValue = ph_value;
     sensor_debug.ecValid = ec_valid;
     sensor_debug.ecRaw = ec_raw;
     sensor_debug.ecVoltage = ec_voltage;
+    sensor_debug.ecValue = ec_value;
     sensor_debug.mcpPresent = mcp_present;
     sensor_debug.mcpValid = mcp_valid;
     sensor_debug.mcpState = mcp_state;
@@ -14993,6 +16049,55 @@ bool gui_app_runtime_ready(void) {
            label_wifi_state != nullptr;
 }
 
+bool gui_app_ota_health_ready(void) {
+    GuiMutexGuard guard(50U);
+    if (!guard.locked() ||
+        !gui_ready ||
+        cfg.magic != UI_CONFIG_MAGIC) {
+        return false;
+    }
+    if (cfg.devMode) {
+        return true;
+    }
+
+    const uint32_t now_ms = millis();
+    const bool frame_fresh =
+        sensor_debug.updatedMs != 0U &&
+        static_cast<uint32_t>(
+            now_ms - sensor_debug.updatedMs) <=
+            SENSOR_FRAME_STALE_MS;
+    const bool temperature_ready =
+        sensor_debug.temperaturePresent &&
+        !sensor_debug.temperatureStale &&
+        status_temperature_ok &&
+        sensor_debug.temperatureAgeMs <=
+            SENSOR_FRAME_STALE_MS;
+    const bool ph_ready =
+        !(cfg.showPhSensor || cfg.enableCo2) ||
+        (sensor_debug.adcPresent &&
+         sensor_debug.phValid);
+    const bool ec_ready =
+        !cfg.enableEc ||
+        (sensor_debug.adcPresent &&
+         sensor_debug.ecValid);
+    const bool mcp_ready =
+        sensor_debug.mcpPresent &&
+        sensor_debug.mcpValid;
+    constexpr unsigned int blocking_health_alarms =
+        aquarium::AlarmSensorMissing |
+        aquarium::AlarmSensorStale |
+        aquarium::AlarmSensorBusFault |
+        aquarium::AlarmActuatorWriteFailed;
+    return frame_fresh &&
+           temperature_ready &&
+           ph_ready &&
+           ec_ready &&
+           mcp_ready &&
+           !actuator_write_failed &&
+           (current_alarm_flags &
+            blocking_health_alarms) == 0U;
+}
+
 bool gui_app_ble_snapshot(GuiBleSnapshot *out) {
     GuiMutexGuard guard(200U);
     if (!guard.locked() || !gui_ready || out == nullptr || cfg.magic != UI_CONFIG_MAGIC) {
@@ -15009,7 +16114,7 @@ bool gui_app_ble_snapshot(GuiBleSnapshot *out) {
                          : (dev_mode ? dev.ph : NAN);
     const bool ec_valid = sensor_debug.ecValid || dev_mode;
     const float ec = sensor_debug.ecValid
-                         ? sensor_debug.ecVoltage * 1000.0f
+                         ? sensor_debug.ecValue
                          : (dev_mode ? dev.ecConductivity : NAN);
     const bool ldr_valid = last_ldr_valid || dev_mode;
     const int ldr = last_ldr_valid ? last_ldr_value : (dev_mode ? dev.ldr : 0);
@@ -15038,18 +16143,8 @@ bool gui_app_ble_snapshot(GuiBleSnapshot *out) {
     out->ec_valid = ec_valid && isfinite(ec);
     out->ldr = ldr;
     out->ldr_valid = ldr_valid;
-    out->alarm_flags = dev_mode ? dev.alarmFlags : aquarium::evaluate_alarm_flags({
-        out->temperature_valid,
-        out->temperature,
-        out->ph_valid,
-        out->ph,
-        mcp_valid,
-        water_high,
-        mcp_valid,
-        leak_detected,
-        false,
-        NAN
-    });
+    out->alarm_flags =
+        static_cast<uint16_t>(current_alarm_flags);
     out->water_level_high = water_high;
     out->leak_detected = leak_detected;
     out->light_on = runtime.lightOn;
@@ -15380,9 +16475,23 @@ bool gui_app_ble_full_status_json(char *out, size_t out_size) {
     const IPAddress ip = wifi_ota_active ? WiFi.softAPIP() : WiFi.localIP();
     char ssid[96];
     char configured_ssid[96];
+    const RemoteAlarmRelayStatus remote_gateway =
+        remote_alarm_relay_status();
+    char remote_base_url[
+        REMOTE_ALARM_RELAY_URL_BYTES * 2U] = {};
+    char remote_device_id[
+        REMOTE_ALARM_RELAY_DEVICE_ID_BYTES * 2U] = {};
     json_escape_to_buffer(wifi_ota_active ? WiFi.softAPSSID().c_str() : WiFi.SSID().c_str(),
                           ssid, sizeof(ssid));
     json_escape_to_buffer(selected_ssid, configured_ssid, sizeof(configured_ssid));
+    json_escape_to_buffer(
+        remote_gateway.base_url,
+        remote_base_url,
+        sizeof(remote_base_url));
+    json_escape_to_buffer(
+        remote_gateway.device_id,
+        remote_device_id,
+        sizeof(remote_device_id));
     const char *temperature = snapshot.temperature_valid ? nullptr : "null";
     const char *ph = snapshot.ph_valid ? nullptr : "null";
     const char *ec = snapshot.ec_valid ? nullptr : "null";
@@ -15444,7 +16553,9 @@ bool gui_app_ble_full_status_json(char *out, size_t out_size) {
     ok = ok && ble_json_append(out, out_size, &used,
         "\"alarms\":{\"flags\":%u,\"activeCount\":%u,\"temperatureHigh\":%s,"
         "\"temperatureLow\":%s,\"phOutOfRange\":%s,\"waterLevelLow\":%s,"
-        "\"leak\":%s,\"supplyLow\":%s},",
+        "\"leak\":%s,\"supplyLow\":%s,\"sensorMissing\":%s,"
+        "\"sensorStale\":%s,\"sensorBusFault\":%s,"
+        "\"actuatorWriteFailed\":%s},",
         static_cast<unsigned>(snapshot.alarm_flags),
         static_cast<unsigned>(aquarium::alarm_count(snapshot.alarm_flags)),
         (snapshot.alarm_flags & aquarium::AlarmTemperatureHigh) ? "true" : "false",
@@ -15452,7 +16563,59 @@ bool gui_app_ble_full_status_json(char *out, size_t out_size) {
         (snapshot.alarm_flags & aquarium::AlarmPhOutOfRange) ? "true" : "false",
         (snapshot.alarm_flags & aquarium::AlarmWaterLevelLow) ? "true" : "false",
         (snapshot.alarm_flags & aquarium::AlarmLeak) ? "true" : "false",
-        (snapshot.alarm_flags & aquarium::AlarmSupplyLow) ? "true" : "false");
+        (snapshot.alarm_flags & aquarium::AlarmSupplyLow) ? "true" : "false",
+        (snapshot.alarm_flags & aquarium::AlarmSensorMissing) ? "true" : "false",
+        (snapshot.alarm_flags & aquarium::AlarmSensorStale) ? "true" : "false",
+        (snapshot.alarm_flags & aquarium::AlarmSensorBusFault) ? "true" : "false",
+        (snapshot.alarm_flags & aquarium::AlarmActuatorWriteFailed) ? "true" : "false");
+    const aquarium::SensorCalibration calibration =
+        sensor_calibration_store_snapshot();
+    ok = ok && ble_json_append(
+        out, out_size, &used,
+        "\"calibration\":{\"version\":%u,"
+        "\"ph\":{\"lowRaw\":%d,\"lowReference\":%.3f,"
+        "\"highRaw\":%d,\"highReference\":%.3f},"
+        "\"ec\":{\"referenceRaw\":%d,\"referenceUsCm\":%.2f,"
+        "\"temperatureCoefficient\":%.5f,"
+        "\"referenceTemperatureC\":%.2f}},",
+        static_cast<unsigned>(calibration.version),
+        static_cast<int>(calibration.ph_low_raw),
+        static_cast<double>(calibration.ph_low_reference),
+        static_cast<int>(calibration.ph_high_raw),
+        static_cast<double>(calibration.ph_high_reference),
+        static_cast<int>(calibration.ec_reference_raw),
+        static_cast<double>(calibration.ec_reference_us_cm),
+        static_cast<double>(
+            calibration.ec_temperature_coefficient),
+        static_cast<double>(
+            calibration.ec_reference_temperature_c));
+    ok = ok && ble_json_append(
+        out, out_size, &used,
+        "\"remoteGateway\":{\"enabled\":%s,"
+        "\"provisioned\":%s,\"taskRunning\":%s,"
+        "\"caCertificateLoaded\":%s,"
+        "\"deliveredEvents\":%lu,\"failedAttempts\":%lu,"
+        "\"lastSuccessEpoch\":%lu,\"nextRetryMs\":%lu,"
+        "\"lastError\":\"%s\",\"baseUrl\":\"%s\","
+        "\"deviceId\":\"%s\"},",
+        remote_gateway.enabled ? "true" : "false",
+        remote_gateway.provisioned ? "true" : "false",
+        remote_gateway.task_running ? "true" : "false",
+        remote_gateway.ca_certificate_loaded
+            ? "true"
+            : "false",
+        static_cast<unsigned long>(
+            remote_gateway.delivered_events),
+        static_cast<unsigned long>(
+            remote_gateway.failed_attempts),
+        static_cast<unsigned long>(
+            remote_gateway.last_success_epoch),
+        static_cast<unsigned long>(
+            remote_gateway.next_retry_ms),
+        remote_alarm_relay_error_code(
+            remote_gateway.last_error),
+        remote_base_url,
+        remote_device_id);
     ok = ok && ble_json_append(out, out_size, &used,
         "\"config\":{\"target_temp\":%.2f,\"temp_hysteresis\":%.2f,\"co2TargetPh\":%.2f,"
         "\"co2MaxTimeMin\":%u,\"dev_mode\":%s,\"modem_sleep\":%s,"
@@ -15542,20 +16705,33 @@ bool gui_app_ble_full_status_json(char *out, size_t out_size) {
         static_cast<unsigned>(FirmwareInfo::API_VERSION),
         __DATE__,
         __TIME__);
+    const RuntimeSafetyStatus safety =
+        runtime_safety_status();
     ok = ok && ble_json_append(out, out_size, &used,
         "\"network\":{\"staConnected\":%s,\"staConnecting\":%s,\"apMode\":%s,"
         "\"serviceMode\":%s,\"staSsid\":\"%s\",\"configuredStaSsid\":\"%s\","
         "\"configuredApSsid\":\"cydAkwarium_AP\",\"ssid\":\"%s\","
         "\"ip\":\"%u.%u.%u.%u\",\"rssi\":%d,\"clients\":%u},"
         "\"system\":{\"uptime\":%lu,\"powerMode\":\"%s\",\"resetReason\":\"%d\","
-        "\"freeHeap\":%lu,\"largestHeap\":%lu},",
+        "\"freeHeap\":%lu,\"largestHeap\":%lu,\"minimumFreeHeap\":%lu,"
+        "\"bootId\":%lu,\"bootCount\":%lu,\"faultCount\":%lu,"
+        "\"lastFaultReason\":\"%s\",\"lastFaultUptimeMs\":%lu,"
+        "\"lastFailSafeConfirmed\":%s,\"actuatorWriteErrors\":%lu},",
         wifi_connected ? "true" : "false", is_connecting ? "true" : "false",
         wifi_ota_active ? "true" : "false", ota_portal_sta_running ? "true" : "false",
         ssid, configured_ssid, ssid, ip[0], ip[1], ip[2], ip[3], wifi_rssi,
         static_cast<unsigned>(wifi_ota_active ? WiFi.softAPgetStationNum() : 0U),
         static_cast<unsigned long>(millis() / 1000UL), cfg.modemSleep ? "eco" : "normal",
         static_cast<int>(esp_reset_reason()), static_cast<unsigned long>(ESP.getFreeHeap()),
-        static_cast<unsigned long>(heap_caps_get_largest_free_block(MALLOC_CAP_8BIT)));
+        static_cast<unsigned long>(heap_caps_get_largest_free_block(MALLOC_CAP_8BIT)),
+        static_cast<unsigned long>(safety.current_minimum_free_heap),
+        static_cast<unsigned long>(safety.boot_id),
+        static_cast<unsigned long>(safety.boot_count),
+        static_cast<unsigned long>(safety.fault_count),
+        runtime_fault_reason_code(safety.last_reset.fault_reason),
+        static_cast<unsigned long>(safety.last_reset.fault_uptime_ms),
+        safety.last_reset.fail_safe_confirmed ? "true" : "false",
+        static_cast<unsigned long>(actuator_write_error_count));
     const uint32_t light_status_ms = millis();
     const aquarium::AquaelLightSnapshot front_light =
         mcp_outputs.frontLight.snapshot(light_status_ms);
@@ -15700,11 +16876,24 @@ bool gui_app_ble_diagnostics_json(char *out, size_t out_size, const char *pin) {
         !gui_ble_pin_valid(pin) || out == nullptr || out_size < 512U) {
         return false;
     }
+    const RuntimeSafetyStatus safety =
+        runtime_safety_status();
+    const RemoteAlarmRelayStatus remote_gateway =
+        remote_alarm_relay_status();
     const int written = snprintf(
         out, out_size,
         "{\"type\":\"diagnostics\",\"data\":{\"ok\":true,\"simulated\":%s,"
         "\"sda\":%u,\"scl\":%u,\"frequencyHz\":%lu,\"scanMs\":0,"
         "\"count\":%u,\"truncated\":false,\"devices\":[],"
+        "\"runtime\":{\"bootId\":%lu,\"bootCount\":%lu,"
+        "\"faultCount\":%lu,\"minimumFreeHeap\":%lu,"
+        "\"lastFaultReason\":\"%s\",\"lastFaultUptimeMs\":%lu,"
+        "\"lastFailSafeConfirmed\":%s,"
+        "\"actuatorWriteErrors\":%lu},"
+        "\"remoteGateway\":{\"enabled\":%s,"
+        "\"provisioned\":%s,\"taskRunning\":%s,"
+        "\"deliveredEvents\":%lu,\"failedAttempts\":%lu,"
+        "\"lastError\":\"%s\"},"
         "\"uart\":{\"ports\":[],\"discoverySupported\":false},"
         "\"oneWire\":{\"dataPin\":%u,\"scanMs\":0,\"count\":0,"
         "\"truncated\":false,\"devices\":[]}}}",
@@ -15714,8 +16903,140 @@ bool gui_app_ble_diagnostics_json(char *out, size_t out_size, const char *pin) {
         static_cast<unsigned long>(HwConfig::I2C_FREQUENCY_HZ),
         static_cast<unsigned>((sensor_debug.mcpPresent ? 1U : 0U) +
                               (sensor_debug.adcPresent ? 1U : 0U)),
+        static_cast<unsigned long>(safety.boot_id),
+        static_cast<unsigned long>(safety.boot_count),
+        static_cast<unsigned long>(safety.fault_count),
+        static_cast<unsigned long>(
+            safety.current_minimum_free_heap),
+        runtime_fault_reason_code(
+            safety.last_reset.fault_reason),
+        static_cast<unsigned long>(
+            safety.last_reset.fault_uptime_ms),
+        safety.last_reset.fail_safe_confirmed
+            ? "true"
+            : "false",
+        static_cast<unsigned long>(
+            actuator_write_error_count),
+        remote_gateway.enabled ? "true" : "false",
+        remote_gateway.provisioned ? "true" : "false",
+        remote_gateway.task_running ? "true" : "false",
+        static_cast<unsigned long>(
+            remote_gateway.delivered_events),
+        static_cast<unsigned long>(
+            remote_gateway.failed_attempts),
+        remote_alarm_relay_error_code(
+            remote_gateway.last_error),
         static_cast<unsigned>(HwConfig::OneWireBus::DATA_PIN));
     return written > 0 && static_cast<size_t>(written) < out_size;
+}
+
+static bool is_remote_gateway_action(
+    const char *action) {
+    return action != nullptr &&
+           (strcmp(
+                action,
+                "save_remote_gateway") == 0 ||
+            strcmp(
+                action,
+                "set_remote_gateway_enabled") == 0 ||
+            strcmp(
+                action,
+                "clear_remote_gateway") == 0);
+}
+
+static GuiBleCommandResult execute_remote_gateway_action(
+    const char *action,
+    const char *command_json) {
+    if (strcmp(action, "save_remote_gateway") == 0) {
+        char base_url[
+            REMOTE_ALARM_RELAY_URL_BYTES] = {};
+        char device_id[
+            REMOTE_ALARM_RELAY_DEVICE_ID_BYTES] = {};
+        char hmac_secret[136] = {};
+        bool enabled = true;
+        const bool parsed =
+            ble_json_read_string(
+                command_json,
+                "baseUrl",
+                base_url,
+                sizeof(base_url)) &&
+            ble_json_read_string(
+                command_json,
+                "deviceId",
+                device_id,
+                sizeof(device_id)) &&
+            ble_json_read_string(
+                command_json,
+                "hmacSecret",
+                hmac_secret,
+                sizeof(hmac_secret));
+        ble_json_read_bool(
+            command_json, "enabled", &enabled);
+        const bool saved =
+            parsed &&
+            remote_alarm_relay_configure(
+                base_url,
+                device_id,
+                hmac_secret,
+                enabled);
+        secure_clear_gui_buffer(
+            hmac_secret, sizeof(hmac_secret));
+        return saved
+                   ? GuiBleCommandResult{
+                         true,
+                         "remote_gateway_saved",
+                         "Bezpieczna bramka alarmowa zostala zapisana."}
+                   : GuiBleCommandResult{
+                         false,
+                         "invalid_remote_gateway",
+                         "Sprawdz adres HTTPS, identyfikator i sekret Base64."};
+    }
+    if (strcmp(
+            action,
+            "set_remote_gateway_enabled") == 0) {
+        bool enabled = false;
+        if (!ble_json_read_bool(
+                command_json,
+                "enabled",
+                &enabled)) {
+            return {
+                false,
+                "invalid_remote_gateway_state",
+                "Brak poprawnego pola enabled."};
+        }
+        const bool saved =
+            remote_alarm_relay_set_enabled(enabled);
+        return saved
+                   ? GuiBleCommandResult{
+                         true,
+                         enabled
+                             ? "remote_gateway_enabled"
+                             : "remote_gateway_disabled",
+                         enabled
+                             ? "Wysylanie alarmow zostalo wlaczone."
+                             : "Wysylanie alarmow zostalo wylaczone."}
+                   : GuiBleCommandResult{
+                         false,
+                         "remote_gateway_not_provisioned",
+                         "Najpierw zapisz konfiguracje bramki."};
+    }
+    if (strcmp(action, "clear_remote_gateway") == 0) {
+        const bool cleared =
+            remote_alarm_relay_clear();
+        return cleared
+                   ? GuiBleCommandResult{
+                         true,
+                         "remote_gateway_cleared",
+                         "Konfiguracja bramki zostala usunieta."}
+                   : GuiBleCommandResult{
+                         false,
+                         "remote_gateway_clear_failed",
+                         "Nie udalo sie wyczyscic konfiguracji bramki."};
+    }
+    return {
+        false,
+        "invalid_remote_gateway_action",
+        "Nieznana akcja bramki alarmowej."};
 }
 
 GuiBleCommandResult gui_app_ble_action(const char *action,
@@ -15736,6 +17057,10 @@ GuiBleCommandResult gui_app_ble_action(const char *action,
     }
     if (strcmp(action, "feed_now") == 0) {
         return gui_app_ble_feed(pin);
+    }
+    if (is_remote_gateway_action(action)) {
+        return execute_remote_gateway_action(
+            action, command_json);
     }
 
     if (strcmp(action, "save_schedule") == 0) {
@@ -15819,6 +17144,115 @@ GuiBleCommandResult gui_app_ble_action(const char *action,
         return {true, "ok", "Ustawienia temperatury zapisane."};
     }
 
+    if (strcmp(action, "save_calibration") == 0) {
+        char type[8] = {};
+        if (!ble_json_read_string(
+                command_json, "type", type, sizeof(type))) {
+            return {
+                false,
+                "invalid_calibration",
+                "Brak typu kalibracji ph/ec."
+            };
+        }
+        if (strcmp(type, "ph") == 0) {
+            long low_raw = 0L;
+            long high_raw = 0L;
+            float low_reference = 4.01f;
+            float high_reference = 6.86f;
+            if (!ble_json_read_long(
+                    command_json,
+                    "lowRaw",
+                    INT16_MIN,
+                    INT16_MAX,
+                    &low_raw) ||
+                !ble_json_read_long(
+                    command_json,
+                    "highRaw",
+                    INT16_MIN,
+                    INT16_MAX,
+                    &high_raw) ||
+                !ble_json_read_float(
+                    command_json,
+                    "lowReference",
+                    0.0f,
+                    14.0f,
+                    &low_reference) ||
+                !ble_json_read_float(
+                    command_json,
+                    "highReference",
+                    0.0f,
+                    14.0f,
+                    &high_reference) ||
+                !sensor_calibration_store_save_ph(
+                    static_cast<int16_t>(low_raw),
+                    low_reference,
+                    static_cast<int16_t>(high_raw),
+                    high_reference)) {
+                return {
+                    false,
+                    "invalid_calibration",
+                    "Punkty pH sa niepoprawne lub zbyt blisko."
+                };
+            }
+            return {
+                true,
+                "calibration_saved",
+                "Kalibracja pH zapisana."
+            };
+        }
+        if (strcmp(type, "ec") == 0) {
+            long reference_raw = 0L;
+            float reference = 1413.0f;
+            float coefficient = 0.019f;
+            float reference_temperature = 25.0f;
+            if (!ble_json_read_long(
+                    command_json,
+                    "referenceRaw",
+                    1L,
+                    INT16_MAX,
+                    &reference_raw) ||
+                !ble_json_read_float(
+                    command_json,
+                    "referenceUsCm",
+                    1.0f,
+                    100000.0f,
+                    &reference) ||
+                !ble_json_read_float(
+                    command_json,
+                    "temperatureCoefficient",
+                    0.0f,
+                    0.1f,
+                    &coefficient) ||
+                !ble_json_read_float(
+                    command_json,
+                    "referenceTemperatureC",
+                    0.0f,
+                    50.0f,
+                    &reference_temperature) ||
+                !sensor_calibration_store_save_ec(
+                    static_cast<int16_t>(reference_raw),
+                    reference,
+                    coefficient,
+                    reference_temperature)) {
+                return {
+                    false,
+                    "invalid_calibration",
+                    "Punkt EC lub kompensacja sa niepoprawne."
+                };
+            }
+            return {
+                true,
+                "calibration_saved",
+                "Kalibracja EC zapisana."
+            };
+        }
+        return {
+            false,
+            "invalid_calibration",
+            "Typ kalibracji musi miec wartosc ph albo ec."
+        };
+    }
+
     if (strcmp(action, "save_co2") == 0) {
         bool enabled = cfg.enableCo2;
         float target = co2_target_ph;
@@ -15900,9 +17334,15 @@ GuiBleCommandResult gui_app_ble_action(const char *action,
         }
         ble_json_read_string(command_json, "staPassword", password, sizeof(password));
         if (password[0] != '\0' && strlen(password) < 8U) {
+            secure_clear_gui_buffer(
+                password, sizeof(password));
             return {false, "wifi_profile_error", "Haslo WPA musi miec co najmniej 8 znakow."};
         }
-        if (!save_wifi_profile_to_sd(ssid, password, "", 0)) {
+        const bool saved =
+            save_wifi_profile_to_sd(ssid, password, "", 0);
+        secure_clear_gui_buffer(
+            password, sizeof(password));
+        if (!saved) {
             return {false, "wifi_profile_error", "Nie zapisano profilu WiFi na karcie SD."};
         }
         snprintf(selected_ssid, sizeof(selected_ssid), "%s", ssid);
@@ -15967,6 +17407,8 @@ GuiBleCommandResult gui_app_ble_action(const char *action,
                    : GuiBleCommandResult{false, "relay_test_unavailable", "Kanal jest niedostepny."};
     }
     if (strcmp(action, "restart_device") == 0) {
+        ota_reboot_reason =
+            RuntimeFaultReason::ManualRestart;
         ota_reboot_pending = true;
         ota_reboot_at_ms = millis() + 1000UL;
         return {true, "ok", "Restart sterownika za chwile."};
@@ -15977,6 +17419,9 @@ GuiBleCommandResult gui_app_ble_action(const char *action,
             prefs.end();
         }
         device_credentials_factory_reset();
+        wifi_credential_store_clear();
+        sensor_calibration_store_reset_defaults();
+        remote_alarm_relay_clear();
         admin_sessions.clear();
         load_default_config(cfg);
         display_auto_brightness = true;
@@ -15991,6 +17436,8 @@ GuiBleCommandResult gui_app_ble_action(const char *action,
         ato_timeout_latched = false;
         gui_app_save_settings();
         apply_mcp_outputs();
+        ota_reboot_reason =
+            RuntimeFaultReason::FactoryReset;
         ota_reboot_pending = true;
         ota_reboot_at_ms = millis() + 1200UL;
         return {true, "ok", "Konfiguracja fabryczna przywrocona."};
@@ -16263,6 +17710,10 @@ GuiBleCommandResult execute_v2_control_action_locked(const char *action,
         control_modes.stop_service();
         return {true, "automatic_restored", "Tryb serwisowy zakonczony; powrot do AUTO."};
     }
+    if (is_remote_gateway_action(action)) {
+        return execute_remote_gateway_action(
+            action, command_json);
+    }
     if (strcmp(action, "forget_ble_bonds") == 0) {
         return ble_controller_request_forget_bonds()
                    ? GuiBleCommandResult{
@@ -16284,9 +17735,10 @@ bool is_v2_control_action(const char *action) {
             strcmp(action, "clear_timed_override") == 0 ||
             strcmp(action, "start_feeding_mode") == 0 ||
             strcmp(action, "stop_feeding_mode") == 0 ||
-            strcmp(action, "start_service_mode") == 0 ||
-            strcmp(action, "stop_service_mode") == 0 ||
-            strcmp(action, "forget_ble_bonds") == 0);
+             strcmp(action, "start_service_mode") == 0 ||
+             strcmp(action, "stop_service_mode") == 0 ||
+             is_remote_gateway_action(action) ||
+             strcmp(action, "forget_ble_bonds") == 0);
 }
 
 uint32_t v2_action_fingerprint(const char *action, const char *command_json) {
@@ -16337,6 +17789,61 @@ uint32_t v2_action_fingerprint(const char *action, const char *command_json) {
             aquarium::ControlModeManager::kServiceMaxSeconds,
             &duration);
         snprintf(canonical, sizeof(canonical), "%s|%ld", action, duration);
+    } else if (strcmp(
+                   action,
+                   "save_remote_gateway") == 0) {
+        char base_url[
+            REMOTE_ALARM_RELAY_URL_BYTES] = {};
+        char device_id[
+            REMOTE_ALARM_RELAY_DEVICE_ID_BYTES] = {};
+        char hmac_secret[136] = {};
+        bool enabled = true;
+        ble_json_read_string(
+            command_json,
+            "baseUrl",
+            base_url,
+            sizeof(base_url));
+        ble_json_read_string(
+            command_json,
+            "deviceId",
+            device_id,
+            sizeof(device_id));
+        ble_json_read_string(
+            command_json,
+            "hmacSecret",
+            hmac_secret,
+            sizeof(hmac_secret));
+        ble_json_read_bool(
+            command_json, "enabled", &enabled);
+        snprintf(
+            canonical,
+            sizeof(canonical),
+            "%s|%08lx|%08lx|%08lx|%u",
+            action,
+            static_cast<unsigned long>(
+                aquarium::IdempotencyLedger::
+                    fingerprint(base_url)),
+            static_cast<unsigned long>(
+                aquarium::IdempotencyLedger::
+                    fingerprint(device_id)),
+            static_cast<unsigned long>(
+                aquarium::IdempotencyLedger::
+                    fingerprint(hmac_secret)),
+            enabled ? 1U : 0U);
+        secure_clear_gui_buffer(
+            hmac_secret, sizeof(hmac_secret));
+    } else if (strcmp(
+                   action,
+                   "set_remote_gateway_enabled") == 0) {
+        bool enabled = false;
+        ble_json_read_bool(
+            command_json, "enabled", &enabled);
+        snprintf(
+            canonical,
+            sizeof(canonical),
+            "%s|%u",
+            action,
+            enabled ? 1U : 0U);
     } else {
         snprintf(canonical, sizeof(canonical), "%s", action);
     }
@@ -16466,17 +17973,24 @@ bool gui_app_v2_capabilities_json(char *out, size_t out_size) {
         "\"features\":{\"timedOverrides\":true,\"feedingMode\":true,"
         "\"serviceMode\":true,\"safeOta\":true,\"idempotency\":true,"
         "\"adminSessions\":true,\"aquaelLightProfiles\":true,"
-        "\"signedFirmwarePackages\":true},"
+        "\"signedFirmwarePackages\":true,\"sensorCalibration\":true,"
+        "\"persistentAlarmTransitions\":true,\"runtimeWatchdog\":true,"
+        "\"remoteAlarmGateway\":true},"
         "\"security\":{\"ble\":{\"linkEncryption\":true,\"bonding\":true,"
         "\"mitmProtection\":true,\"secureConnections\":true,"
         "\"minimumKeySize\":16,\"bondCount\":%d,"
         "\"applicationAuth\":\"short_lived_token\"},"
         "\"ota\":{\"algorithm\":\"rsa-pss-sha256\","
-        "\"trustedKeyId\":\"%s\",\"unsignedOtaAllowed\":%s}},"
+        "\"trustedKeyId\":\"%s\",\"unsignedOtaAllowed\":%s},"
+        "\"remoteGateway\":{\"provisioningTransport\":\"ble\","
+        "\"linkEncryptionRequired\":true,\"bondRequired\":true,"
+        "\"adminSessionRequired\":true}},"
         "\"endpoints\":{\"status\":{\"method\":\"GET\",\"path\":\"/api/status\"},"
         "\"capabilities\":{\"method\":\"GET\",\"path\":\"/api/v2/capabilities\"},"
         "\"auth\":{\"method\":\"POST\",\"path\":\"/api/v2/auth\","
         "\"contentType\":\"application/json\"},"
+        "\"alarmEvents\":{\"method\":\"GET\","
+        "\"path\":\"/api/v2/alarm-events\"},"
         "\"action\":{\"method\":\"POST\",\"path\":\"/api/action\","
         "\"contentType\":\"application/x-www-form-urlencoded\","
         "\"jsonAlias\":\"/api/v2/action\"}},"
@@ -16494,7 +18008,9 @@ bool gui_app_v2_capabilities_json(char *out, size_t out_size) {
         "\"actions\":[\"set_light_profile\",\"set_timed_override\","
         "\"clear_timed_override\",\"start_feeding_mode\","
         "\"stop_feeding_mode\",\"start_service_mode\",\"stop_service_mode\","
-        "\"forget_ble_bonds\"],"
+        "\"forget_ble_bonds\",\"save_calibration\","
+        "\"save_remote_gateway\",\"set_remote_gateway_enabled\","
+        "\"clear_remote_gateway\"],"
         "\"lights\":{\"front\":{\"label\":\"Przednia\",\"relay\":\"light1\"},"
         "\"rear\":{\"label\":\"Tylna\",\"relay\":\"light2\"},"
         "\"profiles\":[\"day\",\"daybreak\",\"night\"]},"

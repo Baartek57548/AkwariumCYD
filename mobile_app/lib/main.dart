@@ -5,9 +5,11 @@ import 'alarm_center/background_sync.dart';
 import 'app_settings.dart';
 import 'aquarium_app.dart';
 import 'controller_bootstrap_page.dart';
+import 'remote_gateway/remote_push.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
+  RemotePushBootstrap.configureBackgroundHandling();
   try {
     await AquariumBackgroundService.initialize();
   } on Object {

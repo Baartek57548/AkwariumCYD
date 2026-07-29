@@ -1,0 +1,15 @@
+{
+  "name": "aquacyd-secure-gateway",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Optional outbound-only alarm gateway for AquaCYD controllers.",
+  "engines": {
+    "node": ">=22.0.0"
+  },
+  "scripts": {
+    "generate:secrets": "node scripts/generate-secrets.mjs",
+    "start": "node src/server.mjs",
+    "test": "node --test test/*.test.mjs"
+  }
+}

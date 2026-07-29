@@ -1,5 +1,10 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 
+import '../../offline_drafts/offline_configuration_draft.dart';
+import '../../remote_gateway/remote_alarm_gateway.dart';
+import '../../remote_gateway/remote_alarm_gateway_card.dart';
 import '../controller_api.dart';
 import '../controller_session.dart';
 import '../controller_shell.dart';
@@ -12,11 +17,13 @@ class SettingsView extends StatefulWidget {
     required this.session,
     required this.runAction,
     required this.ensureAdmin,
+    this.draftRepository,
   });
 
   final ControllerSession session;
   final RunControllerAction runAction;
   final Future<bool> Function() ensureAdmin;
+  final OfflineDraftRepository? draftRepository;
 
   @override
   State<SettingsView> createState() => _SettingsViewState();
@@ -32,10 +39,14 @@ class _SettingsViewState extends State<SettingsView> {
   bool _networkConfigurationLoaded = false;
   final Set<String> busy = {};
   String? message;
+  late final OfflineDraftRepository _draftRepository;
+  OfflineConfigurationDraft? _displayDraft;
+  bool _displayDraftConflict = false;
 
   @override
   void initState() {
     super.initState();
+    _draftRepository = widget.draftRepository ?? OfflineDraftRepository();
     final status = widget.session.status;
     final network = status.section('network');
     final display = status.section('display');
@@ -43,11 +54,23 @@ class _SettingsViewState extends State<SettingsView> {
     password = TextEditingController();
     _networkConfigurationLoaded = network.containsKey('configuredStaSsid');
     _readDisplayConfiguration(display);
+    unawaited(_loadDisplayDraft());
   }
 
   @override
   void didUpdateWidget(SettingsView oldWidget) {
     super.didUpdateWidget(oldWidget);
+    if (!identical(oldWidget.session, widget.session)) {
+      final status = widget.session.status;
+      final network = status.section('network');
+      ssid.text = network.text('configuredStaSsid');
+      _networkConfigurationLoaded = network.containsKey('configuredStaSsid');
+      _readDisplayConfiguration(status.section('display'));
+      _displayDraft = null;
+      _displayDraftConflict = false;
+      unawaited(_loadDisplayDraft());
+      return;
+    }
     final status = widget.session.status;
     final network = status.section('network');
     if (!_networkConfigurationLoaded &&
@@ -57,6 +80,10 @@ class _SettingsViewState extends State<SettingsView> {
     }
     if (!_hasDisplayConfiguration) {
       _readDisplayConfiguration(status.section('display'));
+    }
+    final draft = _displayDraft;
+    if (draft != null) {
+      _displayDraftConflict = draft.conflictsWith(_displayBaseData());
     }
   }
 
@@ -93,6 +120,13 @@ class _SettingsViewState extends State<SettingsView> {
       await operation();
     } on ControllerApiException catch (error) {
       if (mounted) setState(() => message = error.message);
+    } on Object {
+      if (mounted) {
+        setState(
+          () => message =
+              'Operacja nie powiodła się. Sprawdź połączenie i pamięć aplikacji.',
+        );
+      }
     } finally {
       if (mounted) setState(() => busy.remove(key));
     }
@@ -114,15 +148,125 @@ class _SettingsViewState extends State<SettingsView> {
   Future<void> _saveDisplay() async {
     if (!_hasDisplayConfiguration) return;
     await _execute('display', () async {
+      final payload = <String, Object?>{
+        'autoBrightness': autoBrightness!,
+        'profile': displayProfile!,
+        'brightness': brightness!,
+      };
+      if (!widget.session.canIssueCommands) {
+        final now = DateTime.now().toUtc();
+        final existing = _displayDraft;
+        final draft = existing == null
+            ? OfflineConfigurationDraft.create(
+                kind: OfflineDraftKind.settings,
+                controllerId: _controllerDraftId,
+                baseData: _displayBaseData(),
+                editedData: payload,
+                now: now,
+              )
+            : OfflineConfigurationDraft(
+                kind: existing.kind,
+                controllerId: existing.controllerId,
+                baseVersion: existing.baseVersion,
+                baseData: existing.baseData,
+                editedData: payload,
+                createdAt: existing.createdAt,
+                updatedAt: now,
+              );
+        await _draftRepository.save(draft);
+        if (mounted) {
+          setState(() {
+            _displayDraft = draft;
+            _displayDraftConflict = draft.conflictsWith(_displayBaseData());
+            message = _displayDraftConflict
+                ? 'Szkic zapisano, zachowując konflikt z nowszym sterownikiem.'
+                : 'Szkic ustawień ekranu zapisano bez wysyłania polecenia.';
+          });
+        }
+        return;
+      }
       final result = await widget.runAction(
         'save_display',
-        payload: {
-          'autoBrightness': autoBrightness!,
-          'profile': displayProfile!,
-          'brightness': brightness!,
-        },
+        payload: payload,
+        confirmation: _displayDraftConflict
+            ? 'Sterownik ma nowsze ustawienia ekranu. Zastąpić je szkicem?'
+            : null,
+      );
+      await _draftRepository.delete(
+        kind: OfflineDraftKind.settings,
+        controllerId: _controllerDraftId,
       );
       if (mounted) setState(() => message = result.message);
+    });
+  }
+
+  String get _controllerDraftId {
+    final network = widget.session.status.section('network');
+    final advertised = network.text(
+      'configuredApSsid',
+      network.text('staSsid'),
+    );
+    if (advertised.trim().isNotEmpty) return 'aquacyd:$advertised';
+    return widget.session.baseUri?.toString() ?? 'aquacyd:local-controller';
+  }
+
+  Map<String, Object?> _displayBaseData() {
+    final display = widget.session.status.section('display');
+    return <String, Object?>{
+      'autoBrightness': display['autoBrightness'],
+      'profile': display['profile'],
+      'brightness': display['brightness'],
+    };
+  }
+
+  Future<void> _loadDisplayDraft() async {
+    try {
+      final draft = await _draftRepository.load(
+        kind: OfflineDraftKind.settings,
+        controllerId: _controllerDraftId,
+      );
+      if (!mounted || draft == null) return;
+      setState(() {
+        _displayDraft = draft;
+        _displayDraftConflict = draft.conflictsWith(_displayBaseData());
+        final edited = draft.editedData;
+        final rawAuto = edited['autoBrightness'];
+        final rawBrightness = edited['brightness'];
+        final rawProfile = edited['profile'];
+        if (rawAuto is bool) autoBrightness = rawAuto;
+        if (rawBrightness is num) {
+          brightness = rawBrightness.toInt().clamp(10, 100);
+        }
+        if (rawProfile is String &&
+            const {
+              'always_on',
+              'timeout_60s',
+              'always_off',
+            }.contains(rawProfile)) {
+          displayProfile = rawProfile;
+        }
+        message = _displayDraftConflict
+            ? 'Szkic ekranu jest oparty na starszej konfiguracji.'
+            : 'Wczytano lokalny szkic ustawień ekranu.';
+      });
+    } on Object {
+      if (mounted) {
+        setState(() => message = 'Nie udało się odczytać szkicu ekranu.');
+      }
+    }
+  }
+
+  Future<void> _discardDisplayDraft() async {
+    await _draftRepository.delete(
+      kind: OfflineDraftKind.settings,
+      controllerId: _controllerDraftId,
+    );
+    if (!mounted) return;
+    setState(() {
+      _displayDraft = null;
+      _displayDraftConflict = false;
+      _readDisplayConfiguration(widget.session.status.section('display'));
+      message = 'Usunięto szkic ustawień ekranu.';
     });
   }
 
@@ -138,6 +282,69 @@ class _SettingsViewState extends State<SettingsView> {
     });
   }
 
+  String? get _gatewayProvisioningUnavailableReason {
+    final session = widget.session;
+    if (!session.isBluetooth) {
+      return 'Provisioning firmware jest celowo zablokowany przez Wi‑Fi, '
+          'HTTP i tryb offline. Połącz sterownik bezpośrednio przez '
+          'szyfrowane BLE v2.';
+    }
+    if (session.isLegacyBluetooth) {
+      return 'Ten sterownik używa BLE v1. Provisioning wymaga '
+          'uwierzytelnionego i szyfrowanego protokołu BLE v2.';
+    }
+    if (!session.canIssueCommands) {
+      return session.commandBlockReason ??
+          'Poczekaj na aktywną, bezpieczną sesję BLE.';
+    }
+    return null;
+  }
+
+  Future<String> _provisionRemoteGateway(
+    RemoteGatewayProvisioningRequest request,
+  ) async {
+    final unavailable = _gatewayProvisioningUnavailableReason;
+    if (unavailable != null) throw StateError(unavailable);
+    if (!await widget.ensureAdmin()) {
+      throw StateError(
+        'Provisioning anulowano przed autoryzacją administratora.',
+      );
+    }
+    try {
+      final result = await widget.runAction(
+        'save_remote_gateway',
+        payload: request.actionPayload,
+        confirmation:
+            'Zapisać nowy sekret bramki w sterowniku? Poprzedni sekret '
+            'przestanie działać.',
+      );
+      return result.message;
+    } on ControllerApiException catch (error) {
+      throw StateError(error.message);
+    }
+  }
+
+  Future<String> _clearRemoteGatewayProvisioning() async {
+    final unavailable = _gatewayProvisioningUnavailableReason;
+    if (unavailable != null) throw StateError(unavailable);
+    if (!await widget.ensureAdmin()) {
+      throw StateError(
+        'Czyszczenie anulowano przed autoryzacją administratora.',
+      );
+    }
+    try {
+      final result = await widget.runAction(
+        'clear_remote_gateway',
+        confirmation:
+            'Usunąć ze sterownika sekret i konfigurację zdalnej bramki? '
+            'Alarmy zdalne przestaną być wysyłane.',
+      );
+      return result.message;
+    } on ControllerApiException catch (error) {
+      throw StateError(error.message);
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final status = widget.session.status;
@@ -147,6 +354,8 @@ class _SettingsViewState extends State<SettingsView> {
     final firmware = status.section('firmware');
     final canEdit = widget.session.canIssueCommands;
     final hasDisplayConfiguration = _hasDisplayConfiguration;
+    final canEditDisplay =
+        canEdit || (widget.session.isOfflineMode && hasDisplayConfiguration);
     return ControllerPageBody(
       children: [
         const SectionHeader(
@@ -183,6 +392,28 @@ class _SettingsViewState extends State<SettingsView> {
             ),
             childrenPadding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
             children: [
+              if (!canEdit && canEditDisplay) ...[
+                const StatusBanner(
+                  icon: Icons.edit_note_rounded,
+                  title: 'Szkic ustawień offline',
+                  message:
+                      'Możesz przygotować nastawy ekranu. Żadne polecenie '
+                      'nie zostanie wysłane bez aktywnego połączenia.',
+                  isError: false,
+                ),
+                const SizedBox(height: 12),
+              ],
+              if (_displayDraftConflict) ...[
+                const StatusBanner(
+                  icon: Icons.sync_problem_rounded,
+                  title: 'Konflikt wersji bazowej',
+                  message:
+                      'Sterownik ma nowsze nastawy. Przed zastosowaniem '
+                      'sprawdź różnice i świadomie potwierdź zastąpienie.',
+                  isError: false,
+                ),
+                const SizedBox(height: 12),
+              ],
               Form(
                 key: networkForm,
                 child: Column(
@@ -280,6 +511,17 @@ class _SettingsViewState extends State<SettingsView> {
           ),
         ),
         const SizedBox(height: 10),
+        RemoteAlarmGatewayCard(
+          onProvisionController: _gatewayProvisioningUnavailableReason == null
+              ? _provisionRemoteGateway
+              : null,
+          onClearControllerProvisioning:
+              _gatewayProvisioningUnavailableReason == null
+              ? _clearRemoteGatewayProvisioning
+              : null,
+          provisioningUnavailableReason: _gatewayProvisioningUnavailableReason,
+        ),
+        const SizedBox(height: 10),
         Card(
           child: ExpansionTile(
             leading: const Icon(Icons.brightness_6_rounded),
@@ -323,7 +565,7 @@ class _SettingsViewState extends State<SettingsView> {
                       child: Text('Zawsze wyłączony'),
                     ),
                   ],
-                  onChanged: canEdit
+                  onChanged: canEditDisplay
                       ? (value) {
                           if (value != null) {
                             setState(() => displayProfile = value);
@@ -336,7 +578,7 @@ class _SettingsViewState extends State<SettingsView> {
                   subtitle:
                       'LDR skaluje podświetlenie od 15% do ustawionego maksimum.',
                   value: autoBrightness!,
-                  onChanged: canEdit
+                  onChanged: canEditDisplay
                       ? (value) => setState(() => autoBrightness = value)
                       : null,
                 ),
@@ -355,16 +597,51 @@ class _SettingsViewState extends State<SettingsView> {
                   max: 100,
                   divisions: 18,
                   label: '${brightness!}%',
-                  onChanged: canEdit
+                  onChanged: canEditDisplay
                       ? (value) =>
                             setState(() => brightness = (value / 5).round() * 5)
                       : null,
                 ),
                 SaveButton(
-                  onPressed: canEdit ? _saveDisplay : null,
-                  label: 'Zapisz ustawienia ekranu',
+                  onPressed: canEditDisplay ? _saveDisplay : null,
+                  label: canEdit
+                      ? _displayDraft == null
+                            ? 'Zapisz ustawienia ekranu'
+                            : 'Zastosuj szkic ustawień'
+                      : 'Zapisz szkic ustawień',
                   busy: busy.contains('display'),
                 ),
+                if (_displayDraft case final draft?) ...[
+                  const SizedBox(height: 8),
+                  ExpansionTile(
+                    tilePadding: EdgeInsets.zero,
+                    title: Text(
+                      'Różnice szkicu (${draft.diff.length})',
+                      style: const TextStyle(fontWeight: FontWeight.w800),
+                    ),
+                    subtitle: Text('Baza ${draft.baseVersion.substring(0, 8)}'),
+                    children: [
+                      for (final change in draft.diff)
+                        ListTile(
+                          dense: true,
+                          title: Text(change.path),
+                          subtitle: Text(
+                            '${change.beforeLabel} → ${change.afterLabel}',
+                          ),
+                        ),
+                      Align(
+                        alignment: Alignment.centerRight,
+                        child: TextButton.icon(
+                          onPressed: busy.contains('display')
+                              ? null
+                              : _discardDisplayDraft,
+                          icon: const Icon(Icons.delete_outline_rounded),
+                          label: const Text('Usuń szkic'),
+                        ),
+                      ),
+                    ],
+                  ),
+                ],
               ],
             ],
           ),

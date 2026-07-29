@@ -1,7 +1,9 @@
 import 'dart:async';
+import 'dart:io';
 
 import 'package:flutter/foundation.dart';
 
+import 'app_update_background.dart';
 import 'app_update_models.dart';
 import 'app_update_platform.dart';
 import 'app_update_preferences.dart';
@@ -86,6 +88,9 @@ class AppUpdateController extends ChangeNotifier {
 
   AppUpdateState get state => _state;
 
+  AppUpdateBackgroundOptions get backgroundOptions =>
+      _preferences?.backgroundOptions ?? const AppUpdateBackgroundOptions();
+
   bool get isEnabled =>
       _installedApp?.packageName == productionPackageName &&
       _state.phase != AppUpdatePhase.disabled;
@@ -118,6 +123,9 @@ class AppUpdateController extends ChangeNotifier {
         return;
       }
       await _preferences!.cleanForInstalledVersion(installedVersion);
+      await AppUpdateBackgroundService.applyOptions(
+        _preferences!.backgroundOptions,
+      );
       _emit(AppUpdatePhase.idle);
     } on AppUpdateException {
       _emit(AppUpdatePhase.disabled);
@@ -167,6 +175,7 @@ class AppUpdateController extends ChangeNotifier {
         _emit(AppUpdatePhase.idle, release: release);
         return;
       }
+      await _adoptBackgroundDownload(release);
       _emit(AppUpdatePhase.available, release: release, isManual: manual);
     } on AppUpdateException catch (error) {
       _emit(
@@ -199,6 +208,15 @@ class AppUpdateController extends ChangeNotifier {
     _emit(AppUpdatePhase.idle, release: release);
   }
 
+  Future<void> saveBackgroundOptions(AppUpdateBackgroundOptions options) async {
+    await initialize();
+    final preferences = _preferences;
+    if (preferences == null) return;
+    await preferences.saveBackgroundOptions(options);
+    await AppUpdateBackgroundService.applyOptions(options);
+    notifyListeners();
+  }
+
   Future<void> skipCurrentVersion() async {
     final release = _state.release;
     final preferences = _preferences;
@@ -226,6 +244,10 @@ class AppUpdateController extends ChangeNotifier {
     if (release == null || _isInstallFlowActive) return;
     _cancelDownload = false;
     try {
+      if (await _hasUsableDownloadedApk(release)) {
+        await _launchInstaller(release);
+        return;
+      }
       _emit(AppUpdatePhase.downloading, release: release, progress: 0);
       final updateDirectory = await _platform.getUpdateDirectory();
       final progressStopwatch = Stopwatch()..start();
@@ -254,6 +276,11 @@ class AppUpdateController extends ChangeNotifier {
         isCanceled: () => _cancelDownload || _disposed,
       );
       _downloadedApkPath = apkPath;
+      await _preferences?.recordDownloaded(
+        version: release.version,
+        path: apkPath,
+        sha256: release.asset.sha256,
+      );
       if (!_isForeground) {
         _emit(
           AppUpdatePhase.readyToInstall,
@@ -325,6 +352,26 @@ class AppUpdateController extends ChangeNotifier {
       message:
           'Instalator Androida został otwarty. Potwierdź instalację nowej wersji.',
     );
+  }
+
+  Future<void> _adoptBackgroundDownload(AppRelease release) async {
+    final preferences = _preferences;
+    if (preferences == null ||
+        !preferences.hasMatchingDownload(release.asset, release.version)) {
+      return;
+    }
+    final path = preferences.downloadedPath;
+    if (path != null && await File(path).exists()) {
+      _downloadedApkPath = path;
+      return;
+    }
+    await preferences.clearDownloaded();
+  }
+
+  Future<bool> _hasUsableDownloadedApk(AppRelease release) async {
+    await _adoptBackgroundDownload(release);
+    final path = _downloadedApkPath;
+    return path != null && await File(path).exists();
   }
 
   Future<void> onAppResumed() async {

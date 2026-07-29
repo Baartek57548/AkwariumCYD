@@ -6,6 +6,7 @@ import 'package:flutter/widgets.dart' hide LocalHistoryEntry;
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:workmanager/workmanager.dart';
 
+import '../app_update/app_update_background.dart';
 import '../controller_preferences.dart';
 import '../controller_address.dart';
 import '../controller_snapshot_cache.dart';
@@ -364,6 +365,10 @@ abstract final class AquariumBackgroundService {
 void aquariumBackgroundCallbackDispatcher() {
   WidgetsFlutterBinding.ensureInitialized();
   Workmanager().executeTask((task, inputData) async {
+    if (AppUpdateBackgroundService.handles(task)) {
+      final result = await AppUpdateBackgroundRunner().run();
+      return result.succeeded;
+    }
     if (task != AquariumBackgroundService.workerTaskName &&
         task != AquariumBackgroundService.uniqueTaskName) {
       return true;

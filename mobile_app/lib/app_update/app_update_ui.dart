@@ -1,7 +1,9 @@
 import 'package:flutter/material.dart';
 
+import '../alarm_center/alarm_notifications.dart';
 import 'app_update_controller.dart';
 import 'app_update_models.dart';
+import 'app_update_preferences.dart';
 
 enum AppUpdatePromptAction { install, remindLater, skip }
 
@@ -307,10 +309,57 @@ class AppUpdateProgressDialog extends StatelessWidget {
   }
 }
 
-class AppUpdateSettingsCard extends StatelessWidget {
-  const AppUpdateSettingsCard({super.key, required this.controller});
+class AppUpdateSettingsCard extends StatefulWidget {
+  const AppUpdateSettingsCard({
+    super.key,
+    required this.controller,
+    this.notificationSink,
+  });
 
   final AppUpdateController controller;
+  final AlarmNotificationSink? notificationSink;
+
+  @override
+  State<AppUpdateSettingsCard> createState() => _AppUpdateSettingsCardState();
+}
+
+class _AppUpdateSettingsCardState extends State<AppUpdateSettingsCard> {
+  bool _savingOptions = false;
+
+  AppUpdateController get controller => widget.controller;
+
+  Future<void> _saveOptions(AppUpdateBackgroundOptions options) async {
+    if (_savingOptions) return;
+    setState(() => _savingOptions = true);
+    try {
+      if (options.systemNotificationsEnabled) {
+        final sink = widget.notificationSink ?? LocalAlarmNotificationSink();
+        if (!await sink.requestPermission()) {
+          if (!mounted) return;
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text(
+                'System nie zezwolił na powiadomienia o aktualizacjach.',
+              ),
+              behavior: SnackBarBehavior.floating,
+            ),
+          );
+          return;
+        }
+      }
+      await controller.saveBackgroundOptions(options);
+    } on Object {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Nie udało się zapisać ustawień aktualizacji w tle.'),
+          behavior: SnackBarBehavior.floating,
+        ),
+      );
+    } finally {
+      if (mounted) setState(() => _savingOptions = false);
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -321,6 +370,7 @@ class AppUpdateSettingsCard extends StatelessWidget {
         final installed = state.installedApp;
         final checking = state.phase == AppUpdatePhase.checking;
         final available = state.release;
+        final options = controller.backgroundOptions;
         return Card(
           child: Padding(
             padding: const EdgeInsets.all(16),
@@ -364,6 +414,35 @@ class AppUpdateSettingsCard extends StatelessWidget {
                   ),
                 ],
                 const SizedBox(height: 14),
+                SwitchListTile.adaptive(
+                  key: const Key('app-update-system-notifications-switch'),
+                  contentPadding: EdgeInsets.zero,
+                  value: options.systemNotificationsEnabled,
+                  onChanged: _savingOptions
+                      ? null
+                      : (value) => _saveOptions(
+                          options.copyWith(systemNotificationsEnabled: value),
+                        ),
+                  title: const Text('Powiadamiaj o nowej wersji'),
+                  subtitle: const Text(
+                    'Okresowa kontrola działa także po zamknięciu aplikacji.',
+                  ),
+                ),
+                SwitchListTile.adaptive(
+                  key: const Key('app-update-background-download-switch'),
+                  contentPadding: EdgeInsets.zero,
+                  value: options.downloadOnWifiEnabled,
+                  onChanged: _savingOptions
+                      ? null
+                      : (value) => _saveOptions(
+                          options.copyWith(downloadOnWifiEnabled: value),
+                        ),
+                  title: const Text('Pobieraj wcześniej przez Wi‑Fi'),
+                  subtitle: const Text(
+                    'Opcjonalne. Instalacja zawsze wymaga Twojego potwierdzenia.',
+                  ),
+                ),
+                const SizedBox(height: 8),
                 OutlinedButton.icon(
                   onPressed: checking
                       ? null

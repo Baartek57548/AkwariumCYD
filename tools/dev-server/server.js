@@ -360,15 +360,15 @@ function createDevServer(options = {}) {
                     v: 2,
                     data: {
                         device: 'cydAkwarium',
-                        firmwareVersion: '5.1.0',
+                        firmwareVersion: '6.0.0',
                         ota: {
                             format: 'aqfw-v1',
                             productId: 'aquacyd-cyd',
                             target: 'ili9341',
                             keyId: '9470c281de5f898f',
                             bootloaderVersion: 1,
-                            securityVersion: 1,
-                            minimumSecurityVersion: 1,
+                            securityVersion: 2,
+                            minimumSecurityVersion: 2,
                             updatePartitionBytes: 1966080,
                             pendingVerify: false,
                             state: 'valid'

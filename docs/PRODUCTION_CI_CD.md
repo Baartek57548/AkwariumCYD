@@ -2,12 +2,16 @@
 
 ## Automatyczna weryfikacja
 
-Workflow `.github/workflows/ci.yml` uruchamia cztery niezależne zadania:
+Workflow `.github/workflows/ci.yml` uruchamia pięć niezależnych zadań:
 
 1. self-test narzędzi wydaniowych i HIL;
-2. testy Node API, składnię JavaScript, zgodność assetów gzip i Playwright;
+2. testy Node API i bramy, składnię JavaScript, zgodność assetów gzip oraz
+   Playwright na Chromium, Firefox i WebKit;
 3. testy natywnej logiki PlatformIO oraz build ILI9341 i ST7789;
 4. `flutter analyze`, testy Flutter, testy Android/JVM i build wariantu `current`.
+5. smoke test na emulatorze Android API 35: rzeczywiste kanały i dostarczenie
+   powiadomienia, uprawnienie systemowe oraz start aplikacji z bezpiecznego
+   payloadu powiadomienia; test nie emuluje ani nie wymaga sprzętu BLE.
 
 Self-test HIL obejmuje rzeczywiste kontrakty v2 auth/action/capabilities,
 idempotencję, timeout override oraz dwie niezależne lampy Aquael `front` i
@@ -29,7 +33,8 @@ Gałąź główna powinna wymagać:
 
 - PR z co najmniej jednym zatwierdzeniem;
 - zaliczonych zadań `Release and HIL tooling`, `Web and Node`,
-  `PlatformIO firmware` oraz `Flutter and Android`;
+  `PlatformIO firmware`, `Flutter and Android` oraz
+  `Android notification smoke (API 35)`;
 - zablokowanego force-push i usuwania gałęzi;
 - rozwiązania wszystkich komentarzy;
 - aktualnej gałęzi względem `main`;
@@ -47,6 +52,20 @@ W chronionym środowisku wydania mobilnego:
 - `ANDROID_KEY_ALIAS`;
 - `ANDROID_KEY_PASSWORD`;
 - `ANDROID_STORE_PASSWORD`.
+
+To samo środowisko może zawierać komplet czterech niesekretnych GitHub
+Environment Variables używanych do opcjonalnego zdalnego push:
+
+- `AQUACYD_FIREBASE_API_KEY`;
+- `AQUACYD_FIREBASE_APP_ID`;
+- `AQUACYD_FIREBASE_MESSAGING_SENDER_ID`;
+- `AQUACYD_FIREBASE_PROJECT_ID`.
+
+Workflow akceptuje wyłącznie dwa stany: brak wszystkich czterech zmiennych
+oznacza jawny build `local-only`, natomiast komplet czterech jest przekazywany
+do Fluttera jako `--dart-define` i włącza adapter Firebase. Konfiguracja częściowa
+lub wartość zawierająca białe znaki zatrzymuje wydanie przed zbudowaniem APK.
+Wybrany tryb jest zapisywany w podsumowaniu joba bez ujawniania wartości.
 
 W chronionym środowisku firmware:
 
@@ -69,7 +88,8 @@ Po buildzie usuwa materializowane pliki również przy błędzie.
 1. Zwiększ `version: X.Y.Z+N` w `mobile_app/pubspec.yaml`.
 2. Upewnij się, że cały CI jest zielony.
 3. Utwórz podpisany lub chroniony tag `mobile-vX.Y.Z` na zweryfikowanym commicie.
-4. Workflow sprawdzi tag względem pubspec, wykona pełne testy i zbuduje APK.
+4. Workflow sprawdzi tag względem pubspec, zweryfikuje konfigurację
+   `local-only`/Firebase, wykona pełne testy i zbuduje APK.
 5. `aapt` potwierdzi package, `versionName` i `versionCode`; `apksigner`
    potwierdzi certyfikat i jego zapisany publiczny fingerprint SHA-256.
 6. Publikowane są APK, `SHA256SUMS` i `release-manifest.json`.
@@ -130,3 +150,39 @@ Self-test i dry-run nie zapisują eFuse ani nie wysyłają żądań do urządzen
 Odczyt stanu konkretnego ESP32 wykonuje
 `python scripts/audit_esp32_security.py --port COMx`; skrypt nie zawiera żadnej
 operacji zapisu lub przepalania eFuse.
+
+## Bramka HIL dokładnego commita
+
+Tag `firmware-vX.Y.Z` najpierw przechodzi job `firmware-source` na izolowanym
+runnerze GitHub-hosted. Job rozwiązuje tag do pełnego SHA commita, sprawdza
+kanoniczną wersję oraz wymaga, aby commit był osiągalny z `origin/main`.
+Dopiero ten zatwierdzony SHA jest przekazywany do reusable workflow `hil.yml`.
+Stanowisko sprawdza po checkout, że `git rev-parse HEAD` jest identyczny z
+zatwierdzonym SHA. Dzięki temu self-hosted runner nigdy nie wykonuje kodu z
+dowolnego taga przed kontrolą ancestry. Dopiero zaliczony fizyczny HIL
+odblokowuje testy natywne, podpisanie i publikację. Raport `hil-report-<sha>`
+jest przechowywany przez 90 dni i wiąże wyniki z pełnym commitem.
+
+Wywołanie ręczne nadal jest możliwe, ale produkcyjne wydanie zawsze ustawia
+`run_hardware`, kontrolowane mutacje i scenariusz rollbacku. Brak oznaczonego
+runnera nie omija bramki — wydanie czeka albo kończy się błędem/timeoutem.
+
+## SBOM, provenance i pakiet WWW
+
+Wydanie mobilne publikuje CycloneDX SBOM zależności Dart obok APK. Wydanie
+firmware publikuje osobne SBOM-y dla PlatformIO/firmware i npm/panelu WWW.
+GitHub Artifact Attestations zapisuje SLSA build provenance oraz atestację SBOM
+dla APK, obu wariantów firmware, pakietów `.aqfw` i archiwum WWW.
+
+Weryfikację publicznego artefaktu można wykonać po zalogowaniu `gh`:
+
+```powershell
+gh attestation verify AquaCYD-Web-X.Y.Z.tar.gz `
+  --repo Baartek57548/AkwariumCYD
+gh attestation verify AquaCYD-Control-X.Y.Z-current.apk `
+  --repo Baartek57548/AkwariumCYD
+```
+
+Pełny, podpisany i wersjonowany panel SD jest częścią release firmware. Procedurę
+instalacji atomowej i rollbacku opisuje
+[WEB_BUNDLE_AND_GATEWAY_PWA.md](WEB_BUNDLE_AND_GATEWAY_PWA.md).

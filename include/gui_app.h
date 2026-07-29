@@ -79,13 +79,19 @@ void gui_app_update_status_bar(uint32_t uptime_sec);
  * @brief Aktualizuje panel deweloperski i moduly opcjonalne rzeczywistymi odczytami HAL.
  */
 void gui_app_update_sensor_debug(int ldr_value,
+                                 bool temperature_present,
+                                 bool temperature_stale,
+                                 uint32_t temperature_age_ms,
+                                 uint32_t temperature_error_count,
                                  bool adc_present,
                                  bool ph_valid,
                                  int16_t ph_raw,
                                  float ph_voltage,
+                                 float ph_value,
                                  bool ec_valid,
                                  int16_t ec_raw,
                                  float ec_voltage,
+                                 float ec_value,
                                  bool mcp_present,
                                  bool mcp_valid,
                                  uint16_t mcp_state);
@@ -106,6 +112,9 @@ bool gui_app_is_web_focus_active(void);
  * initialized. Used by the post-OTA health gate before marking an image valid.
  */
 bool gui_app_runtime_ready(void);
+
+/** OTA health gate: validates hardware required by the active configuration. */
+bool gui_app_ota_health_ready(void);
 
 struct GuiBleSnapshot {
     uint8_t protocol_version;

@@ -11,7 +11,9 @@
 #include "hal_display.h"
 #include "hal_sd.h"
 #include "ota_guard.h"
+#include "remote_alarm_relay.h"
 #include "runtime_controller.h"
+#include "runtime_safety.h"
 
 bool wifi_connected = false;
 int wifi_rssi = 0;
@@ -49,6 +51,13 @@ void log_ram_checkpoint(const char *stage) {
                   stage != nullptr ? stage : "unknown",
                   static_cast<unsigned long>(ESP.getFreeHeap()),
                   static_cast<unsigned long>(ESP.getMinFreeHeap()));
+}
+
+void service_ui_startup_watchdog() {
+    runtime_safety_heartbeat(
+        RuntimeSafetyTask::Ui,
+        millis(),
+        ESP.getFreeHeap());
 }
 
 bool is_leap_year(int year) {
@@ -146,13 +155,19 @@ bool apply_telemetry(const RuntimeTelemetry &frame) {
     gui_app_update_ldr(frame.ldr_value, frame.ldr_valid);
     gui_app_update_sensor_debug(
         frame.ldr_value,
+        frame.temperature_present,
+        frame.temperature_stale,
+        frame.temperature_age_ms,
+        frame.temperature_error_count,
         frame.adc_present,
         frame.ph_valid,
         frame.ph_raw,
         frame.ph_voltage,
+        frame.ph_value,
         frame.ec_valid,
         frame.ec_raw,
         frame.ec_voltage,
+        frame.ec_value,
         frame.mcp_present,
         frame.mcp_valid,
         frame.mcp_state);
@@ -190,11 +205,14 @@ void setup() {
     Serial.begin(HwConfig::UartConsole::BAUD);
     Serial.println();
     Serial.println("--- ESP32 CYD AQUARIUM / PRODUKCYJNY RUNTIME ---");
+    runtime_safety_initialize();
+    runtime_safety_register_current_task(RuntimeSafetyTask::Ui);
     ota_guard_initialize(millis());
 
     if (!gui_app_sync_init()) {
         Serial.println("FATAL: nie można utworzyć blokady GUI.");
-        return;
+        runtime_safety_fail_and_restart(
+            RuntimeFaultReason::GuiInitializationFailed);
     }
     if (!events_init()) {
         Serial.println("EVENTS: inicjalizacja kolejek nie powiodła się.");
@@ -202,10 +220,12 @@ void setup() {
 
     // Przekaźniki otrzymują stan bezpieczny przed inicjalizacją grafiki i SD.
     runtime_controller_prepare_hardware();
+    service_ui_startup_watchdog();
     log_ram_checkpoint("after_safe_hardware");
 
     lv_init();
     hal_display_init();
+    service_ui_startup_watchdog();
     log_ram_checkpoint("after_display");
 
     if (hal_sd_init()) {
@@ -223,7 +243,14 @@ void setup() {
         }
     }
 
+    service_ui_startup_watchdog();
     gui_app_init();
+    service_ui_startup_watchdog();
+    if (!remote_alarm_relay_initialize()) {
+        Serial.println(
+            "REMOTE_ALARM: relay task unavailable.");
+    }
+    service_ui_startup_watchdog();
     log_ram_checkpoint("after_gui");
 
     const uint32_t now_ms = millis();
@@ -233,12 +260,21 @@ void setup() {
     last_ota_health_ms = now_ms;
     if (!runtime_controller_start()) {
         Serial.println("FATAL: zadanie I/O Core 0 nie wystartowało.");
+        runtime_safety_fail_and_restart(
+            RuntimeFaultReason::IoTaskStartFailed);
+    }
+    if (!runtime_safety_start_supervisor()) {
+        Serial.println("FATAL: safety supervisor did not start.");
+        runtime_safety_fail_and_restart(
+            RuntimeFaultReason::IoTaskStartFailed);
     }
     Serial.printf("SYSTEM: UI Core=%d, I/O Core=0, gotowy.\n", xPortGetCoreID());
 }
 
 void loop() {
     const uint32_t now_ms = millis();
+    runtime_safety_heartbeat(
+        RuntimeSafetyTask::Ui, now_ms, ESP.getFreeHeap());
     service_clock(now_ms);
     service_status_bar(now_ms);
     service_lvgl(now_ms);
@@ -265,7 +301,8 @@ void loop() {
             telemetry_applied &&
             runtime_controller_is_healthy(
                 now_ms, OTA_HEARTBEAT_MAX_AGE_MS) &&
-            gui_app_runtime_ready();
+            gui_app_runtime_ready() &&
+            gui_app_ota_health_ready();
         ota_guard_service(now_ms, runtime_ready, ESP.getFreeHeap());
     }
 

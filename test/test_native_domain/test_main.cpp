@@ -16,6 +16,7 @@
 #include "idempotency_ledger.h"
 #include "ota_package.h"
 #include "ota_safety_policy.h"
+#include "sensor_calibration.h"
 #include "web_activity_tracker.h"
 #include "wifi_retry_policy.h"
 
@@ -146,6 +147,127 @@ static void test_alarm_flags_and_count() {
     TEST_ASSERT_BITS_HIGH(aquarium::AlarmLeak, flags);
     TEST_ASSERT_BITS_HIGH(aquarium::AlarmSupplyLow, flags);
     TEST_ASSERT_EQUAL_UINT(5U, aquarium::alarm_count(flags));
+}
+
+static void test_alarm_flags_report_required_sensor_and_actuator_health() {
+    aquarium::AlarmInput input = {
+        false, NAN,
+        false, NAN,
+        false, false,
+        false, false,
+        false, NAN,
+        aquarium::AlarmSensorTemperature |
+            aquarium::AlarmSensorPh |
+            aquarium::AlarmSensorLeak,
+        aquarium::AlarmSensorTemperature |
+            aquarium::AlarmSensorPh,
+        aquarium::AlarmSensorPh,
+        true,
+        true
+    };
+    const unsigned int flags = aquarium::evaluate_alarm_flags(input);
+    TEST_ASSERT_BITS_HIGH(aquarium::AlarmSensorMissing, flags);
+    TEST_ASSERT_BITS_HIGH(aquarium::AlarmSensorStale, flags);
+    TEST_ASSERT_BITS_HIGH(aquarium::AlarmSensorBusFault, flags);
+    TEST_ASSERT_BITS_HIGH(aquarium::AlarmActuatorWriteFailed, flags);
+    TEST_ASSERT_EQUAL_UINT(4U, aquarium::alarm_count(flags));
+}
+
+static void test_alarm_stability_filter_rejects_threshold_chatter() {
+    aquarium::AlarmStabilityFilter filter;
+    const unsigned int temperature =
+        aquarium::AlarmTemperatureHigh;
+
+    TEST_ASSERT_EQUAL_UINT(
+        aquarium::AlarmNone,
+        filter.update(temperature));
+    TEST_ASSERT_EQUAL_UINT(
+        aquarium::AlarmNone,
+        filter.update(aquarium::AlarmNone));
+    TEST_ASSERT_EQUAL_UINT(
+        aquarium::AlarmNone,
+        filter.update(temperature));
+    TEST_ASSERT_EQUAL_UINT(
+        temperature,
+        filter.update(temperature));
+
+    TEST_ASSERT_EQUAL_UINT(
+        temperature,
+        filter.update(aquarium::AlarmNone));
+    TEST_ASSERT_EQUAL_UINT(
+        temperature,
+        filter.update(temperature));
+    TEST_ASSERT_EQUAL_UINT(
+        temperature,
+        filter.update(aquarium::AlarmNone));
+    TEST_ASSERT_EQUAL_UINT(
+        temperature,
+        filter.update(aquarium::AlarmNone));
+    TEST_ASSERT_EQUAL_UINT(
+        aquarium::AlarmNone,
+        filter.update(aquarium::AlarmNone));
+}
+
+static void test_alarm_stability_filter_raises_safety_alarms_immediately() {
+    aquarium::AlarmStabilityFilter filter;
+    const unsigned int immediate =
+        aquarium::AlarmLeak |
+        aquarium::AlarmActuatorWriteFailed;
+
+    TEST_ASSERT_EQUAL_UINT(
+        immediate,
+        filter.update(immediate));
+    TEST_ASSERT_EQUAL_UINT(
+        immediate,
+        filter.update(aquarium::AlarmNone));
+    TEST_ASSERT_EQUAL_UINT(
+        immediate,
+        filter.update(aquarium::AlarmNone));
+    TEST_ASSERT_EQUAL_UINT(
+        aquarium::AlarmNone,
+        filter.update(aquarium::AlarmNone));
+}
+
+static void test_sensor_calibration_and_temperature_compensation() {
+    aquarium::SensorCalibration calibration =
+        aquarium::default_sensor_calibration();
+    calibration.ph_low_raw = 1000;
+    calibration.ph_high_raw = 3000;
+    calibration.ph_low_reference = 4.01f;
+    calibration.ph_high_reference = 6.86f;
+    calibration.ec_reference_raw = 12000;
+    calibration.ec_reference_us_cm = 1413.0f;
+    TEST_ASSERT_TRUE(aquarium::validate_sensor_calibration(calibration));
+    TEST_ASSERT_FLOAT_WITHIN(
+        0.001f, 4.01f, aquarium::calibrate_ph(1000, calibration));
+    TEST_ASSERT_FLOAT_WITHIN(
+        0.001f, 6.86f, aquarium::calibrate_ph(3000, calibration));
+    TEST_ASSERT_FLOAT_WITHIN(
+        0.001f, 5.435f, aquarium::calibrate_ph(2000, calibration));
+    TEST_ASSERT_FLOAT_WITHIN(
+        0.01f,
+        1413.0f,
+        aquarium::calibrate_ec(12000, 25.0f, true, calibration));
+    TEST_ASSERT_TRUE(
+        aquarium::calibrate_ec(12000, 30.0f, true, calibration) < 1413.0f);
+
+    calibration.ph_high_raw = calibration.ph_low_raw;
+    TEST_ASSERT_FALSE(aquarium::validate_sensor_calibration(calibration));
+    TEST_ASSERT_TRUE(isnan(aquarium::calibrate_ph(2000, calibration)));
+}
+
+static void test_sensor_median_filter_rejects_single_spike() {
+    aquarium::MedianFilter filter;
+    TEST_ASSERT_EQUAL_size_t(0U, filter.size());
+    filter.push(1000);
+    filter.push(1002);
+    filter.push(4095);
+    filter.push(999);
+    const float median = filter.push(1001);
+    TEST_ASSERT_EQUAL_size_t(5U, filter.size());
+    TEST_ASSERT_FLOAT_WITHIN(0.001f, 1001.0f, median);
+    filter.reset();
+    TEST_ASSERT_EQUAL_size_t(0U, filter.size());
 }
 
 static void test_dev_simulator_is_deterministic_and_coherent() {
@@ -814,6 +936,11 @@ int main(int, char **) {
     RUN_TEST(test_gas_control_is_mutually_exclusive_and_leak_safe);
     RUN_TEST(test_ato_requires_low_valid_level_and_obeys_interlocks);
     RUN_TEST(test_alarm_flags_and_count);
+    RUN_TEST(test_alarm_flags_report_required_sensor_and_actuator_health);
+    RUN_TEST(test_alarm_stability_filter_rejects_threshold_chatter);
+    RUN_TEST(test_alarm_stability_filter_raises_safety_alarms_immediately);
+    RUN_TEST(test_sensor_calibration_and_temperature_compensation);
+    RUN_TEST(test_sensor_median_filter_rejects_single_spike);
     RUN_TEST(test_dev_simulator_is_deterministic_and_coherent);
     RUN_TEST(test_web_activity_tracker_capacity_timeout_and_release);
     RUN_TEST(test_wifi_retry_policy_handles_capacity_and_millis_wrap);

@@ -130,6 +130,8 @@ class ControllerSession extends ChangeNotifier {
     'stop_feeding_mode',
     'start_service_mode',
     'stop_service_mode',
+    'save_remote_gateway',
+    'clear_remote_gateway',
   };
 
   ControllerSession.wifi(

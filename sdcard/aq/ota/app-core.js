@@ -954,7 +954,7 @@ function mergeTemperaturePayload(previousTemperature, nextTemperature) {
     return merged;
 }
 
-function applyStatusPayload(data, sequence = 0) {
+function applyStatusPayload(data, sequence = 0, options = {}) {
     if (!data || typeof data !== 'object') {
         return false;
     }
@@ -974,7 +974,9 @@ function applyStatusPayload(data, sequence = 0) {
     latestAppliedStatusSequence = Math.max(latestAppliedStatusSequence, sequence);
     lastStatusData = mergedData;
     window.lastStatusData = mergedData;
-    setBackendState(true);
+    const offlineSnapshot = options.offlineSnapshot === true;
+    document.body.dataset.dataMode = offlineSnapshot ? 'offline-snapshot' : 'live';
+    setBackendState(!offlineSnapshot);
 
     if (typeof window.applyPortalThemeFromStatus === 'function') {
         window.applyPortalThemeFromStatus(mergedData);
@@ -985,6 +987,12 @@ function applyStatusPayload(data, sequence = 0) {
 
     if (window.ChartsApp && typeof window.ChartsApp.updateData === 'function' && mergedData.temperature) {
         window.ChartsApp.updateData(mergedData.temperature);
+    }
+    if (!offlineSnapshot &&
+        typeof window.AquaCydGatewayPwa?.persistSnapshot === 'function') {
+        window.AquaCydGatewayPwa.persistSnapshot(mergedData).catch((error) => {
+            console.warn('Nie udało się zapisać bezpiecznego snapshotu offline.', error);
+        });
     }
     return true;
 }
@@ -1706,6 +1714,12 @@ window.loginAsAdmin = loginAsAdmin;
 window.logoutAdmin = logoutAdmin;
 
 async function executeActionRequest(action, payload = {}, options = {}) {
+    if (document.body.dataset.dataMode === 'offline-snapshot' || !backendConnected) {
+        throw createRequestError(
+            'Tryb offline udostępnia wyłącznie ostatni zapisany podgląd. Polecenia nie są kolejkowane.',
+            'offline_read_only'
+        );
+    }
     const actionPayload = { ...payload };
     const needsAdmin = options.requirePin ?? PIN_GUARDED_ACTIONS.has(action);
 

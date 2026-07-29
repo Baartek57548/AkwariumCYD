@@ -89,6 +89,14 @@ BleQueuedCommand callback_command = {};
 BleSession processing_session = {BLE_INVALID_CONN_HANDLE, 0U};
 char outgoing_json[BLE_MESSAGE_BUFFER_BYTES] = {};
 
+void secure_clear_buffer(void *buffer, size_t length) {
+    volatile uint8_t *bytes =
+        static_cast<volatile uint8_t *>(buffer);
+    while (length-- > 0U) {
+        *bytes++ = 0U;
+    }
+}
+
 bool session_is_valid(const BleSession &session) {
     return session.conn_handle != BLE_INVALID_CONN_HANDLE &&
            session.generation != 0U;
@@ -290,7 +298,8 @@ void reset_incoming() {
     incoming.next_part = 0U;
     incoming.length = 0U;
     incoming.last_fragment_ms = 0U;
-    incoming.json[0] = '\0';
+    secure_clear_buffer(
+        incoming.json, sizeof(incoming.json));
 }
 
 bool extract_json_int(const char *json, const char *key, int *out) {
@@ -385,7 +394,17 @@ bool enqueue_command(const char *json,
     callback_command.session = session;
     memcpy(callback_command.json, json, length);
     callback_command.json[length] = '\0';
-    return xQueueSend(command_queue, &callback_command, 0) == pdTRUE;
+    const bool queued =
+        xQueueSend(
+            command_queue,
+            &callback_command,
+            0) == pdTRUE;
+    secure_clear_buffer(
+        callback_command.json,
+        sizeof(callback_command.json));
+    callback_command.session = {
+        BLE_INVALID_CONN_HANDLE, 0U};
+    return queued;
 }
 
 void send_json(const char *json) {
@@ -1102,7 +1121,9 @@ void controller_ble_task(void *) {
             processing_command.session = {
                 BLE_INVALID_CONN_HANDLE,
                 0U};
-            processing_command.json[0] = '\0';
+            secure_clear_buffer(
+                processing_command.json,
+                sizeof(processing_command.json));
         }
         if (session_is_valid(active_session_snapshot(true)) &&
             now_ms - last_status_ms >= BLE_STATUS_INTERVAL_MS) {

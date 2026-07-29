@@ -151,6 +151,13 @@ final class _FakeNotifications implements AlarmNotificationSink {
   Future<void> showTestNotification() async {}
 
   @override
+  Future<void> showAppUpdate({
+    required String tagName,
+    required String version,
+    required bool downloaded,
+  }) async {}
+
+  @override
   Future<void> showAlarm(AlarmRecord alarm) async {}
 
   @override

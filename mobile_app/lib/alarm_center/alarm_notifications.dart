@@ -1,6 +1,7 @@
 import 'package:flutter/foundation.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 
+import '../notifications/notification_intents.dart';
 import 'alarm_models.dart';
 
 abstract interface class AlarmNotificationSink {
@@ -14,6 +15,11 @@ abstract interface class AlarmNotificationSink {
     required String title,
     required String body,
   });
+  Future<void> showAppUpdate({
+    required String tagName,
+    required String version,
+    required bool downloaded,
+  });
   Future<void> cancelAlarm(String alarmKey);
 }
 
@@ -24,6 +30,7 @@ final class LocalAlarmNotificationSink implements AlarmNotificationSink {
   static const criticalChannelId = 'aquacyd_critical_alarms_v1';
   static const warningChannelId = 'aquacyd_warning_alarms_v1';
   static const maintenanceChannelId = 'aquacyd_maintenance_v1';
+  static const updateChannelId = 'aquacyd_app_updates_v1';
 
   final FlutterLocalNotificationsPlugin _plugin;
   Future<void>? _initialization;
@@ -53,6 +60,10 @@ final class LocalAlarmNotificationSink implements AlarmNotificationSink {
         iOS: darwin,
         macOS: darwin,
       ),
+      onDidReceiveNotificationResponse:
+          AquaNotificationIntentBus.instance.acceptResponse,
+      onDidReceiveBackgroundNotificationResponse:
+          aquariumNotificationBackgroundResponse,
     );
     final androidPlugin = _plugin
         .resolvePlatformSpecificImplementation<
@@ -85,7 +96,24 @@ final class LocalAlarmNotificationSink implements AlarmNotificationSink {
           importance: Importance.defaultImportance,
         ),
       );
+      await androidPlugin.createNotificationChannel(
+        const AndroidNotificationChannel(
+          updateChannelId,
+          'Aktualizacje aplikacji',
+          description: 'Dostępność bezpiecznych aktualizacji AquaCYD Control.',
+          importance: Importance.defaultImportance,
+        ),
+      );
     }
+    final launchDetails = await _plugin.getNotificationAppLaunchDetails();
+    final launchResponse = launchDetails?.notificationResponse;
+    if ((launchDetails?.didNotificationLaunchApp ?? false) &&
+        launchResponse != null) {
+      AquaNotificationIntentBus.instance.acceptResponse(launchResponse);
+    }
+    AquaNotificationIntentBus.instance.accept(
+      await NotificationIntentInbox.takePersisted(),
+    );
   }
 
   @override
@@ -146,6 +174,10 @@ final class LocalAlarmNotificationSink implements AlarmNotificationSink {
   Future<void> showAlarm(AlarmRecord alarm) async {
     await initialize();
     final critical = alarm.severity == AlarmSeverity.critical;
+    final intent = AquaNotificationIntent(
+      target: AquaNotificationTarget.alarm,
+      identifier: alarm.key,
+    );
     await _ensureAndroidChannelEnabled(
       critical ? criticalChannelId : warningChannelId,
     );
@@ -153,7 +185,7 @@ final class LocalAlarmNotificationSink implements AlarmNotificationSink {
       id: _notificationId('alarm:${alarm.key}'),
       title: critical ? 'Pilny alarm: ${alarm.title}' : alarm.title,
       body: alarm.message,
-      payload: 'alarm:${alarm.key}',
+      payload: intent.payload,
       notificationDetails: NotificationDetails(
         android: AndroidNotificationDetails(
           critical ? criticalChannelId : warningChannelId,
@@ -165,6 +197,14 @@ final class LocalAlarmNotificationSink implements AlarmNotificationSink {
           priority: critical ? Priority.max : Priority.high,
           category: AndroidNotificationCategory.alarm,
           visibility: NotificationVisibility.public,
+          actions: const <AndroidNotificationAction>[
+            AndroidNotificationAction(
+              AquaNotificationIntent.alarmAcknowledgeActionId,
+              'Potwierdź alarm',
+              showsUserInterface: true,
+              cancelNotification: false,
+            ),
+          ],
         ),
         iOS: const DarwinNotificationDetails(
           presentAlert: true,
@@ -179,11 +219,15 @@ final class LocalAlarmNotificationSink implements AlarmNotificationSink {
   Future<void> showResolved(AlarmRecord alarm) async {
     await initialize();
     await _ensureAndroidChannelEnabled(warningChannelId);
+    final intent = AquaNotificationIntent(
+      target: AquaNotificationTarget.alarm,
+      identifier: alarm.key,
+    );
     await _plugin.show(
       id: _notificationId('resolved:${alarm.key}'),
       title: 'Alarm rozwiązany',
       body: alarm.title,
-      payload: 'alarm:${alarm.key}',
+      payload: intent.payload,
       notificationDetails: const NotificationDetails(
         android: AndroidNotificationDetails(
           warningChannelId,
@@ -205,11 +249,15 @@ final class LocalAlarmNotificationSink implements AlarmNotificationSink {
   }) async {
     await initialize();
     await _ensureAndroidChannelEnabled(maintenanceChannelId);
+    final intent = AquaNotificationIntent(
+      target: AquaNotificationTarget.service,
+      identifier: id,
+    );
     await _plugin.show(
       id: _notificationId('service:$id'),
       title: title,
       body: body,
-      payload: 'service:$id',
+      payload: intent.payload,
       notificationDetails: const NotificationDetails(
         android: AndroidNotificationDetails(
           maintenanceChannelId,
@@ -217,6 +265,58 @@ final class LocalAlarmNotificationSink implements AlarmNotificationSink {
           channelDescription: 'Przypomnienia o konserwacji i pielęgnacji.',
           importance: Importance.defaultImportance,
           priority: Priority.defaultPriority,
+          actions: <AndroidNotificationAction>[
+            AndroidNotificationAction(
+              AquaNotificationIntent.serviceCompleteActionId,
+              'Oznacz jako wykonane',
+              showsUserInterface: true,
+              cancelNotification: true,
+            ),
+          ],
+        ),
+        iOS: DarwinNotificationDetails(),
+      ),
+    );
+  }
+
+  @override
+  Future<void> showAppUpdate({
+    required String tagName,
+    required String version,
+    required bool downloaded,
+  }) async {
+    final intent = AquaNotificationIntent(
+      target: AquaNotificationTarget.update,
+      identifier: tagName,
+    );
+    await initialize();
+    await _ensureAndroidChannelEnabled(updateChannelId);
+    await _plugin.show(
+      id: _notificationId('update:$tagName'),
+      title: downloaded
+          ? 'Aktualizacja $version jest gotowa'
+          : 'Dostępna aktualizacja $version',
+      body: downloaded
+          ? 'Otwórz AquaCYD, aby zweryfikować i zatwierdzić instalację.'
+          : 'Otwórz aplikację, aby zobaczyć zmiany i zdecydować o pobraniu.',
+      payload: intent.payload,
+      notificationDetails: const NotificationDetails(
+        android: AndroidNotificationDetails(
+          updateChannelId,
+          'Aktualizacje aplikacji',
+          channelDescription:
+              'Dostępność bezpiecznych aktualizacji AquaCYD Control.',
+          importance: Importance.defaultImportance,
+          priority: Priority.defaultPriority,
+          category: AndroidNotificationCategory.status,
+          actions: <AndroidNotificationAction>[
+            AndroidNotificationAction(
+              AquaNotificationIntent.updateRemindActionId,
+              'Przypomnij później',
+              showsUserInterface: true,
+              cancelNotification: true,
+            ),
+          ],
         ),
         iOS: DarwinNotificationDetails(),
       ),

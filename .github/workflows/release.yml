@@ -21,7 +21,9 @@ jobs:
     timeout-minutes: 40
     environment: production-mobile
     permissions:
+      attestations: write
       contents: write
+      id-token: write
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
@@ -116,11 +118,66 @@ jobs:
         run: ./gradlew testCurrentDebugUnitTest --no-daemon --console=plain
       - name: Build signed APK
         working-directory: mobile_app
+        shell: bash
+        env:
+          AQUACYD_FIREBASE_API_KEY: ${{ vars.AQUACYD_FIREBASE_API_KEY }}
+          AQUACYD_FIREBASE_APP_ID: ${{ vars.AQUACYD_FIREBASE_APP_ID }}
+          AQUACYD_FIREBASE_MESSAGING_SENDER_ID: ${{ vars.AQUACYD_FIREBASE_MESSAGING_SENDER_ID }}
+          AQUACYD_FIREBASE_PROJECT_ID: ${{ vars.AQUACYD_FIREBASE_PROJECT_ID }}
         run: |
+          set -euo pipefail
+          firebase_names=(
+            AQUACYD_FIREBASE_API_KEY
+            AQUACYD_FIREBASE_APP_ID
+            AQUACYD_FIREBASE_MESSAGING_SENDER_ID
+            AQUACYD_FIREBASE_PROJECT_ID
+          )
+          firebase_args=()
+          missing_names=()
+          configured_count=0
+
+          for name in "${firebase_names[@]}"; do
+            value="${!name}"
+            if [[ -z "${value//[[:space:]]/}" ]]; then
+              missing_names+=("$name")
+              continue
+            fi
+            if [[ "$value" =~ [[:space:]] ]]; then
+              echo "GitHub variable $name contains whitespace" >&2
+              exit 1
+            fi
+            configured_count=$((configured_count + 1))
+            firebase_args+=("--dart-define=$name=$value")
+          done
+
+          if (( configured_count != 0 && configured_count != 4 )); then
+            printf \
+              'Firebase release configuration must contain either 0 or all 4 variables; missing:' \
+              >&2
+            printf ' %s' "${missing_names[@]}" >&2
+            printf '\n' >&2
+            exit 1
+          fi
+
+          if (( configured_count == 4 )); then
+            echo \
+              "::notice title=AquaCYD APK push mode::Firebase remote push enabled"
+            printf \
+              '### AquaCYD APK push mode\n\nFirebase remote push enabled.\n' \
+              >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo \
+              "::notice title=AquaCYD APK push mode::Explicit local-only mode; Firebase variables are absent"
+            printf \
+              '### AquaCYD APK push mode\n\nExplicit local-only mode; Firebase is not initialized.\n' \
+              >> "$GITHUB_STEP_SUMMARY"
+          fi
+
           flutter build apk \
             --release \
             --flavor current \
-            --target lib/main.dart
+            --target lib/main.dart \
+            "${firebase_args[@]}"
       - name: Verify notification icon survived release shrinking
         shell: bash
         run: |
@@ -203,6 +260,29 @@ jobs:
           )
           echo "directory=$output_dir" >> "$GITHUB_OUTPUT"
           echo "apk=$apk" >> "$GITHUB_OUTPUT"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+      - name: Generate mobile CycloneDX SBOM
+        shell: bash
+        env:
+          RELEASE_DIR: ${{ steps.metadata.outputs.directory }}
+          RELEASE_APK: ${{ steps.metadata.outputs.apk }}
+        run: |
+          set -euo pipefail
+          version="${GITHUB_REF_NAME#mobile-v}"
+          python tools/generate_sbom.py \
+            --kind mobile \
+            --version "$version" \
+            --artifact "$RELEASE_APK" \
+            --output "$RELEASE_DIR/AquaCYD-Control-$version.cdx.json"
+      - name: Attest mobile build provenance
+        uses: actions/attest@f7c74d28b9d84cb8768d0b8ca14a4bac6ef463e6 # v4.2.0
+        with:
+          subject-path: ${{ steps.metadata.outputs.apk }}
+      - name: Attest mobile SBOM
+        uses: actions/attest@f7c74d28b9d84cb8768d0b8ca14a4bac6ef463e6 # v4.2.0
+        with:
+          subject-path: ${{ steps.metadata.outputs.apk }}
+          sbom-path: ${{ steps.metadata.outputs.directory }}/AquaCYD-Control-${{ steps.metadata.outputs.version }}.cdx.json
       - name: Refuse overwrite of an existing release
         env:
           GH_TOKEN: ${{ github.token }}
@@ -221,6 +301,7 @@ jobs:
             "$RELEASE_APK" \
             "$RELEASE_DIR/SHA256SUMS" \
             "$RELEASE_DIR/release-manifest.json" \
+            "$RELEASE_DIR/AquaCYD-Control-${GITHUB_REF_NAME#mobile-v}.cdx.json" \
             --verify-tag \
             --title "AquaCYD Control ${GITHUB_REF_NAME#mobile-v}" \
             --generate-notes
@@ -231,9 +312,63 @@ jobs:
             mobile_app/android/key.properties \
             "$RUNNER_TEMP/aquacyd-release.jks"
 
+  firmware-source:
+    name: Validate firmware release source
+    if: ${{ startsWith(github.ref_name, 'firmware-v') }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    outputs:
+      exact_sha: ${{ steps.source.outputs.exact_sha }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
+        with:
+          python-version: "3.13"
+      - name: Require an approved canonical firmware tag
+        id: source
+        shell: bash
+        run: |
+          set -euo pipefail
+          git fetch --no-tags --prune origin \
+            +refs/heads/main:refs/remotes/origin/main
+          tag_commit="$(git rev-parse "${GITHUB_SHA}^{commit}")"
+          [[ "$tag_commit" =~ ^[0-9a-f]{40}$ ]]
+          git merge-base --is-ancestor \
+            "$tag_commit" \
+            refs/remotes/origin/main || {
+              echo \
+                "Firmware tag commit $tag_commit is not reachable from origin/main" \
+                >&2
+              exit 1
+            }
+          python scripts/validate_release.py \
+            --tag "$GITHUB_REF_NAME" \
+            --firmware-config include/config.h \
+            --print-firmware-contract \
+            >/dev/null
+          echo "exact_sha=$tag_commit" >> "$GITHUB_OUTPUT"
+
+  firmware-hil:
+    name: Exact-commit physical HIL gate
+    if: ${{ startsWith(github.ref_name, 'firmware-v') }}
+    needs: firmware-source
+    uses: ./.github/workflows/hil.yml
+    with:
+      exact_sha: ${{ needs.firmware-source.outputs.exact_sha }}
+      run_hardware: true
+      allow_mutations: true
+      allow_ota_rollback: true
+      forbid_skips: true
+    secrets: inherit
+
   firmware-native:
     name: Firmware native tests
     if: ${{ startsWith(github.ref_name, 'firmware-v') }}
+    needs: firmware-hil
     runs-on: windows-latest
     timeout-minutes: 15
     permissions:
@@ -285,7 +420,9 @@ jobs:
     timeout-minutes: 35
     environment: production-firmware
     permissions:
+      attestations: write
       contents: write
+      id-token: write
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
@@ -510,6 +647,96 @@ jobs:
             sha256sum --check SHA256SUMS
           )
           echo "directory=$output_dir" >> "$GITHUB_OUTPUT"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+      - name: Create signed, deterministic SD web bundle
+        shell: bash
+        env:
+          FIRMWARE_PRIVATE_KEY: ${{ steps.signing.outputs.private_key }}
+          FIRMWARE_PUBLIC_KEY: ${{ steps.signing.outputs.public_key }}
+          RELEASE_DIR: ${{ steps.metadata.outputs.directory }}
+          RELEASE_VERSION: ${{ steps.metadata.outputs.version }}
+        run: |
+          set -euo pipefail
+          python tools/web_package.py \
+            --source sdcard/aq/ota \
+            --output-dir "$RELEASE_DIR" \
+            --version "$RELEASE_VERSION" \
+            --commit "${GITHUB_SHA,,}" \
+            --private-key "$FIRMWARE_PRIVATE_KEY" \
+            --public-key "$FIRMWARE_PUBLIC_KEY"
+      - name: Generate firmware and web CycloneDX SBOMs
+        shell: bash
+        env:
+          RELEASE_DIR: ${{ steps.metadata.outputs.directory }}
+          RELEASE_VERSION: ${{ steps.metadata.outputs.version }}
+        run: |
+          set -euo pipefail
+          python tools/generate_sbom.py \
+            --kind firmware \
+            --version "$RELEASE_VERSION" \
+            --artifact "$RELEASE_DIR/AquaCYD-Firmware-$RELEASE_VERSION-ili9341-sbv2.bin" \
+            --artifact "$RELEASE_DIR/AquaCYD-Firmware-$RELEASE_VERSION-ili9341.aqfw" \
+            --artifact "$RELEASE_DIR/AquaCYD-Firmware-$RELEASE_VERSION-st7789-sbv2.bin" \
+            --artifact "$RELEASE_DIR/AquaCYD-Firmware-$RELEASE_VERSION-st7789.aqfw" \
+            --output "$RELEASE_DIR/AquaCYD-Firmware-$RELEASE_VERSION.cdx.json"
+          python tools/generate_sbom.py \
+            --kind web \
+            --version "$RELEASE_VERSION" \
+            --artifact "$RELEASE_DIR/AquaCYD-Web-$RELEASE_VERSION.tar.gz" \
+            --output "$RELEASE_DIR/AquaCYD-Web-$RELEASE_VERSION.cdx.json"
+      - name: Extend release checksums with web bundle and SBOMs
+        shell: bash
+        env:
+          RELEASE_DIR: ${{ steps.metadata.outputs.directory }}
+          RELEASE_VERSION: ${{ steps.metadata.outputs.version }}
+        run: |
+          set -euo pipefail
+          for file in \
+            "AquaCYD-Web-$RELEASE_VERSION.tar.gz" \
+            "AquaCYD-Web-$RELEASE_VERSION.tar.gz.sha256" \
+            "AquaCYD-Web-$RELEASE_VERSION.manifest.json" \
+            "AquaCYD-Web-$RELEASE_VERSION.manifest.json.sig" \
+            "AquaCYD-Firmware-$RELEASE_VERSION.cdx.json" \
+            "AquaCYD-Web-$RELEASE_VERSION.cdx.json"
+          do
+            (
+              cd "$RELEASE_DIR"
+              sha256sum "$file"
+            ) >> "$RELEASE_DIR/SHA256SUMS"
+          done
+          sort -k2,2 "$RELEASE_DIR/SHA256SUMS" \
+            -o "$RELEASE_DIR/SHA256SUMS"
+          test -z "$(
+            awk '{print $2}' "$RELEASE_DIR/SHA256SUMS" |
+              sort |
+              uniq -d
+          )"
+          (
+            cd "$RELEASE_DIR"
+            sha256sum --check SHA256SUMS
+          )
+      - name: Attest firmware build provenance
+        uses: actions/attest@f7c74d28b9d84cb8768d0b8ca14a4bac6ef463e6 # v4.2.0
+        with:
+          subject-path: |
+            ${{ steps.metadata.outputs.directory }}/*-sbv2.bin
+            ${{ steps.metadata.outputs.directory }}/*.aqfw
+      - name: Attest firmware SBOM
+        uses: actions/attest@f7c74d28b9d84cb8768d0b8ca14a4bac6ef463e6 # v4.2.0
+        with:
+          subject-path: |
+            ${{ steps.metadata.outputs.directory }}/*-sbv2.bin
+            ${{ steps.metadata.outputs.directory }}/*.aqfw
+          sbom-path: ${{ steps.metadata.outputs.directory }}/AquaCYD-Firmware-${{ steps.metadata.outputs.version }}.cdx.json
+      - name: Attest web bundle build provenance
+        uses: actions/attest@f7c74d28b9d84cb8768d0b8ca14a4bac6ef463e6 # v4.2.0
+        with:
+          subject-path: ${{ steps.metadata.outputs.directory }}/AquaCYD-Web-${{ steps.metadata.outputs.version }}.tar.gz
+      - name: Attest web bundle SBOM
+        uses: actions/attest@f7c74d28b9d84cb8768d0b8ca14a4bac6ef463e6 # v4.2.0
+        with:
+          subject-path: ${{ steps.metadata.outputs.directory }}/AquaCYD-Web-${{ steps.metadata.outputs.version }}.tar.gz
+          sbom-path: ${{ steps.metadata.outputs.directory }}/AquaCYD-Web-${{ steps.metadata.outputs.version }}.cdx.json
       - name: Refuse overwrite of an existing release
         env:
           GH_TOKEN: ${{ github.token }}
@@ -531,6 +758,8 @@ jobs:
             "$RELEASE_DIR/release-manifest.json.sig" \
             "$RELEASE_DIR/firmware-signing-public.pem" \
             "$RELEASE_DIR/SIGNING_KEY_SHA256" \
+            "$RELEASE_DIR"/AquaCYD-Web-* \
+            "$RELEASE_DIR"/*.cdx.json \
             --verify-tag \
             --title "AquaCYD Firmware ${GITHUB_REF_NAME#firmware-v}" \
             --generate-notes

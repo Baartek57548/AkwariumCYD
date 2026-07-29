@@ -10,6 +10,7 @@ import 'connection_home_page.dart';
 import 'design_system.dart';
 import 'display_refresh_rate.dart';
 import 'app_settings.dart';
+import 'remote_gateway/remote_push.dart';
 
 class AquariumApp extends StatefulWidget {
   const AquariumApp({
@@ -17,11 +18,13 @@ class AquariumApp extends StatefulWidget {
     this.title = 'AquaCYD Control',
     this.home,
     this.enableAppUpdates = false,
+    this.remotePushCoordinator,
   });
 
   final String title;
   final Widget? home;
   final bool enableAppUpdates;
+  final RemotePushCoordinator? remotePushCoordinator;
 
   @override
   State<AquariumApp> createState() => _AquariumAppState();
@@ -32,6 +35,7 @@ class _AquariumAppState extends State<AquariumApp> with WidgetsBindingObserver {
   final _navigatorKey = GlobalKey<NavigatorState>();
   final _scaffoldMessengerKey = GlobalKey<ScaffoldMessengerState>();
   AppUpdateController? _appUpdateController;
+  late final RemotePushCoordinator _remotePushCoordinator;
   String? _lastPromptedVersion;
   int _lastFeedbackEventId = -1;
   bool _promptOpen = false;
@@ -44,12 +48,23 @@ class _AquariumAppState extends State<AquariumApp> with WidgetsBindingObserver {
     refreshRateController = DisplayRefreshRateController()
       ..addListener(_onRefreshRateChanged);
     AppSettings.themeModeNotifier.addListener(_onSettingsChanged);
+    _remotePushCoordinator =
+        widget.remotePushCoordinator ?? RemotePushCoordinator.standard();
+    unawaited(_initializeRemotePush());
     if (widget.enableAppUpdates) {
       _appUpdateController = AppUpdateController()
         ..addListener(_onAppUpdateChanged);
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (mounted) unawaited(_appUpdateController!.start());
       });
+    }
+  }
+
+  Future<void> _initializeRemotePush() async {
+    try {
+      await _remotePushCoordinator.initialize();
+    } on Object {
+      // Brak bramki lub FCM nie może ograniczać lokalnego działania aplikacji.
     }
   }
 
@@ -71,6 +86,7 @@ class _AquariumAppState extends State<AquariumApp> with WidgetsBindingObserver {
     _appUpdateController
       ?..removeListener(_onAppUpdateChanged)
       ..dispose();
+    unawaited(_remotePushCoordinator.dispose());
     super.dispose();
   }
 
@@ -79,6 +95,7 @@ class _AquariumAppState extends State<AquariumApp> with WidgetsBindingObserver {
     if (state == AppLifecycleState.resumed) {
       final controller = _appUpdateController;
       if (controller != null) unawaited(controller.onAppResumed());
+      unawaited(_initializeRemotePush());
     } else {
       _appUpdateController?.onAppBackgrounded();
     }
@@ -219,7 +236,10 @@ class _AquariumAppState extends State<AquariumApp> with WidgetsBindingObserver {
           if (controller != null) {
             content = AppUpdateScope(controller: controller, child: content);
           }
-          return content;
+          return RemotePushScope(
+            coordinator: _remotePushCoordinator,
+            child: content,
+          );
         },
         home: widget.home ?? const ConnectionHomePage(),
       ),
