@@ -48,14 +48,12 @@ adb shell pm grant \
 adb shell am force-stop "$package_name"
 deep_link_output="$diagnostics_directory/deep-link.txt"
 adb shell am start \
-  -W \
   -a SELECT_NOTIFICATION \
   -n "$package_name/.MainActivity" \
   --ei notificationId 4242 \
   --es payload "aquacyd://update/mobile-v$app_version" \
   > "$deep_link_output"
-grep -F "Status: ok" "$deep_link_output" >/dev/null
-sleep 2
+grep -F "Starting:" "$deep_link_output" >/dev/null
 
 package_dump="$diagnostics_directory/package.txt"
 adb shell dumpsys package "$package_name" > "$package_dump"
@@ -65,16 +63,24 @@ grep -E \
   >/dev/null
 
 notifications_dump="$diagnostics_directory/notifications.txt"
-adb shell dumpsys notification --noredact > "$notifications_dump"
-for channel in \
-  aquacyd_critical_alarms_v1 \
-  aquacyd_warning_alarms_v1 \
-  aquacyd_maintenance_v1 \
-  aquacyd_app_updates_v1
-do
-  grep -F "$channel" "$notifications_dump" >/dev/null
+activity_dump="$diagnostics_directory/activity.txt"
+runtime_ready=false
+for _attempt in {1..30}; do
+  adb shell dumpsys notification --noredact > "$notifications_dump"
+  adb shell dumpsys activity activities > "$activity_dump"
+
+  if grep -F "$package_name/.MainActivity" "$activity_dump" >/dev/null &&
+    grep -F "SELECT_NOTIFICATION" "$activity_dump" >/dev/null &&
+    grep -F "aquacyd_critical_alarms_v1" "$notifications_dump" >/dev/null &&
+    grep -F "aquacyd_warning_alarms_v1" "$notifications_dump" >/dev/null &&
+    grep -F "aquacyd_maintenance_v1" "$notifications_dump" >/dev/null &&
+    grep -F "aquacyd_app_updates_v1" "$notifications_dump" >/dev/null
+  then
+    runtime_ready=true
+    break
+  fi
+
+  sleep 1
 done
 
-activity_dump="$diagnostics_directory/activity.txt"
-adb shell dumpsys activity activities > "$activity_dump"
-grep -F "$package_name/.MainActivity" "$activity_dump" >/dev/null
+test "$runtime_ready" = true
