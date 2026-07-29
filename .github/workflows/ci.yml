@@ -159,6 +159,7 @@ jobs:
         run: |
           pio run --environment esp32dev
           pio run --environment esp32dev-st7789
+          pio run --environment esp32dev-espnow
       - name: Collect firmware binaries and checksums
         shell: pwsh
         run: |

@@ -215,6 +215,16 @@ GuiBleCommandResult gui_app_v2_action(const char *action,
                                       char *out_replay_message,
                                       size_t out_replay_message_size);
 
+/**
+ * Executes the restricted control subset for an authenticated encrypted
+ * machine link. The caller must validate peer identity, replay window and TTL
+ * before entering this trust boundary.
+ */
+GuiBleCommandResult gui_app_trusted_link_action(const char *action,
+                                                const char *command_json,
+                                                const char *command_id,
+                                                bool *out_duplicate);
+
 /** @brief Serializes the common HTTP/BLE protocol-v2 capability document. */
 bool gui_app_v2_capabilities_json(char *out, size_t out_size);
 

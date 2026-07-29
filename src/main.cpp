@@ -7,6 +7,7 @@
 
 #include "config.h"
 #include "events.h"
+#include "espnow_link.h"
 #include "gui_app.h"
 #include "hal_display.h"
 #include "hal_sd.h"
@@ -250,6 +251,10 @@ void setup() {
         Serial.println(
             "REMOTE_ALARM: relay task unavailable.");
     }
+    if (!espnow_link_initialize()) {
+        Serial.println(
+            "ESPNOW: lacze niedostepne; sterowanie lokalne pozostaje aktywne.");
+    }
     service_ui_startup_watchdog();
     log_ram_checkpoint("after_gui");
 
@@ -281,6 +286,7 @@ void loop() {
 
     RuntimeTelemetry newest_frame = {};
     if (runtime_controller_take_latest(&newest_frame)) {
+        espnow_link_publish(newest_frame);
         pending_telemetry = newest_frame;
         pending_telemetry_valid = true;
     }

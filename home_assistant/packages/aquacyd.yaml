@@ -1,0 +1,97 @@
+script:
+  aquacyd_light_on_15_minutes:
+    alias: AquaCYD - światło na 15 minut
+    mode: single
+    sequence:
+      - action: mqtt.publish
+        data:
+          topic: aquacyd/aquarium/command/set
+          qos: 1
+          retain: false
+          payload: >-
+            {"action":"set_output","target":"light_primary","value":1,"duration_ms":900000}
+
+  aquacyd_light_off_15_minutes:
+    alias: AquaCYD - wyłącz światło na 15 minut
+    mode: single
+    sequence:
+      - action: mqtt.publish
+        data:
+          topic: aquacyd/aquarium/command/set
+          qos: 1
+          retain: false
+          payload: >-
+            {"action":"set_output","target":"light_primary","value":0,"duration_ms":900000}
+
+  aquacyd_filter_on_15_minutes:
+    alias: AquaCYD - filtr na 15 minut
+    mode: single
+    sequence:
+      - action: mqtt.publish
+        data:
+          topic: aquacyd/aquarium/command/set
+          qos: 1
+          retain: false
+          payload: >-
+            {"action":"set_output","target":"filter","value":1,"duration_ms":900000}
+
+  aquacyd_start_feeding:
+    alias: AquaCYD - rozpocznij karmienie
+    mode: single
+    sequence:
+      - action: mqtt.publish
+        data:
+          topic: aquacyd/aquarium/command/set
+          qos: 1
+          retain: false
+          payload: >-
+            {"action":"trigger_feed","target":"feeder","value":1,"duration_ms":0}
+
+automation:
+  - id: aquacyd_controller_availability
+    alias: AquaCYD - dostępność sterownika
+    mode: restart
+    trigger:
+      - platform: mqtt
+        topic: aquacyd/aquarium/availability
+    action:
+      - choose:
+          - conditions:
+              - condition: template
+                value_template: "{{ trigger.payload == 'offline' }}"
+            sequence:
+              - delay:
+                  seconds: 30
+              - action: persistent_notification.create
+                data:
+                  notification_id: aquacyd_controller_offline
+                  title: AquaCYD jest offline
+                  message: >-
+                    Bramka C6 nie odbiera telemetrii sterownika. Automatyka
+                    lokalna CYD nadal działa, ale sprawdź zasilanie, kanał
+                    2,4 GHz i zasięg ESP-NOW.
+        default:
+          - condition: template
+            value_template: "{{ trigger.payload == 'online' }}"
+          - action: persistent_notification.dismiss
+            data:
+              notification_id: aquacyd_controller_offline
+
+  - id: aquacyd_leak_detected
+    alias: AquaCYD - wykryto wyciek
+    mode: single
+    trigger:
+      - platform: mqtt
+        topic: aquacyd/aquarium/state
+    condition:
+      - condition: template
+        value_template: >-
+          {{ trigger.payload_json.leak_detected | default(false) }}
+    action:
+      - action: persistent_notification.create
+        data:
+          notification_id: aquacyd_leak
+          title: AquaCYD wykrył wyciek
+          message: >-
+            CYD uruchomił lokalną procedurę bezpieczeństwa. Sprawdź akwarium
+            przed ponownym włączeniem urządzeń.

@@ -4,6 +4,7 @@
 #include "config.h"
 #include "device_credentials.h"
 #include "events.h"
+#include "espnow_link.h"
 #include "firmware_trust_anchor.h"
 #include "hal_adc.h"
 #include "hal_display.h"
@@ -8020,7 +8021,13 @@ static void ota_portal_handle_action() {
             "set_remote_gateway_enabled") == 0 ||
         strcmp(
             action_name,
-            "clear_remote_gateway") == 0) {
+            "clear_remote_gateway") == 0 ||
+        strcmp(
+            action_name,
+            "save_espnow_link") == 0 ||
+        strcmp(
+            action_name,
+            "clear_espnow_link") == 0) {
         secure_clear_gui_buffer(
             request_json, sizeof(request_json));
         ota_portal_no_cache();
@@ -8029,7 +8036,7 @@ static void ota_portal_handle_action() {
             "application/json",
             "{\"ok\":false,\"success\":false,"
             "\"code\":\"secure_transport_required\","
-            "\"message\":\"Konfiguracja bramki jest dostepna "
+            "\"message\":\"Konfiguracja sekretow lacza jest dostepna "
             "wylacznie przez zaszyfrowane i uwierzytelnione BLE.\"}");
         return;
     }
@@ -17710,6 +17717,49 @@ GuiBleCommandResult execute_v2_control_action_locked(const char *action,
         control_modes.stop_service();
         return {true, "automatic_restored", "Tryb serwisowy zakonczony; powrot do AUTO."};
     }
+    if (strcmp(action, "save_espnow_link") == 0) {
+        char peer_mac[18] = {};
+        char pmk_hex[33] = {};
+        char lmk_hex[33] = {};
+        long channel = 0L;
+        const bool parsed =
+            ble_json_read_string(
+                command_json, "peerMac", peer_mac, sizeof(peer_mac)) &&
+            ble_json_read_string(
+                command_json, "pmk", pmk_hex, sizeof(pmk_hex)) &&
+            ble_json_read_string(
+                command_json, "lmk", lmk_hex, sizeof(lmk_hex)) &&
+            ble_json_read_long(command_json, "channel", 1L, 13L, &channel);
+        const bool saved =
+            parsed &&
+            espnow_link_configure(
+                peer_mac,
+                pmk_hex,
+                lmk_hex,
+                static_cast<uint8_t>(channel));
+        secure_clear_gui_buffer(pmk_hex, sizeof(pmk_hex));
+        secure_clear_gui_buffer(lmk_hex, sizeof(lmk_hex));
+        return saved
+                   ? GuiBleCommandResult{
+                         true,
+                         "espnow_saved_restart_required",
+                         "Szyfrowane lacze zapisane; uruchom sterownik ponownie."}
+                   : GuiBleCommandResult{
+                         false,
+                         "invalid_espnow_configuration",
+                         "Sprawdz MAC, kanal oraz 32-znakowe klucze PMK i LMK."};
+    }
+    if (strcmp(action, "clear_espnow_link") == 0) {
+        return espnow_link_clear_configuration()
+                   ? GuiBleCommandResult{
+                         true,
+                         "espnow_cleared_restart_required",
+                         "Konfiguracja lacza usunieta; uruchom sterownik ponownie."}
+                   : GuiBleCommandResult{
+                         false,
+                         "espnow_clear_failed",
+                         "Nie mozna usunac konfiguracji lacza z NVS."};
+    }
     if (is_remote_gateway_action(action)) {
         return execute_remote_gateway_action(
             action, command_json);
@@ -17737,6 +17787,8 @@ bool is_v2_control_action(const char *action) {
             strcmp(action, "stop_feeding_mode") == 0 ||
              strcmp(action, "start_service_mode") == 0 ||
              strcmp(action, "stop_service_mode") == 0 ||
+             strcmp(action, "save_espnow_link") == 0 ||
+             strcmp(action, "clear_espnow_link") == 0 ||
              is_remote_gateway_action(action) ||
              strcmp(action, "forget_ble_bonds") == 0);
 }
@@ -17789,6 +17841,32 @@ uint32_t v2_action_fingerprint(const char *action, const char *command_json) {
             aquarium::ControlModeManager::kServiceMaxSeconds,
             &duration);
         snprintf(canonical, sizeof(canonical), "%s|%ld", action, duration);
+    } else if (strcmp(action, "save_espnow_link") == 0) {
+        char peer_mac[18] = {};
+        char pmk_hex[33] = {};
+        char lmk_hex[33] = {};
+        long channel = 0L;
+        ble_json_read_string(
+            command_json, "peerMac", peer_mac, sizeof(peer_mac));
+        ble_json_read_string(
+            command_json, "pmk", pmk_hex, sizeof(pmk_hex));
+        ble_json_read_string(
+            command_json, "lmk", lmk_hex, sizeof(lmk_hex));
+        ble_json_read_long(
+            command_json, "channel", 1L, 13L, &channel);
+        snprintf(
+            canonical,
+            sizeof(canonical),
+            "%s|%s|%08lx|%08lx|%ld",
+            action,
+            peer_mac,
+            static_cast<unsigned long>(
+                aquarium::IdempotencyLedger::fingerprint(pmk_hex)),
+            static_cast<unsigned long>(
+                aquarium::IdempotencyLedger::fingerprint(lmk_hex)),
+            channel);
+        secure_clear_gui_buffer(pmk_hex, sizeof(pmk_hex));
+        secure_clear_gui_buffer(lmk_hex, sizeof(lmk_hex));
     } else if (strcmp(
                    action,
                    "save_remote_gateway") == 0) {
@@ -17958,6 +18036,84 @@ GuiBleCommandResult gui_app_v2_action(const char *action,
     return result;
 }
 
+GuiBleCommandResult gui_app_trusted_link_action(const char *action,
+                                                const char *command_json,
+                                                const char *command_id,
+                                                bool *out_duplicate) {
+    GuiMutexGuard guard(1000U);
+    if (out_duplicate != nullptr) {
+        *out_duplicate = false;
+    }
+    if (!guard.locked() || !gui_ready) {
+        return {false, "controller_busy", "Sterownik jest chwilowo zajety."};
+    }
+    const bool action_allowed =
+        action != nullptr &&
+        (strcmp(action, "set_timed_override") == 0 ||
+         strcmp(action, "start_feeding_mode") == 0);
+    if (!action_allowed || command_json == nullptr) {
+        return {
+            false,
+            "trusted_action_unsupported",
+            "Polecenie nie nalezy do bezpiecznego podzbioru lacza."
+        };
+    }
+    if (!aquarium::IdempotencyLedger::valid_command_id(command_id)) {
+        return {
+            false,
+            "invalid_command_id",
+            "Nieprawidlowy identyfikator polecenia lacza."
+        };
+    }
+
+    const uint32_t fingerprint =
+        v2_action_fingerprint(action, command_json);
+    aquarium::CachedCommandResult cached = {};
+    const aquarium::CommandLookup lookup =
+        command_ledger.lookup(command_id, fingerprint, millis(), &cached);
+    if (lookup == aquarium::CommandLookup::Duplicate) {
+        if (out_duplicate != nullptr) {
+            *out_duplicate = true;
+        }
+        return {
+            cached.success,
+            "duplicate_replayed",
+            "Polecenie lacza bylo juz wykonane."
+        };
+    }
+    if (lookup == aquarium::CommandLookup::Conflict) {
+        return {
+            false,
+            "command_id_conflict",
+            "Identyfikator byl juz uzyty z innym poleceniem."
+        };
+    }
+    if (lookup == aquarium::CommandLookup::InvalidId) {
+        return {
+            false,
+            "invalid_command_id",
+            "Nieprawidlowy identyfikator polecenia lacza."
+        };
+    }
+
+    const GuiBleCommandResult result =
+        execute_v2_control_action_locked(action, command_json);
+    aquarium::CachedCommandResult stored = {};
+    stored.success = result.success;
+    snprintf(
+        stored.code,
+        sizeof(stored.code),
+        "%s",
+        result.code != nullptr ? result.code : "internal_error");
+    snprintf(
+        stored.message,
+        sizeof(stored.message),
+        "%s",
+        result.message != nullptr ? result.message : "");
+    command_ledger.remember(command_id, fingerprint, stored, millis());
+    return result;
+}
+
 bool gui_app_v2_capabilities_json(char *out, size_t out_size) {
     if (out == nullptr || out_size < 512U) {
         return false;
@@ -18010,7 +18166,8 @@ bool gui_app_v2_capabilities_json(char *out, size_t out_size) {
         "\"stop_feeding_mode\",\"start_service_mode\",\"stop_service_mode\","
         "\"forget_ble_bonds\",\"save_calibration\","
         "\"save_remote_gateway\",\"set_remote_gateway_enabled\","
-        "\"clear_remote_gateway\"],"
+        "\"clear_remote_gateway\",\"save_espnow_link\","
+        "\"clear_espnow_link\"],"
         "\"lights\":{\"front\":{\"label\":\"Przednia\",\"relay\":\"light1\"},"
         "\"rear\":{\"label\":\"Tylna\",\"relay\":\"light2\"},"
         "\"profiles\":[\"day\",\"daybreak\",\"night\"]},"

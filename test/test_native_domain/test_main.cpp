@@ -10,6 +10,7 @@
 #include "aquarium_schedule.h"
 #include "admin_session.h"
 #include "aquael_light_controller.h"
+#include "aquacyd_link_protocol.h"
 #include "ble_pairing_policy.h"
 #include "control_modes.h"
 #include "dev_simulator.h"
@@ -23,6 +24,16 @@
 using aquarium::LightProfile;
 using aquarium::ScheduleMode;
 using aquarium::TimeWindow;
+
+using aquacyd::link::AcknowledgementPayload;
+using aquacyd::link::AcknowledgementStatus;
+using aquacyd::link::CommandAction;
+using aquacyd::link::CommandPayload;
+using aquacyd::link::CommandTarget;
+using aquacyd::link::DecodeStatus;
+using aquacyd::link::Frame;
+using aquacyd::link::MessageType;
+using aquacyd::link::TelemetryPayload;
 
 extern "C" void setUp(void) {
 }
@@ -926,6 +937,172 @@ static void test_aquael_calibration_is_safe_at_millis_zero() {
     TEST_ASSERT_TRUE(decision.relay_on);
 }
 
+static void test_aquacyd_link_frame_round_trip_and_crc_rejection() {
+    Frame source = {};
+    source.type = MessageType::Telemetry;
+    source.flags = aquacyd::link::FlagAckRequested;
+    source.source_id = 0x10203040U;
+    source.boot_id = 0x55667788U;
+    source.sequence = 42U;
+    source.acknowledged_sequence = 17U;
+    source.issued_at_ms = UINT32_MAX - 50U;
+    source.ttl_ms = 500U;
+    source.payload_length = 4U;
+    source.payload[0] = 0x00U;
+    source.payload[1] = 0x11U;
+    source.payload[2] = 0x00U;
+    source.payload[3] = 0xFFU;
+
+    uint8_t wire[aquacyd::link::kEspNowMaximumFrameSize] = {};
+    size_t wire_length = 0U;
+    TEST_ASSERT_EQUAL_UINT8(
+        static_cast<uint8_t>(DecodeStatus::Ok),
+        static_cast<uint8_t>(aquacyd::link::encode_frame(
+            source, wire, sizeof(wire), &wire_length)));
+    TEST_ASSERT_EQUAL_size_t(
+        aquacyd::link::kHeaderSize + source.payload_length +
+            aquacyd::link::kCrcSize,
+        wire_length);
+
+    Frame decoded = {};
+    TEST_ASSERT_EQUAL_UINT8(
+        static_cast<uint8_t>(DecodeStatus::Ok),
+        static_cast<uint8_t>(
+            aquacyd::link::decode_frame(wire, wire_length, &decoded)));
+    TEST_ASSERT_EQUAL_UINT32(source.source_id, decoded.source_id);
+    TEST_ASSERT_EQUAL_UINT32(source.boot_id, decoded.boot_id);
+    TEST_ASSERT_EQUAL_UINT32(source.sequence, decoded.sequence);
+    TEST_ASSERT_EQUAL_UINT16(source.payload_length, decoded.payload_length);
+    TEST_ASSERT_EQUAL_UINT8_ARRAY(source.payload, decoded.payload, 4U);
+    TEST_ASSERT_FALSE(aquacyd::link::is_expired(decoded, 100U));
+    TEST_ASSERT_TRUE(aquacyd::link::is_expired(decoded, 500U));
+
+    wire[12] ^= 0x01U;
+    TEST_ASSERT_EQUAL_UINT8(
+        static_cast<uint8_t>(DecodeStatus::CrcMismatch),
+        static_cast<uint8_t>(
+            aquacyd::link::decode_frame(wire, wire_length, &decoded)));
+}
+
+static void test_aquacyd_link_payload_codecs_preserve_signed_values() {
+    const TelemetryPayload telemetry = {
+        static_cast<uint16_t>(
+            aquacyd::link::TelemetryTemperatureValid |
+            aquacyd::link::TelemetryPhValid |
+            aquacyd::link::TelemetryControllerSafe),
+        -1250,
+        6987,
+        1234567,
+        4095U,
+        0x0055U,
+        0xA5A55A5AU,
+        123456U,
+        64000U,
+        -71,
+        19U
+    };
+    uint8_t payload[aquacyd::link::kMaximumPayloadSize] = {};
+    uint16_t payload_length = 0U;
+    TEST_ASSERT_EQUAL_UINT8(
+        static_cast<uint8_t>(DecodeStatus::Ok),
+        static_cast<uint8_t>(aquacyd::link::encode_telemetry_payload(
+            telemetry, payload, sizeof(payload), &payload_length)));
+    TelemetryPayload decoded_telemetry = {};
+    TEST_ASSERT_EQUAL_UINT8(
+        static_cast<uint8_t>(DecodeStatus::Ok),
+        static_cast<uint8_t>(aquacyd::link::decode_telemetry_payload(
+            payload, payload_length, &decoded_telemetry)));
+    TEST_ASSERT_EQUAL_INT32(-1250, decoded_telemetry.temperature_milli_c);
+    TEST_ASSERT_EQUAL_INT16(-71, decoded_telemetry.wifi_rssi_dbm);
+    TEST_ASSERT_EQUAL_UINT32(
+        telemetry.configuration_revision,
+        decoded_telemetry.configuration_revision);
+
+    const CommandPayload command = {
+        0x0102030405060708ULL,
+        CommandAction::SetOutput,
+        CommandTarget::Filter,
+        -1,
+        300000U,
+        19U
+    };
+    TEST_ASSERT_EQUAL_UINT8(
+        static_cast<uint8_t>(DecodeStatus::Ok),
+        static_cast<uint8_t>(aquacyd::link::encode_command_payload(
+            command, payload, sizeof(payload), &payload_length)));
+    CommandPayload decoded_command = {};
+    TEST_ASSERT_EQUAL_UINT8(
+        static_cast<uint8_t>(DecodeStatus::Ok),
+        static_cast<uint8_t>(aquacyd::link::decode_command_payload(
+            payload, payload_length, &decoded_command)));
+    TEST_ASSERT_TRUE(command.command_id == decoded_command.command_id);
+    TEST_ASSERT_EQUAL_INT32(-1, decoded_command.value);
+
+    const AcknowledgementPayload acknowledgement = {
+        command.command_id,
+        AcknowledgementStatus::Accepted,
+        0U,
+        20U
+    };
+    TEST_ASSERT_EQUAL_UINT8(
+        static_cast<uint8_t>(DecodeStatus::Ok),
+        static_cast<uint8_t>(
+            aquacyd::link::encode_acknowledgement_payload(
+                acknowledgement,
+                payload,
+                sizeof(payload),
+                &payload_length)));
+    AcknowledgementPayload decoded_acknowledgement = {};
+    TEST_ASSERT_EQUAL_UINT8(
+        static_cast<uint8_t>(DecodeStatus::Ok),
+        static_cast<uint8_t>(
+            aquacyd::link::decode_acknowledgement_payload(
+                payload,
+                payload_length,
+                &decoded_acknowledgement)));
+    TEST_ASSERT_TRUE(
+        acknowledgement.command_id == decoded_acknowledgement.command_id);
+}
+
+static void test_aquacyd_link_cobs_and_sequence_window() {
+    const uint8_t source[] = {
+        0x00U, 0x01U, 0x02U, 0x00U, 0x00U, 0x7FU, 0xFFU
+    };
+    uint8_t encoded[aquacyd::link::kMaximumCobsFrameSize] = {};
+    size_t encoded_length = 0U;
+    TEST_ASSERT_EQUAL_UINT8(
+        static_cast<uint8_t>(DecodeStatus::Ok),
+        static_cast<uint8_t>(aquacyd::link::cobs_encode(
+            source,
+            sizeof(source),
+            encoded,
+            sizeof(encoded),
+            &encoded_length)));
+    uint8_t decoded[sizeof(source)] = {};
+    size_t decoded_length = 0U;
+    TEST_ASSERT_EQUAL_UINT8(
+        static_cast<uint8_t>(DecodeStatus::Ok),
+        static_cast<uint8_t>(aquacyd::link::cobs_decode(
+            encoded,
+            encoded_length,
+            decoded,
+            sizeof(decoded),
+            &decoded_length)));
+    TEST_ASSERT_EQUAL_size_t(sizeof(source), decoded_length);
+    TEST_ASSERT_EQUAL_UINT8_ARRAY(source, decoded, sizeof(source));
+
+    aquacyd::link::SequenceWindow window;
+    TEST_ASSERT_FALSE(window.accept(0U, 1U));
+    TEST_ASSERT_TRUE(window.accept(10U, UINT32_MAX - 1U));
+    TEST_ASSERT_FALSE(window.accept(10U, UINT32_MAX - 1U));
+    TEST_ASSERT_TRUE(window.accept(10U, UINT32_MAX));
+    TEST_ASSERT_TRUE(window.accept(10U, 1U));
+    TEST_ASSERT_FALSE(window.accept(10U, UINT32_MAX));
+    TEST_ASSERT_TRUE(window.accept(11U, 1U));
+    TEST_ASSERT_EQUAL_UINT32(11U, window.boot_id());
+    TEST_ASSERT_EQUAL_UINT32(1U, window.newest_sequence());
+}
+
 int main(int, char **) {
     UNITY_BEGIN();
     RUN_TEST(test_regular_and_wrapped_windows);
@@ -961,5 +1138,8 @@ int main(int, char **) {
     RUN_TEST(test_aquael_quick_power_cycle_advances_and_long_off_resets_day);
     RUN_TEST(test_aquael_exact_five_second_boundary_still_advances);
     RUN_TEST(test_aquael_calibration_is_safe_at_millis_zero);
+    RUN_TEST(test_aquacyd_link_frame_round_trip_and_crc_rejection);
+    RUN_TEST(test_aquacyd_link_payload_codecs_preserve_signed_values);
+    RUN_TEST(test_aquacyd_link_cobs_and_sequence_window);
     return UNITY_END();
 }

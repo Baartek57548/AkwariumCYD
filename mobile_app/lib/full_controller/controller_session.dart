@@ -132,6 +132,8 @@ class ControllerSession extends ChangeNotifier {
     'stop_service_mode',
     'save_remote_gateway',
     'clear_remote_gateway',
+    'save_espnow_link',
+    'clear_espnow_link',
   };
 
   ControllerSession.wifi(

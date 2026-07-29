@@ -73,3 +73,15 @@ Firmware przyjmuje produkcyjnie tylko podpisany pakiet `.aqfw` zweryfikowany
 względem wbudowanego trust anchora. Sprzętowe Secure Boot v2 i Flash Encryption
 wymagają dodatkowo kontrolowanego provisioningu każdej płytki; żaden workflow
 ani skrypt w repozytorium nie przepala eFuse automatycznie.
+
+## Panel ESP32-P4, bramka ESP32-C6 i Home Assistant
+
+Nowa, opcjonalna architektura zachowuje CYD jako autonomiczny sterownik, a
+duży panel Waveshare ESP32-P4 7" traktuje jako odpinany klient LVGL/MQTT.
+Nieruchomy ESP32-C6 przekazuje szyfrowany ESP-NOW do MQTT, więc wyłączenie
+panelu nie odcina Home Assistanta. Projekty znajdują się w
+`firmware/esp32p4_hmi`, `firmware/esp32c6_gateway` i `home_assistant`.
+
+Pełny opis odpowiedzialności, sprzętu, protokołu, provisioningu i kolejności
+migracji znajduje się w
+[docs/ESP32_P4_C6_HOME_ASSISTANT_ARCHITECTURE.md](docs/ESP32_P4_C6_HOME_ASSISTANT_ARCHITECTURE.md).
