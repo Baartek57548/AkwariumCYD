@@ -111,6 +111,32 @@ void main() {
     expect(harness.notifications.permissionRequests, 2);
     expect(harness.services.preferences.enabled, isTrue);
     expect((await harness.preferences.load()).enabled, isTrue);
+    expect(harness.notifications.testNotifications, 1);
+  });
+
+  testWidgets('przycisk diagnostyczny wysyła powiadomienie systemowe', (
+    tester,
+  ) async {
+    final harness = await _RuntimeHarness.create(permissionGranted: true);
+    addTearDown(harness.dispose);
+
+    await tester.pumpWidget(
+      AquariumApp(home: AlarmCenterView(services: harness.services)),
+    );
+    await _pumpUi(tester);
+    await tester.ensureVisible(find.text('Powiadomienia'));
+    await _pumpUi(tester);
+    await tester.tap(find.text('Powiadomienia'));
+    await _pumpUi(tester);
+    await tester.ensureVisible(find.text('Wyślij powiadomienie testowe'));
+    await _pumpUi(tester);
+
+    await tester.tap(find.text('Wyślij powiadomienie testowe'));
+    await _pumpUi(tester);
+
+    expect(harness.notifications.permissionRequests, 1);
+    expect(harness.notifications.testNotifications, 1);
+    expect(find.text('Wysłano powiadomienie testowe.'), findsOneWidget);
   });
 }
 
@@ -174,6 +200,7 @@ final class _PermissionNotificationSink implements AlarmNotificationSink {
 
   bool permissionGranted;
   int permissionRequests = 0;
+  int testNotifications = 0;
 
   @override
   Future<void> cancelAlarm(String alarmKey) async {}
@@ -185,6 +212,11 @@ final class _PermissionNotificationSink implements AlarmNotificationSink {
   Future<bool> requestPermission() async {
     permissionRequests++;
     return permissionGranted;
+  }
+
+  @override
+  Future<void> showTestNotification() async {
+    testNotifications++;
   }
 
   @override

@@ -2,6 +2,28 @@
 
 Wersjonowanie aplikacji jest zgodne z [Semantic Versioning](https://semver.org/).
 
+## 5.1.1 — 2026-07-29
+
+### Powiadomienia systemowe
+
+- naprawiono produkcyjny APK, w którym optymalizator Androida usuwał dynamicznie
+  wskazywaną ikonę `ic_notification`, powodując błąd `invalid_icon` podczas
+  inicjalizacji wszystkich kanałów,
+- dodano kontrolę globalnej zgody i stanu docelowego kanału przed wysłaniem
+  alarmu, ostrzeżenia lub przypomnienia,
+- dodano natychmiastowe powiadomienie testowe oraz skrót do systemowych ustawień
+  aplikacji,
+- błąd dostawy jest teraz pokazany użytkownikowi i nie zostaje ukryty przez
+  warstwę synchronizacji,
+- gotowy release APK jest automatycznie analizowany przez `aapt` w CI i przed
+  publikacją.
+
+### Dystrybucja
+
+- wersja aplikacji: `5.1.1+19`,
+- tag aplikacji: `mobile-v5.1.1`,
+- produkcyjny asset Androida: `AquaCYD-Control-5.1.1-current.apk`.
+
 ## 5.1.0 — 2026-07-28
 
 ### Bezpieczeństwo połączenia

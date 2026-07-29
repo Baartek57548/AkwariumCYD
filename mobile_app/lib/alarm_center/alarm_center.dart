@@ -64,6 +64,8 @@ final class AlarmCenter {
   Future<bool> requestNotificationPermission() =>
       notifications.requestPermission();
 
+  Future<void> showTestNotification() => notifications.showTestNotification();
+
   Future<AlarmDispatchReport> ingestSignals(
     Iterable<AlarmSignal> signals, {
     DateTime? observedAt,

@@ -6,6 +6,7 @@ import 'alarm_models.dart';
 abstract interface class AlarmNotificationSink {
   Future<void> initialize();
   Future<bool> requestPermission();
+  Future<void> showTestNotification();
   Future<void> showAlarm(AlarmRecord alarm);
   Future<void> showResolved(AlarmRecord alarm);
   Future<void> showServiceReminder({
@@ -25,11 +26,21 @@ final class LocalAlarmNotificationSink implements AlarmNotificationSink {
   static const maintenanceChannelId = 'aquacyd_maintenance_v1';
 
   final FlutterLocalNotificationsPlugin _plugin;
-  bool _initialized = false;
+  Future<void>? _initialization;
 
   @override
-  Future<void> initialize() async {
-    if (_initialized) return;
+  Future<void> initialize() => _initialization ??= _initializeSafely();
+
+  Future<void> _initializeSafely() async {
+    try {
+      await _initialize();
+    } on Object {
+      _initialization = null;
+      rethrow;
+    }
+  }
+
+  Future<void> _initialize() async {
     const android = AndroidInitializationSettings('ic_notification');
     const darwin = DarwinInitializationSettings(
       requestAlertPermission: false,
@@ -75,7 +86,6 @@ final class LocalAlarmNotificationSink implements AlarmNotificationSink {
         ),
       );
     }
-    _initialized = true;
   }
 
   @override
@@ -86,7 +96,9 @@ final class LocalAlarmNotificationSink implements AlarmNotificationSink {
           AndroidFlutterLocalNotificationsPlugin
         >();
     if (android != null) {
-      return await android.requestNotificationsPermission() ?? false;
+      final granted = await android.requestNotificationsPermission() ?? false;
+      if (!granted) return false;
+      return await android.areNotificationsEnabled() ?? true;
     }
     final ios = _plugin
         .resolvePlatformSpecificImplementation<
@@ -104,9 +116,39 @@ final class LocalAlarmNotificationSink implements AlarmNotificationSink {
   }
 
   @override
+  Future<void> showTestNotification() async {
+    await initialize();
+    await _ensureAndroidChannelEnabled(warningChannelId);
+    await _plugin.show(
+      id: _notificationId('diagnostic:system-notifications'),
+      title: 'AquaCYD Control',
+      body: 'Powiadomienia systemowe działają poprawnie.',
+      payload: 'diagnostic:notifications',
+      notificationDetails: const NotificationDetails(
+        android: AndroidNotificationDetails(
+          warningChannelId,
+          'Ostrzeżenia',
+          channelDescription: 'Ostrzeżenia wymagające sprawdzenia akwarium.',
+          importance: Importance.high,
+          priority: Priority.high,
+          visibility: NotificationVisibility.public,
+        ),
+        iOS: DarwinNotificationDetails(
+          presentAlert: true,
+          presentBadge: true,
+          presentSound: true,
+        ),
+      ),
+    );
+  }
+
+  @override
   Future<void> showAlarm(AlarmRecord alarm) async {
     await initialize();
     final critical = alarm.severity == AlarmSeverity.critical;
+    await _ensureAndroidChannelEnabled(
+      critical ? criticalChannelId : warningChannelId,
+    );
     await _plugin.show(
       id: _notificationId('alarm:${alarm.key}'),
       title: critical ? 'Pilny alarm: ${alarm.title}' : alarm.title,
@@ -136,6 +178,7 @@ final class LocalAlarmNotificationSink implements AlarmNotificationSink {
   @override
   Future<void> showResolved(AlarmRecord alarm) async {
     await initialize();
+    await _ensureAndroidChannelEnabled(warningChannelId);
     await _plugin.show(
       id: _notificationId('resolved:${alarm.key}'),
       title: 'Alarm rozwiązany',
@@ -161,6 +204,7 @@ final class LocalAlarmNotificationSink implements AlarmNotificationSink {
     required String body,
   }) async {
     await initialize();
+    await _ensureAndroidChannelEnabled(maintenanceChannelId);
     await _plugin.show(
       id: _notificationId('service:$id'),
       title: title,
@@ -183,6 +227,23 @@ final class LocalAlarmNotificationSink implements AlarmNotificationSink {
   Future<void> cancelAlarm(String alarmKey) async {
     await initialize();
     await _plugin.cancel(id: _notificationId('alarm:$alarmKey'));
+  }
+
+  Future<void> _ensureAndroidChannelEnabled(String channelId) async {
+    final android = _plugin
+        .resolvePlatformSpecificImplementation<
+          AndroidFlutterLocalNotificationsPlugin
+        >();
+    if (android == null) return;
+    if (await android.areNotificationsEnabled() == false) {
+      throw StateError('Powiadomienia aplikacji są wyłączone w systemie.');
+    }
+    final channels = await android.getNotificationChannels();
+    if (channels == null || channels.isEmpty) return;
+    final channel = channels.where((item) => item.id == channelId).firstOrNull;
+    if (channel == null || channel.importance == Importance.none) {
+      throw StateError('Kanał powiadomień $channelId jest wyłączony.');
+    }
   }
 
   static int _notificationId(String value) {

@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:permission_handler/permission_handler.dart';
 
 import '../../alarm_center/alarm_center_api.dart';
 import '../../controller_runtime_services.dart';
@@ -21,6 +22,7 @@ class _AlarmCenterViewState extends State<AlarmCenterView> {
   final Set<String> _busyItems = <String>{};
   bool _savingPreferences = false;
   bool _requestingPermission = false;
+  bool _testingNotification = false;
 
   @override
   void initState() {
@@ -115,11 +117,50 @@ class _AlarmCenterViewState extends State<AlarmCenterView> {
         widget.services.preferences.copyWith(enabled: true),
       );
       if (mounted && saved) {
-        _message('Powiadomienia o alarmach są aktywne.');
+        final delivered = await widget.services.sendTestNotification();
+        if (!mounted) return;
+        _message(
+          delivered
+              ? 'Powiadomienia są aktywne. Wysłano próbny komunikat.'
+              : 'Zgoda jest aktywna, ale kanał Androida jest wyłączony.',
+          error: !delivered,
+        );
       }
     } finally {
       if (mounted) setState(() => _requestingPermission = false);
     }
+  }
+
+  Future<void> _sendTestNotification() async {
+    if (_testingNotification || _requestingPermission) return;
+    setState(() => _testingNotification = true);
+    try {
+      final granted = await widget.services.requestNotificationPermission();
+      if (!mounted) return;
+      if (!granted) {
+        _message(
+          'Android blokuje powiadomienia. Włącz je w ustawieniach aplikacji.',
+          error: true,
+        );
+        return;
+      }
+      final delivered = await widget.services.sendTestNotification();
+      if (!mounted) return;
+      _message(
+        delivered
+            ? 'Wysłano powiadomienie testowe.'
+            : 'Kanał powiadomień jest wyłączony w ustawieniach Androida.',
+        error: !delivered,
+      );
+    } finally {
+      if (mounted) setState(() => _testingNotification = false);
+    }
+  }
+
+  Future<void> _openSystemSettings() async {
+    final opened = await openAppSettings();
+    if (!mounted || opened) return;
+    _message('Nie udało się otworzyć ustawień aplikacji.', error: true);
   }
 
   Future<void> _requestPermission() async {
@@ -248,11 +289,16 @@ class _AlarmCenterViewState extends State<AlarmCenterView> {
           const SizedBox(height: AquaSpacing.lg),
           _NotificationSettingsCard(
             preferences: services.preferences,
-            saving: _savingPreferences || _requestingPermission,
+            saving:
+                _savingPreferences ||
+                _requestingPermission ||
+                _testingNotification,
             onChanged: (value) => unawaited(_savePreferences(value)),
             onEnabledChanged: (value) =>
                 unawaited(_setNotificationsEnabled(value)),
             onRequestPermission: () => unawaited(_requestPermission()),
+            onSendTest: () => unawaited(_sendTestNotification()),
+            onOpenSystemSettings: () => unawaited(_openSystemSettings()),
           ),
           if (resolved.isNotEmpty) ...[
             const SizedBox(height: AquaSpacing.lg),
@@ -564,6 +610,8 @@ class _NotificationSettingsCard extends StatelessWidget {
     required this.onChanged,
     required this.onEnabledChanged,
     required this.onRequestPermission,
+    required this.onSendTest,
+    required this.onOpenSystemSettings,
   });
 
   final AlarmNotificationPreferences preferences;
@@ -571,6 +619,8 @@ class _NotificationSettingsCard extends StatelessWidget {
   final ValueChanged<AlarmNotificationPreferences> onChanged;
   final ValueChanged<bool> onEnabledChanged;
   final VoidCallback onRequestPermission;
+  final VoidCallback onSendTest;
+  final VoidCallback onOpenSystemSettings;
 
   @override
   Widget build(BuildContext context) {
@@ -626,11 +676,34 @@ class _NotificationSettingsCard extends StatelessWidget {
           const SizedBox(height: AquaSpacing.xs),
           SizedBox(
             width: double.infinity,
-            child: OutlinedButton.icon(
-              onPressed: onRequestPermission,
-              icon: const Icon(Icons.security_rounded),
-              label: const Text('Sprawdź uprawnienie systemowe'),
+            child: FilledButton.tonalIcon(
+              onPressed: saving ? null : onSendTest,
+              icon: saving
+                  ? const SizedBox.square(
+                      dimension: 18,
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    )
+                  : const Icon(Icons.notifications_active_rounded),
+              label: const Text('Wyślij powiadomienie testowe'),
             ),
+          ),
+          const SizedBox(height: AquaSpacing.xs),
+          Wrap(
+            alignment: WrapAlignment.center,
+            spacing: AquaSpacing.xs,
+            runSpacing: AquaSpacing.xs,
+            children: [
+              TextButton.icon(
+                onPressed: saving ? null : onRequestPermission,
+                icon: const Icon(Icons.security_rounded),
+                label: const Text('Sprawdź zgodę'),
+              ),
+              TextButton.icon(
+                onPressed: onOpenSystemSettings,
+                icon: const Icon(Icons.settings_outlined),
+                label: const Text('Ustawienia Androida'),
+              ),
+            ],
           ),
         ],
       ),
