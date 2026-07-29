@@ -95,3 +95,11 @@ czasowe sterowanie, alarmy i przykład najmniejszych uprawnień MQTT.
 Pełny opis odpowiedzialności, sprzętu, protokołu, provisioningu i kolejności
 migracji znajduje się w
 [docs/ESP32_P4_C6_HOME_ASSISTANT_ARCHITECTURE.md](docs/ESP32_P4_C6_HOME_ASSISTANT_ARCHITECTURE.md).
+
+Kierunek produktu, granice odpowiedzialności oraz etapy dojścia od działającego
+MVP do instalacji produkcyjnej opisuje
+[docs/PROJECT_DIRECTION.md](docs/PROJECT_DIRECTION.md). Zasady wspólnego
+projektowania ekranów w Figma i implementowania ich jako natywny LVGL znajdują
+się w
+[docs/HMI_LVGL_FIGMA_WORKFLOW.md](docs/HMI_LVGL_FIGMA_WORKFLOW.md), a wspólne
+tokeny wizualne w `design/hmi/aquacyd-hmi.tokens.json`.

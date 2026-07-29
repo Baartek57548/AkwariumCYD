@@ -40,3 +40,8 @@ CYD.
 Po wypięciu ze stacji ściennej panel może działać z akumulatora, o ile pozostaje
 w zasięgu domowego Wi-Fi; odłączenie albo rozładowanie panelu nie wpływa na
 bramkę, automatykę CYD ani Home Assistanta.
+
+Docelowa mapa ekranów, komponenty, stany błędów i proces Figma → LVGL są
+opisane w `../../docs/HMI_LVGL_FIGMA_WORKFLOW.md`. Kolory, odstępy, promienie,
+typografia i wymiary bazowe są wersjonowane w
+`../../design/hmi/aquacyd-hmi.tokens.json`.
