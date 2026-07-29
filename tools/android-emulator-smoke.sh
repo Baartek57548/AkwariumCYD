@@ -41,13 +41,12 @@ flutter test \
   -d emulator-5554 \
   --flavor current
 
-notification_permission="$(
-  adb shell pm check-permission \
-    android.permission.POST_NOTIFICATIONS \
-    "$package_name" |
-    tr -d '\r'
-)"
-test "$notification_permission" = "granted"
+package_dump="$diagnostics_directory/package.txt"
+adb shell dumpsys package "$package_name" > "$package_dump"
+grep -E \
+  'android\.permission\.POST_NOTIFICATIONS: granted=true([,[:space:]]|$)' \
+  "$package_dump" \
+  >/dev/null
 
 notifications_dump="$diagnostics_directory/notifications.txt"
 adb shell dumpsys notification --noredact > "$notifications_dump"
