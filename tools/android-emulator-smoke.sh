@@ -43,8 +43,8 @@ flutter test \
 
 notification_permission="$(
   adb shell pm check-permission \
-    "$package_name" \
-    android.permission.POST_NOTIFICATIONS |
+    android.permission.POST_NOTIFICATIONS \
+    "$package_name" |
     tr -d '\r'
 )"
 test "$notification_permission" = "granted"
