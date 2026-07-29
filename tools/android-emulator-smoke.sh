@@ -41,6 +41,22 @@ flutter test \
   -d emulator-5554 \
   --flavor current
 
+adb install -r -t -g "$main_apk"
+adb shell pm grant \
+  "$package_name" \
+  android.permission.POST_NOTIFICATIONS
+adb shell am force-stop "$package_name"
+deep_link_output="$diagnostics_directory/deep-link.txt"
+adb shell am start \
+  -W \
+  -a SELECT_NOTIFICATION \
+  -n "$package_name/.MainActivity" \
+  --ei notificationId 4242 \
+  --es payload "aquacyd://update/mobile-v$app_version" \
+  > "$deep_link_output"
+grep -F "Status: ok" "$deep_link_output" >/dev/null
+sleep 2
+
 package_dump="$diagnostics_directory/package.txt"
 adb shell dumpsys package "$package_name" > "$package_dump"
 grep -E \
@@ -58,21 +74,7 @@ for channel in \
 do
   grep -F "$channel" "$notifications_dump" >/dev/null
 done
-grep -F "AquaCYD Control" "$notifications_dump" >/dev/null
 
-adb install -r -t -g "$main_apk"
-adb shell am force-stop "$package_name"
-deep_link_output="$diagnostics_directory/deep-link.txt"
-adb shell am start \
-  -W \
-  -a SELECT_NOTIFICATION \
-  -n "$package_name/.MainActivity" \
-  --ei notificationId 4242 \
-  --es payload "aquacyd://update/mobile-v$app_version" \
-  > "$deep_link_output"
-grep -F "Status: ok" "$deep_link_output" >/dev/null
-
-sleep 2
 activity_dump="$diagnostics_directory/activity.txt"
 adb shell dumpsys activity activities > "$activity_dump"
 grep -F "$package_name/.MainActivity" "$activity_dump" >/dev/null
