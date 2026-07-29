@@ -136,13 +136,18 @@ void main() {
     addTearDown(service.dispose);
     final token = FirmwareDownloadCancellationToken();
     final progress = <double>[];
+    final firstProgress = Completer<void>();
 
     final operation = service.downloadFirmwarePackage(
       release: fixture.release,
-      onProgress: progress.add,
+      onProgress: (value) {
+        progress.add(value);
+        if (!firstProgress.isCompleted) firstProgress.complete();
+      },
       cancellationToken: token,
     );
     await fixture.requestStarted.future.timeout(const Duration(seconds: 2));
+    await firstProgress.future.timeout(const Duration(seconds: 2));
     token.cancel();
 
     await expectLater(
