@@ -328,7 +328,8 @@ abstract final class AquariumBackgroundService {
   static const uniqueTaskName = 'aquacyd-local-wifi-sync-v1';
   static const workerTaskName = 'aquacydLocalWifiSync';
 
-  /// Należy wywołać po WidgetsFlutterBinding.ensureInitialized(), przed runApp.
+  /// Należy wywołać po WidgetsFlutterBinding.ensureInitialized(). Wywołujący
+  /// nie powinien blokować pierwszej klatki UI oczekiwaniem na systemowy worker.
   static Future<void> initialize() async {
     if (kIsWeb || !Platform.isAndroid) return;
     await Workmanager().initialize(aquariumBackgroundCallbackDispatcher);
