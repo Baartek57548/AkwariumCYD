@@ -1014,6 +1014,16 @@ static void test_aquacyd_link_payload_codecs_preserve_signed_values() {
             payload, payload_length, &decoded_telemetry)));
     TEST_ASSERT_EQUAL_INT32(-1250, decoded_telemetry.temperature_milli_c);
     TEST_ASSERT_EQUAL_INT16(-71, decoded_telemetry.wifi_rssi_dbm);
+    TEST_ASSERT_EQUAL_UINT16(telemetry.relay_bits, decoded_telemetry.relay_bits);
+    TEST_ASSERT_TRUE(
+        (decoded_telemetry.relay_bits &
+         aquacyd::link::RelayLightPrimaryOn) != 0U);
+    TEST_ASSERT_TRUE(
+        (decoded_telemetry.relay_bits &
+         aquacyd::link::RelayFilterOn) != 0U);
+    TEST_ASSERT_TRUE(
+        (decoded_telemetry.relay_bits &
+         aquacyd::link::RelayHeaterOn) != 0U);
     TEST_ASSERT_EQUAL_UINT32(
         telemetry.configuration_revision,
         decoded_telemetry.configuration_revision);

@@ -15,5 +15,6 @@ gateway/gateway-state/
 gateway/aquacyd-gateway-secrets.json
 gateway/firebase-service-account.json
 firmware/**/build/
+firmware/**/managed_components/
 firmware/**/sdkconfig
 firmware/**/sdkconfig.old

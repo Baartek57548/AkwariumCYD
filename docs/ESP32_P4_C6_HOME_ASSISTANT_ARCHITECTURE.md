@@ -97,6 +97,33 @@ MQTT używa tematów:
 - `aquacyd/aquarium/command/ack`;
 - `aquacyd/aquarium/hmi/availability`.
 
+Każde polecenie MQTT musi zawierać niezerowy `command_id` zapisany jako dokładnie
+16 cyfr szesnastkowych. Identyfikator tworzy klient (HMI albo Home Assistant) i
+bramka przenosi go bez zmian do CYD. CYD przechowuje osiem ostatnich wyników
+przez 10 minut bez alokacji dynamicznej. W tym oknie ponowienie QoS 1 lub
+ponowne wysłanie tej samej wiadomości nie uruchamia drugi raz akcji
+nieodwracalnej, np. karmnika. Przykład kompletnego polecenia:
+
+```json
+{
+  "command_id": "18d4a6c30f924be1",
+  "action": "set_output",
+  "target": "light_primary",
+  "value": 1,
+  "duration_ms": 900000,
+  "expected_revision": 305419896
+}
+```
+
+`expected_revision=0` wyłącza optymistyczną kontrolę współbieżności. HMI używa
+rewizji z ostatniej telemetrii, natomiast skrypty HA celowo wysyłają zero, bo
+stan encji może być opóźniony. ACK zawiera status liczbowy i tekstowy, kod
+przyczyny, aktualną rewizję oraz flagę `transport_timeout`.
+
+Zdalnie dostępne wyjścia są celowo ograniczone do obu świateł, filtra i
+napowietrzania. Grzałka, CO₂ oraz dolewka są tylko monitorowane; ich zaawansowane
+reguły i zabezpieczenia pozostają lokalnie w CYD.
+
 ## Kanał radiowy
 
 ESP-NOW i połączenie Wi-Fi STA muszą pracować na tym samym kanale. Router 2,4
@@ -115,15 +142,19 @@ routerze należy wyłączyć.
 1. Zainstalować Home Assistant OS na Raspberry Pi 4B 2 GB.
 2. Podłączyć Pi przez Ethernet i przenieść bazę na SSD USB.
 3. Dodać oficjalną integrację MQTT i lokalnego brokera Mosquitto.
-4. Skopiować `home_assistant/packages/aquacyd.yaml` do katalogu pakietów.
-5. Nie wystawiać MQTT ani CYD bezpośrednio do Internetu; użyć Home Assistant
+4. Skopiować `home_assistant/packages/aquacyd.yaml` i
+   `home_assistant/dashboards/aquacyd.yaml` zgodnie z
+   `home_assistant/README.md`.
+5. Utworzyć osobne konta MQTT dla bramki, HMI i HA. Dla samodzielnego Mosquitto
+   użyć minimalnych uprawnień z `home_assistant/mosquitto/aquacyd.acl`.
+6. Nie wystawiać MQTT ani CYD bezpośrednio do Internetu; użyć Home Assistant
    Cloud albo VPN.
 
 ### 2. Stała bramka C6
 
 1. W `firmware/esp32c6_gateway` uruchomić `idf.py menuconfig`.
 2. Ustawić SSID 2,4 GHz, MQTT, MAC CYD, PMK i LMK.
-3. Zbudować i wgrać firmware ESP-IDF 5.4.x.
+3. Zbudować i wgrać firmware ESP-IDF 5.4.4.
 4. Sprawdzić w brokerze `availability=offline`; zmieni się na `online` dopiero
    po odebraniu poprawnej telemetrii CYD.
 
@@ -170,9 +201,30 @@ sesją administratora. Po zapisie należy kontrolowanie zrestartować CYD.
 ### 4. Panel ESP32-P4
 
 W `firmware/esp32p4_hmi` ustawić Wi-Fi i MQTT przez `idf.py menuconfig`, następnie
-zbudować ESP-IDF 5.4.x. Panel subskrybuje retained state i availability. Przy
+zbudować ESP-IDF 5.4.4. Panel subskrybuje retained state i availability. Przy
 braku CYD blokuje przyciski, a przy braku HMI Home Assistant i CYD działają
-dalej.
+dalej. Zakładki pokazują pomiary, alarmy, stany pięciu wyjść, pamięć, uptime,
+rewizję konfiguracji i stan czujników bezpieczeństwa. Sterowanie jest blokowane
+podczas oczekiwania na aplikacyjny ACK, a timeout i konflikt rewizji są jawnie
+pokazywane. Jasność jest zapisywana w NVS.
+
+Oba obrazy można zbudować:
+
+```powershell
+.\tools\build-p4-c6.ps1 -IdfPath C:\esp\v5.4.4-full\esp-idf
+```
+
+Wgranie wymaga jawnego wskazania jednej płytki i portu:
+
+```powershell
+.\tools\build-p4-c6.ps1 -Target c6 -IdfPath C:\esp\v5.4.4-full\esp-idf -Flash -Port COM7
+.\tools\build-p4-c6.ps1 -Target p4 -IdfPath C:\esp\v5.4.4-full\esp-idf -Flash -Port COM8
+```
+
+Zaimplementowany BSP i pinout dotyczą
+`Waveshare ESP32-P4-WIFI6-Touch-LCD-7B`. Wersja Elecrow wymaga osobnego BSP
+zgodnego z konkretną rewizją płytki; nie należy wgrywać obrazu Waveshare do
+Elecrow tylko dlatego, że oba urządzenia używają ESP32-P4 i ESP32-C6.
 
 ## Kryteria odbioru
 

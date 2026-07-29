@@ -189,6 +189,64 @@ jobs:
           if-no-files-found: error
           retention-days: 14
 
+  esp-idf-firmware:
+    name: ESP32-C6 gateway and ESP32-P4 HMI
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    container:
+      image: espressif/idf:v5.4.4
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - name: Build ESP32-C6 gateway
+        shell: bash
+        run: |
+          set -euo pipefail
+          idf.py -C firmware/esp32c6_gateway build
+      - name: Build ESP32-P4 HMI
+        shell: bash
+        run: |
+          set -euo pipefail
+          idf.py -C firmware/esp32p4_hmi build
+      - name: Collect flashable images and checksums
+        shell: bash
+        run: |
+          set -euo pipefail
+          output="$GITHUB_WORKSPACE/artifacts/esp-idf"
+          mkdir -p "$output/c6" "$output/p4"
+          cp firmware/esp32c6_gateway/build/bootloader/bootloader.bin \
+            "$output/c6/"
+          cp firmware/esp32c6_gateway/build/partition_table/partition-table.bin \
+            "$output/c6/"
+          cp firmware/esp32c6_gateway/build/ota_data_initial.bin \
+            "$output/c6/"
+          cp firmware/esp32c6_gateway/build/aquacyd_esp32c6_gateway.bin \
+            "$output/c6/"
+          cp firmware/esp32c6_gateway/build/flash_args \
+            "$output/c6/"
+          cp firmware/esp32p4_hmi/build/bootloader/bootloader.bin \
+            "$output/p4/"
+          cp firmware/esp32p4_hmi/build/partition_table/partition-table.bin \
+            "$output/p4/"
+          cp firmware/esp32p4_hmi/build/ota_data_initial.bin \
+            "$output/p4/"
+          cp firmware/esp32p4_hmi/build/aquacyd_esp32p4_hmi.bin \
+            "$output/p4/"
+          cp firmware/esp32p4_hmi/build/flash_args \
+            "$output/p4/"
+          (
+            cd "$output"
+            find c6 p4 -type f -print0 |
+              sort -z |
+              xargs -0 sha256sum > SHA256SUMS
+          )
+      - name: Upload ESP-IDF firmware
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: esp32-p4-c6-firmware
+          path: artifacts/esp-idf/
+          if-no-files-found: error
+          retention-days: 14
+
   flutter:
     name: Flutter and Android
     runs-on: ubuntu-latest

@@ -1,0 +1,143 @@
+title: AquaCYD
+views:
+  - title: Akwarium
+    path: akwarium
+    icon: mdi:fishbowl
+    cards:
+      - type: glance
+        title: Pomiary
+        columns: 4
+        show_name: true
+        show_state: true
+        entities:
+          - entity: sensor.aquacyd_aquarium_temperature
+            name: Temperatura
+          - entity: sensor.aquacyd_aquarium_ph
+            name: pH
+          - entity: sensor.aquacyd_aquarium_ec
+            name: Przewodność
+          - entity: sensor.aquacyd_aquarium_ldr
+            name: LDR
+
+      - type: entities
+        title: Bezpieczeństwo
+        show_header_toggle: false
+        entities:
+          - entity: binary_sensor.aquacyd_aquarium_controller_safe
+            name: Sterownik bezpieczny
+          - entity: binary_sensor.aquacyd_aquarium_leak
+            name: Wyciek
+          - entity: binary_sensor.aquacyd_aquarium_water_low
+            name: Niski poziom wody
+          - entity: sensor.aquacyd_aquarium_alarms
+            name: Flagi alarmów
+
+      - type: entities
+        title: Wyjścia sterownika
+        show_header_toggle: false
+        entities:
+          - entity: binary_sensor.aquacyd_aquarium_light_primary
+            name: Światło główne
+          - entity: binary_sensor.aquacyd_aquarium_light_secondary
+            name: Światło roślinne
+          - entity: binary_sensor.aquacyd_aquarium_filter
+            name: Filtr
+          - entity: binary_sensor.aquacyd_aquarium_aerator
+            name: Napowietrzanie
+          - entity: binary_sensor.aquacyd_aquarium_heater
+            name: Grzałka
+
+      - type: entities
+        title: Sterowanie czasowe
+        show_header_toggle: false
+        entities:
+          - entity: input_number.aquacyd_override_minutes
+          - entity: input_number.aquacyd_feeding_minutes
+
+      - type: grid
+        title: Polecenia
+        columns: 2
+        square: false
+        cards:
+          - type: button
+            name: Światło ON
+            icon: mdi:lightbulb-on
+            tap_action:
+              action: perform-action
+              perform_action: script.aquacyd_light_on
+          - type: button
+            name: Światło OFF
+            icon: mdi:lightbulb-off
+            tap_action:
+              action: perform-action
+              perform_action: script.aquacyd_light_off
+          - type: button
+            name: Roślinne ON
+            icon: mdi:sprout
+            tap_action:
+              action: perform-action
+              perform_action: script.aquacyd_plant_light_on
+          - type: button
+            name: Roślinne OFF
+            icon: mdi:sprout-off
+            tap_action:
+              action: perform-action
+              perform_action: script.aquacyd_plant_light_off
+          - type: button
+            name: Filtr ON
+            icon: mdi:air-filter
+            tap_action:
+              action: perform-action
+              perform_action: script.aquacyd_filter_on
+          - type: button
+            name: Filtr OFF
+            icon: mdi:air-filter
+            tap_action:
+              action: perform-action
+              perform_action: script.aquacyd_filter_off
+          - type: button
+            name: Napowietrzanie ON
+            icon: mdi:chart-bubble
+            tap_action:
+              action: perform-action
+              perform_action: script.aquacyd_aerator_on
+          - type: button
+            name: Napowietrzanie OFF
+            icon: mdi:chart-bubble
+            tap_action:
+              action: perform-action
+              perform_action: script.aquacyd_aerator_off
+          - type: button
+            name: Karmienie
+            icon: mdi:food-drumstick
+            tap_action:
+              action: perform-action
+              perform_action: script.aquacyd_start_feeding
+          - type: button
+            name: Odśwież
+            icon: mdi:refresh
+            tap_action:
+              action: perform-action
+              perform_action: script.aquacyd_request_snapshot
+
+  - title: Diagnostyka
+    path: diagnostyka
+    icon: mdi:stethoscope
+    cards:
+      - type: entities
+        title: Łącza
+        entities:
+          - entity: sensor.aquacyd_aquarium_wifi_rssi
+            name: Wi-Fi CYD
+          - entity: sensor.aquacyd_aquarium_espnow_rssi
+            name: ESP-NOW
+
+      - type: entities
+        title: Sterownik CYD
+        entities:
+          - entity: sensor.aquacyd_aquarium_uptime
+            name: Czas pracy
+          - entity: sensor.aquacyd_aquarium_free_heap
+            name: Wolna pamięć
+          - entity: sensor.aquacyd_aquarium_configuration_revision
+            name: Rewizja konfiguracji

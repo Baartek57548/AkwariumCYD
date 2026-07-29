@@ -2,8 +2,10 @@ dependencies:
   idf:
     version: ">=5.4.0,<5.5.0"
   lvgl/lvgl:
-    version: "9.2.*"
+    version: "9.2.2"
     public: true
+  espressif/esp_lvgl_port:
+    version: "2.6.3"
   waveshare/esp32_p4_wifi6_touch_lcd_7b:
     version: "1.0.2"
     public: true

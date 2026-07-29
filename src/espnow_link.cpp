@@ -39,6 +39,18 @@ constexpr uint32_t TELEMETRY_TTL_MS = 3000U;
 constexpr uint32_t COMMAND_MAXIMUM_TTL_MS = 10000U;
 constexpr uint32_t OVERRIDE_MINIMUM_MS = 30000U;
 constexpr uint32_t OVERRIDE_MAXIMUM_MS = 86400000U;
+constexpr uint32_t FEEDING_MINIMUM_MS = 60000U;
+constexpr uint32_t FEEDING_MAXIMUM_MS = 3600000U;
+
+enum CommandReasonCode : uint16_t {
+    CommandReasonNone = 0U,
+    CommandReasonRevisionConflict = 1U,
+    CommandReasonInvalidParameters = 2U,
+    CommandReasonUnsupported = 3U,
+    CommandReasonRejectedByController = 4U,
+    CommandReasonControllerNotReady = 5U,
+    CommandReasonCommandIdConflict = 6U
+};
 
 struct StoredConfiguration {
     uint32_t magic;
@@ -204,11 +216,21 @@ int32_t scaled_milli(float value) {
 
 uint16_t relay_bits(const GuiBleSnapshot &snapshot) {
     uint16_t bits = 0U;
-    bits |= snapshot.light_on ? 1U << 0U : 0U;
-    bits |= snapshot.plant_light_on ? 1U << 1U : 0U;
-    bits |= snapshot.filter_on ? 1U << 2U : 0U;
-    bits |= snapshot.aeration_on ? 1U << 3U : 0U;
-    bits |= snapshot.heater_on ? 1U << 4U : 0U;
+    bits |= snapshot.light_on
+                ? aquacyd::link::RelayLightPrimaryOn
+                : 0U;
+    bits |= snapshot.plant_light_on
+                ? aquacyd::link::RelayLightSecondaryOn
+                : 0U;
+    bits |= snapshot.filter_on
+                ? aquacyd::link::RelayFilterOn
+                : 0U;
+    bits |= snapshot.aeration_on
+                ? aquacyd::link::RelayAeratorOn
+                : 0U;
+    bits |= snapshot.heater_on
+                ? aquacyd::link::RelayHeaterOn
+                : 0U;
     return bits;
 }
 
@@ -271,7 +293,7 @@ void send_telemetry(const RuntimeTelemetry &telemetry) {
     payload.free_heap_bytes = telemetry.free_heap_bytes;
     payload.wifi_rssi_dbm = static_cast<int16_t>(
         WiFi.status() == WL_CONNECTED ? WiFi.RSSI() : 0);
-    payload.configuration_revision = 0U;
+    payload.configuration_revision = snapshot.configuration_revision;
 
     aquacyd::link::Frame frame = {};
     frame.type = aquacyd::link::MessageType::Telemetry;
@@ -313,27 +335,50 @@ const char *target_name(aquacyd::link::CommandTarget target) {
     }
 }
 
+bool remote_output_target_allowed(aquacyd::link::CommandTarget target) {
+    return target == aquacyd::link::CommandTarget::LightPrimary ||
+           target == aquacyd::link::CommandTarget::LightSecondary ||
+           target == aquacyd::link::CommandTarget::Filter ||
+           target == aquacyd::link::CommandTarget::Aerator;
+}
+
 aquacyd::link::AcknowledgementStatus execute_command(
     const aquacyd::link::CommandPayload &command,
     uint16_t *reason_code) {
     if (reason_code == nullptr) {
         return aquacyd::link::AcknowledgementStatus::Invalid;
     }
-    *reason_code = 0U;
+    *reason_code = CommandReasonNone;
     if (command.action ==
         aquacyd::link::CommandAction::RequestSnapshot) {
         return aquacyd::link::AcknowledgementStatus::Accepted;
+    }
+
+    GuiBleSnapshot current_snapshot = {};
+    if (!gui_app_ble_snapshot(&current_snapshot)) {
+        *reason_code = CommandReasonControllerNotReady;
+        return aquacyd::link::AcknowledgementStatus::Rejected;
+    }
+    if (command.expected_configuration_revision != 0U &&
+        command.expected_configuration_revision !=
+            current_snapshot.configuration_revision) {
+        *reason_code = CommandReasonRevisionConflict;
+        return aquacyd::link::AcknowledgementStatus::Conflict;
     }
 
     char action[32] = {};
     char json[192] = {};
     if (command.action == aquacyd::link::CommandAction::SetOutput) {
         const char *target = target_name(command.target);
-        if (target == nullptr ||
+        if (target == nullptr || !remote_output_target_allowed(command.target)) {
+            *reason_code = CommandReasonUnsupported;
+            return aquacyd::link::AcknowledgementStatus::Rejected;
+        }
+        if (
             (command.value != 0 && command.value != 1) ||
             command.duration_ms < OVERRIDE_MINIMUM_MS ||
             command.duration_ms > OVERRIDE_MAXIMUM_MS) {
-            *reason_code = 2U;
+            *reason_code = CommandReasonInvalidParameters;
             return aquacyd::link::AcknowledgementStatus::Invalid;
         }
         snprintf(action, sizeof(action), "set_timed_override");
@@ -347,6 +392,12 @@ aquacyd::link::AcknowledgementStatus execute_command(
     } else if (
         command.action == aquacyd::link::CommandAction::TriggerFeed &&
         command.target == aquacyd::link::CommandTarget::Feeder) {
+        if (command.duration_ms != 0U &&
+            (command.duration_ms < FEEDING_MINIMUM_MS ||
+             command.duration_ms > FEEDING_MAXIMUM_MS)) {
+            *reason_code = CommandReasonInvalidParameters;
+            return aquacyd::link::AcknowledgementStatus::Invalid;
+        }
         const uint32_t duration_seconds =
             command.duration_ms == 0U ? 600U : command.duration_ms / 1000U;
         snprintf(action, sizeof(action), "start_feeding_mode");
@@ -356,7 +407,7 @@ aquacyd::link::AcknowledgementStatus execute_command(
             "{\"durationSec\":%lu,\"dispense\":true}",
             static_cast<unsigned long>(duration_seconds));
     } else {
-        *reason_code = 3U;
+        *reason_code = CommandReasonUnsupported;
         return aquacyd::link::AcknowledgementStatus::Rejected;
     }
 
@@ -374,7 +425,12 @@ aquacyd::link::AcknowledgementStatus execute_command(
         return aquacyd::link::AcknowledgementStatus::Duplicate;
     }
     if (!result.success) {
-        *reason_code = 4U;
+        if (result.code != nullptr &&
+            strcmp(result.code, "command_id_conflict") == 0) {
+            *reason_code = CommandReasonCommandIdConflict;
+            return aquacyd::link::AcknowledgementStatus::Conflict;
+        }
+        *reason_code = CommandReasonRejectedByController;
         return aquacyd::link::AcknowledgementStatus::Rejected;
     }
     return aquacyd::link::AcknowledgementStatus::Accepted;
@@ -389,7 +445,11 @@ void acknowledge_command(
     acknowledgement.command_id = command.command_id;
     acknowledgement.status = status;
     acknowledgement.reason_code = reason_code;
-    acknowledgement.configuration_revision = 0U;
+    GuiBleSnapshot current_snapshot = {};
+    acknowledgement.configuration_revision =
+        gui_app_ble_snapshot(&current_snapshot)
+            ? current_snapshot.configuration_revision
+            : 0U;
 
     aquacyd::link::Frame frame = {};
     frame.type = aquacyd::link::MessageType::Acknowledgement;

@@ -7,7 +7,7 @@ Waveshare/Elecrow z ESP32-P4 nadal pełni rolę modemu Wi-Fi panelu HMI.
 
 ## Budowanie
 
-Wymagany jest ESP-IDF 5.4.x:
+Wymagany jest ESP-IDF 5.4.4:
 
 ```powershell
 cd firmware/esp32c6_gateway
@@ -15,6 +15,12 @@ idf.py set-target esp32c6
 idf.py menuconfig
 idf.py build
 idf.py flash monitor
+```
+
+Z katalogu głównego można użyć sprawdzonego skryptu:
+
+```powershell
+.\tools\build-p4-c6.ps1 -Target c6 -IdfPath C:\esp\v5.4.4-full\esp-idf
 ```
 
 W menu `AquaCYD ESP32-C6 gateway` trzeba ustawić SSID 2,4 GHz, dane brokera
@@ -38,6 +44,7 @@ Przykładowe polecenie:
 
 ```json
 {
+  "command_id": "18d4a6c30f924be1",
   "action": "set_output",
   "target": "filter",
   "value": 1,
@@ -46,7 +53,9 @@ Przykładowe polecenie:
 }
 ```
 
-Gateway odrzuca nieznane akcje i cele, ogranicza czas wymuszenia do 24 godzin,
-ponawia ramkę do czterech razy i raportuje błąd transportu, jeżeli CYD nie
-prześle aplikacyjnego potwierdzenia. Samo potwierdzenie warstwy radiowej nie
-jest traktowane jako wykonanie polecenia.
+`command_id` jest obowiązkowym, niezerowym identyfikatorem zapisanym jako
+dokładnie 16 cyfr szesnastkowych. Gateway waliduje format i zakresy, ponawia
+ramkę do czterech razy i raportuje błąd transportu, jeżeli CYD nie prześle
+aplikacyjnego potwierdzenia. CYD wykonuje końcową kontrolę dozwolonego celu,
+rewizji konfiguracji i duplikatów. Samo potwierdzenie warstwy radiowej nie jest
+traktowane jako wykonanie polecenia.

@@ -34,6 +34,7 @@ constexpr uint32_t kCommandAckTimeoutMs = 450U;
 constexpr uint8_t kCommandMaximumAttempts = 4U;
 constexpr EventBits_t kWifiConnectedBit = 1U << 0U;
 constexpr EventBits_t kMqttConnectedBit = 1U << 1U;
+constexpr uint16_t kTransportTimeoutReason = 100U;
 
 struct ReceivedDatagram {
     uint8_t source_mac[kMacLength];
@@ -125,6 +126,25 @@ bool parse_hexadecimal(const char *text,
     return true;
 }
 
+bool parse_command_id(const char *text, uint64_t *output) {
+    if (text == nullptr || output == nullptr || strlen(text) != 16U) {
+        return false;
+    }
+    uint64_t value = 0U;
+    for (size_t index = 0U; index < 16U; ++index) {
+        const int digit = hexadecimal_value(text[index]);
+        if (digit < 0) {
+            return false;
+        }
+        value = (value << 4U) | static_cast<uint64_t>(digit);
+    }
+    if (value == 0U) {
+        return false;
+    }
+    *output = value;
+    return true;
+}
+
 bool parse_mac_address(const char *text, uint8_t *output) {
     if (text == nullptr || output == nullptr || strlen(text) != 17U) {
         return false;
@@ -152,10 +172,15 @@ bool parse_mac_address(const char *text, uint8_t *output) {
 
 bool configuration_is_valid() {
     if (strlen(CONFIG_AQUACYD_WIFI_SSID) == 0U ||
+        strlen(CONFIG_AQUACYD_WIFI_PASSWORD) == 0U ||
         strlen(CONFIG_AQUACYD_MQTT_BROKER_URI) == 0U ||
+        strlen(CONFIG_AQUACYD_MQTT_USERNAME) == 0U ||
+        strlen(CONFIG_AQUACYD_MQTT_PASSWORD) == 0U ||
         strlen(CONFIG_AQUACYD_MQTT_BASE_TOPIC) == 0U ||
         strlen(CONFIG_AQUACYD_DEVICE_ID) == 0U) {
-        ESP_LOGE(kTag, "Wi-Fi, MQTT and device settings must not be empty");
+        ESP_LOGE(
+            kTag,
+            "Wi-Fi, MQTT credentials and device settings must not be empty");
         return false;
     }
     if (!parse_mac_address(CONFIG_AQUACYD_CONTROLLER_MAC, controller_mac)) {
@@ -250,14 +275,36 @@ void publish_discovery_entity(const char *component,
         return;
     }
     char unique_id[96] = {};
-    snprintf(
+    const int unique_length = snprintf(
         unique_id,
         sizeof(unique_id),
         "%s_%s",
         CONFIG_AQUACYD_DEVICE_ID,
         object_suffix);
+    if (unique_length <= 0 ||
+        static_cast<size_t>(unique_length) >= sizeof(unique_id)) {
+        ESP_LOGE(kTag, "Discovery unique ID is too long");
+        cJSON_Delete(root);
+        return;
+    }
+    char default_entity_id[112] = {};
+    const int entity_id_length = snprintf(
+        default_entity_id,
+        sizeof(default_entity_id),
+        "%s.%s",
+        component,
+        unique_id);
+    if (entity_id_length <= 0 ||
+        static_cast<size_t>(entity_id_length) >=
+            sizeof(default_entity_id)) {
+        ESP_LOGE(kTag, "Discovery entity ID is too long");
+        cJSON_Delete(root);
+        return;
+    }
     cJSON_AddStringToObject(root, "name", name);
     cJSON_AddStringToObject(root, "unique_id", unique_id);
+    cJSON_AddStringToObject(
+        root, "default_entity_id", default_entity_id);
     cJSON_AddStringToObject(root, "state_topic", state_topic);
     cJSON_AddStringToObject(root, "value_template", value_template);
     cJSON_AddStringToObject(root, "availability_topic", availability_topic);
@@ -325,11 +372,107 @@ void publish_discovery() {
         "measurement");
     publish_discovery_entity(
         "sensor",
+        "espnow_rssi",
+        "Sygnał ESP-NOW",
+        "{{ value_json.espnow_rssi_dbm }}",
+        "dBm",
+        "signal_strength",
+        "measurement");
+    publish_discovery_entity(
+        "sensor",
+        "uptime",
+        "Czas pracy CYD",
+        "{{ value_json.uptime_seconds }}",
+        "s",
+        "duration",
+        "measurement");
+    publish_discovery_entity(
+        "sensor",
+        "free_heap",
+        "Wolna pamięć CYD",
+        "{{ value_json.free_heap_bytes }}",
+        "B",
+        "data_size",
+        "measurement");
+    publish_discovery_entity(
+        "sensor",
+        "configuration_revision",
+        "Rewizja konfiguracji",
+        "{{ value_json.configuration_revision }}",
+        "",
+        "",
+        "");
+    publish_discovery_entity(
+        "sensor",
         "alarms",
         "Flagi alarmów",
         "{{ value_json.alarm_flags }}",
         "",
         "",
+        "");
+    publish_discovery_entity(
+        "binary_sensor",
+        "leak",
+        "Wyciek",
+        "{{ 'ON' if value_json.leak_detected else 'OFF' }}",
+        "",
+        "moisture",
+        "");
+    publish_discovery_entity(
+        "binary_sensor",
+        "water_low",
+        "Niski poziom wody",
+        "{{ 'ON' if value_json.water_level_low else 'OFF' }}",
+        "",
+        "problem",
+        "");
+    publish_discovery_entity(
+        "binary_sensor",
+        "controller_safe",
+        "Sterownik bezpieczny",
+        "{{ 'ON' if value_json.controller_safe else 'OFF' }}",
+        "",
+        "",
+        "");
+    publish_discovery_entity(
+        "binary_sensor",
+        "light_primary",
+        "Światło główne",
+        "{{ 'ON' if value_json.light_primary_on else 'OFF' }}",
+        "",
+        "",
+        "");
+    publish_discovery_entity(
+        "binary_sensor",
+        "light_secondary",
+        "Światło roślinne",
+        "{{ 'ON' if value_json.light_secondary_on else 'OFF' }}",
+        "",
+        "",
+        "");
+    publish_discovery_entity(
+        "binary_sensor",
+        "filter",
+        "Filtr",
+        "{{ 'ON' if value_json.filter_on else 'OFF' }}",
+        "",
+        "",
+        "");
+    publish_discovery_entity(
+        "binary_sensor",
+        "aerator",
+        "Napowietrzanie",
+        "{{ 'ON' if value_json.aerator_on else 'OFF' }}",
+        "",
+        "",
+        "");
+    publish_discovery_entity(
+        "binary_sensor",
+        "heater",
+        "Grzałka",
+        "{{ 'ON' if value_json.heater_on else 'OFF' }}",
+        "",
+        "heat",
         "");
 }
 
@@ -373,6 +516,28 @@ void publish_telemetry(const aquacyd::link::Frame &frame,
     }
     cJSON_AddNumberToObject(root, "ldr_raw", telemetry.ldr_raw);
     cJSON_AddNumberToObject(root, "relay_bits", telemetry.relay_bits);
+    cJSON_AddBoolToObject(
+        root,
+        "light_primary_on",
+        (telemetry.relay_bits &
+         aquacyd::link::RelayLightPrimaryOn) != 0U);
+    cJSON_AddBoolToObject(
+        root,
+        "light_secondary_on",
+        (telemetry.relay_bits &
+         aquacyd::link::RelayLightSecondaryOn) != 0U);
+    cJSON_AddBoolToObject(
+        root,
+        "filter_on",
+        (telemetry.relay_bits & aquacyd::link::RelayFilterOn) != 0U);
+    cJSON_AddBoolToObject(
+        root,
+        "aerator_on",
+        (telemetry.relay_bits & aquacyd::link::RelayAeratorOn) != 0U);
+    cJSON_AddBoolToObject(
+        root,
+        "heater_on",
+        (telemetry.relay_bits & aquacyd::link::RelayHeaterOn) != 0U);
     cJSON_AddNumberToObject(root, "alarm_flags", telemetry.alarm_flags);
     cJSON_AddNumberToObject(root, "uptime_seconds", telemetry.uptime_seconds);
     cJSON_AddNumberToObject(root, "free_heap_bytes", telemetry.free_heap_bytes);
@@ -404,19 +569,42 @@ void publish_telemetry(const aquacyd::link::Frame &frame,
     cJSON_Delete(root);
 }
 
+const char *acknowledgement_status_name(
+    aquacyd::link::AcknowledgementStatus status) {
+    switch (status) {
+    case aquacyd::link::AcknowledgementStatus::Accepted:
+        return "accepted";
+    case aquacyd::link::AcknowledgementStatus::Duplicate:
+        return "duplicate";
+    case aquacyd::link::AcknowledgementStatus::Rejected:
+        return "rejected";
+    case aquacyd::link::AcknowledgementStatus::Conflict:
+        return "conflict";
+    case aquacyd::link::AcknowledgementStatus::Invalid:
+        return "invalid";
+    case aquacyd::link::AcknowledgementStatus::Busy:
+        return "busy";
+    case aquacyd::link::AcknowledgementStatus::Expired:
+        return "expired";
+    default:
+        return "unknown";
+    }
+}
+
 void publish_acknowledgement(
     const aquacyd::link::AcknowledgementPayload &acknowledgement,
     bool transport_timeout) {
-    char json[224] = {};
+    char json[256] = {};
     const int written = snprintf(
         json,
         sizeof(json),
         "{\"command_id\":\"%016" PRIx64
-        "\",\"status\":%u,\"reason_code\":%u,"
+        "\",\"status\":%u,\"status_text\":\"%s\",\"reason_code\":%u,"
         "\"configuration_revision\":%" PRIu32
         ",\"transport_timeout\":%s}",
         acknowledgement.command_id,
         static_cast<unsigned int>(acknowledgement.status),
+        acknowledgement_status_name(acknowledgement.status),
         static_cast<unsigned int>(acknowledgement.reason_code),
         acknowledgement.configuration_revision,
         transport_timeout ? "true" : "false");
@@ -650,6 +838,8 @@ bool parse_mqtt_command(const MqttCommand &message,
     }
 
     cJSON *action_item = cJSON_GetObjectItemCaseSensitive(root, "action");
+    cJSON *command_id_item =
+        cJSON_GetObjectItemCaseSensitive(root, "command_id");
     cJSON *target_item = cJSON_GetObjectItemCaseSensitive(root, "target");
     cJSON *value_item = cJSON_GetObjectItemCaseSensitive(root, "value");
     cJSON *duration_item =
@@ -658,10 +848,13 @@ bool parse_mqtt_command(const MqttCommand &message,
         cJSON_GetObjectItemCaseSensitive(root, "expected_revision");
 
     aquacyd::link::CommandPayload parsed = {};
+    uint64_t command_id = 0U;
     int64_t numeric_value = 0;
     int64_t duration = 0;
     int64_t revision = 0;
     const bool valid =
+        cJSON_IsString(command_id_item) &&
+        parse_command_id(command_id_item->valuestring, &command_id) &&
         cJSON_IsString(action_item) &&
         cJSON_IsString(target_item) &&
         parse_action(action_item->valuestring, &parsed.action) &&
@@ -674,12 +867,9 @@ bool parse_mqtt_command(const MqttCommand &message,
         (revision_item == nullptr ||
          json_integer_in_range(
              revision_item, 0, UINT32_MAX, &revision));
+    parsed.command_id = command_id;
+    *output = parsed;
     if (valid) {
-        parsed.command_id =
-            (static_cast<uint64_t>(esp_random()) << 32U) | esp_random();
-        if (parsed.command_id == 0U) {
-            parsed.command_id = 1U;
-        }
         parsed.value = static_cast<int32_t>(numeric_value);
         parsed.duration_ms = static_cast<uint32_t>(duration);
         parsed.expected_configuration_revision =
@@ -707,6 +897,15 @@ void command_task(void *) {
         aquacyd::link::CommandPayload command = {};
         if (!parse_mqtt_command(message, &command)) {
             ESP_LOGW(kTag, "Rejected invalid MQTT command");
+            if (command.command_id != 0U) {
+                const aquacyd::link::AcknowledgementPayload invalid = {
+                    command.command_id,
+                    aquacyd::link::AcknowledgementStatus::Invalid,
+                    2U,
+                    0U
+                };
+                publish_acknowledgement(invalid, false);
+            }
             continue;
         }
 
@@ -762,7 +961,7 @@ void command_task(void *) {
             const aquacyd::link::AcknowledgementPayload timeout = {
                 command.command_id,
                 aquacyd::link::AcknowledgementStatus::Busy,
-                1U,
+                kTransportTimeoutReason,
                 command.expected_configuration_revision
             };
             publish_acknowledgement(timeout, true);

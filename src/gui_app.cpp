@@ -16141,6 +16141,7 @@ bool gui_app_ble_snapshot(GuiBleSnapshot *out) {
     out->developer_mode = dev_mode;
     out->uptime_seconds = millis() / 1000UL;
     out->free_heap_bytes = ESP.getFreeHeap();
+    out->configuration_revision = cfg.crc32;
     out->temperature = isfinite(temperature) ? temperature : 0.0f;
     out->temperature_valid = isfinite(temperature);
     out->target_temperature = cfg.targetTemp;

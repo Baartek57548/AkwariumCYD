@@ -11,6 +11,9 @@
 #include "cJSON.h"
 #include "esp_event.h"
 #include "esp_log.h"
+#include "esp_random.h"
+#include "esp_system.h"
+#include "esp_timer.h"
 #include "esp_wifi.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/event_groups.h"
@@ -18,6 +21,7 @@
 #include "freertos/task.h"
 #include "lvgl.h"
 #include "mqtt_client.h"
+#include "nvs.h"
 #include "nvs_flash.h"
 
 namespace {
@@ -26,6 +30,12 @@ constexpr char kTag[] = "aquacyd_hmi";
 constexpr size_t kTopicBytes = 160U;
 constexpr size_t kCommandBytes = 224U;
 constexpr size_t kStateJsonBytes = 1024U;
+constexpr size_t kAcknowledgementJsonBytes = 512U;
+constexpr uint32_t kCommandUiTimeoutMs = 7000U;
+constexpr char kPreferencesNamespace[] = "aquacyd-hmi";
+constexpr char kBrightnessKey[] = "brightness";
+constexpr uint8_t kDefaultBrightness = 80U;
+constexpr uint8_t kMinimumBrightness = 10U;
 constexpr EventBits_t kWifiConnectedBit = 1U << 0U;
 constexpr EventBits_t kMqttConnectedBit = 1U << 1U;
 
@@ -41,11 +51,29 @@ struct HmiSnapshot {
     uint32_t alarm_flags;
     int espnow_rssi_dbm;
     uint32_t configuration_revision;
+    uint32_t controller_uptime_seconds;
+    uint32_t controller_free_heap_bytes;
+    bool water_level_low;
+    bool leak_detected;
+    bool controller_safe;
+    bool light_primary_on;
+    bool light_secondary_on;
+    bool filter_on;
+    bool aerator_on;
+    bool heater_on;
 };
 
 struct OutgoingCommand {
     size_t length;
     char json[kCommandBytes];
+};
+
+struct CommandFeedback {
+    uint64_t command_id;
+    uint8_t status;
+    uint16_t reason_code;
+    uint32_t configuration_revision;
+    bool transport_timeout;
 };
 
 struct ButtonCommand {
@@ -59,6 +87,7 @@ struct ButtonCommand {
 EventGroupHandle_t connection_events = nullptr;
 QueueHandle_t snapshot_queue = nullptr;
 QueueHandle_t outgoing_command_queue = nullptr;
+QueueHandle_t feedback_queue = nullptr;
 esp_mqtt_client_handle_t mqtt_client = nullptr;
 
 char state_topic[kTopicBytes] = {};
@@ -78,15 +107,77 @@ lv_obj_t *ldr_label = nullptr;
 lv_obj_t *radio_label = nullptr;
 lv_obj_t *alarm_label = nullptr;
 lv_obj_t *feedback_label = nullptr;
+lv_obj_t *output_state_label = nullptr;
+lv_obj_t *system_info_label = nullptr;
+lv_obj_t *brightness_label = nullptr;
+lv_obj_t *control_buttons[10] = {};
+
+uint64_t pending_command_id = 0U;
+uint32_t pending_command_started_ms = 0U;
+uint8_t display_brightness = kDefaultBrightness;
 
 constexpr ButtonCommand kButtonCommands[] = {
     {"Światło ON", "set_output", "light_primary", 1, 900000U},
     {"Światło OFF", "set_output", "light_primary", 0, 900000U},
+    {"Roślinne ON", "set_output", "light_secondary", 1, 900000U},
+    {"Roślinne OFF", "set_output", "light_secondary", 0, 900000U},
     {"Filtr ON", "set_output", "filter", 1, 900000U},
     {"Filtr OFF", "set_output", "filter", 0, 900000U},
+    {"Napowietrzanie ON", "set_output", "aerator", 1, 900000U},
+    {"Napowietrzanie OFF", "set_output", "aerator", 0, 900000U},
     {"Karmienie", "trigger_feed", "feeder", 1, 0U},
     {"Odśwież", "request_snapshot", "controller", 0, 0U}
 };
+
+static_assert(
+    sizeof(control_buttons) / sizeof(control_buttons[0]) ==
+        sizeof(kButtonCommands) / sizeof(kButtonCommands[0]),
+    "Control button storage must match command definitions");
+
+uint32_t monotonic_ms() {
+    return static_cast<uint32_t>(
+        static_cast<uint64_t>(esp_timer_get_time()) / 1000ULL);
+}
+
+int hexadecimal_value(char character) {
+    if (character >= '0' && character <= '9') {
+        return character - '0';
+    }
+    if (character >= 'a' && character <= 'f') {
+        return character - 'a' + 10;
+    }
+    if (character >= 'A' && character <= 'F') {
+        return character - 'A' + 10;
+    }
+    return -1;
+}
+
+bool parse_command_id(const char *text, uint64_t *output) {
+    if (text == nullptr || output == nullptr || strlen(text) != 16U) {
+        return false;
+    }
+    uint64_t parsed = 0U;
+    for (size_t index = 0U; index < 16U; ++index) {
+        const int digit = hexadecimal_value(text[index]);
+        if (digit < 0) {
+            return false;
+        }
+        parsed = (parsed << 4U) | static_cast<uint64_t>(digit);
+    }
+    if (parsed == 0U) {
+        return false;
+    }
+    *output = parsed;
+    return true;
+}
+
+uint64_t create_command_id() {
+    uint64_t value =
+        (static_cast<uint64_t>(esp_random()) << 32U) |
+        static_cast<uint64_t>(esp_random());
+    value ^= static_cast<uint64_t>(esp_timer_get_time());
+    return value == 0U ? 1U : value;
+}
 
 bool append_topic(char *destination,
                   size_t destination_size,
@@ -105,9 +196,12 @@ bool append_topic(char *destination,
 
 bool initialize_topics() {
     if (strlen(CONFIG_AQUACYD_HMI_WIFI_SSID) == 0U ||
+        strlen(CONFIG_AQUACYD_HMI_WIFI_PASSWORD) == 0U ||
         strlen(CONFIG_AQUACYD_HMI_MQTT_BROKER_URI) == 0U ||
+        strlen(CONFIG_AQUACYD_HMI_MQTT_USERNAME) == 0U ||
+        strlen(CONFIG_AQUACYD_HMI_MQTT_PASSWORD) == 0U ||
         strlen(CONFIG_AQUACYD_HMI_MQTT_BASE_TOPIC) == 0U) {
-        ESP_LOGE(kTag, "Wi-Fi and MQTT settings must not be empty");
+        ESP_LOGE(kTag, "Wi-Fi and MQTT credentials must not be empty");
         return false;
     }
     return append_topic(
@@ -181,6 +275,72 @@ bool json_integer(cJSON *root,
     return true;
 }
 
+bool json_boolean(cJSON *root, const char *name, bool *output) {
+    if (root == nullptr || name == nullptr || output == nullptr) {
+        return false;
+    }
+    cJSON *item = cJSON_GetObjectItemCaseSensitive(root, name);
+    if (!cJSON_IsBool(item)) {
+        return false;
+    }
+    *output = cJSON_IsTrue(item);
+    return true;
+}
+
+uint8_t load_display_brightness() {
+    nvs_handle_t handle = 0;
+    const esp_err_t open_result =
+        nvs_open(kPreferencesNamespace, NVS_READONLY, &handle);
+    if (open_result == ESP_ERR_NVS_NOT_FOUND) {
+        return kDefaultBrightness;
+    }
+    if (open_result != ESP_OK) {
+        ESP_LOGW(
+            kTag,
+            "Unable to open HMI preferences: %s",
+            esp_err_to_name(open_result));
+        return kDefaultBrightness;
+    }
+    uint8_t value = kDefaultBrightness;
+    const esp_err_t read_result = nvs_get_u8(handle, kBrightnessKey, &value);
+    nvs_close(handle);
+    if (read_result != ESP_OK ||
+        value < kMinimumBrightness ||
+        value > 100U) {
+        return kDefaultBrightness;
+    }
+    return value;
+}
+
+bool save_display_brightness(uint8_t value) {
+    if (value < kMinimumBrightness || value > 100U) {
+        return false;
+    }
+    nvs_handle_t handle = 0;
+    esp_err_t result =
+        nvs_open(kPreferencesNamespace, NVS_READWRITE, &handle);
+    if (result != ESP_OK) {
+        ESP_LOGE(
+            kTag,
+            "Unable to open HMI preferences for write: %s",
+            esp_err_to_name(result));
+        return false;
+    }
+    result = nvs_set_u8(handle, kBrightnessKey, value);
+    if (result == ESP_OK) {
+        result = nvs_commit(handle);
+    }
+    nvs_close(handle);
+    if (result != ESP_OK) {
+        ESP_LOGE(
+            kTag,
+            "Unable to save display brightness: %s",
+            esp_err_to_name(result));
+        return false;
+    }
+    return true;
+}
+
 void queue_latest_snapshot(const HmiSnapshot &snapshot) {
     if (snapshot_queue != nullptr) {
         xQueueOverwrite(snapshot_queue, &snapshot);
@@ -222,8 +382,76 @@ void parse_state_message(const char *json, size_t length) {
             &integer)) {
         parsed.configuration_revision = static_cast<uint32_t>(integer);
     }
+    if (json_integer(
+            root,
+            "uptime_seconds",
+            0,
+            UINT32_MAX,
+            &integer)) {
+        parsed.controller_uptime_seconds = static_cast<uint32_t>(integer);
+    }
+    if (json_integer(
+            root,
+            "free_heap_bytes",
+            0,
+            UINT32_MAX,
+            &integer)) {
+        parsed.controller_free_heap_bytes = static_cast<uint32_t>(integer);
+    }
+    json_boolean(root, "water_level_low", &parsed.water_level_low);
+    json_boolean(root, "leak_detected", &parsed.leak_detected);
+    json_boolean(root, "controller_safe", &parsed.controller_safe);
+    json_boolean(root, "light_primary_on", &parsed.light_primary_on);
+    json_boolean(root, "light_secondary_on", &parsed.light_secondary_on);
+    json_boolean(root, "filter_on", &parsed.filter_on);
+    json_boolean(root, "aerator_on", &parsed.aerator_on);
+    json_boolean(root, "heater_on", &parsed.heater_on);
     latest_snapshot = parsed;
     queue_latest_snapshot(parsed);
+    cJSON_Delete(root);
+}
+
+void parse_acknowledgement_message(const char *json, size_t length) {
+    if (json == nullptr || length == 0U ||
+        length > kAcknowledgementJsonBytes || feedback_queue == nullptr) {
+        return;
+    }
+    cJSON *root = cJSON_ParseWithLength(json, length);
+    if (root == nullptr || !cJSON_IsObject(root)) {
+        cJSON_Delete(root);
+        ESP_LOGW(kTag, "Rejected malformed acknowledgement JSON");
+        return;
+    }
+    cJSON *command_id_item =
+        cJSON_GetObjectItemCaseSensitive(root, "command_id");
+    int64_t status = 0;
+    int64_t reason_code = 0;
+    int64_t revision = 0;
+    bool transport_timeout = false;
+    CommandFeedback feedback = {};
+    const bool valid =
+        cJSON_IsString(command_id_item) &&
+        parse_command_id(command_id_item->valuestring, &feedback.command_id) &&
+        json_integer(root, "status", 0, 6, &status) &&
+        json_integer(root, "reason_code", 0, UINT16_MAX, &reason_code) &&
+        json_integer(
+            root,
+            "configuration_revision",
+            0,
+            UINT32_MAX,
+            &revision) &&
+        json_boolean(root, "transport_timeout", &transport_timeout);
+    if (valid) {
+        feedback.status = static_cast<uint8_t>(status);
+        feedback.reason_code = static_cast<uint16_t>(reason_code);
+        feedback.configuration_revision = static_cast<uint32_t>(revision);
+        feedback.transport_timeout = transport_timeout;
+        if (xQueueSend(feedback_queue, &feedback, 0U) != pdTRUE) {
+            ESP_LOGW(kTag, "Acknowledgement queue is full");
+        }
+    } else {
+        ESP_LOGW(kTag, "Rejected incomplete acknowledgement JSON");
+    }
     cJSON_Delete(root);
 }
 
@@ -233,6 +461,12 @@ bool mqtt_connected() {
 }
 
 void queue_button_command(const ButtonCommand &command) {
+    if (pending_command_id != 0U) {
+        lv_label_set_text(
+            feedback_label,
+            "Poczekaj na potwierdzenie poprzedniego polecenia.");
+        return;
+    }
     if (!mqtt_connected() || !controller_online) {
         if (feedback_label != nullptr) {
             lv_label_set_text(
@@ -242,12 +476,15 @@ void queue_button_command(const ButtonCommand &command) {
         return;
     }
     OutgoingCommand outgoing = {};
+    const uint64_t command_id = create_command_id();
     const int written = snprintf(
         outgoing.json,
         sizeof(outgoing.json),
-        "{\"action\":\"%s\",\"target\":\"%s\",\"value\":%" PRId32
+        "{\"command_id\":\"%016" PRIx64
+        "\",\"action\":\"%s\",\"target\":\"%s\",\"value\":%" PRId32
         ",\"duration_ms\":%" PRIu32
         ",\"expected_revision\":%" PRIu32 "}",
+        command_id,
         command.action,
         command.target,
         command.value,
@@ -262,6 +499,8 @@ void queue_button_command(const ButtonCommand &command) {
         lv_label_set_text(feedback_label, "Kolejka poleceń jest pełna.");
         return;
     }
+    pending_command_id = command_id;
+    pending_command_started_ms = monotonic_ms();
     lv_label_set_text(feedback_label, "Polecenie wysłane, oczekiwanie na ACK…");
 }
 
@@ -273,6 +512,42 @@ void button_event_callback(lv_event_t *event) {
         static_cast<const ButtonCommand *>(lv_event_get_user_data(event));
     if (command != nullptr) {
         queue_button_command(*command);
+    }
+}
+
+void brightness_event_callback(lv_event_t *event) {
+    if (event == nullptr) {
+        return;
+    }
+    lv_obj_t *slider =
+        static_cast<lv_obj_t *>(lv_event_get_target(event));
+    if (slider == nullptr) {
+        return;
+    }
+    const lv_event_code_t code = lv_event_get_code(event);
+    const int32_t value = lv_slider_get_value(slider);
+    if (value < kMinimumBrightness || value > 100) {
+        return;
+    }
+    if (code == LV_EVENT_VALUE_CHANGED) {
+        display_brightness = static_cast<uint8_t>(value);
+        if (brightness_label != nullptr) {
+            lv_label_set_text_fmt(brightness_label, "%" PRId32 "%%", value);
+        }
+        const esp_err_t result =
+            bsp_display_brightness_set(static_cast<int>(value));
+        if (result != ESP_OK) {
+            ESP_LOGW(
+                kTag,
+                "Unable to set display brightness: %s",
+                esp_err_to_name(result));
+        }
+    } else if (
+        code == LV_EVENT_RELEASED &&
+        !save_display_brightness(static_cast<uint8_t>(value))) {
+        lv_label_set_text(
+            brightness_label,
+            "Błąd zapisu jasności");
     }
 }
 
@@ -342,6 +617,103 @@ void update_dashboard(const HmiSnapshot &snapshot) {
             ? lv_color_hex(0x65D69B)
             : lv_color_hex(0xFF6B6B),
         0);
+    if (output_state_label != nullptr) {
+        lv_label_set_text_fmt(
+            output_state_label,
+            "Główne: %s   Roślinne: %s   Filtr: %s   "
+            "Napowietrzanie: %s   Grzałka: %s",
+            snapshot.light_primary_on ? "ON" : "OFF",
+            snapshot.light_secondary_on ? "ON" : "OFF",
+            snapshot.filter_on ? "ON" : "OFF",
+            snapshot.aerator_on ? "ON" : "OFF",
+            snapshot.heater_on ? "ON" : "OFF");
+    }
+    if (system_info_label != nullptr) {
+        lv_label_set_text_fmt(
+            system_info_label,
+            "CYD uptime: %" PRIu32 " s\n"
+            "CYD wolna pamięć: %" PRIu32 " B\n"
+            "Rewizja konfiguracji: %08" PRIX32 "\n"
+            "Poziom wody: %s\n"
+            "Czujnik wycieku: %s\n"
+            "Fail-safe: %s\n"
+            "HMI wolna pamięć: %" PRIu32 " B",
+            snapshot.controller_uptime_seconds,
+            snapshot.controller_free_heap_bytes,
+            snapshot.configuration_revision,
+            snapshot.water_level_low ? "NISKI" : "OK",
+            snapshot.leak_detected ? "WYCIEK" : "OK",
+            snapshot.controller_safe ? "OK" : "ALARM",
+            static_cast<uint32_t>(esp_get_free_heap_size()));
+    }
+}
+
+void update_control_states() {
+    const bool enabled =
+        mqtt_connected() && controller_online && pending_command_id == 0U;
+    for (lv_obj_t *button : control_buttons) {
+        if (button == nullptr) {
+            continue;
+        }
+        if (enabled) {
+            lv_obj_remove_state(button, LV_STATE_DISABLED);
+        } else {
+            lv_obj_add_state(button, LV_STATE_DISABLED);
+        }
+    }
+}
+
+void show_command_feedback(const CommandFeedback &feedback) {
+    if (feedback.command_id != pending_command_id) {
+        return;
+    }
+    pending_command_id = 0U;
+    pending_command_started_ms = 0U;
+    if (feedback.configuration_revision != 0U) {
+        latest_snapshot.configuration_revision =
+            feedback.configuration_revision;
+    }
+    if (feedback.transport_timeout) {
+        lv_label_set_text(
+            feedback_label,
+            "Brak odpowiedzi CYD. Polecenie nie zostało potwierdzone.");
+        return;
+    }
+    switch (feedback.status) {
+    case 0U:
+        lv_label_set_text(feedback_label, "Polecenie wykonane przez CYD.");
+        break;
+    case 1U:
+        lv_label_set_text(
+            feedback_label,
+            "Polecenie było już wykonane; duplikat bezpiecznie pominięto.");
+        break;
+    case 3U:
+        lv_label_set_text_fmt(
+            feedback_label,
+            "Konflikt konfiguracji (rewizja %08" PRIX32
+            "). Odświeżono stan.",
+            feedback.configuration_revision);
+        break;
+    case 4U:
+        lv_label_set_text_fmt(
+            feedback_label,
+            "Nieprawidłowe polecenie (kod %u).",
+            static_cast<unsigned int>(feedback.reason_code));
+        break;
+    case 5U:
+        lv_label_set_text(feedback_label, "Sterownik jest chwilowo zajęty.");
+        break;
+    case 6U:
+        lv_label_set_text(feedback_label, "Polecenie wygasło.");
+        break;
+    default:
+        lv_label_set_text_fmt(
+            feedback_label,
+            "CYD odrzucił polecenie (kod %u).",
+            static_cast<unsigned int>(feedback.reason_code));
+        break;
+    }
 }
 
 void ui_timer_callback(lv_timer_t *) {
@@ -353,6 +725,21 @@ void ui_timer_callback(lv_timer_t *) {
     if (received) {
         update_dashboard(snapshot);
     }
+    CommandFeedback feedback = {};
+    while (xQueueReceive(feedback_queue, &feedback, 0U) == pdTRUE) {
+        show_command_feedback(feedback);
+    }
+    if (pending_command_id != 0U &&
+        static_cast<uint32_t>(
+            monotonic_ms() - pending_command_started_ms) >
+            kCommandUiTimeoutMs) {
+        pending_command_id = 0U;
+        pending_command_started_ms = 0U;
+        lv_label_set_text(
+            feedback_label,
+            "Przekroczono czas oczekiwania na potwierdzenie MQTT.");
+    }
+    update_control_states();
 }
 
 void create_dashboard_ui() {
@@ -391,6 +778,7 @@ void create_dashboard_ui() {
 
     lv_obj_t *dashboard_tab = lv_tabview_add_tab(tabs, "Podgląd");
     lv_obj_t *controls_tab = lv_tabview_add_tab(tabs, "Sterowanie");
+    lv_obj_t *system_tab = lv_tabview_add_tab(tabs, "System");
     lv_obj_set_flex_flow(dashboard_tab, LV_FLEX_FLOW_ROW_WRAP);
     lv_obj_set_flex_align(
         dashboard_tab,
@@ -414,14 +802,15 @@ void create_dashboard_ui() {
         LV_FLEX_ALIGN_START,
         LV_FLEX_ALIGN_CENTER);
     lv_obj_set_style_pad_all(controls_tab, 24, 0);
-    lv_obj_set_style_pad_row(controls_tab, 18, 0);
+    lv_obj_set_style_pad_row(controls_tab, 12, 0);
     lv_obj_set_style_pad_column(controls_tab, 18, 0);
 
     for (size_t index = 0U;
          index < sizeof(kButtonCommands) / sizeof(kButtonCommands[0]);
          ++index) {
         lv_obj_t *button = lv_button_create(controls_tab);
-        lv_obj_set_size(button, 280, 82);
+        control_buttons[index] = button;
+        lv_obj_set_size(button, 280, 64);
         lv_obj_set_style_radius(button, 14, 0);
         lv_obj_add_event_cb(
             button,
@@ -433,6 +822,17 @@ void create_dashboard_ui() {
         lv_obj_set_style_text_font(label, &lv_font_montserrat_20, 0);
         lv_obj_center(label);
     }
+    output_state_label = lv_label_create(controls_tab);
+    lv_obj_set_width(output_state_label, LV_PCT(100));
+    lv_label_set_long_mode(output_state_label, LV_LABEL_LONG_WRAP);
+    lv_label_set_text(
+        output_state_label,
+        "Główne: —   Roślinne: —   Filtr: —   "
+        "Napowietrzanie: —   Grzałka: —");
+    lv_obj_set_style_text_align(output_state_label, LV_TEXT_ALIGN_CENTER, 0);
+    lv_obj_set_style_text_font(
+        output_state_label, &lv_font_montserrat_16, 0);
+
     feedback_label = lv_label_create(controls_tab);
     lv_obj_set_width(feedback_label, LV_PCT(100));
     lv_label_set_long_mode(feedback_label, LV_LABEL_LONG_WRAP);
@@ -443,6 +843,57 @@ void create_dashboard_ui() {
     lv_obj_set_style_text_font(
         feedback_label, &lv_font_montserrat_16, 0);
 
+    lv_obj_set_flex_flow(system_tab, LV_FLEX_FLOW_COLUMN);
+    lv_obj_set_flex_align(
+        system_tab,
+        LV_FLEX_ALIGN_START,
+        LV_FLEX_ALIGN_START,
+        LV_FLEX_ALIGN_START);
+    lv_obj_set_style_pad_all(system_tab, 28, 0);
+    lv_obj_set_style_pad_row(system_tab, 20, 0);
+
+    lv_obj_t *brightness_title = lv_label_create(system_tab);
+    lv_label_set_text(brightness_title, "Jasność ekranu");
+    lv_obj_set_style_text_font(
+        brightness_title, &lv_font_montserrat_24, 0);
+
+    lv_obj_t *brightness_row = lv_obj_create(system_tab);
+    lv_obj_set_size(brightness_row, LV_PCT(100), 76);
+    lv_obj_set_style_bg_opa(brightness_row, LV_OPA_TRANSP, 0);
+    lv_obj_set_style_border_width(brightness_row, 0, 0);
+    lv_obj_set_style_pad_all(brightness_row, 0, 0);
+
+    lv_obj_t *brightness_slider = lv_slider_create(brightness_row);
+    lv_obj_set_size(brightness_slider, 790, 28);
+    lv_slider_set_range(
+        brightness_slider, kMinimumBrightness, 100);
+    lv_slider_set_value(
+        brightness_slider, display_brightness, LV_ANIM_OFF);
+    lv_obj_align(brightness_slider, LV_ALIGN_LEFT_MID, 0, 0);
+    lv_obj_add_event_cb(
+        brightness_slider,
+        brightness_event_callback,
+        LV_EVENT_ALL,
+        nullptr);
+
+    brightness_label = lv_label_create(brightness_row);
+    lv_label_set_text_fmt(
+        brightness_label, "%u%%", static_cast<unsigned int>(display_brightness));
+    lv_obj_set_style_text_font(
+        brightness_label, &lv_font_montserrat_20, 0);
+    lv_obj_align(brightness_label, LV_ALIGN_RIGHT_MID, 0, 0);
+
+    system_info_label = lv_label_create(system_tab);
+    lv_obj_set_width(system_info_label, LV_PCT(100));
+    lv_label_set_long_mode(system_info_label, LV_LABEL_LONG_WRAP);
+    lv_label_set_text(
+        system_info_label,
+        "Oczekiwanie na dane diagnostyczne sterownika…");
+    lv_obj_set_style_text_font(
+        system_info_label, &lv_font_montserrat_20, 0);
+    lv_obj_set_style_text_line_space(system_info_label, 10, 0);
+
+    update_control_states();
     lv_timer_create(ui_timer_callback, 100U, nullptr);
 }
 
@@ -516,10 +967,8 @@ void mqtt_event_handler(void *,
             latest_snapshot.controller_online = controller_online;
             queue_latest_snapshot(latest_snapshot);
         } else if (topic_matches(event, acknowledgement_topic)) {
-            ESP_LOGI(
-                kTag,
-                "Command acknowledgement received (%d bytes)",
-                event->data_len);
+            parse_acknowledgement_message(
+                event->data, static_cast<size_t>(event->data_len));
         }
     } else if (event_id == MQTT_EVENT_ERROR) {
         ESP_LOGE(kTag, "MQTT transport error");
@@ -620,6 +1069,7 @@ void initialize_display() {
         abort();
     }
     ESP_ERROR_CHECK(bsp_display_backlight_on());
+    ESP_ERROR_CHECK(bsp_display_brightness_set(display_brightness));
 #if CONFIG_AQUACYD_HMI_ROTATE_180
     bsp_display_rotate(display, LV_DISPLAY_ROTATION_180);
 #endif
@@ -641,6 +1091,7 @@ extern "C" void app_main(void) {
         nvs_result = nvs_flash_init();
     }
     ESP_ERROR_CHECK(nvs_result);
+    display_brightness = load_display_brightness();
     if (!initialize_topics()) {
         ESP_LOGE(kTag, "Run idf.py menuconfig before flashing the HMI");
         abort();
@@ -649,9 +1100,11 @@ extern "C" void app_main(void) {
     connection_events = xEventGroupCreate();
     snapshot_queue = xQueueCreate(1U, sizeof(HmiSnapshot));
     outgoing_command_queue = xQueueCreate(8U, sizeof(OutgoingCommand));
+    feedback_queue = xQueueCreate(8U, sizeof(CommandFeedback));
     if (connection_events == nullptr ||
         snapshot_queue == nullptr ||
-        outgoing_command_queue == nullptr) {
+        outgoing_command_queue == nullptr ||
+        feedback_queue == nullptr) {
         ESP_LOGE(kTag, "Unable to allocate HMI RTOS resources");
         abort();
     }

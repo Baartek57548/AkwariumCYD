@@ -73,6 +73,14 @@ enum TelemetryFlags : uint16_t {
     TelemetryControllerSafe = 1U << 6U
 };
 
+enum RelayStateFlags : uint16_t {
+    RelayLightPrimaryOn = 1U << 0U,
+    RelayLightSecondaryOn = 1U << 1U,
+    RelayFilterOn = 1U << 2U,
+    RelayAeratorOn = 1U << 3U,
+    RelayHeaterOn = 1U << 4U
+};
+
 struct TelemetryPayload {
     uint16_t flags;
     int32_t temperature_milli_c;

@@ -121,6 +121,7 @@ struct GuiBleSnapshot {
     bool developer_mode;
     uint32_t uptime_seconds;
     uint32_t free_heap_bytes;
+    uint32_t configuration_revision;
     float temperature;
     bool temperature_valid;
     float target_temperature;

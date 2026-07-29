@@ -81,6 +81,16 @@ duży panel Waveshare ESP32-P4 7" traktuje jako odpinany klient LVGL/MQTT.
 Nieruchomy ESP32-C6 przekazuje szyfrowany ESP-NOW do MQTT, więc wyłączenie
 panelu nie odcina Home Assistanta. Projekty znajdują się w
 `firmware/esp32p4_hmi`, `firmware/esp32c6_gateway` i `home_assistant`.
+Oba firmware’y są przypięte plikami `dependencies.lock` do ESP-IDF 5.4.4,
+budowane w CI i lokalnie jednym poleceniem:
+
+```powershell
+.\tools\build-p4-c6.ps1 -IdfPath C:\esp\v5.4.4-full\esp-idf
+```
+
+Panel pokazuje pomiary, alarmy, stany wyjść i diagnostykę, potwierdza każdą
+komendę oraz zapisuje jasność w NVS. Pakiet Home Assistanta zawiera dashboard,
+czasowe sterowanie, alarmy i przykład najmniejszych uprawnień MQTT.
 
 Pełny opis odpowiedzialności, sprzętu, protokołu, provisioningu i kolejności
 migracji znajduje się w
