@@ -4,7 +4,6 @@ on:
   push:
     branches:
       - main
-      - "codex/**"
   pull_request:
   workflow_dispatch:
 
@@ -32,7 +31,7 @@ jobs:
       - name: Lint GitHub Actions workflows
         run: go run github.com/rhysd/actionlint/cmd/actionlint@v1.7.12
       - name: Compile Python tools
-        run: python -m compileall -q scripts tools/hil
+        run: python -m compileall -q scripts tools
       - name: Exercise release validator
         shell: bash
         run: |
@@ -57,16 +56,23 @@ jobs:
             --dry-run
           python scripts/verify_firmware_trust.py
           python tools/firmware_package.py self-test
+          python tools/web_package.py --self-test
+          python tools/install_web_bundle.py --self-test
+          python tools/generate_sbom.py --self-test
           python scripts/audit_esp32_security.py --self-test
       - name: Exercise HIL runner without hardware
         run: |
           python tools/hil/runner.py --self-test
           python tools/hil/runner.py --dry-run
+          if python tools/hil/runner.py --dry-run --forbid-skips; then
+            echo "Strict HIL dry-run unexpectedly accepted skipped scenarios" >&2
+            exit 1
+          fi
 
   web:
     name: Web and Node
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 25
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
@@ -82,13 +88,21 @@ jobs:
           xargs -0 -n1 node --check
       - name: Run API simulator tests
         run: npm run test:api
+      - name: Run secure gateway tests
+        run: npm run test:gateway
       - name: Verify generated embedded web assets
         run: |
           npm run build:web-assets
           git diff --exit-code -- sdcard/aq/ota
-      - name: Install Chromium
-        run: npx playwright install --with-deps chromium
-      - name: Run browser tests
+          test -z "$(
+            git ls-files \
+              --others \
+              --exclude-standard \
+              -- sdcard/aq/ota
+          )"
+      - name: Install browser compatibility matrix
+        run: npx playwright install --with-deps chromium firefox webkit
+      - name: Run browser, accessibility and responsive tests
         run: npm run test:e2e
       - name: Package web artifact
         run: |
@@ -312,4 +326,87 @@ jobs:
           name: android-unsigned-validation
           path: artifacts/AquaCYD-Control-ci-current-unsigned.apk*
           if-no-files-found: error
+          retention-days: 7
+
+  flutter-emulator-smoke:
+    name: Android notification smoke (API 35)
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/setup-java@c1e323688fd81a25caa38c78aa6df2d33d3e20d9 # v4.8.0
+        with:
+          distribution: temurin
+          java-version: "17"
+      - uses: gradle/actions/setup-gradle@ed408507eac070d1f99cc633dbcf757c94c7933a # v4.4.3
+        with:
+          gradle-version: "8.14"
+      - uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2 # v2.23.0
+        with:
+          flutter-version: "3.41.5"
+          channel: stable
+          cache: true
+      - name: Prepare deterministic Android debug build
+        shell: bash
+        run: |
+          set -euo pipefail
+          key_path="$RUNNER_TEMP/aquacyd-emulator-validation.jks"
+          keytool -genkeypair \
+            -keystore "$key_path" \
+            -storepass emulator-validation-only \
+            -keypass emulator-validation-only \
+            -alias emulator-validation \
+            -keyalg RSA \
+            -keysize 3072 \
+            -validity 1 \
+            -dname "CN=AquaCYD Emulator Validation,OU=CI,O=AquaCYD,C=PL"
+          {
+            printf 'storePassword=emulator-validation-only\n'
+            printf 'keyPassword=emulator-validation-only\n'
+            printf 'keyAlias=emulator-validation\n'
+            printf 'storeFile=%s\n' "$key_path"
+          } > mobile_app/android/key.properties
+          flutter_sdk="$(dirname "$(dirname "$(command -v flutter)")")"
+          android_sdk="${ANDROID_SDK_ROOT:-${ANDROID_HOME:-}}"
+          test -n "$android_sdk"
+          printf 'sdk.dir=%s\nflutter.sdk=%s\n' \
+            "$android_sdk" "$flutter_sdk" \
+            > mobile_app/android/local.properties
+          gradle \
+            --project-dir mobile_app/android \
+            wrapper \
+            --gradle-version 8.14 \
+            --distribution-type all
+          chmod +x mobile_app/android/gradlew
+          (
+            cd mobile_app
+            flutter pub get
+            flutter test test/notification_intents_test.dart
+          )
+      - name: Enable Linux KVM for the Android emulator
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo \
+            'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' \
+            | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+      - name: Exercise notification channels, delivery and deep-link launch
+        uses: reactivecircus/android-emulator-runner@0a638108440efd5c7f980e6ba145dbcdd8f32009 # v2.37.0
+        with:
+          api-level: 35
+          target: google_apis
+          arch: x86_64
+          profile: pixel_7
+          disable-animations: true
+          working-directory: mobile_app
+          script: bash ../tools/android-emulator-smoke.sh
+      - name: Upload Android emulator diagnostics
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: android-emulator-smoke-diagnostics
+          path: artifacts/android-emulator/
+          if-no-files-found: warn
           retention-days: 7

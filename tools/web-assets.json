@@ -1,0 +1,39 @@
+{
+  "schemaVersion": 1,
+  "sourceFiles": [
+    "index.html",
+    "settings.html",
+    "theme-bootstrap.js",
+    "style.css",
+    "charts.css",
+    "app-core.js",
+    "app-init.js",
+    "chart-engine.js",
+    "charts.js",
+    "dashboard.js",
+    "gateway-pwa.js",
+    "logs.js",
+    "ota.js",
+    "relays-wizard.js",
+    "schedules.js",
+    "service-worker.js",
+    "settings.js",
+    "theme.js",
+    "manifest.webmanifest",
+    "aquacyd-icon-192.png",
+    "aquacyd-icon-512.png"
+  ],
+  "gzipExtensions": [
+    ".html",
+    ".css",
+    ".js",
+    ".webmanifest",
+    ".svg"
+  ],
+  "budgets": {
+    "rawBytes": 819200,
+    "gzipBytes": 163840,
+    "largestRawAssetBytes": 360000,
+    "largestGzipAssetBytes": 65000
+  }
+}

@@ -6,6 +6,7 @@ import 'package:flutter/widgets.dart' hide LocalHistoryEntry;
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:workmanager/workmanager.dart';
 
+import '../app_update/app_update_background.dart';
 import '../controller_preferences.dart';
 import '../controller_address.dart';
 import '../controller_snapshot_cache.dart';
@@ -327,7 +328,8 @@ abstract final class AquariumBackgroundService {
   static const uniqueTaskName = 'aquacyd-local-wifi-sync-v1';
   static const workerTaskName = 'aquacydLocalWifiSync';
 
-  /// Należy wywołać po WidgetsFlutterBinding.ensureInitialized(), przed runApp.
+  /// Należy wywołać po WidgetsFlutterBinding.ensureInitialized(). Wywołujący
+  /// nie powinien blokować pierwszej klatki UI oczekiwaniem na systemowy worker.
   static Future<void> initialize() async {
     if (kIsWeb || !Platform.isAndroid) return;
     await Workmanager().initialize(aquariumBackgroundCallbackDispatcher);
@@ -364,6 +366,10 @@ abstract final class AquariumBackgroundService {
 void aquariumBackgroundCallbackDispatcher() {
   WidgetsFlutterBinding.ensureInitialized();
   Workmanager().executeTask((task, inputData) async {
+    if (AppUpdateBackgroundService.handles(task)) {
+      final result = await AppUpdateBackgroundRunner().run();
+      return result.succeeded;
+    }
     if (task != AquariumBackgroundService.workerTaskName &&
         task != AquariumBackgroundService.uniqueTaskName) {
       return true;

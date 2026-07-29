@@ -24,6 +24,10 @@ Stanowisko powinno mieć:
 `--self-test` uruchamia lokalny serwer symulujący cały kontrakt. Bez
 `AQUACYD_HIL_BASE_URL` zwykły run pokazuje każdy test jako `SKIP`.
 Workflow sprzętowy używa `--require-hardware`, więc brak adresu jest błędem.
+Produkcyjne wywołanie z taga dodaje `--forbid-skips`: brak dowolnej capability,
+portu szeregowego, fixture lamp, pełnego OTA health lub innego wymaganego
+elementu zatrzymuje wydanie. Ręczne uruchomienie może pozostawić jawne `SKIP`
+podczas budowy stanowiska.
 
 Zmiany stanu wymagają `AQUACYD_HIL_ALLOW_MUTATIONS=1`. Rollback ma dodatkową,
 niezależną blokadę `AQUACYD_HIL_ALLOW_OTA_ROLLBACK=1`. Dzięki temu operator może
@@ -133,3 +137,38 @@ rozszerzać o nagłówki autoryzacji lub payload logowania.
 Po każdym teście operator sprawdza stan AUTO, brak aktywnego override, stan
 alarmów i właściwy slot OTA. Nieudane przywrócenie Wi-Fi lub rollback wymaga
 odłączenia obciążeń przed dalszą diagnostyką.
+
+## Fixture odporności sensorów, SD i restartów
+
+Opcjonalny `AQUACYD_HIL_RESILIENCE_URL` opisuje możliwości stanowiska przez
+`GET`:
+
+```json
+{
+  "capabilities": [
+    "sensor_fault",
+    "sd_failure",
+    "brownout",
+    "watchdog"
+  ]
+}
+```
+
+Runner uruchamia tylko reklamowaną operację przez uwierzytelniony lab token.
+Brak URL albo konkretnej capability daje jawny `SKIP`; reklamowana capability z
+niepełnym lub niebezpiecznym wynikiem zawsze daje `FAIL`.
+
+- `sensor_fault` wstrzykuje NaN/timeout i musi potwierdzić listę odrzuconych
+  wejść, bezpieczne wyjścia, odzyskanie oraz aktywną lokalną automatykę;
+- `sd_failure` fizycznie odłącza lub emuluje błąd karty, potwierdza działanie
+  automatyki bez SD i poprawny remount;
+- `brownout` używa kontrolowanego zasilacza, wymaga bezpiecznych wyjść podczas
+  startu, właściwego reset reason i powrotu przed deadlinem;
+- `watchdog` wyzwala wyłącznie laboratoryjny, kontrolowany hang i wymaga reset
+  reason WDT, bezpiecznego startu oraz powrotu przed deadlinem.
+
+Każda odpowiedź zawiera `operation`, `recovered`, `automationSafe` i
+`reconnectMs`. Mutacje są dostępne wyłącznie po
+`AQUACYD_HIL_ALLOW_MUTATIONS=1`; endpoint fixture nie może być wystawiony w
+sieci użytkownika. Produkcyjny release nadal wymaga również rollbacku OTA oraz
+niezależnego pomiaru sekwencji obu lamp Aquael `front` i `rear`.

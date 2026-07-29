@@ -5,6 +5,8 @@ import 'package:flutter/services.dart';
 
 import '../controller_runtime_services.dart';
 import '../design_system.dart';
+import '../notifications/notification_intents.dart';
+import '../app_update/app_update_ui.dart';
 import 'connection_health.dart';
 import 'connection_health_bar.dart';
 import 'controller_api.dart';
@@ -48,6 +50,8 @@ class _ControllerShellState extends State<ControllerShell>
     with WidgetsBindingObserver {
   _ControllerSection _section = _ControllerSection.dashboard;
   bool _actionPipelineBusy = false;
+  StreamSubscription<AquaNotificationIntent>? _notificationSubscription;
+  bool _notificationRouteOpen = false;
 
   ControllerSession get session => widget.session;
 
@@ -56,6 +60,14 @@ class _ControllerShellState extends State<ControllerShell>
     super.initState();
     WidgetsBinding.instance.addObserver(this);
     if (widget.disposeSession) _activateSessionForCurrentLifecycle();
+    _notificationSubscription = AquaNotificationIntentBus.instance.stream
+        .listen((intent) => unawaited(_handleNotificationIntent(intent)));
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      for (final intent in AquaNotificationIntentBus.instance.takePending()) {
+        unawaited(_handleNotificationIntent(intent));
+      }
+    });
   }
 
   @override
@@ -84,6 +96,8 @@ class _ControllerShellState extends State<ControllerShell>
   @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
+    unawaited(_notificationSubscription?.cancel());
+    _notificationSubscription = null;
     if (widget.disposeSession) session.dispose();
     super.dispose();
   }
@@ -265,6 +279,59 @@ class _ControllerShellState extends State<ControllerShell>
         builder: (_) => AlarmCenterView(services: services),
       ),
     );
+  }
+
+  Future<void> _handleNotificationIntent(AquaNotificationIntent intent) async {
+    if (!mounted) return;
+    if (intent.target == AquaNotificationTarget.update) {
+      final controller = AppUpdateScope.maybeOf(context, listen: false);
+      if (controller == null) return;
+      if (intent.action == AquaNotificationAction.remindUpdateLater) {
+        if (controller.state.release?.tagName != intent.identifier) {
+          await controller.checkForUpdates(manual: true);
+        }
+        if (controller.state.release?.tagName == intent.identifier) {
+          await controller.remindLater();
+          if (mounted) {
+            _showMessage(
+              'Przypomnienie o aktualizacji odłożono o 24 godziny.',
+              success: true,
+            );
+          }
+          return;
+        }
+      }
+      setState(() => _section = _ControllerSection.settings);
+      await controller.checkForUpdates(manual: true);
+      return;
+    }
+
+    final services = widget.runtimeServices;
+    if (services == null) return;
+    await services.initialize();
+    try {
+      if (intent.action == AquaNotificationAction.acknowledgeAlarm) {
+        await services.acknowledgeAlarm(intent.identifier);
+      } else if (intent.action == AquaNotificationAction.completeService) {
+        await services.completeReminder(intent.identifier);
+      }
+    } on Object {
+      if (mounted) {
+        _showMessage(
+          'Nie udało się wykonać akcji z powiadomienia.',
+          success: false,
+        );
+      }
+    }
+    if (!mounted || _notificationRouteOpen) return;
+    _notificationRouteOpen = true;
+    await Navigator.of(context)
+        .push(
+          MaterialPageRoute<void>(
+            builder: (_) => AlarmCenterView(services: services),
+          ),
+        )
+        .whenComplete(() => _notificationRouteOpen = false);
   }
 
   List<Widget> _sectionViews() {

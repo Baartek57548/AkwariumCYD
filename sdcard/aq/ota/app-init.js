@@ -337,6 +337,27 @@ document.addEventListener('DOMContentLoaded', () => {
     startWebSessionHeartbeat();
     startEventStream();
     startPollingFallback();
+    if (typeof window.AquaCydGatewayPwa?.restoreSnapshot === 'function') {
+        window.AquaCydGatewayPwa.restoreSnapshot()
+            .then((snapshot) => {
+                if (!snapshot || backendConnected || lastStatusData) {
+                    return;
+                }
+                applyStatusPayload(snapshot.status, 0, { offlineSnapshot: true });
+                const savedAt = snapshot.savedAt > 0
+                    ? new Date(snapshot.savedAt).toLocaleString('pl-PL')
+                    : 'nieznany czas';
+                showToast(
+                    'Podgląd offline',
+                    `Wyświetlam dane zapisane ${savedAt}. Sterowanie pozostaje zablokowane.`,
+                    'warning',
+                    6200
+                );
+            })
+            .catch((error) => {
+                console.warn('Nie udało się przywrócić snapshotu offline.', error);
+            });
+    }
     fetchStatus(true, true);
     fetchLogs(true);
     renderLogs();

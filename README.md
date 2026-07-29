@@ -6,6 +6,10 @@ obsługą OTA i aplikacją Flutter.
 Dokumentacja firmware, pinologia, profile kompilacji i procedura wgrywania:
 [docs/CYD_FIRMWARE.md](docs/CYD_FIRMWARE.md).
 
+Watchdog, fail-safe, kalibracja, bezpieczne profile Wi-Fi, trwałe alarmy oraz
+warunek zatwierdzenia OTA są opisane w
+[docs/FIRMWARE_RUNTIME_SAFETY.md](docs/FIRMWARE_RUNTIME_SAFETY.md).
+
 Gotowe obrazy firmware ILI9341/ST7789 oraz instalacyjny APK są publikowane w
 [GitHub Releases](https://github.com/Baartek57548/AkwariumCYD/releases).
 Wybierz tag `firmware-vX.Y.Z` dla podpisanego pakietu `.aqfw` albo
@@ -16,6 +20,7 @@ Najważniejsze katalogi:
 - `src/`, `include/`, `lib/` — firmware ESP32;
 - `test/` — testy logiki domenowej;
 - `web/` — panel WWW;
+- `gateway/` — opcjonalna brama HTTPS dla zdalnych alarmów i FCM;
 - `mobile_app/` — aplikacja Flutter;
 - `sdcard/` — struktura danych i zasobów karty SD.
 
@@ -52,6 +57,14 @@ podpisywania artefaktów OTA, lokalnego rollbacku i docelowego Secure Boot v2 w
 pakietu `.aqfw`, publiczny fingerprint oraz procedura fabrycznego provisioningu
 znajdują się w
 [docs/FIRMWARE_SIGNING_AND_PROVISIONING.md](docs/FIRMWARE_SIGNING_AND_PROVISIONING.md).
+
+Opcjonalna brama nie udostępnia sterownika bezpośrednio w Internecie. Przyjmuje
+wyłącznie podpisane i chronione przed replayem zdarzenia HTTPS, przechowuje
+ograniczoną historię oraz może przekazywać alarmy do FCM. Provisioning odbywa się
+po bezpiecznym BLE, a sekret HMAC nie jest zapisywany w aplikacji mobilnej.
+Instrukcje uruchomienia znajdują się w [gateway/README.md](gateway/README.md), a
+zasady instalowalnego panelu w
+[docs/WEB_BUNDLE_AND_GATEWAY_PWA.md](docs/WEB_BUNDLE_AND_GATEWAY_PWA.md).
 
 Sterownika nie należy wystawiać bezpośrednio do Internetu. Zdalny dostęp powinien
 działać przez VPN lub uwierzytelnioną bramę, z krótkotrwałymi tokenami i limitami

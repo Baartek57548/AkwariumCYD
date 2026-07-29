@@ -14,6 +14,7 @@ import enum
 import http.server
 import json
 import os
+import pathlib
 import socket
 import threading
 import time
@@ -73,6 +74,7 @@ class Config:
     allow_ota_rollback: bool
     aquael_trace_url: str
     aquael_transition_timeout_seconds: float
+    resilience_url: str
     serial_port: str
     serial_baud: int
     serial_boot_marker: str
@@ -126,6 +128,9 @@ class Config:
                 20.0,
                 2.0,
                 120.0,
+            ),
+            resilience_url=_clean_url(
+                os.getenv("AQUACYD_HIL_RESILIENCE_URL", "")
             ),
             serial_port=os.getenv("AQUACYD_HIL_SERIAL_PORT", "").strip(),
             serial_baud=_int_env("AQUACYD_HIL_SERIAL_BAUD", 115200, 1200, 4_000_000),
@@ -331,6 +336,7 @@ class HilSuite:
         self.client = JsonClient(config)
         self.dry_run = dry_run
         self.results: list[Result] = []
+        self._resilience_capabilities: set[str] | None = None
 
     def run(self) -> int:
         checks: list[tuple[str, Callable[[], str]]] = [
@@ -340,6 +346,10 @@ class HilSuite:
             ("Wi-Fi outage and reconnect", self.wifi_reconnect),
             ("OTA health contract", self.ota_health),
             ("OTA rollback", self.ota_rollback),
+            ("sensor fault fail-safe", self.sensor_fault_fail_safe),
+            ("SD removal and recovery", self.sd_removal_recovery),
+            ("brownout recovery", self.brownout_recovery),
+            ("watchdog recovery", self.watchdog_recovery),
             ("dual Aquael API profiles", self.aquael_api_profiles),
             ("dual Aquael electrical sequence", self.aquael_light_sequence),
             ("serial boot marker", self.serial_boot_marker),
@@ -380,6 +390,10 @@ class HilSuite:
             "temporary override timeout",
             "Wi-Fi outage and reconnect",
             "OTA rollback",
+            "sensor fault fail-safe",
+            "SD removal and recovery",
+            "brownout recovery",
+            "watchdog recovery",
             "dual Aquael API profiles",
             "dual Aquael electrical sequence",
         }
@@ -409,6 +423,13 @@ class HilSuite:
             and not self.config.aquael_trace_url
         ):
             return "missing: AQUACYD_HIL_AQUAEL_TRACE_URL"
+        if name in {
+            "sensor fault fail-safe",
+            "SD removal and recovery",
+            "brownout recovery",
+            "watchdog recovery",
+        } and not self.config.resilience_url:
+            return "missing: AQUACYD_HIL_RESILIENCE_URL"
         if name == "serial boot marker" and not self.config.serial_port:
             return "missing: AQUACYD_HIL_SERIAL_PORT"
         return "configuration valid; no network or serial operation executed"
@@ -429,6 +450,148 @@ class HilSuite:
         if body and body.get("healthy") is False:
             raise TestFailure("controller reports unhealthy state")
         return "controller accepted an authenticated health request"
+
+    def _load_resilience_capabilities(self) -> set[str]:
+        if self._resilience_capabilities is not None:
+            return self._resilience_capabilities
+        if not self.config.resilience_url:
+            raise SkipTest("AQUACYD_HIL_RESILIENCE_URL is not configured")
+        body = self.client.require_json(
+            "GET",
+            self.config.resilience_url,
+            include_device_auth=False,
+        )
+        raw_capabilities = body.get("capabilities")
+        if not isinstance(raw_capabilities, list) or any(
+            not isinstance(item, str) or not item.strip()
+            for item in raw_capabilities
+        ):
+            raise TestFailure(
+                "resilience fixture must return a string capabilities array"
+            )
+        self._resilience_capabilities = {
+            item.strip() for item in raw_capabilities
+        }
+        return self._resilience_capabilities
+
+    def _exercise_resilience(self, operation: str) -> dict[str, Any]:
+        self._require_mutations()
+        if operation not in self._load_resilience_capabilities():
+            raise SkipTest(
+                f"resilience fixture does not advertise {operation}"
+            )
+        body = self.client.require_json(
+            "POST",
+            self.config.resilience_url,
+            {
+                "operation": operation,
+                "runId": str(uuid.uuid4()),
+                "maximumReconnectMs": int(
+                    self.config.reconnect_timeout_seconds * 1000
+                ),
+            },
+            include_device_auth=False,
+            accepted={200, 202},
+        )
+        if body.get("operation") != operation:
+            raise TestFailure(
+                f"resilience fixture returned the wrong operation for {operation}"
+            )
+        if body.get("recovered") is not True:
+            raise TestFailure(f"{operation} did not restore the controller")
+        if body.get("automationSafe") is not True:
+            raise TestFailure(f"{operation} left automation in an unsafe state")
+        reconnect_ms = body.get("reconnectMs")
+        if (
+            not isinstance(reconnect_ms, int)
+            or reconnect_ms < 0
+            or reconnect_ms
+            > int(self.config.reconnect_timeout_seconds * 1000)
+        ):
+            raise TestFailure(
+                f"{operation} reconnect time is missing or exceeds the limit"
+            )
+        return body
+
+    def sensor_fault_fail_safe(self) -> str:
+        body = self._exercise_resilience("sensor_fault")
+        invalid_inputs = body.get("invalidInputs")
+        if (
+            not isinstance(invalid_inputs, list)
+            or not invalid_inputs
+            or any(not isinstance(item, str) for item in invalid_inputs)
+        ):
+            raise TestFailure(
+                "sensor fault fixture did not report invalid sensor inputs"
+            )
+        if body.get("outputsSafe") is not True:
+            raise TestFailure("sensor fault did not drive guarded outputs safe")
+        return (
+            "invalid sensor payloads were rejected and guarded outputs remained safe"
+        )
+
+    def sd_removal_recovery(self) -> str:
+        body = self._exercise_resilience("sd_failure")
+        if body.get("storageFallback") is not True:
+            raise TestFailure(
+                "controller did not preserve automation without the SD card"
+            )
+        if body.get("filesystemRecovered") is not True:
+            raise TestFailure("SD storage did not recover after reinsertion")
+        return "SD removal preserved automation and storage recovered"
+
+    def brownout_recovery(self) -> str:
+        body = self._exercise_resilience("brownout")
+        if body.get("resetReason") not in {"brownout", "power_on"}:
+            raise TestFailure("brownout fixture reported an unexpected reset reason")
+        if body.get("outputsSafeDuringBoot") is not True:
+            raise TestFailure("outputs were not safe during brownout reboot")
+        return "brownout reboot recovered with safe outputs"
+
+    def watchdog_recovery(self) -> str:
+        body = self._exercise_resilience("watchdog")
+        if body.get("resetReason") not in {
+            "watchdog",
+            "task_wdt",
+            "interrupt_wdt",
+        }:
+            raise TestFailure("watchdog fixture reported an unexpected reset reason")
+        if body.get("outputsSafeDuringBoot") is not True:
+            raise TestFailure("outputs were not safe during watchdog reboot")
+        return "watchdog reboot recovered with safe outputs"
+
+    def write_report(self, path: pathlib.Path, source_sha: str) -> None:
+        normalized_sha = source_sha.strip().lower()
+        if normalized_sha and (
+            len(normalized_sha) != 40
+            or any(
+                character not in "0123456789abcdef"
+                for character in normalized_sha
+            )
+        ):
+            raise ValueError(
+                "HIL source SHA must be empty or 40 lowercase hex characters"
+            )
+        payload = {
+            "schemaVersion": 1,
+            "sourceSha": normalized_sha,
+            "hardwareRequired": bool(self.config.base_url),
+            "results": [
+                {
+                    "name": result.name,
+                    "outcome": result.outcome.value,
+                    "detail": result.detail,
+                    "durationSeconds": round(result.duration_seconds, 3),
+                }
+                for result in self.results
+            ],
+        }
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(
+            json.dumps(payload, ensure_ascii=False, indent=2) + "\n",
+            encoding="utf-8",
+            newline="\n",
+        )
 
     def duplicate_command(self) -> str:
         self._require_mutations()
@@ -578,13 +741,34 @@ class HilSuite:
                     outage_observed = True
                 time.sleep(0.2)
         finally:
-            self.client.require_json(
-                "POST",
-                self.config.wifi_restore_url,
-                {"state": "on"},
-                accepted={200, 202, 204},
-                include_device_auth=False,
+            restore_deadline = (
+                time.monotonic() + self.config.reconnect_timeout_seconds
             )
+            last_restore_error: Exception | None = None
+            while time.monotonic() < restore_deadline:
+                try:
+                    self.client.require_json(
+                        "POST",
+                        self.config.wifi_restore_url,
+                        {"state": "on"},
+                        accepted={200, 202, 204},
+                        include_device_auth=False,
+                    )
+                    last_restore_error = None
+                    break
+                except (
+                    OSError,
+                    urllib.error.URLError,
+                    socket.timeout,
+                    TestFailure,
+                ) as error:
+                    last_restore_error = error
+                    time.sleep(0.2)
+            if last_restore_error is not None:
+                raise TestFailure(
+                    "managed Wi-Fi fixture could not restore connectivity: "
+                    f"{last_restore_error}"
+                ) from last_restore_error
         if not outage_observed:
             raise TestFailure("managed outage did not make the controller unavailable")
         reconnect_deadline = (
@@ -1157,6 +1341,19 @@ def _self_test_handler(state: _SelfTestState) -> type[http.server.BaseHTTPReques
                     },
                 )
                 return
+            if self.path == "/lab/resilience":
+                self._json(
+                    200,
+                    {
+                        "capabilities": [
+                            "sensor_fault",
+                            "sd_failure",
+                            "brownout",
+                            "watchdog",
+                        ]
+                    },
+                )
+                return
             self._json(404, {"error": "not found"})
 
         def do_POST(self) -> None:
@@ -1295,6 +1492,49 @@ def _self_test_handler(state: _SelfTestState) -> type[http.server.BaseHTTPReques
                     },
                 )
                 return
+            if self.path == "/lab/resilience":
+                payload = self._payload()
+                operation = str(payload.get("operation", ""))
+                common = {
+                    "operation": operation,
+                    "runId": payload.get("runId"),
+                    "recovered": True,
+                    "automationSafe": True,
+                    "reconnectMs": 250,
+                }
+                if operation == "sensor_fault":
+                    common.update(
+                        {
+                            "invalidInputs": ["temperature_nan", "ph_timeout"],
+                            "outputsSafe": True,
+                        }
+                    )
+                elif operation == "sd_failure":
+                    common.update(
+                        {
+                            "storageFallback": True,
+                            "filesystemRecovered": True,
+                        }
+                    )
+                elif operation == "brownout":
+                    common.update(
+                        {
+                            "resetReason": "brownout",
+                            "outputsSafeDuringBoot": True,
+                        }
+                    )
+                elif operation == "watchdog":
+                    common.update(
+                        {
+                            "resetReason": "task_wdt",
+                            "outputsSafeDuringBoot": True,
+                        }
+                    )
+                else:
+                    self._json(409, {"error": "unsupported_operation"})
+                    return
+                self._json(200, common)
+                return
             if self.path == "/api/v2/ota/rollback":
                 state.boot_slot = "ota_1" if state.boot_slot == "ota_0" else "ota_0"
                 self._json(202, {"accepted": True})
@@ -1328,6 +1568,7 @@ def run_self_test() -> int:
         ota_rollback_url=f"{base_url}/api/v2/ota/rollback",
         allow_ota_rollback=True,
         aquael_trace_url=f"{base_url}/lab/aquael-trace",
+        resilience_url=f"{base_url}/lab/resilience",
         serial_port="",
     )
     try:
@@ -1337,7 +1578,7 @@ def run_self_test() -> int:
         server.shutdown()
         server.server_close()
         thread.join(timeout=2.0)
-    expected_passes = 8
+    expected_passes = 12
     pass_count = sum(result.outcome is Outcome.PASS for result in suite.results)
     skip_count = sum(result.outcome is Outcome.SKIP for result in suite.results)
     if exit_code or pass_count != expected_passes or skip_count != 1:
@@ -1369,6 +1610,16 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="fail instead of skipping when AQUACYD_HIL_BASE_URL is absent",
     )
+    parser.add_argument(
+        "--report-json",
+        default="",
+        help="write a machine-readable HIL report bound to AQUACYD_HIL_SOURCE_SHA",
+    )
+    parser.add_argument(
+        "--forbid-skips",
+        action="store_true",
+        help="fail when any physical scenario is skipped",
+    )
     return parser.parse_args()
 
 
@@ -1382,7 +1633,26 @@ def main() -> int:
             raise ValueError(
                 "AQUACYD_HIL_BASE_URL is required when --require-hardware is used"
             )
-        return HilSuite(config, dry_run=args.dry_run).run()
+        suite = HilSuite(config, dry_run=args.dry_run)
+        result = suite.run()
+        if args.report_json:
+            suite.write_report(
+                pathlib.Path(args.report_json),
+                os.getenv("AQUACYD_HIL_SOURCE_SHA", ""),
+            )
+        if args.forbid_skips:
+            skipped = [
+                item.name
+                for item in suite.results
+                if item.outcome is Outcome.SKIP
+            ]
+            if skipped:
+                print(
+                    "Strict HIL gate rejected skipped scenarios: "
+                    + ", ".join(skipped)
+                )
+                result = 1
+        return result
     except ValueError as error:
         print(f"Configuration error: {error}")
         return 2

@@ -1,7 +1,9 @@
+import 'dart:async';
 import 'dart:convert';
 
 import 'package:flutter/material.dart';
 
+import '../../offline_drafts/offline_configuration_draft.dart';
 import '../controller_api.dart';
 import '../controller_session.dart';
 import '../controller_shell.dart';
@@ -13,10 +15,12 @@ class SchedulesView extends StatefulWidget {
     super.key,
     required this.session,
     required this.runAction,
+    this.draftRepository,
   });
 
   final ControllerSession session;
   final RunControllerAction runAction;
+  final OfflineDraftRepository? draftRepository;
 
   @override
   State<SchedulesView> createState() => _SchedulesViewState();
@@ -35,11 +39,16 @@ class _SchedulesViewState extends State<SchedulesView> {
   bool _dirty = false;
   bool _remoteChangedWhileEditing = false;
   String _sourceFingerprint = '';
+  late final OfflineDraftRepository _draftRepository;
+  OfflineConfigurationDraft? _draft;
+  bool _draftLoading = true;
 
   @override
   void initState() {
     super.initState();
+    _draftRepository = widget.draftRepository ?? OfflineDraftRepository();
     _loadFromStatus();
+    unawaited(_loadDraft());
   }
 
   void _loadFromStatus() {
@@ -121,6 +130,13 @@ class _SchedulesViewState extends State<SchedulesView> {
   @override
   void didUpdateWidget(SchedulesView oldWidget) {
     super.didUpdateWidget(oldWidget);
+    if (!identical(oldWidget.session, widget.session)) {
+      _loadFromStatus();
+      _draft = null;
+      _draftLoading = true;
+      unawaited(_loadDraft());
+      return;
+    }
     final currentFingerprint = _fingerprint(widget.session.status);
     if (currentFingerprint == _sourceFingerprint) return;
     if (_dirty || saving) {
@@ -138,62 +154,221 @@ class _SchedulesViewState extends State<SchedulesView> {
     });
   }
 
+  String get _controllerDraftId {
+    final network = widget.session.status.section('network');
+    final advertisedId = network.text(
+      'configuredApSsid',
+      network.text('staSsid'),
+    );
+    if (advertisedId.trim().isNotEmpty) return 'aquacyd:$advertisedId';
+    final uri = widget.session.baseUri;
+    if (uri != null) return uri.toString();
+    return 'aquacyd:local-controller';
+  }
+
+  Map<String, Object?> _baseDraftData() {
+    final status = widget.session.status;
+    return _objectMap(<String, Object?>{
+      'schedules': status['schedules'],
+      'schedule': status['schedule'],
+      'feeding': status['feeding'],
+    });
+  }
+
+  Map<String, Object?> _buildPayload() => <String, Object?>{
+    'lightMode': light.mode,
+    'dayStart': _timeText(light.start),
+    'dayEnd': _timeText(light.end),
+    'lightStart': _timeText(light.start),
+    'lightEnd': _timeText(light.end),
+    'lightProfile': light.profile == 'cycle' ? 'day' : light.profile,
+    'lightProfileCycle': light.profile == 'cycle',
+    'light1Mode': light.mode,
+    'light1Start': _timeText(light.start),
+    'light1End': _timeText(light.end),
+    'light1Profile': light.profile == 'cycle' ? 'day' : light.profile,
+    'light1ProfileCycle': light.profile == 'cycle',
+    'plantLightMode': plant.mode,
+    'plantLightStart': _timeText(plant.start),
+    'plantLightEnd': _timeText(plant.end),
+    'plantLightProfile': plant.profile == 'cycle' ? 'day' : plant.profile,
+    'plantLightProfileCycle': plant.profile == 'cycle',
+    'light2Mode': plant.mode,
+    'light2Start': _timeText(plant.start),
+    'light2End': _timeText(plant.end),
+    'light2Profile': plant.profile == 'cycle' ? 'day' : plant.profile,
+    'light2ProfileCycle': plant.profile == 'cycle',
+    'aerationMode': air.mode,
+    'airOn': _timeText(air.start),
+    'airOff': _timeText(air.end),
+    'filterMode': filter.mode,
+    'filterOn': _timeText(filter.start),
+    'filterOff': _timeText(filter.end),
+    'heaterMode': heaterMode,
+    'heaterStart': '00:00',
+    'heaterEnd': '23:59',
+    'feedFreq': feederEnabled ? 1 : 0,
+    'feedTime': _timeText(feedTime),
+  };
+
+  Future<void> _loadDraft() async {
+    try {
+      final draft = await _draftRepository.load(
+        kind: OfflineDraftKind.schedule,
+        controllerId: _controllerDraftId,
+      );
+      if (!mounted) return;
+      setState(() {
+        _draft = draft;
+        _draftLoading = false;
+        if (draft != null) {
+          _applyDraftPayload(draft.editedData);
+          _dirty = true;
+          _remoteChangedWhileEditing = draft.conflictsWith(_baseDraftData());
+          statusMessage = _remoteChangedWhileEditing
+              ? 'Szkic wymaga rozwiązania konfliktu z nowszym sterownikiem.'
+              : 'Wczytano bezpiecznie zapisany szkic offline.';
+        }
+      });
+    } on Object {
+      if (!mounted) return;
+      setState(() {
+        _draftLoading = false;
+        statusMessage = 'Nie udało się odczytać szkicu offline.';
+      });
+    }
+  }
+
+  void _applyDraftPayload(Map<String, Object?> payload) {
+    int integer(String key, int fallback) {
+      final value = payload[key];
+      return value is num ? value.toInt() : fallback;
+    }
+
+    String text(String key, String fallback) {
+      final value = payload[key];
+      return value is String ? value : fallback;
+    }
+
+    bool flag(String key, bool fallback) {
+      final value = payload[key];
+      return value is bool ? value : fallback;
+    }
+
+    light = light.copyWith(
+      mode: integer('light1Mode', light.mode).clamp(0, 2),
+      start: _parseTime(text('light1Start', _timeText(light.start))),
+      end: _parseTime(text('light1End', _timeText(light.end))),
+      profile: flag('light1ProfileCycle', false)
+          ? 'cycle'
+          : text('light1Profile', light.profile),
+    );
+    plant = plant.copyWith(
+      mode: integer('light2Mode', plant.mode).clamp(0, 2),
+      start: _parseTime(text('light2Start', _timeText(plant.start))),
+      end: _parseTime(text('light2End', _timeText(plant.end))),
+      profile: flag('light2ProfileCycle', false)
+          ? 'cycle'
+          : text('light2Profile', plant.profile),
+    );
+    filter = filter.copyWith(
+      mode: integer('filterMode', filter.mode).clamp(0, 2),
+      start: _parseTime(text('filterOn', _timeText(filter.start))),
+      end: _parseTime(text('filterOff', _timeText(filter.end))),
+    );
+    air = air.copyWith(
+      mode: integer('aerationMode', air.mode).clamp(0, 2),
+      start: _parseTime(text('airOn', _timeText(air.start))),
+      end: _parseTime(text('airOff', _timeText(air.end))),
+    );
+    heaterMode = integer('heaterMode', heaterMode) == 1 ? 1 : 0;
+    feederEnabled = integer('feedFreq', feederEnabled ? 1 : 0) > 0;
+    feedTime = _parseTime(text('feedTime', _timeText(feedTime)));
+  }
+
+  Future<void> _saveOfflineDraft() async {
+    final now = DateTime.now().toUtc();
+    final existing = _draft;
+    final draft = existing == null
+        ? OfflineConfigurationDraft.create(
+            kind: OfflineDraftKind.schedule,
+            controllerId: _controllerDraftId,
+            baseData: _baseDraftData(),
+            editedData: _buildPayload(),
+            now: now,
+          )
+        : OfflineConfigurationDraft(
+            kind: existing.kind,
+            controllerId: existing.controllerId,
+            baseVersion: existing.baseVersion,
+            baseData: existing.baseData,
+            editedData: _buildPayload(),
+            createdAt: existing.createdAt,
+            updatedAt: now,
+          );
+    await _draftRepository.save(draft);
+    if (!mounted) return;
+    setState(() {
+      _draft = draft;
+      _dirty = true;
+      _remoteChangedWhileEditing = draft.conflictsWith(_baseDraftData());
+      statusMessage = _remoteChangedWhileEditing
+          ? 'Szkic zapisano, zachowując konflikt z nowszą konfiguracją.'
+          : 'Szkic zapisano lokalnie. Żadne polecenie nie zostało wysłane.';
+    });
+  }
+
+  Future<void> _discardDraft() async {
+    await _draftRepository.delete(
+      kind: OfflineDraftKind.schedule,
+      controllerId: _controllerDraftId,
+    );
+    if (!mounted) return;
+    setState(() {
+      _draft = null;
+      _loadFromStatus();
+      statusMessage = 'Usunięto lokalny szkic harmonogramu.';
+    });
+  }
+
   Future<void> _save() async {
     setState(() {
       saving = true;
       statusMessage = 'Zapisywanie harmonogramów…';
     });
     try {
+      if (!widget.session.canIssueCommands) {
+        await _saveOfflineDraft();
+        return;
+      }
       await widget.runAction(
         'save_schedule',
-        payload: {
-          'lightMode': light.mode,
-          'dayStart': _timeText(light.start),
-          'dayEnd': _timeText(light.end),
-          'lightStart': _timeText(light.start),
-          'lightEnd': _timeText(light.end),
-          'lightProfile': light.profile == 'cycle' ? 'day' : light.profile,
-          'lightProfileCycle': light.profile == 'cycle',
-          'light1Mode': light.mode,
-          'light1Start': _timeText(light.start),
-          'light1End': _timeText(light.end),
-          'light1Profile': light.profile == 'cycle' ? 'day' : light.profile,
-          'light1ProfileCycle': light.profile == 'cycle',
-          'plantLightMode': plant.mode,
-          'plantLightStart': _timeText(plant.start),
-          'plantLightEnd': _timeText(plant.end),
-          'plantLightProfile': plant.profile == 'cycle' ? 'day' : plant.profile,
-          'plantLightProfileCycle': plant.profile == 'cycle',
-          'light2Mode': plant.mode,
-          'light2Start': _timeText(plant.start),
-          'light2End': _timeText(plant.end),
-          'light2Profile': plant.profile == 'cycle' ? 'day' : plant.profile,
-          'light2ProfileCycle': plant.profile == 'cycle',
-          'aerationMode': air.mode,
-          'airOn': _timeText(air.start),
-          'airOff': _timeText(air.end),
-          'filterMode': filter.mode,
-          'filterOn': _timeText(filter.start),
-          'filterOff': _timeText(filter.end),
-          'heaterMode': heaterMode,
-          'heaterStart': '00:00',
-          'heaterEnd': '23:59',
-          'feedFreq': feederEnabled ? 1 : 0,
-          'feedTime': _timeText(feedTime),
-        },
+        payload: _buildPayload(),
         confirmation: _remoteChangedWhileEditing
             ? 'Konfiguracja sterownika zmieniła się podczas edycji. '
                   'Zapisać ten kompletny plan i zastąpić nowsze wartości?'
             : 'Zapisać kompletny plan dobowy w sterowniku?',
       );
+      await _draftRepository.delete(
+        kind: OfflineDraftKind.schedule,
+        controllerId: _controllerDraftId,
+      );
       if (mounted) {
         setState(() {
+          _draft = null;
           _loadFromStatus();
           statusMessage = 'Harmonogramy zapisane i zsynchronizowane.';
         });
       }
     } on ControllerApiException catch (error) {
       if (mounted) setState(() => statusMessage = error.message);
+    } on Object {
+      if (mounted) {
+        setState(
+          () => statusMessage =
+              'Nie udało się bezpiecznie zapisać harmonogramu ani szkicu.',
+        );
+      }
     } finally {
       if (mounted) setState(() => saving = false);
     }
@@ -201,8 +376,10 @@ class _SchedulesViewState extends State<SchedulesView> {
 
   @override
   Widget build(BuildContext context) {
-    final canEdit = widget.session.canIssueCommands;
     final hasStoredData = widget.session.hasStatusData;
+    final canEdit =
+        widget.session.canIssueCommands ||
+        (widget.session.isOfflineMode && hasStoredData);
     return ControllerPageBody(
       children: [
         SectionHeader(
@@ -215,13 +392,18 @@ class _SchedulesViewState extends State<SchedulesView> {
             tooltip: 'Przywróć dane sterownika',
           ),
         ),
-        if (!canEdit) ...[
+        if (!widget.session.canIssueCommands) ...[
           StatusBanner(
-            icon: Icons.visibility_rounded,
-            title: widget.session.hasCachedSnapshot
+            icon: canEdit ? Icons.edit_note_rounded : Icons.visibility_rounded,
+            title: canEdit
+                ? 'Bezpieczny szkic offline'
+                : widget.session.hasCachedSnapshot
                 ? 'Harmonogram tylko do podglądu'
                 : 'Brak zapisanego harmonogramu',
-            message: widget.session.hasCachedSnapshot
+            message: canEdit
+                ? 'Zmiany pozostaną lokalnym szkicem. Aplikacja nie wysyła '
+                      'poleceń bez aktywnego połączenia.'
+                : widget.session.hasCachedSnapshot
                 ? widget.session.commandBlockReason ??
                       'Połącz sterownik, aby edytować i zapisać plan dobowy.'
                 : 'Widoczny układ pokazuje dostępne funkcje, ale wartości '
@@ -229,6 +411,14 @@ class _SchedulesViewState extends State<SchedulesView> {
             isError: false,
           ),
           const SizedBox(height: 10),
+        ],
+        if (_draftLoading) ...[
+          const ListTile(
+            contentPadding: EdgeInsets.zero,
+            leading: Icon(Icons.shield_outlined),
+            title: Text('Sprawdzanie bezpiecznego szkicu…'),
+          ),
+          const SizedBox(height: 12),
         ],
         if (hasStoredData)
           _ScheduleTimeline(
@@ -392,9 +582,53 @@ class _SchedulesViewState extends State<SchedulesView> {
           ),
           const SizedBox(height: 12),
         ],
+        if (_draft case final draft?) ...[
+          Card(
+            color: Theme.of(
+              context,
+            ).colorScheme.secondaryContainer.withValues(alpha: 0.45),
+            child: ExpansionTile(
+              leading: const Icon(Icons.difference_rounded),
+              title: const Text(
+                'Różnice lokalnego szkicu',
+                style: TextStyle(fontWeight: FontWeight.w800),
+              ),
+              subtitle: Text(
+                '${draft.diff.length} zmienionych pól · wersja bazowa '
+                '${draft.baseVersion.substring(0, 8)}',
+              ),
+              children: [
+                for (final change in draft.diff.take(24))
+                  ListTile(
+                    dense: true,
+                    title: Text(change.path),
+                    subtitle: Text(
+                      '${change.beforeLabel} → ${change.afterLabel}',
+                    ),
+                  ),
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
+                  child: Align(
+                    alignment: Alignment.centerRight,
+                    child: TextButton.icon(
+                      onPressed: saving ? null : _discardDraft,
+                      icon: const Icon(Icons.delete_outline_rounded),
+                      label: const Text('Usuń szkic'),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(height: 12),
+        ],
         SaveButton(
           onPressed: canEdit ? _save : null,
-          label: 'Zapisz kompletny harmonogram',
+          label: widget.session.canIssueCommands
+              ? _draft == null
+                    ? 'Zapisz kompletny harmonogram'
+                    : 'Zastosuj szkic w sterowniku'
+              : 'Zapisz szkic offline',
           busy: saving,
         ),
         if (statusMessage != null)
@@ -1057,3 +1291,9 @@ TimeOfDay _parseTime(String value) {
 
 String _timeText(TimeOfDay value) =>
     '${value.hour.toString().padLeft(2, '0')}:${value.minute.toString().padLeft(2, '0')}';
+
+Map<String, Object?> _objectMap(Map<String, Object?> source) {
+  final decoded = jsonDecode(jsonEncode(source));
+  if (decoded is! Map) return const <String, Object?>{};
+  return decoded.map((key, value) => MapEntry(key.toString(), value));
+}

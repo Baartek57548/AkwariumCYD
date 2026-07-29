@@ -1,8 +1,35 @@
 name: Hardware-in-the-loop
 
 on:
+  workflow_call:
+    inputs:
+      exact_sha:
+        description: Commit SHA that must be checked out and tested
+        required: true
+        type: string
+      run_hardware:
+        description: Run the labeled physical station
+        required: true
+        type: boolean
+      allow_mutations:
+        description: Permit controlled fixture and controller mutations
+        required: true
+        type: boolean
+      allow_ota_rollback:
+        description: Permit the guarded OTA rollback scenario
+        required: true
+        type: boolean
+      forbid_skips:
+        description: Fail when any physical scenario is skipped
+        required: true
+        type: boolean
   workflow_dispatch:
     inputs:
+      exact_sha:
+        description: Optional full commit SHA; defaults to the selected ref
+        required: false
+        type: string
+        default: ""
       run_hardware:
         description: Uruchom testy na oznaczonym stanowisku self-hosted
         required: true
@@ -15,6 +42,11 @@ on:
         default: false
       allow_ota_rollback:
         description: Zezwól na restart i rollback partycji OTA
+        required: true
+        type: boolean
+        default: false
+      forbid_skips:
+        description: Traktuj każdy pominięty scenariusz jako błąd
         required: true
         type: boolean
         default: false
@@ -33,6 +65,8 @@ jobs:
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          ref: ${{ inputs.exact_sha || github.sha }}
       - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
         with:
           python-version: "3.13"
@@ -49,6 +83,7 @@ jobs:
     timeout-minutes: 15
     environment: aquacyd-hil
     env:
+      AQUACYD_HIL_SOURCE_SHA: ${{ inputs.exact_sha || github.sha }}
       AQUACYD_HIL_BASE_URL: ${{ secrets.AQUACYD_HIL_BASE_URL }}
       AQUACYD_HIL_ADMIN_PIN: ${{ secrets.AQUACYD_HIL_ADMIN_PIN }}
       AQUACYD_HIL_TOKEN: ${{ secrets.AQUACYD_HIL_TOKEN }}
@@ -56,6 +91,7 @@ jobs:
       AQUACYD_HIL_WIFI_RESTORE_URL: ${{ secrets.AQUACYD_HIL_WIFI_RESTORE_URL }}
       AQUACYD_HIL_OTA_ROLLBACK_URL: ${{ secrets.AQUACYD_HIL_OTA_ROLLBACK_URL }}
       AQUACYD_HIL_AQUAEL_TRACE_URL: ${{ secrets.AQUACYD_HIL_AQUAEL_TRACE_URL }}
+      AQUACYD_HIL_RESILIENCE_URL: ${{ secrets.AQUACYD_HIL_RESILIENCE_URL }}
       AQUACYD_HIL_LAB_TOKEN: ${{ secrets.AQUACYD_HIL_LAB_TOKEN }}
       AQUACYD_HIL_SERIAL_PORT: ${{ vars.AQUACYD_HIL_SERIAL_PORT }}
       AQUACYD_HIL_SERIAL_BAUD: ${{ vars.AQUACYD_HIL_SERIAL_BAUD }}
@@ -65,10 +101,47 @@ jobs:
       AQUACYD_HIL_ALLOW_OTA_ROLLBACK: ${{ inputs.allow_ota_rollback && '1' || '0' }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          ref: ${{ inputs.exact_sha || github.sha }}
+          fetch-depth: 1
       - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
         with:
           python-version: "3.13"
+      - name: Verify the exact release commit
+        shell: python
+        env:
+          EXPECTED_SHA: ${{ inputs.exact_sha || github.sha }}
+        run: |
+          import os
+          import re
+          import subprocess
+
+          expected = os.environ["EXPECTED_SHA"].strip().lower()
+          actual = subprocess.check_output(
+              ["git", "rev-parse", "HEAD"],
+              text=True,
+          ).strip().lower()
+          if re.fullmatch(r"[0-9a-f]{40}", expected) is None:
+              raise SystemExit(
+                  "Expected release SHA must contain exactly 40 hexadecimal characters."
+              )
+          if actual != expected:
+              raise SystemExit(
+                  f"HIL checkout {actual} does not match release commit {expected}."
+              )
       - name: Install serial adapter support
         run: python -m pip install --disable-pip-version-check -r tools/hil/requirements.txt
       - name: Execute physical resilience suite
-        run: python tools/hil/runner.py --require-hardware
+        run: >
+          python tools/hil/runner.py
+          --require-hardware
+          --report-json artifacts/hil-report.json
+          ${{ inputs.forbid_skips && '--forbid-skips' || '' }}
+      - name: Upload exact-commit HIL report
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: hil-report-${{ inputs.exact_sha || github.sha }}
+          path: artifacts/hil-report.json
+          if-no-files-found: error
+          retention-days: 90

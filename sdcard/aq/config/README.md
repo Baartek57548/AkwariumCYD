@@ -17,17 +17,36 @@ safe_mode.flag.example -> safe_mode.flag
 The active runtime configuration can still live in ESP32 NVS/Preferences. SD
 config files are intended for import, export, diagnostics, and recovery.
 
-Wi-Fi credentials confirmed by a successful ESP32 connection are written by the
-firmware to:
+Wi-Fi credentials confirmed by a successful ESP32 connection are stored in the
+ESP32 NVS namespace `aq_wifi_sec`. Production devices must protect NVS with
+Flash Encryption. The removable card contains only non-secret connection
+metadata:
 
 ```text
 /aq/config/wifi/profile_<ssid_hash>.cfg
 ```
 
-These files contain the SSID, password, last IP, RSSI, and an update timestamp.
-They are stored as plain text on the SD card by design, so treat the card as
-sensitive material.
+The files contain the SSID, last IP, RSSI and update time, but never the
+password. During the first boot after upgrading, legacy v1 profiles are copied
+to NVS and overwritten with the password-free v2 format. The old file bytes are
+zeroed on a best-effort basis before removal; securely erase archival card
+images separately.
 
-`safe_mode.flag` is designed as a recovery switch. After firmware support is
-added, placing this file on the SD card should request a minimal boot path that
-does not load heavy screens, splash animation, Wi-Fi, OTA, or audio.
+## Remote alarm gateway trust anchor
+
+The optional outbound alarm relay accepts only HTTPS. Place the issuing CA
+certificate chain for the configured gateway at:
+
+```text
+/aq/config/gateway-ca.pem
+```
+
+The PEM file must contain one or more `BEGIN CERTIFICATE` blocks, be smaller
+than 6144 bytes and contain no private key. Use the stable issuing CA/root chain,
+not the gateway's short-lived private key. After replacing this file, restart
+the controller or wait for the relay retry. Gateway URL, device ID and HMAC
+secret are provisioned separately through authenticated, bonded BLE; the HMAC
+secret must never be written to this card.
+
+`safe_mode.flag.example` is a reserved recovery-file contract and is not
+consumed by firmware 6.0.0. Renaming it does not change the boot path.

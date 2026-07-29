@@ -2,6 +2,48 @@
 
 Wersjonowanie aplikacji jest zgodne z [Semantic Versioning](https://semver.org/).
 
+## 6.0.0 — 2026-07-29
+
+### Centrum sterowania dostępne offline
+
+- harmonogram i bezpieczne ustawienia można przeglądać oraz edytować bez aktywnego
+  połączenia ze sterownikiem,
+- szkice są szyfrowane, nie zawierają haseł ani tokenów i przechowują wersję bazową
+  oraz czytelny diff,
+- aplikacja wykrywa konflikt ze zmianami wykonanymi na sterowniku i wymaga
+  świadomego potwierdzenia przed zastosowaniem szkicu,
+- polecenia natychmiastowe, restart i konfiguracja sieci nigdy nie trafiają do
+  kolejki offline.
+
+### Powiadomienia i aktualizacje
+
+- kliknięcie alarmu, przypomnienia serwisowego lub aktualizacji prowadzi do
+  właściwego ekranu również po zimnym starcie aplikacji,
+- alarm można potwierdzić, serwis oznaczyć jako wykonany, a aktualizację odłożyć
+  bezpośrednio z akcji powiadomienia,
+- aktualizacje mają osobny kanał Androida i okresowe sprawdzanie co 12 godzin,
+  z deduplikacją oraz opcjonalnym pobieraniem APK wyłącznie przez Wi‑Fi,
+- pobrany APK nadal przechodzi kontrolę sumy SHA-256, pakietu, wersji i podpisu,
+  a instalacja wymaga zgody użytkownika.
+
+### Zdalna bramka alarmowa
+
+- dodano opcjonalną konfigurację bramki HTTPS z identyfikatorem urządzenia,
+  testem połączenia i tokenem viewer zapisanym wyłącznie w bezpiecznym magazynie,
+- lokalne Wi‑Fi i Bluetooth działają niezależnie od bramki,
+- wdrożono opcjonalny FCM konfigurowany przez `--dart-define`: foreground,
+  background, tap/deep-link, odświeżanie tokenu oraz rejestrację HTTPS,
+- brak parametrów runtime pozostaje pełnoprawnym trybem lokalnym i nie wymaga
+  pliku `google-services.json`,
+- sekret HMAC firmware można przekazać wyłącznie przez aktywne BLE v2 po
+  autoryzacji; pole jest efemeryczne, a provisioning Wi‑Fi/HTTP zablokowany.
+
+### Dystrybucja
+
+- wersja aplikacji: `6.0.0+20`,
+- tag aplikacji: `mobile-v6.0.0`,
+- produkcyjny asset Androida: `AquaCYD-Control-6.0.0-current.apk`.
+
 ## 5.1.1 — 2026-07-29
 
 ### Powiadomienia systemowe

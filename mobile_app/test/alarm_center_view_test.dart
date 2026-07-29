@@ -220,6 +220,13 @@ final class _PermissionNotificationSink implements AlarmNotificationSink {
   }
 
   @override
+  Future<void> showAppUpdate({
+    required String tagName,
+    required String version,
+    required bool downloaded,
+  }) async {}
+
+  @override
   Future<void> showAlarm(AlarmRecord alarm) async {}
 
   @override

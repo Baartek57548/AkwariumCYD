@@ -12,6 +12,9 @@ struct RuntimeTelemetry {
     float temperature_c;
     bool temperature_present;
     bool temperature_valid;
+    bool temperature_stale;
+    uint32_t temperature_age_ms;
+    uint32_t temperature_error_count;
 
     int ldr_value;
     bool ldr_valid;
@@ -58,5 +61,8 @@ bool runtime_controller_take_latest(RuntimeTelemetry *out);
  */
 bool runtime_controller_is_healthy(uint32_t now_ms,
                                    uint32_t maximum_heartbeat_age_ms);
+
+/** Returns the last Core 0 heartbeat without applying a health policy. */
+uint32_t runtime_controller_last_heartbeat_ms(void);
 
 #endif // AQUARIUM_RUNTIME_CONTROLLER_H

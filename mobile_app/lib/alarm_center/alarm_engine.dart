@@ -63,8 +63,10 @@ final class AlarmEngine {
       final states = await transaction.signalStates();
       final keys = <String>{
         ...currentSignals.keys,
-        if (completeSnapshot) ...states.keys,
-        if (completeSnapshot) ...records.keys,
+        if (completeSnapshot)
+          ...states.keys.where((key) => !key.startsWith('remote:')),
+        if (completeSnapshot)
+          ...records.keys.where((key) => !key.startsWith('remote:')),
       };
       final transitions = <AlarmTransition>[];
       final notificationCandidates = <AlarmRecord>[];

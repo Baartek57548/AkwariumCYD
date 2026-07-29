@@ -1,6 +1,8 @@
 #ifndef AQUARIUM_AUTOMATION_H
 #define AQUARIUM_AUTOMATION_H
 
+#include <stdint.h>
+
 namespace aquarium {
 
 struct ThermostatInput {
@@ -51,6 +53,11 @@ struct AlarmInput {
     bool leakDetected;
     bool supplyValid;
     float supplyVoltage;
+    unsigned int requiredSensors;
+    unsigned int presentSensors;
+    unsigned int staleSensors;
+    bool sensorBusFault;
+    bool actuatorWriteFailed;
 };
 
 enum AlarmFlags {
@@ -60,7 +67,47 @@ enum AlarmFlags {
     AlarmPhOutOfRange = 1 << 2,
     AlarmWaterLevelLow = 1 << 3,
     AlarmLeak = 1 << 4,
-    AlarmSupplyLow = 1 << 5
+    AlarmSupplyLow = 1 << 5,
+    AlarmSensorMissing = 1 << 6,
+    AlarmSensorStale = 1 << 7,
+    AlarmSensorBusFault = 1 << 8,
+    AlarmActuatorWriteFailed = 1 << 9
+};
+
+enum AlarmSensorFlags {
+    AlarmSensorTemperature = 1 << 0,
+    AlarmSensorPh = 1 << 1,
+    AlarmSensorEc = 1 << 2,
+    AlarmSensorWaterLevel = 1 << 3,
+    AlarmSensorLeak = 1 << 4
+};
+
+/**
+ * Stabilizes independently evaluated alarm bits before they are persisted or
+ * forwarded. Short threshold chatter is ignored, while alarms that represent
+ * immediate physical danger can bypass only the raise confirmation.
+ */
+class AlarmStabilityFilter {
+public:
+    AlarmStabilityFilter(
+        uint8_t raise_samples = 2U,
+        uint8_t clear_samples = 3U,
+        unsigned int immediate_raise_mask =
+            AlarmLeak | AlarmActuatorWriteFailed);
+
+    void reset(unsigned int stable_flags = AlarmNone);
+    unsigned int update(unsigned int observed_flags);
+    unsigned int stable_flags() const;
+
+private:
+    static const uint8_t kTrackedFlagCount = 10U;
+
+    uint8_t raise_samples_;
+    uint8_t clear_samples_;
+    unsigned int immediate_raise_mask_;
+    unsigned int stable_flags_;
+    uint8_t raise_counts_[kTrackedFlagCount];
+    uint8_t clear_counts_[kTrackedFlagCount];
 };
 
 bool thermostat_next_state(const ThermostatInput &input);

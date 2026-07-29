@@ -1,5 +1,38 @@
 # Changelog
 
+## mobile-v6.0.0 / firmware-v6.0.0 - 2026-07-29
+
+Produkcyjne wydanie centrum sterowania AquaCYD `6.0.0`.
+
+### What is included
+
+- Aplikacja działa także bez połączenia ze sterownikiem: pokazuje ostatni
+  zsynchronizowany stan, przechowuje zaszyfrowane szkice zmian i bezpiecznie
+  rozwiązuje konflikty po ponownym połączeniu.
+- Automatyczne wykrywanie urządzenia w sieci lokalnej, ręczne połączenie BLE oraz
+  zdalne alarmy przez opcjonalną bramę HTTPS z podpisem HMAC i integracją FCM.
+- Produkcyjne powiadomienia Android z akcjami, przekierowaniem do właściwego
+  alarmu, diagnostyką uprawnień i kanałów oraz bezpiecznym sprawdzaniem aktualizacji
+  w tle. Instalacja APK nadal wymaga jawnej zgody użytkownika.
+- Firmware CYD otrzymał watchdog, trwałą historię resetów, alarmy braku i
+  niestabilności czujników, fail-safe przekaźników, filtrację alarmów oraz kolejkę
+  zdarzeń odporną na restarty.
+- Kalibracja pH/EC jest atomowo zapisywana i dostępna przez kreator na ekranie,
+  BLE i chronione API. Dane Wi-Fi zostały przeniesione z karty SD do NVS.
+- Panel WWW otrzymał opcjonalny, instalowalny tryb PWA wyłącznie przez zaufaną
+  bramę HTTPS, testy dostępności i zgodności przeglądarek oraz atomowy pakiet
+  instalacyjny z manifestem, podpisem, rollbackiem i SBOM.
+- Pipeline wydania wymusza testy API, Fluttera, Androida, obu wariantów firmware,
+  panelu WWW, podpisów i pochodzenia artefaktów. Wydanie firmware wymaga zielonego
+  testu HIL na fizycznym stanowisku.
+
+### Verification
+
+- Pełna macierz testów i kompilacji jest wykonywana przed utworzeniem tagów
+  `mobile-v6.0.0` i `firmware-v6.0.0`.
+- APK jest publikowany jako zasób GitHub Release wraz z sumą SHA-256; plik
+  wykonywalny nie jest przechowywany bezpośrednio w historii Git.
+
 ## mobile-v5.1.1 - 2026-07-29
 
 Poprawka produkcyjnych powiadomień systemowych aplikacji AquaCYD `5.1.1`.

@@ -164,6 +164,107 @@ final class AlarmCenter {
     return record;
   }
 
+  /// Zapisuje zweryfikowane zdarzenie z zewnętrznej bramki bez traktowania
+  /// braku tego alarmu w lokalnym snapshotcie jako jego rozwiązania.
+  Future<AlarmRecord> ingestExternalRecord(
+    AlarmRecord incoming, {
+    required String eventId,
+  }) async {
+    late AlarmRecord persisted;
+    late AlarmTransitionType transitionType;
+    await store.transaction((transaction) async {
+      final previous = (await transaction.records())[incoming.key];
+      if (previous == null) {
+        persisted = incoming;
+        transitionType = incoming.lifecycle == AlarmLifecycle.resolved
+            ? AlarmTransitionType.resolved
+            : AlarmTransitionType.opened;
+      } else if (incoming.lifecycle == AlarmLifecycle.resolved) {
+        final resolvedAt = incoming.resolvedAt ?? incoming.lastTriggeredAt;
+        if (previous.isActive &&
+            resolvedAt.isBefore(previous.lastTriggeredAt)) {
+          persisted = previous;
+          transitionType = AlarmTransitionType.repeated;
+        } else if (previous.lifecycle == AlarmLifecycle.resolved &&
+            previous.resolvedAt != null &&
+            !resolvedAt.isAfter(previous.resolvedAt!)) {
+          persisted = previous;
+          transitionType = AlarmTransitionType.resolved;
+        } else {
+          persisted = previous.copyWith(
+            lifecycle: AlarmLifecycle.resolved,
+            lastTriggeredAt:
+                incoming.lastTriggeredAt.isAfter(previous.lastTriggeredAt)
+                ? incoming.lastTriggeredAt
+                : previous.lastTriggeredAt,
+            resolvedAt: resolvedAt,
+          );
+          transitionType = AlarmTransitionType.resolved;
+        }
+      } else if (previous.lifecycle == AlarmLifecycle.resolved) {
+        final previousResolvedAt = previous.resolvedAt;
+        if (previousResolvedAt != null &&
+            !incoming.lastTriggeredAt.isAfter(previousResolvedAt)) {
+          persisted = previous;
+          transitionType = AlarmTransitionType.resolved;
+        } else {
+          persisted = AlarmRecord(
+            key: incoming.key,
+            severity: incoming.severity,
+            lifecycle: AlarmLifecycle.newAlarm,
+            title: incoming.title,
+            message: incoming.message,
+            firstTriggeredAt: previous.firstTriggeredAt,
+            lastTriggeredAt: incoming.lastTriggeredAt,
+            occurrences: previous.occurrences + 1,
+          );
+          transitionType = AlarmTransitionType.opened;
+        }
+      } else {
+        if (!incoming.lastTriggeredAt.isAfter(previous.lastTriggeredAt)) {
+          persisted = previous;
+        } else {
+          final escalated =
+              previous.severity == AlarmSeverity.warning &&
+              incoming.severity == AlarmSeverity.critical;
+          persisted = previous.copyWith(
+            severity: incoming.severity,
+            lifecycle: escalated ? AlarmLifecycle.newAlarm : null,
+            title: incoming.title,
+            message: incoming.message,
+            lastTriggeredAt: incoming.lastTriggeredAt,
+            clearAcknowledgedAt: escalated,
+            clearLastNotifiedAt: escalated,
+          );
+        }
+        transitionType = AlarmTransitionType.repeated;
+      }
+      await transaction.saveRecord(persisted);
+    });
+    await history.append(
+      LocalHistoryEntry(
+        id: LocalHistoryEntry.createId(
+          timestamp: incoming.lastTriggeredAt,
+          category: LocalHistoryCategory.alarm,
+          discriminator: '${incoming.key}|external|$eventId',
+        ),
+        category: LocalHistoryCategory.alarm,
+        timestamp: incoming.lastTriggeredAt,
+        title: persisted.title,
+        detail: persisted.message,
+        source: 'remote_gateway',
+        values: <String, Object?>{
+          'alarmKey': persisted.key,
+          'severity': persisted.severity.name,
+          'state': persisted.lifecycle.storageValue,
+          'transition': transitionType.name,
+          'occurrences': persisted.occurrences,
+        },
+      ),
+    );
+    return persisted;
+  }
+
   Future<List<AlarmRecord>> alarms({
     bool includeResolved = true,
     int limit = 200,

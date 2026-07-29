@@ -22,6 +22,7 @@ uint8_t output_shadow_a = 0xFF;
 uint8_t output_shadow_b = 0x00;
 uint8_t mcp_consecutive_errors = 0U;
 uint32_t mcp_next_probe_ms = 0U;
+volatile bool mcp_safe_latched = false;
 
 bool deadline_reached(uint32_t now_ms, uint32_t deadline_ms)
 {
@@ -184,6 +185,9 @@ bool hal_mcp_write_channel(HwConfig::McpChannel channel, bool on)
     if (!channel_is_output(channel)) {
         return false;
     }
+    if (on && mcp_safe_latched) {
+        return false;
+    }
 
     if (!hal_i2c_bus_lock(HwConfig::I2C_MUTEX_TIMEOUT_MS)) {
         return false;
@@ -310,4 +314,10 @@ bool hal_mcp_all_relays_safe(void)
 
     hal_i2c_bus_unlock();
     return ok;
+}
+
+bool hal_mcp_latch_all_relays_safe(void)
+{
+    mcp_safe_latched = true;
+    return hal_mcp_all_relays_safe();
 }

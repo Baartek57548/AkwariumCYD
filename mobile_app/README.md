@@ -1,4 +1,4 @@
-# AquaCYD Control 5
+# AquaCYD Control 6
 
 Profesjonalne, mobilne centrum dowodzenia dla sterownika akwarium AquaCYD. Aplikacja działa offline-first: cały interfejs jest dostępny od razu, pokazuje ostatni bezpiecznie zapisany stan, a po odzyskaniu Wi‑Fi automatycznie synchronizuje się ze sterownikiem. Łączy się także bezpośrednio przez BLE, chroni operacje administracyjne kodem PIN i prowadzi użytkownika od alarmu do właściwej akcji.
 
@@ -14,6 +14,8 @@ Profesjonalne, mobilne centrum dowodzenia dla sterownika akwarium AquaCYD. Aplik
 - niezależne profile `DAY`, `DAYBREAK` i `NIGHT` dla świetlówki przedniej i tylnej Aquael,
 - bezpiecznie wygasające sterowanie czasowe, tryb karmienia i tryb serwisowy,
 - lokalne centrum alarmów, historia SQLite, przypomnienia serwisowe i opcjonalna kontrola Wi‑Fi w tle,
+- opcjonalna zdalna bramka HTTPS i FCM konfigurowany bez sekretów w repozytorium,
+- bezpieczny provisioning sekretu HMAC firmware wyłącznie przez BLE v2,
 - czytelne rozróżnienie fizycznego stanu wyjścia od trybu automatyki,
 - harmonogramy i reguły temperatury, CO₂, ATO oraz zabezpieczenia przed wyciekiem,
 - wykresy temperatury, próbki historyczne, logi i eksport danych,
@@ -73,8 +75,12 @@ token po przejściu w tło i wygasza sesję po pięciu minutach bezczynności.
 - `local_history/` — ograniczona historia SQLite i przypomnienia serwisowe,
 - `design_system.dart` — tokeny kolorów, odstępów, promieni i motywy Material 3,
 - `app_update/` — wykrywanie, pobieranie, weryfikacja i przekazanie APK do instalatora Androida.
+- `remote_gateway/` — health check, bezpieczny token viewer, opcjonalny FCM i efemeryczny provisioning BLE.
 
 Widoki nie wykonują bezpośrednich żądań HTTP. Aktualizują wyłącznie potrzebny stan, a zasoby sesji, timery i transporty są zamykane wraz z cyklem życia ekranu.
+
+Kontrakt zdalnej bramki, payloady FCM i parametry `--dart-define` opisuje
+[docs/remote-push.md](docs/remote-push.md).
 
 ## Uruchomienie i build
 
@@ -96,7 +102,7 @@ flutter build apk --release --flavor current --target lib/main.dart
 ```
 
 Wynik powstaje w `build/app/outputs/flutter-apk/app-current-release.apk`.
-Wydanie 5.1.1 jest publikowane jako `AquaCYD-Control-5.1.1-current.apk`.
+Wydanie 6.0.0 jest publikowane jako `AquaCYD-Control-6.0.0-current.apk`.
 
 Build release wymaga pliku `android/key.properties` z niepustymi polami:
 
@@ -111,7 +117,7 @@ Plik JKS, hasła i `key.properties` muszą pozostać poza repozytorium. Gradle p
 
 ## Aktualizacje aplikacji
 
-Kanał aktualizacji działa wyłącznie w produkcyjnym buildzie release wariantu `current`. Aplikacja sprawdza stabilne GitHub Releases po uruchomieniu, po powrocie na pierwszy plan oraz okresowo co 6 godzin. Po błędzie ponawia sprawdzenie z ograniczonym opóźnieniem wykładniczym. Użytkownik może także uruchomić sprawdzenie ręcznie, odłożyć aktualizację o 24 godziny albo pominąć wskazaną wersję.
+Kanał aktualizacji działa wyłącznie w produkcyjnym buildzie release wariantu `current`. Aplikacja sprawdza stabilne GitHub Releases po uruchomieniu, po powrocie na pierwszy plan oraz okresowo co 12 godzin. Powiadomienie jest deduplikowane dla każdej wersji, a pobranie APK w tle wymaga osobnej zgody i aktywnego Wi‑Fi. Użytkownik może także uruchomić sprawdzenie ręcznie, odłożyć aktualizację o 24 godziny albo pominąć wskazaną wersję.
 
 Kontrakt publikacji:
 

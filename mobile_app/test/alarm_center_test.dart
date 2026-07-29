@@ -133,6 +133,76 @@ void main() {
       expect(relay.transitions, hasLength(2));
     },
   );
+
+  test(
+    'zdalny alarm pozostaje aktywny do jawnego zdarzenia resolved',
+    () async {
+      final raisedAt = DateTime.utc(2026, 7, 29, 12);
+      const key = 'remote:aquacyd-salon:leak.detected';
+      await center.ingestExternalRecord(
+        AlarmRecord(
+          key: key,
+          severity: AlarmSeverity.critical,
+          lifecycle: AlarmLifecycle.newAlarm,
+          title: 'Wyciek',
+          message: 'Zdalny czujnik wykrył wodę.',
+          firstTriggeredAt: raisedAt,
+          lastTriggeredAt: raisedAt,
+          occurrences: 1,
+        ),
+        eventId: 'boot-1:17',
+      );
+
+      await center.ingestSignals(
+        const <AlarmSignal>[],
+        observedAt: raisedAt.add(const Duration(minutes: 1)),
+      );
+      await center.ingestSignals(
+        const <AlarmSignal>[],
+        observedAt: raisedAt.add(const Duration(minutes: 2)),
+      );
+      expect((await center.alarms()).single.lifecycle, AlarmLifecycle.newAlarm);
+
+      final resolvedAt = raisedAt.add(const Duration(minutes: 3));
+      await center.ingestExternalRecord(
+        AlarmRecord(
+          key: key,
+          severity: AlarmSeverity.critical,
+          lifecycle: AlarmLifecycle.resolved,
+          title: 'Wyciek usunięty',
+          message: 'Zdalny czujnik wrócił do stanu bezpiecznego.',
+          firstTriggeredAt: resolvedAt,
+          lastTriggeredAt: resolvedAt,
+          resolvedAt: resolvedAt,
+          occurrences: 1,
+        ),
+        eventId: 'boot-1:18',
+      );
+
+      final stored = (await center.alarms()).single;
+      expect(stored.lifecycle, AlarmLifecycle.resolved);
+      expect(stored.resolvedAt, resolvedAt);
+
+      await center.ingestExternalRecord(
+        AlarmRecord(
+          key: key,
+          severity: AlarmSeverity.critical,
+          lifecycle: AlarmLifecycle.newAlarm,
+          title: 'Opóźniony pakiet',
+          message: 'Starsze zdarzenie raised dotarło po resolved.',
+          firstTriggeredAt: raisedAt,
+          lastTriggeredAt: resolvedAt.subtract(const Duration(seconds: 1)),
+          occurrences: 1,
+        ),
+        eventId: 'boot-1:17-retry',
+      );
+      expect((await center.alarms()).single.lifecycle, AlarmLifecycle.resolved);
+      expect(
+        await database.latest(category: LocalHistoryCategory.alarm),
+        hasLength(3),
+      );
+    },
+  );
 }
 
 final class _FakeNotificationSink implements AlarmNotificationSink {
@@ -152,6 +222,13 @@ final class _FakeNotificationSink implements AlarmNotificationSink {
 
   @override
   Future<void> showTestNotification() async {}
+
+  @override
+  Future<void> showAppUpdate({
+    required String tagName,
+    required String version,
+    required bool downloaded,
+  }) async {}
 
   @override
   Future<void> showAlarm(AlarmRecord alarm) async {

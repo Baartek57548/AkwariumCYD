@@ -6,9 +6,13 @@
     "build:web-assets": "node tools/build-web-assets.js",
     "dev:web": "node tools/dev-server/server.js",
     "test:api": "node --test tools/dev-server/test/*.test.js",
-    "test:e2e": "playwright test --config tools/web-e2e/playwright.config.js"
+    "test:gateway": "npm --prefix gateway test",
+    "test:e2e": "playwright test --config tools/web-e2e/playwright.config.js",
+    "test:e2e:compat": "playwright test compatibility.spec.js --config tools/web-e2e/playwright.config.js"
   },
   "devDependencies": {
-    "@playwright/test": "^1.55.0"
+    "@axe-core/playwright": "^4.12.1",
+    "@playwright/test": "^1.55.0",
+    "terser": "5.49.0"
   }
 }

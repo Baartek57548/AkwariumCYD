@@ -1,0 +1,5 @@
+gateway-state
+aquacyd-gateway-secrets.json
+firebase-service-account.json
+test
+*.log

@@ -3,35 +3,26 @@
 const fs = require('node:fs');
 const path = require('node:path');
 const zlib = require('node:zlib');
+const { minifyGatewayPwa } = require('./minify-gateway-pwa');
+const { renderPwaIcons } = require('./render-pwa-icons');
 
 const projectRoot = path.resolve(__dirname, '..');
 const webRoot = path.join(projectRoot, 'web');
 const otaRoot = path.join(projectRoot, 'sdcard', 'aq', 'ota');
-const files = [
-    'index.html',
-    'settings.html',
-    'theme-bootstrap.js',
-    'style.css',
-    'charts.css',
-    'app-core.js',
-    'app-init.js',
-    'chart-engine.js',
-    'charts.js',
-    'dashboard.js',
-    'logs.js',
-    'ota.js',
-    'relays-wizard.js',
-    'schedules.js',
-    'settings.js',
-    'theme.js'
-];
+const assetContract = require('./web-assets.json');
+const files = assetContract.sourceFiles;
+const gzipExtensions = new Set(assetContract.gzipExtensions);
 const obsoleteFiles = [
+    'aquacyd-icon.svg',
+    'aquacyd-icon.svg.gz',
     'vendor/alpine.min.js',
     'vendor/alpine.min.js.gz',
     'vendor/tailwind.min.css',
     'vendor/tailwind.min.css.gz'
 ];
 
+minifyGatewayPwa(projectRoot);
+renderPwaIcons(webRoot);
 fs.mkdirSync(otaRoot, { recursive: true });
 
 let removedObsoleteFiles = 0;
@@ -57,12 +48,15 @@ for (const relativePath of files) {
     }
 
     fs.mkdirSync(path.dirname(destinationPath), { recursive: true });
-    const source = fs.readFileSync(sourcePath, 'utf8');
-    const content = Buffer.from(source.replace(/\r\n?/g, '\n'), 'utf8');
+    const extension = path.extname(relativePath).toLowerCase();
+    const source = fs.readFileSync(sourcePath);
+    const content = gzipExtensions.has(extension)
+        ? Buffer.from(source.toString('utf8').replace(/\r\n?/g, '\n'), 'utf8')
+        : source;
     fs.writeFileSync(destinationPath, content);
     sourceBytes += content.length;
 
-    if (/\.(?:html|css|js)$/i.test(relativePath)) {
+    if (gzipExtensions.has(extension)) {
         const compressed = zlib.gzipSync(content, { level: zlib.constants.Z_BEST_COMPRESSION });
         if (compressed.length < 10 || compressed[0] !== 0x1f || compressed[1] !== 0x8b) {
             throw new Error(`Nieprawidlowy wynik kompresji gzip: ${relativePath}`);
