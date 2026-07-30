@@ -83,5 +83,9 @@ Podpisany Android release używa opcjonalnego `android/key.properties` z polami
 properties pozostają poza repozytorium. Bez tego pliku Gradle tworzy
 niepodpisany wariant release przeznaczony do dalszego podpisania w CI.
 
+Oficjalne, podpisane APK publikuje tag `home-vX.Y.Z`. Workflow sprawdza zgodność
+tagu z `pubspec.yaml`, podpis, package ID i sumę SHA-256, po czym tworzy osobny
+GitHub Release bez zastępowania najnowszego wydania AquaCYD Control.
+
 Szczegółowa architektura, kontrakt danych i strategia wdrożenia są opisane w
 [`docs/HOME_ASSISTANT_FLUTTER_APP.md`](../docs/HOME_ASSISTANT_FLUTTER_APP.md).

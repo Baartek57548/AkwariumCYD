@@ -11,6 +11,9 @@
   WebSocket oraz diagnostyka brakujących encji MQTT Discovery.
 - Bramka ESP32-C6 publikuje dodatkowo tryb grzałki i szesnaście pól czterech
   harmonogramów potrzebnych aplikacji i panelom operatorskim.
+- Osobny, chroniony pipeline `home-vX.Y.Z` podpisuje AquaCYD Home, waliduje
+  package i certyfikat oraz publikuje APK, SHA-256, manifest, SBOM i atestację
+  pochodzenia bez zastępowania wydania AquaCYD Control.
 
 - Profesjonalny, natywny panel LVGL 9 dla Waveshare 7B z sześcioma ekranami,
   animowanym startem, stanami offline/stale, alarmami, modalami i pełnym ACK.

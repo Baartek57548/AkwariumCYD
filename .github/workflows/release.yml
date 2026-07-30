@@ -4,6 +4,7 @@ on:
   push:
     tags:
       - "mobile-v*.*.*"
+      - "home-v*.*.*"
       - "firmware-v*.*.*"
 
 permissions:
@@ -313,6 +314,242 @@ jobs:
           rm -f \
             mobile_app/android/key.properties \
             "$RUNNER_TEMP/aquacyd-release.jks"
+
+  home:
+    name: Signed AquaCYD Home release
+    if: ${{ startsWith(github.ref_name, 'home-v') }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    environment: production-mobile
+    permissions:
+      attestations: write
+      contents: write
+      id-token: write
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          fetch-depth: 0
+      - name: Require the home tag commit to be on a remote branch
+        shell: bash
+        run: |
+          set -euo pipefail
+          git fetch --no-tags --prune origin \
+            '+refs/heads/*:refs/remotes/origin/*'
+          tag_commit="$(git rev-parse "${GITHUB_SHA}^{commit}")"
+          containing_refs="$(
+            git for-each-ref \
+              --format='%(refname)' \
+              --contains "$tag_commit" \
+              refs/remotes/origin/
+          )"
+          test -n "$containing_refs" || {
+            echo \
+              "Home tag commit $tag_commit is not reachable from a remote branch" \
+              >&2
+            exit 1
+          }
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
+        with:
+          python-version: "3.13"
+      - uses: actions/setup-java@c1e323688fd81a25caa38c78aa6df2d33d3e20d9 # v4.8.0
+        with:
+          distribution: temurin
+          java-version: "17"
+      - uses: gradle/actions/setup-gradle@ed408507eac070d1f99cc633dbcf757c94c7933a # v4.4.3
+        with:
+          gradle-version: "8.14"
+      - uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2 # v2.23.0
+        with:
+          flutter-version: "3.41.5"
+          channel: stable
+          cache: true
+      - name: Validate AquaCYD Home tag
+        run: >
+          python scripts/validate_release.py
+          --tag "$GITHUB_REF_NAME"
+          --pubspec home_assistant_app/pubspec.yaml
+          --dry-run
+      - name: Materialize signing identity
+        shell: bash
+        env:
+          ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+          ANDROID_STORE_PASSWORD: ${{ secrets.ANDROID_STORE_PASSWORD }}
+        run: |
+          set -euo pipefail
+          for name in \
+            ANDROID_KEYSTORE_BASE64 \
+            ANDROID_KEY_ALIAS \
+            ANDROID_KEY_PASSWORD \
+            ANDROID_STORE_PASSWORD
+          do
+            test -n "${!name}" || {
+              echo "Required signing secret $name is absent" >&2
+              exit 1
+            }
+          done
+          umask 077
+          key_path="$RUNNER_TEMP/aquacyd-home-release.jks"
+          printf '%s' "$ANDROID_KEYSTORE_BASE64" |
+            base64 --decode > "$key_path"
+          test -s "$key_path"
+          {
+            printf 'storePassword=%s\n' "$ANDROID_STORE_PASSWORD"
+            printf 'keyPassword=%s\n' "$ANDROID_KEY_PASSWORD"
+            printf 'keyAlias=%s\n' "$ANDROID_KEY_ALIAS"
+            printf 'storeFile=%s\n' "$key_path"
+          } > home_assistant_app/android/key.properties
+          flutter_sdk="$(dirname "$(dirname "$(command -v flutter)")")"
+          android_sdk="${ANDROID_SDK_ROOT:-${ANDROID_HOME:-}}"
+          test -n "$android_sdk"
+          printf 'sdk.dir=%s\nflutter.sdk=%s\n' \
+            "$android_sdk" "$flutter_sdk" \
+            > home_assistant_app/android/local.properties
+          gradle \
+            --project-dir home_assistant_app/android \
+            wrapper \
+            --gradle-version 8.14 \
+            --distribution-type all
+          chmod +x home_assistant_app/android/gradlew
+      - name: Analyze and test AquaCYD Home
+        working-directory: home_assistant_app
+        run: |
+          flutter pub get
+          flutter analyze
+          flutter test
+      - name: Build signed AquaCYD Home APK
+        working-directory: home_assistant_app
+        run: flutter build apk --release
+      - name: Verify package, version, signature and SHA-256
+        id: home_metadata
+        shell: bash
+        env:
+          EXPECTED_ANDROID_CERT_SHA256: 394b82b7779b9b07375237fb5233082d416c75a06dfc3a232955861176880e9e
+        run: |
+          set -euo pipefail
+          version="${GITHUB_REF_NAME#home-v}"
+          output_dir="$RUNNER_TEMP/home-release"
+          apk="$output_dir/AquaCYD-Home-$version.apk"
+          mkdir -p "$output_dir"
+          cp \
+            home_assistant_app/build/app/outputs/flutter-apk/app-release.apk \
+            "$apk"
+          build_tools="${ANDROID_SDK_ROOT:-$ANDROID_HOME}/build-tools"
+          aapt_path="$(
+            find "$build_tools" -type f -name aapt -print |
+              sort -V |
+              tail -n 1
+          )"
+          apksigner_path="$(
+            find "$build_tools" -type f -name apksigner -print |
+              sort -V |
+              tail -n 1
+          )"
+          test -x "$aapt_path"
+          test -x "$apksigner_path"
+          badging_output="$("$aapt_path" dump badging "$apk")"
+          badging="${badging_output%%$'\n'*}"
+          package_name="$(
+            sed -n "s/.*package: name='\\([^']*\\)'.*/\\1/p" <<<"$badging"
+          )"
+          version_code="$(
+            sed -n "s/.*versionCode='\\([^']*\\)'.*/\\1/p" <<<"$badging"
+          )"
+          version_name="$(
+            sed -n "s/.*versionName='\\([^']*\\)'.*/\\1/p" <<<"$badging"
+          )"
+          signer_output="$(
+            "$apksigner_path" verify --verbose --print-certs "$apk"
+          )"
+          printf '%s\n' "$signer_output"
+          signer_count="$(
+            sed -n 's/^Number of signers: //p' <<<"$signer_output"
+          )"
+          test "$signer_count" = "1" || {
+            echo "APK must contain exactly one signer" >&2
+            exit 1
+          }
+          certificate_sha="$(
+            sed -n \
+              's/^.*certificate SHA-256 digest: //p' \
+              <<<"$signer_output" |
+              tr '[:upper:]' '[:lower:]' |
+              tr -d ':[:space:]'
+          )"
+          test "$certificate_sha" = "$EXPECTED_ANDROID_CERT_SHA256" || {
+            echo "APK was signed by an unexpected certificate" >&2
+            exit 1
+          }
+          python scripts/validate_release.py \
+            --tag "$GITHUB_REF_NAME" \
+            --asset "$apk" \
+            --pubspec home_assistant_app/pubspec.yaml \
+            --package-name "$package_name" \
+            --apk-version-name "$version_name" \
+            --apk-version-code "$version_code" \
+            --checksums "$output_dir/SHA256SUMS" \
+            --manifest "$output_dir/release-manifest.json"
+          (
+            cd "$output_dir"
+            sha256sum --check SHA256SUMS
+          )
+          {
+            echo "directory=$output_dir"
+            echo "apk=$apk"
+            echo "version=$version"
+          } >> "$GITHUB_OUTPUT"
+      - name: Generate AquaCYD Home CycloneDX SBOM
+        shell: bash
+        env:
+          RELEASE_DIR: ${{ steps.home_metadata.outputs.directory }}
+          RELEASE_APK: ${{ steps.home_metadata.outputs.apk }}
+          RELEASE_VERSION: ${{ steps.home_metadata.outputs.version }}
+        run: |
+          python tools/generate_sbom.py \
+            --kind home \
+            --version "$RELEASE_VERSION" \
+            --artifact "$RELEASE_APK" \
+            --output "$RELEASE_DIR/AquaCYD-Home-$RELEASE_VERSION.cdx.json"
+      - name: Attest AquaCYD Home build provenance
+        uses: actions/attest@f7c74d28b9d84cb8768d0b8ca14a4bac6ef463e6 # v4.2.0
+        with:
+          subject-path: ${{ steps.home_metadata.outputs.apk }}
+      - name: Attest AquaCYD Home SBOM
+        uses: actions/attest@f7c74d28b9d84cb8768d0b8ca14a4bac6ef463e6 # v4.2.0
+        with:
+          subject-path: ${{ steps.home_metadata.outputs.apk }}
+          sbom-path: ${{ steps.home_metadata.outputs.directory }}/AquaCYD-Home-${{ steps.home_metadata.outputs.version }}.cdx.json
+      - name: Refuse overwrite of an existing AquaCYD Home release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
+            echo "Release $GITHUB_REF_NAME already exists; refusing overwrite" >&2
+            exit 1
+          fi
+      - name: Publish immutable AquaCYD Home release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_DIR: ${{ steps.home_metadata.outputs.directory }}
+          RELEASE_APK: ${{ steps.home_metadata.outputs.apk }}
+          RELEASE_VERSION: ${{ steps.home_metadata.outputs.version }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" \
+            "$RELEASE_APK" \
+            "$RELEASE_DIR/SHA256SUMS" \
+            "$RELEASE_DIR/release-manifest.json" \
+            "$RELEASE_DIR/AquaCYD-Home-$RELEASE_VERSION.cdx.json" \
+            --verify-tag \
+            --latest=false \
+            --title "AquaCYD Home $RELEASE_VERSION" \
+            --notes "Druga, niezależna aplikacja AquaCYD dla Home Assistanta. Pakiet może być zainstalowany równolegle z AquaCYD Control."
+      - name: Remove AquaCYD Home signing material
+        if: always()
+        run: |
+          rm -f \
+            home_assistant_app/android/key.properties \
+            "$RUNNER_TEMP/aquacyd-home-release.jks"
 
   firmware-source:
     name: Validate firmware release source

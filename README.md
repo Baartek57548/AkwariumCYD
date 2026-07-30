@@ -19,7 +19,8 @@ warunek zatwierdzenia OTA są opisane w
 Gotowe obrazy firmware ILI9341/ST7789 oraz instalacyjny APK są publikowane w
 [GitHub Releases](https://github.com/Baartek57548/AkwariumCYD/releases).
 Wybierz tag `firmware-vX.Y.Z` dla podpisanego pakietu `.aqfw` albo
-`mobile-vX.Y.Z` dla aplikacji Android.
+`mobile-vX.Y.Z` dla aplikacji AquaCYD Control. Druga aplikacja jest publikowana
+niezależnie pod tagiem `home-vX.Y.Z` jako `AquaCYD-Home-X.Y.Z.apk`.
 
 Najważniejsze katalogi:
 

@@ -18,7 +18,7 @@ from collections.abc import Iterable
 SEMVER_PATTERN = re.compile(
     r"^(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)$"
 )
-SUPPORTED_KINDS = {"mobile", "firmware", "web"}
+SUPPORTED_KINDS = {"mobile", "home", "firmware", "web"}
 
 
 class SbomError(RuntimeError):
@@ -221,6 +221,11 @@ def build_sbom(
     elif kind == "mobile":
         dependencies = pub_components(project_root / "mobile_app" / "pubspec.lock")
         application_name = "AquaCYD Control"
+    elif kind == "home":
+        dependencies = pub_components(
+            project_root / "home_assistant_app" / "pubspec.lock"
+        )
+        application_name = "AquaCYD Home"
     else:
         dependencies = platformio_components(project_root / "platformio.ini")
         application_name = "AquaCYD Firmware"

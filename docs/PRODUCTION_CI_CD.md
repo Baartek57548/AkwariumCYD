@@ -98,6 +98,22 @@ Nazwa APK musi być dokładnie
 `AquaCYD-Control-X.Y.Z-current.apk`. Istniejące wydanie nie jest nadpisywane.
 Zmiana gotowego pliku wymaga nowego numeru wersji i tagu.
 
+## Wydanie aplikacji AquaCYD Home
+
+1. Zwiększ `version: X.Y.Z+N` w `home_assistant_app/pubspec.yaml`.
+2. Uruchom analizę, testy oraz kompilację web i Android.
+3. Wypchnij commit na zdalną gałąź, a następnie utwórz tag `home-vX.Y.Z`.
+4. Workflow użyje tego samego chronionego certyfikatu Android, ale zbuduje
+   niezależny pakiet `pl.aquacyd.aquacyd_home`.
+5. Walidator potwierdzi package, wersję, pojedynczego sygnatariusza i publiczny
+   fingerprint certyfikatu.
+6. Release publikuje `AquaCYD-Home-X.Y.Z.apk`, `SHA256SUMS`,
+   `release-manifest.json`, CycloneDX SBOM oraz atestację pochodzenia.
+
+Tag musi wskazywać commit osiągalny z co najmniej jednej zdalnej gałęzi.
+Workflow odmawia nadpisania istniejącego wydania i nie ustawia AquaCYD Home jako
+„Latest”, dzięki czemu głównym wydaniem pozostaje AquaCYD Control.
+
 ## Wydanie firmware
 
 1. Zakończ test na obu profilach ekranu oraz na stanowisku HIL.
