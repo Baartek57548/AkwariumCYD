@@ -6,7 +6,7 @@ views:
     cards:
       - type: glance
         title: Pomiary
-        columns: 4
+        columns: 3
         show_name: true
         show_state: true
         entities:
@@ -18,6 +18,10 @@ views:
             name: Przewodność
           - entity: sensor.aquacyd_aquarium_ldr
             name: LDR
+          - entity: sensor.aquacyd_aquarium_target_temperature
+            name: Cel temperatury
+          - entity: sensor.aquacyd_aquarium_temperature_hysteresis
+            name: Histereza
 
       - type: entities
         title: Bezpieczeństwo
@@ -141,3 +145,5 @@ views:
             name: Wolna pamięć
           - entity: sensor.aquacyd_aquarium_configuration_revision
             name: Rewizja konfiguracji
+          - entity: binary_sensor.aquacyd_aquarium_configuration_valid
+            name: Konfiguracja zdalna

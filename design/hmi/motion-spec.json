@@ -1,0 +1,172 @@
+{
+  "meta": {
+    "name": "AquaCYD HMI motion specification",
+    "version": "1.1.0",
+    "target": "LVGL 9.2.2 on ESP32-P4",
+    "frameRateTarget": 60
+  },
+  "principles": [
+    "Animacja potwierdza zmianę stanu, ale nie opóźnia operacji bezpieczeństwa.",
+    "Kolor nigdy nie jest jedynym nośnikiem informacji.",
+    "Warstwa sieciowa nie steruje bezpośrednio obiektami LVGL.",
+    "Jednocześnie działają najwyżej trzy animacje interfejsu."
+  ],
+  "animations": {
+    "bootMarkPulse": {
+      "figma": {
+        "trigger": "after delay",
+        "property": "opacity",
+        "from": 100,
+        "to": 60,
+        "durationMs": 900,
+        "easing": "ease in-out",
+        "loop": true
+      },
+      "lvgl": {
+        "property": "style opacity",
+        "durationMs": 900,
+        "playbackMs": 900,
+        "repeat": "infinite"
+      }
+    },
+    "bootProgress": {
+      "figma": {
+        "trigger": "state change",
+        "property": "width",
+        "states": [18, 48, 76, 100],
+        "durationMs": 360,
+        "easing": "ease out"
+      },
+      "lvgl": {
+        "property": "bar value",
+        "states": [18, 48, 76, 100],
+        "animated": true
+      }
+    },
+    "bootDismiss": {
+      "figma": {
+        "trigger": "controller online or 4200 ms timeout",
+        "property": "opacity",
+        "from": 100,
+        "to": 0,
+        "durationMs": 360,
+        "easing": "ease out"
+      },
+      "lvgl": {
+        "property": "style opacity",
+        "durationMs": 360,
+        "completion": "hide overlay"
+      }
+    },
+    "pageEnter": {
+      "figma": {
+        "trigger": "navigation tap",
+        "properties": {
+          "x": [20, 0],
+          "opacity": [0, 100]
+        },
+        "durationMs": 220,
+        "easing": "ease out"
+      },
+      "lvgl": {
+        "properties": ["x", "style opacity"],
+        "durationMs": 220,
+        "path": "ease out"
+      }
+    },
+    "alarmPulse": {
+      "figma": {
+        "trigger": "alarm flags non-zero",
+        "property": "opacity",
+        "from": 100,
+        "to": 60,
+        "durationMs": 650,
+        "easing": "ease in-out",
+        "loop": true
+      },
+      "lvgl": {
+        "property": "style opacity",
+        "durationMs": 650,
+        "playbackMs": 650,
+        "repeat": "until alarm clears"
+      }
+    },
+    "toast": {
+      "figma": {
+        "trigger": "command or validation result",
+        "properties": {
+          "yEnter": [616, 520],
+          "yExit": [520, 616]
+        },
+        "durationMs": 220,
+        "holdMs": 3600,
+        "easing": "ease out / ease in"
+      },
+      "lvgl": {
+        "property": "y",
+        "durationMs": 220,
+        "holdMs": 3600
+      }
+    },
+    "commandPending": {
+      "figma": {
+        "trigger": "command queued",
+        "property": "progress",
+        "from": 8,
+        "to": 100,
+        "durationMs": 950,
+        "loop": true
+      },
+      "lvgl": {
+        "property": "bar value",
+        "durationMs": 950,
+        "repeat": "until ACK or timeout"
+      }
+    },
+    "configurationEditorOpen": {
+      "figma": {
+        "trigger": "tap Edytuj",
+        "properties": {
+          "overlayOpacity": [0, 82],
+          "dialogOpacity": [0, 100]
+        },
+        "durationMs": 120,
+        "easing": "ease out"
+      },
+      "lvgl": {
+        "property": "visibility",
+        "durationMs": 0,
+        "note": "Modal appears immediately so editing never waits for decorative motion."
+      }
+    },
+    "metricUpdate": {
+      "figma": {
+        "trigger": "new telemetry",
+        "property": "progress",
+        "durationMs": 220,
+        "easing": "ease out"
+      },
+      "lvgl": {
+        "property": "bar value",
+        "animated": true
+      }
+    }
+  },
+  "performanceBudget": {
+    "maximumConcurrentAnimations": 3,
+    "maximumPageTransitionMs": 220,
+    "maximumBootOverlayMs": 4200,
+    "forbiddenEffects": [
+      "background blur",
+      "animated shadow blur",
+      "full-screen alpha video",
+      "unbounded particle effects"
+    ],
+    "preferredProperties": [
+      "x",
+      "y",
+      "opacity",
+      "bar value"
+    ]
+  }
+}

@@ -214,6 +214,22 @@ int32_t scaled_milli(float value) {
     return static_cast<int32_t>(lround(scaled));
 }
 
+uint16_t scaled_milli_u16(float value) {
+    const int32_t scaled = scaled_milli(value);
+    return static_cast<uint16_t>(
+        constrain(scaled, 0, static_cast<int32_t>(UINT16_MAX)));
+}
+
+aquacyd::link::SchedulePayload link_schedule(
+    const GuiScheduleSnapshot &schedule) {
+    aquacyd::link::SchedulePayload result = {};
+    result.mode = schedule.mode;
+    result.profile = schedule.profile;
+    result.start_minute = schedule.start_minute;
+    result.end_minute = schedule.end_minute;
+    return result;
+}
+
 uint16_t relay_bits(const GuiBleSnapshot &snapshot) {
     uint16_t bits = 0U;
     bits |= snapshot.light_on
@@ -281,7 +297,8 @@ void send_telemetry(const RuntimeTelemetry &telemetry) {
              : 0U) |
         (snapshot.alarm_flags == aquarium::AlarmNone
              ? aquacyd::link::TelemetryControllerSafe
-             : 0U);
+             : 0U) |
+        aquacyd::link::TelemetryConfigurationValid;
     payload.temperature_milli_c = scaled_milli(snapshot.temperature);
     payload.ph_milli = scaled_milli(snapshot.ph);
     payload.ec_milli_us_cm = scaled_milli(snapshot.ec);
@@ -294,6 +311,19 @@ void send_telemetry(const RuntimeTelemetry &telemetry) {
     payload.wifi_rssi_dbm = static_cast<int16_t>(
         WiFi.status() == WL_CONNECTED ? WiFi.RSSI() : 0);
     payload.configuration_revision = snapshot.configuration_revision;
+    payload.target_temperature_milli_c =
+        scaled_milli(snapshot.target_temperature);
+    payload.temperature_hysteresis_milli_c =
+        scaled_milli_u16(snapshot.temperature_hysteresis);
+    payload.heater_mode = snapshot.heater_mode;
+    payload.light_primary_schedule =
+        link_schedule(snapshot.light_schedule);
+    payload.light_secondary_schedule =
+        link_schedule(snapshot.plant_light_schedule);
+    payload.filter_schedule =
+        link_schedule(snapshot.filter_schedule);
+    payload.aerator_schedule =
+        link_schedule(snapshot.aeration_schedule);
 
     aquacyd::link::Frame frame = {};
     frame.type = aquacyd::link::MessageType::Telemetry;
@@ -340,6 +370,100 @@ bool remote_output_target_allowed(aquacyd::link::CommandTarget target) {
            target == aquacyd::link::CommandTarget::LightSecondary ||
            target == aquacyd::link::CommandTarget::Filter ||
            target == aquacyd::link::CommandTarget::Aerator;
+}
+
+const char *schedule_profile_name(uint8_t encoded_profile) {
+    switch (encoded_profile) {
+    case 1U:
+        return "day";
+    case 2U:
+        return "daybreak";
+    case 3U:
+        return "night";
+    default:
+        return nullptr;
+    }
+}
+
+bool encode_schedule_json(aquacyd::link::CommandTarget target,
+                          const aquacyd::link::SchedulePayload &schedule,
+                          char *output,
+                          size_t output_size) {
+    if (output == nullptr || output_size == 0U) {
+        return false;
+    }
+    const unsigned int start_hour = schedule.start_minute / 60U;
+    const unsigned int start_minute = schedule.start_minute % 60U;
+    const unsigned int end_hour = schedule.end_minute / 60U;
+    const unsigned int end_minute = schedule.end_minute % 60U;
+    int written = -1;
+    if (target == aquacyd::link::CommandTarget::LightPrimary ||
+        target == aquacyd::link::CommandTarget::LightSecondary) {
+        const char *prefix =
+            target == aquacyd::link::CommandTarget::LightPrimary
+                ? "light1"
+                : "light2";
+        if (schedule.profile == 0U) {
+            written = snprintf(
+                output,
+                output_size,
+                "{\"%sMode\":%u,\"%sStart\":\"%02u:%02u\","
+                "\"%sEnd\":\"%02u:%02u\",\"%sProfileCycle\":true}",
+                prefix,
+                static_cast<unsigned int>(schedule.mode),
+                prefix,
+                start_hour,
+                start_minute,
+                prefix,
+                end_hour,
+                end_minute,
+                prefix);
+        } else {
+            const char *profile =
+                schedule_profile_name(schedule.profile);
+            if (profile == nullptr) {
+                return false;
+            }
+            written = snprintf(
+                output,
+                output_size,
+                "{\"%sMode\":%u,\"%sStart\":\"%02u:%02u\","
+                "\"%sEnd\":\"%02u:%02u\",\"%sProfile\":\"%s\"}",
+                prefix,
+                static_cast<unsigned int>(schedule.mode),
+                prefix,
+                start_hour,
+                start_minute,
+                prefix,
+                end_hour,
+                end_minute,
+                prefix,
+                profile);
+        }
+    } else if (target == aquacyd::link::CommandTarget::Filter) {
+        written = snprintf(
+            output,
+            output_size,
+            "{\"filterMode\":%u,\"filterOn\":\"%02u:%02u\","
+            "\"filterOff\":\"%02u:%02u\"}",
+            static_cast<unsigned int>(schedule.mode),
+            start_hour,
+            start_minute,
+            end_hour,
+            end_minute);
+    } else if (target == aquacyd::link::CommandTarget::Aerator) {
+        written = snprintf(
+            output,
+            output_size,
+            "{\"aerationMode\":%u,\"airOn\":\"%02u:%02u\","
+            "\"airOff\":\"%02u:%02u\"}",
+            static_cast<unsigned int>(schedule.mode),
+            start_hour,
+            start_minute,
+            end_hour,
+            end_minute);
+    }
+    return written > 0 && static_cast<size_t>(written) < output_size;
 }
 
 aquacyd::link::AcknowledgementStatus execute_command(
@@ -406,6 +530,45 @@ aquacyd::link::AcknowledgementStatus execute_command(
             sizeof(json),
             "{\"durationSec\":%lu,\"dispense\":true}",
             static_cast<unsigned long>(duration_seconds));
+    } else if (
+        command.action == aquacyd::link::CommandAction::SetSchedule) {
+        aquacyd::link::SchedulePayload schedule = {};
+        if (!aquacyd::link::unpack_schedule_command(
+                command.value, command.duration_ms, &schedule) ||
+            !encode_schedule_json(
+                command.target, schedule, json, sizeof(json))) {
+            *reason_code = CommandReasonInvalidParameters;
+            return aquacyd::link::AcknowledgementStatus::Invalid;
+        }
+        snprintf(action, sizeof(action), "save_schedule");
+    } else if (
+        command.action == aquacyd::link::CommandAction::SetSetpoint &&
+        command.target == aquacyd::link::CommandTarget::Heater) {
+        uint8_t heater_mode = 0U;
+        int32_t target_milli_c = 0;
+        uint16_t hysteresis_milli_c = 0U;
+        if (!aquacyd::link::unpack_temperature_command(
+                command.value,
+                command.duration_ms,
+                &heater_mode,
+                &target_milli_c,
+                &hysteresis_milli_c)) {
+            *reason_code = CommandReasonInvalidParameters;
+            return aquacyd::link::AcknowledgementStatus::Invalid;
+        }
+        snprintf(action, sizeof(action), "save_temperature");
+        const int written = snprintf(
+            json,
+            sizeof(json),
+            "{\"heaterMode\":%u,\"target\":%.3f,\"hysteresis\":%.3f}",
+            static_cast<unsigned int>(heater_mode),
+            static_cast<double>(target_milli_c) / 1000.0,
+            static_cast<double>(hysteresis_milli_c) / 1000.0);
+        if (written <= 0 ||
+            static_cast<size_t>(written) >= sizeof(json)) {
+            *reason_code = CommandReasonInvalidParameters;
+            return aquacyd::link::AcknowledgementStatus::Invalid;
+        }
     } else {
         *reason_code = CommandReasonUnsupported;
         return aquacyd::link::AcknowledgementStatus::Rejected;

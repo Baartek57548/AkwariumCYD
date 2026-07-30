@@ -34,9 +34,11 @@ i nie zależy od działania Home Assistanta.
    `sensor.aquacyd_aquarium_*` i `binary_sensor.aquacyd_aquarium_*` zostaną
    utworzone automatycznie.
 
-Pakiet dodaje dziesięć bezpiecznych skryptów sterujących, czas ręcznego
-nadpisania i karmienia oraz powiadomienia o utracie łącza, wycieku, niskim
-poziomie wody i braku potwierdzenia komendy. Każde polecenie otrzymuje unikatowy
+Pakiet dodaje bezpieczne skrypty sterowania czasowego, karmienia, zapisu
+harmonogramu i termostatu oraz powiadomienia o utracie łącza, wycieku, niskim
+poziomie wody i braku potwierdzenia komendy. Formularze skryptów HA korzystają
+z tego samego kontraktu `set_schedule` i `set_setpoint` co panel HMI, ale pełna
+walidacja nadal odbywa się tylko w CYD. Każde polecenie otrzymuje unikatowy
 16-cyfrowy identyfikator, dzięki któremu CYD odrzuca duplikaty z MQTT QoS 1
 w ograniczonym, deterministycznym oknie pamięci. Polecenia nie są retained.
 

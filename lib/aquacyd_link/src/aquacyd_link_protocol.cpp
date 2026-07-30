@@ -8,10 +8,11 @@ namespace {
 
 constexpr uint8_t kMagic0 = 0x41U;
 constexpr uint8_t kMagic1 = 0x51U;
-constexpr uint8_t kTelemetrySchemaVersion = 1U;
+constexpr uint8_t kTelemetrySchemaVersion = 2U;
 constexpr uint8_t kCommandSchemaVersion = 1U;
 constexpr uint8_t kAcknowledgementSchemaVersion = 1U;
-constexpr size_t kTelemetryPayloadSize = 39U;
+constexpr size_t kLegacyTelemetryPayloadSize = 39U;
+constexpr size_t kTelemetryPayloadSize = 70U;
 constexpr size_t kCommandPayloadSize = 23U;
 constexpr size_t kAcknowledgementPayloadSize = 16U;
 
@@ -58,7 +59,7 @@ uint64_t read_u64(const uint8_t *source) {
 bool is_valid_command_action(CommandAction action) {
     const uint8_t value = static_cast<uint8_t>(action);
     return value >= static_cast<uint8_t>(CommandAction::SetOutput) &&
-           value <= static_cast<uint8_t>(CommandAction::SynchronizeTime);
+           value <= static_cast<uint8_t>(CommandAction::SetSchedule);
 }
 
 bool is_valid_command_target(CommandTarget target) {
@@ -69,6 +70,22 @@ bool is_valid_command_target(CommandTarget target) {
 bool is_valid_acknowledgement_status(AcknowledgementStatus status) {
     return static_cast<uint8_t>(status) <=
            static_cast<uint8_t>(AcknowledgementStatus::Expired);
+}
+
+void encode_schedule(const SchedulePayload &schedule, uint8_t *output) {
+    output[0] = schedule.mode;
+    output[1] = schedule.profile;
+    write_u16(output + 2U, schedule.start_minute);
+    write_u16(output + 4U, schedule.end_minute);
+}
+
+SchedulePayload decode_schedule(const uint8_t *data) {
+    SchedulePayload schedule = {};
+    schedule.mode = data[0];
+    schedule.profile = data[1];
+    schedule.start_minute = read_u16(data + 2U);
+    schedule.end_minute = read_u16(data + 4U);
+    return schedule;
 }
 
 } // namespace
@@ -262,7 +279,16 @@ DecodeStatus encode_telemetry_payload(const TelemetryPayload &payload,
     write_u32(output + 27U, payload.free_heap_bytes);
     write_u16(output + 31U, static_cast<uint16_t>(payload.wifi_rssi_dbm));
     write_u32(output + 33U, payload.configuration_revision);
-    write_u16(output + 37U, 0U);
+    write_u32(
+        output + 37U,
+        static_cast<uint32_t>(payload.target_temperature_milli_c));
+    write_u16(output + 41U, payload.temperature_hysteresis_milli_c);
+    output[43] = payload.heater_mode;
+    encode_schedule(payload.light_primary_schedule, output + 44U);
+    encode_schedule(payload.light_secondary_schedule, output + 50U);
+    encode_schedule(payload.filter_schedule, output + 56U);
+    encode_schedule(payload.aerator_schedule, output + 62U);
+    write_u16(output + 68U, 0U);
     *output_length = static_cast<uint16_t>(kTelemetryPayloadSize);
     return DecodeStatus::Ok;
 }
@@ -273,10 +299,19 @@ DecodeStatus decode_telemetry_payload(const uint8_t *data,
     if (data == nullptr || output == nullptr) {
         return DecodeStatus::NullArgument;
     }
-    if (length != kTelemetryPayloadSize) {
-        return DecodeStatus::InvalidLength;
+    const bool legacy =
+        length == kLegacyTelemetryPayloadSize && data[0] == 1U;
+    const bool current =
+        length == kTelemetryPayloadSize &&
+        data[0] == kTelemetrySchemaVersion;
+    if (!legacy && !current) {
+        return length == kLegacyTelemetryPayloadSize ||
+                       length == kTelemetryPayloadSize
+                   ? DecodeStatus::UnsupportedVersion
+                   : DecodeStatus::InvalidLength;
     }
-    if (data[0] != kTelemetrySchemaVersion || read_u16(data + 37U) != 0U) {
+    if ((legacy && read_u16(data + 37U) != 0U) ||
+        (current && read_u16(data + 68U) != 0U)) {
         return DecodeStatus::UnsupportedVersion;
     }
     TelemetryPayload decoded = {};
@@ -291,6 +326,20 @@ DecodeStatus decode_telemetry_payload(const uint8_t *data,
     decoded.free_heap_bytes = read_u32(data + 27U);
     decoded.wifi_rssi_dbm = static_cast<int16_t>(read_u16(data + 31U));
     decoded.configuration_revision = read_u32(data + 33U);
+    if (current) {
+        decoded.target_temperature_milli_c =
+            static_cast<int32_t>(read_u32(data + 37U));
+        decoded.temperature_hysteresis_milli_c =
+            read_u16(data + 41U);
+        decoded.heater_mode = data[43];
+        decoded.light_primary_schedule = decode_schedule(data + 44U);
+        decoded.light_secondary_schedule = decode_schedule(data + 50U);
+        decoded.filter_schedule = decode_schedule(data + 56U);
+        decoded.aerator_schedule = decode_schedule(data + 62U);
+    } else {
+        decoded.flags &= static_cast<uint16_t>(
+            ~TelemetryConfigurationValid);
+    }
     *output = decoded;
     return DecodeStatus::Ok;
 }
@@ -348,6 +397,97 @@ DecodeStatus decode_command_payload(const uint8_t *data,
     }
     *output = decoded;
     return DecodeStatus::Ok;
+}
+
+bool pack_schedule_command(uint8_t mode,
+                           uint8_t profile,
+                           uint16_t start_minute,
+                           uint16_t end_minute,
+                           int32_t *value,
+                           uint32_t *duration) {
+    if (value == nullptr || duration == nullptr ||
+        mode > 2U || profile > 3U ||
+        start_minute >= 24U * 60U || end_minute >= 24U * 60U) {
+        return false;
+    }
+    *value = static_cast<int32_t>(
+        static_cast<uint32_t>(mode) |
+        (static_cast<uint32_t>(profile) << 8U));
+    *duration =
+        static_cast<uint32_t>(start_minute) |
+        (static_cast<uint32_t>(end_minute) << 16U);
+    return true;
+}
+
+bool unpack_schedule_command(int32_t value,
+                             uint32_t duration,
+                             SchedulePayload *output) {
+    if (output == nullptr || value < 0 ||
+        (static_cast<uint32_t>(value) & 0xFFFF0000UL) != 0U) {
+        return false;
+    }
+    SchedulePayload decoded = {};
+    decoded.mode =
+        static_cast<uint8_t>(static_cast<uint32_t>(value) & 0xFFU);
+    decoded.profile =
+        static_cast<uint8_t>(
+            (static_cast<uint32_t>(value) >> 8U) & 0xFFU);
+    decoded.start_minute =
+        static_cast<uint16_t>(duration & 0xFFFFU);
+    decoded.end_minute =
+        static_cast<uint16_t>(duration >> 16U);
+    if (decoded.mode > 2U || decoded.profile > 3U ||
+        decoded.start_minute >= 24U * 60U ||
+        decoded.end_minute >= 24U * 60U) {
+        return false;
+    }
+    *output = decoded;
+    return true;
+}
+
+bool pack_temperature_command(uint8_t heater_mode,
+                              int32_t target_milli_c,
+                              uint16_t hysteresis_milli_c,
+                              int32_t *value,
+                              uint32_t *duration) {
+    if (value == nullptr || duration == nullptr ||
+        heater_mode > 1U ||
+        target_milli_c < 18000 || target_milli_c > 30000 ||
+        hysteresis_milli_c < 100U ||
+        hysteresis_milli_c > 5000U) {
+        return false;
+    }
+    *value = target_milli_c;
+    *duration =
+        static_cast<uint32_t>(hysteresis_milli_c) |
+        (heater_mode == 1U ? 0x80000000UL : 0U);
+    return true;
+}
+
+bool unpack_temperature_command(int32_t value,
+                                uint32_t duration,
+                                uint8_t *heater_mode,
+                                int32_t *target_milli_c,
+                                uint16_t *hysteresis_milli_c) {
+    if (heater_mode == nullptr ||
+        target_milli_c == nullptr ||
+        hysteresis_milli_c == nullptr ||
+        (duration & 0x7FFF0000UL) != 0U) {
+        return false;
+    }
+    const uint8_t decoded_mode =
+        (duration & 0x80000000UL) != 0U ? 1U : 0U;
+    const uint16_t decoded_hysteresis =
+        static_cast<uint16_t>(duration & 0xFFFFU);
+    if (value < 18000 || value > 30000 ||
+        decoded_hysteresis < 100U ||
+        decoded_hysteresis > 5000U) {
+        return false;
+    }
+    *heater_mode = decoded_mode;
+    *target_milli_c = value;
+    *hysteresis_milli_c = decoded_hysteresis;
+    return true;
 }
 
 DecodeStatus encode_acknowledgement_payload(

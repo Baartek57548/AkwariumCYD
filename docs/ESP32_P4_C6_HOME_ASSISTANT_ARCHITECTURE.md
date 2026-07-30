@@ -19,7 +19,7 @@ Docelowa instalacja zawiera **dwa układy ESP32-C6**:
 flowchart LR
     CYD["CYD ESP32<br/>automatyka i fail-safe"]
     GW["stały ESP32-C6<br/>ESP-NOW ↔ MQTT"]
-    HA["Raspberry Pi 4B 2 GB<br/>Home Assistant OS + MQTT"]
+    HA["Raspberry Pi 5 4 GB<br/>Home Assistant OS + MQTT"]
     P4["ESP32-P4 7 cali<br/>natywny LVGL 9"]
     PC6["pokładowy ESP32-C6<br/>ESP-Hosted"]
     APP["aplikacja mobilna"]
@@ -56,17 +56,17 @@ Zalecany wariant budżetowy:
 - obecny CYD;
 - Waveshare ESP32-P4-WIFI6-Touch-LCD-7B, 1024×600, 32 MB PSRAM;
 - osobny ESP32-C6-DevKitC-1 lub mały moduł C6 z poprawną anteną;
-- Raspberry Pi 4B 2 GB z Home Assistant OS;
-- markowy zasilacz USB-C 5 V / 3 A i SSD USB 3 zamiast karty microSD dla HA;
+- Raspberry Pi 5 4 GB z Home Assistant OS;
+- oficjalny zasilacz USB-C PD 27 W, aktywne chłodzenie i NVMe 256 GB dla HA;
 - Ethernet dla Raspberry Pi;
 - stacja ścienna 5 V z magnetycznym lub sprężynowym złączem i mechanicznym
   zatrzaskiem panelu.
 
-Raspberry Pi 5 ma sens dopiero przy kamerach, rozpoznawaniu obrazu, wielu
-dodatkach lub ciężkiej bazie danych. Dla samego akwarium Pi 4B 2 GB jest
-tańszy, chłodniejszy i wystarczający. Panel wymaga osobnego, certyfikowanego
-układu ładowania i ochrony akumulatora; nie wolno podłączać ogniwa Li-Ion
-bezpośrednio do wejścia 5 V płytki.
+Pi 5 4 GB zapewnia zapas na historię, dodatki, VPN i przyszłe kamery. Dla samego
+akwarium Pi 4B 2 GB pozostaje tańszą alternatywą, ale docelowa konfiguracja tego
+projektu używa Pi 5. Panel wymaga osobnego, certyfikowanego układu ładowania i
+ochrony akumulatora; nie wolno podłączać ogniwa Li-Ion bezpośrednio do wejścia
+5 V płytki.
 
 ## Kontrakt komunikacyjny
 
@@ -120,9 +120,25 @@ rewizji z ostatniej telemetrii, natomiast skrypty HA celowo wysyłają zero, bo
 stan encji może być opóźniony. ACK zawiera status liczbowy i tekstowy, kod
 przyczyny, aktualną rewizję oraz flagę `transport_timeout`.
 
+Schemat telemetrii v2 przesyła dodatkowo kompletną konfigurację czterech
+harmonogramów, profile lamp, tryb grzałki, temperaturę docelową i histerezę.
+Dekoder C6 nadal przyjmuje 39-bajtową telemetrię v1, ale oznacza wtedy
+`configuration_valid=false`, dzięki czemu starszy CYD może nadal raportować
+pomiary, a HMI nie pozwoli edytować niepełnej konfiguracji.
+
+Akcja `set_schedule` zapisuje jeden kompletny harmonogram. `value` zawiera tryb
+w bajcie 0 oraz profil lampy w bajcie 1, a `duration_ms` zawiera minutę startu
+w młodszym słowie i minutę końca w starszym słowie. Wspólne funkcje
+`pack_schedule_command()` i `unpack_schedule_command()` są jedynym miejscem
+kodowania tego formatu. Akcja `set_setpoint` dla celu `heater` analogicznie
+przenosi temperaturę w m°C, histerezę w m°C i jawny tryb grzałki. CYD odrzuca
+nieznany tryb, czas poza 00:00–23:59, temperaturę poza 18–30°C, histerezę poza
+0,1–5°C oraz konflikt `expected_revision`.
+
 Zdalnie dostępne wyjścia są celowo ograniczone do obu świateł, filtra i
-napowietrzania. Grzałka, CO₂ oraz dolewka są tylko monitorowane; ich zaawansowane
-reguły i zabezpieczenia pozostają lokalnie w CYD.
+napowietrzania. Bezpośrednie przełączanie grzałki, CO₂ oraz dolewki jest
+zablokowane. HMI może zmienić wyłącznie walidowaną konfigurację termostatu;
+regulacja, interlocki i fizyczne sterowanie pozostają lokalnie w CYD.
 
 ## Kanał radiowy
 
@@ -139,8 +155,8 @@ routerze należy wyłączyć.
 
 ### 1. Home Assistant
 
-1. Zainstalować Home Assistant OS na Raspberry Pi 4B 2 GB.
-2. Podłączyć Pi przez Ethernet i przenieść bazę na SSD USB.
+1. Zainstalować Home Assistant OS na Raspberry Pi 5 4 GB.
+2. Podłączyć Pi przez Ethernet i przenieść dysk danych na NVMe.
 3. Dodać oficjalną integrację MQTT i lokalnego brokera Mosquitto.
 4. Skopiować `home_assistant/packages/aquacyd.yaml` i
    `home_assistant/dashboards/aquacyd.yaml` zgodnie z
@@ -202,11 +218,12 @@ sesją administratora. Po zapisie należy kontrolowanie zrestartować CYD.
 
 W `firmware/esp32p4_hmi` ustawić Wi-Fi i MQTT przez `idf.py menuconfig`, następnie
 zbudować ESP-IDF 5.4.4. Panel subskrybuje retained state i availability. Przy
-braku CYD blokuje przyciski, a przy braku HMI Home Assistant i CYD działają
-dalej. Zakładki pokazują pomiary, alarmy, stany pięciu wyjść, pamięć, uptime,
-rewizję konfiguracji i stan czujników bezpieczeństwa. Sterowanie jest blokowane
-podczas oczekiwania na aplikacyjny ACK, a timeout i konflikt rewizji są jawnie
-pokazywane. Jasność jest zapisywana w NVS.
+braku CYD blokuje przyciski, a przy braku danych dostępowych uruchamia pełny
+interfejs w trybie offline. Zakładki pokazują pomiary, alarmy, stany pięciu
+wyjść, pamięć, uptime, rewizję konfiguracji i stan czujników bezpieczeństwa.
+Ekran Automatyka edytuje harmonogramy, profile lamp i termostat. Sterowanie oraz
+edycja są blokowane podczas oczekiwania na aplikacyjny ACK, a timeout i konflikt
+rewizji są jawnie pokazywane. Jasność jest zapisywana w NVS.
 
 Oba obrazy można zbudować:
 

@@ -16145,6 +16145,32 @@ bool gui_app_ble_snapshot(GuiBleSnapshot *out) {
     out->temperature = isfinite(temperature) ? temperature : 0.0f;
     out->temperature_valid = isfinite(temperature);
     out->target_temperature = cfg.targetTemp;
+    out->temperature_hysteresis = cfg.tempHysteresis;
+    out->heater_mode = cfg.heaterMode;
+    out->light_schedule = {
+        cfg.lightMode,
+        cfg.lightSchedColorMode,
+        to_minutes(cfg.lightStartHour, cfg.lightStartMinute),
+        to_minutes(cfg.lightEndHour, cfg.lightEndMinute)
+    };
+    out->plant_light_schedule = {
+        cfg.plantLightMode,
+        cfg.plantSchedColorMode,
+        to_minutes(cfg.plantStartHour, cfg.plantStartMinute),
+        to_minutes(cfg.plantEndHour, cfg.plantEndMinute)
+    };
+    out->filter_schedule = {
+        cfg.filterMode,
+        0U,
+        to_minutes(cfg.filterStartHour, cfg.filterStartMinute),
+        to_minutes(cfg.filterEndHour, cfg.filterEndMinute)
+    };
+    out->aeration_schedule = {
+        cfg.airMode,
+        0U,
+        to_minutes(cfg.airStartHour, cfg.airStartMinute),
+        to_minutes(cfg.airEndHour, cfg.airEndMinute)
+    };
     out->ph = isfinite(ph) ? ph : 0.0f;
     out->ph_valid = isfinite(ph);
     out->ec = isfinite(ec) ? ec : 0.0f;
@@ -17047,6 +17073,183 @@ static GuiBleCommandResult execute_remote_gateway_action(
         "Nieznana akcja bramki alarmowej."};
 }
 
+static GuiBleCommandResult apply_schedule_json_locked(
+    const char *command_json) {
+    long value = 0L;
+    if (ble_json_read_long(
+            command_json, "light1Mode", 0L, 2L, &value) ||
+        ble_json_read_long(
+            command_json, "lightMode", 0L, 2L, &value)) {
+        cfg.lightMode = static_cast<uint8_t>(value);
+    }
+    if (ble_json_read_long(
+            command_json, "light2Mode", 0L, 2L, &value) ||
+        ble_json_read_long(
+            command_json, "plantLightMode", 0L, 2L, &value)) {
+        cfg.plantLightMode = static_cast<uint8_t>(value);
+    }
+    if (ble_json_read_long(
+            command_json, "filterMode", 0L, 2L, &value)) {
+        cfg.filterMode = static_cast<uint8_t>(value);
+    }
+    if (ble_json_read_long(
+            command_json, "aerationMode", 0L, 2L, &value)) {
+        cfg.airMode = static_cast<uint8_t>(value);
+    }
+    if (ble_json_read_long(
+            command_json, "heaterMode", 0L, 1L, &value)) {
+        cfg.heaterMode = static_cast<uint8_t>(value);
+        cfg.enableHeater = value == 0L;
+    }
+    if (!ble_json_read_time(
+            command_json,
+            "light1Start",
+            &cfg.lightStartHour,
+            &cfg.lightStartMinute)) {
+        ble_json_read_time(
+            command_json,
+            "dayStart",
+            &cfg.lightStartHour,
+            &cfg.lightStartMinute);
+    }
+    if (!ble_json_read_time(
+            command_json,
+            "light1End",
+            &cfg.lightEndHour,
+            &cfg.lightEndMinute)) {
+        ble_json_read_time(
+            command_json,
+            "dayEnd",
+            &cfg.lightEndHour,
+            &cfg.lightEndMinute);
+    }
+    if (!ble_json_read_time(
+            command_json,
+            "light2Start",
+            &cfg.plantStartHour,
+            &cfg.plantStartMinute)) {
+        ble_json_read_time(
+            command_json,
+            "plantLightStart",
+            &cfg.plantStartHour,
+            &cfg.plantStartMinute);
+    }
+    if (!ble_json_read_time(
+            command_json,
+            "light2End",
+            &cfg.plantEndHour,
+            &cfg.plantEndMinute)) {
+        ble_json_read_time(
+            command_json,
+            "plantLightEnd",
+            &cfg.plantEndHour,
+            &cfg.plantEndMinute);
+    }
+    ble_json_read_time(
+        command_json,
+        "filterOn",
+        &cfg.filterStartHour,
+        &cfg.filterStartMinute);
+    ble_json_read_time(
+        command_json,
+        "filterOff",
+        &cfg.filterEndHour,
+        &cfg.filterEndMinute);
+    ble_json_read_time(
+        command_json,
+        "airOn",
+        &cfg.airStartHour,
+        &cfg.airStartMinute);
+    ble_json_read_time(
+        command_json,
+        "airOff",
+        &cfg.airEndHour,
+        &cfg.airEndMinute);
+    uint8_t profile = 0U;
+    if (ble_parse_light_profile(
+            command_json, "light1Profile", &profile) ||
+        ble_parse_light_profile(
+            command_json, "lightProfile", &profile)) {
+        cfg.lightColorMode = profile;
+        cfg.lightSchedColorMode =
+            aquael_profile_to_schedule(profile);
+    }
+    bool profile_cycle = false;
+    if ((ble_json_read_bool(
+             command_json,
+             "light1ProfileCycle",
+             &profile_cycle) ||
+         ble_json_read_bool(
+             command_json,
+             "lightProfileCycle",
+             &profile_cycle)) &&
+        profile_cycle) {
+        cfg.lightSchedColorMode = 0U;
+    }
+    if (ble_parse_light_profile(
+            command_json, "light2Profile", &profile) ||
+        ble_parse_light_profile(
+            command_json, "plantLightProfile", &profile)) {
+        cfg.plantLightColorMode = profile;
+        cfg.plantSchedColorMode =
+            aquael_profile_to_schedule(profile);
+    }
+    profile_cycle = false;
+    if ((ble_json_read_bool(
+             command_json,
+             "light2ProfileCycle",
+             &profile_cycle) ||
+         ble_json_read_bool(
+             command_json,
+             "plantLightProfileCycle",
+             &profile_cycle)) &&
+        profile_cycle) {
+        cfg.plantSchedColorMode = 0U;
+    }
+    if (ble_json_read_long(
+            command_json, "feedFreq", 0L, 2L, &value)) {
+        cfg.feedEnabled = value > 0L;
+        cfg.feedCount = cfg.feedEnabled ? 1U : 0U;
+    }
+    ble_json_read_time(
+        command_json,
+        "feedTime",
+        &cfg.feedHour1,
+        &cfg.feedMinute1);
+    sanitize_config(cfg);
+    gui_app_save_settings();
+    return {true, "ok", "Harmonogramy zapisane."};
+}
+
+static GuiBleCommandResult apply_temperature_json_locked(
+    const char *command_json) {
+    long mode = cfg.heaterMode;
+    float target = cfg.targetTemp;
+    float hysteresis = cfg.tempHysteresis;
+    ble_json_read_long(
+        command_json, "heaterMode", 0L, 1L, &mode);
+    if (!ble_json_read_float(
+            command_json, "target", 18.0f, 30.0f, &target) ||
+        !ble_json_read_float(
+            command_json,
+            "hysteresis",
+            0.1f,
+            5.0f,
+            &hysteresis)) {
+        return {
+            false,
+            "invalid_temperature",
+            "Temperatura lub histereza jest poza zakresem."};
+    }
+    cfg.heaterMode = static_cast<uint8_t>(mode);
+    cfg.enableHeater = mode == 0L;
+    cfg.targetTemp = target;
+    cfg.tempHysteresis = hysteresis;
+    gui_app_save_settings();
+    apply_mcp_outputs();
+    return {true, "ok", "Ustawienia temperatury zapisane."};
+}
+
 GuiBleCommandResult gui_app_ble_action(const char *action,
                                        const char *command_json,
                                        const char *pin) {
@@ -17072,84 +17275,11 @@ GuiBleCommandResult gui_app_ble_action(const char *action,
     }
 
     if (strcmp(action, "save_schedule") == 0) {
-        long value = 0L;
-        if (ble_json_read_long(command_json, "light1Mode", 0L, 2L, &value) ||
-            ble_json_read_long(command_json, "lightMode", 0L, 2L, &value)) {
-            cfg.lightMode = static_cast<uint8_t>(value);
-        }
-        if (ble_json_read_long(command_json, "light2Mode", 0L, 2L, &value) ||
-            ble_json_read_long(command_json, "plantLightMode", 0L, 2L, &value)) {
-            cfg.plantLightMode = static_cast<uint8_t>(value);
-        }
-        if (ble_json_read_long(command_json, "filterMode", 0L, 2L, &value)) cfg.filterMode = static_cast<uint8_t>(value);
-        if (ble_json_read_long(command_json, "aerationMode", 0L, 2L, &value)) cfg.airMode = static_cast<uint8_t>(value);
-        if (ble_json_read_long(command_json, "heaterMode", 0L, 1L, &value)) {
-            cfg.heaterMode = static_cast<uint8_t>(value);
-            cfg.enableHeater = value == 0L;
-        }
-        if (!ble_json_read_time(command_json, "light1Start", &cfg.lightStartHour, &cfg.lightStartMinute)) {
-            ble_json_read_time(command_json, "dayStart", &cfg.lightStartHour, &cfg.lightStartMinute);
-        }
-        if (!ble_json_read_time(command_json, "light1End", &cfg.lightEndHour, &cfg.lightEndMinute)) {
-            ble_json_read_time(command_json, "dayEnd", &cfg.lightEndHour, &cfg.lightEndMinute);
-        }
-        if (!ble_json_read_time(command_json, "light2Start", &cfg.plantStartHour, &cfg.plantStartMinute)) {
-            ble_json_read_time(command_json, "plantLightStart", &cfg.plantStartHour, &cfg.plantStartMinute);
-        }
-        if (!ble_json_read_time(command_json, "light2End", &cfg.plantEndHour, &cfg.plantEndMinute)) {
-            ble_json_read_time(command_json, "plantLightEnd", &cfg.plantEndHour, &cfg.plantEndMinute);
-        }
-        ble_json_read_time(command_json, "filterOn", &cfg.filterStartHour, &cfg.filterStartMinute);
-        ble_json_read_time(command_json, "filterOff", &cfg.filterEndHour, &cfg.filterEndMinute);
-        ble_json_read_time(command_json, "airOn", &cfg.airStartHour, &cfg.airStartMinute);
-        ble_json_read_time(command_json, "airOff", &cfg.airEndHour, &cfg.airEndMinute);
-        uint8_t profile = 0U;
-        if (ble_parse_light_profile(command_json, "light1Profile", &profile) ||
-            ble_parse_light_profile(command_json, "lightProfile", &profile)) {
-            cfg.lightColorMode = profile;
-            cfg.lightSchedColorMode = aquael_profile_to_schedule(profile);
-        }
-        bool profile_cycle = false;
-        if ((ble_json_read_bool(command_json, "light1ProfileCycle", &profile_cycle) ||
-             ble_json_read_bool(command_json, "lightProfileCycle", &profile_cycle)) && profile_cycle) {
-            cfg.lightSchedColorMode = 0U;
-        }
-        if (ble_parse_light_profile(command_json, "light2Profile", &profile) ||
-            ble_parse_light_profile(command_json, "plantLightProfile", &profile)) {
-            cfg.plantLightColorMode = profile;
-            cfg.plantSchedColorMode = aquael_profile_to_schedule(profile);
-        }
-        profile_cycle = false;
-        if ((ble_json_read_bool(command_json, "light2ProfileCycle", &profile_cycle) ||
-             ble_json_read_bool(command_json, "plantLightProfileCycle", &profile_cycle)) && profile_cycle) {
-            cfg.plantSchedColorMode = 0U;
-        }
-        if (ble_json_read_long(command_json, "feedFreq", 0L, 2L, &value)) {
-            cfg.feedEnabled = value > 0L;
-            cfg.feedCount = cfg.feedEnabled ? 1U : 0U;
-        }
-        ble_json_read_time(command_json, "feedTime", &cfg.feedHour1, &cfg.feedMinute1);
-        sanitize_config(cfg);
-        gui_app_save_settings();
-        return {true, "ok", "Harmonogramy zapisane."};
+        return apply_schedule_json_locked(command_json);
     }
 
     if (strcmp(action, "save_temperature") == 0) {
-        long mode = cfg.heaterMode;
-        float target = cfg.targetTemp;
-        float hysteresis = cfg.tempHysteresis;
-        ble_json_read_long(command_json, "heaterMode", 0L, 1L, &mode);
-        if (!ble_json_read_float(command_json, "target", 18.0f, 30.0f, &target) ||
-            !ble_json_read_float(command_json, "hysteresis", 0.1f, 5.0f, &hysteresis)) {
-            return {false, "invalid_temperature", "Temperatura lub histereza jest poza zakresem."};
-        }
-        cfg.heaterMode = static_cast<uint8_t>(mode);
-        cfg.enableHeater = mode == 0L;
-        cfg.targetTemp = target;
-        cfg.tempHysteresis = hysteresis;
-        gui_app_save_settings();
-        apply_mcp_outputs();
-        return {true, "ok", "Ustawienia temperatury zapisane."};
+        return apply_temperature_json_locked(command_json);
     }
 
     if (strcmp(action, "save_calibration") == 0) {
@@ -17528,6 +17658,12 @@ void force_safe_service_outputs() {
 
 GuiBleCommandResult execute_v2_control_action_locked(const char *action,
                                                      const char *command_json) {
+    if (strcmp(action, "save_schedule") == 0) {
+        return apply_schedule_json_locked(command_json);
+    }
+    if (strcmp(action, "save_temperature") == 0) {
+        return apply_temperature_json_locked(command_json);
+    }
     if (strcmp(action, "set_light_profile") == 0) {
         char target[16] = {};
         char profile_text[16] = {};
@@ -17781,7 +17917,9 @@ GuiBleCommandResult execute_v2_control_action_locked(const char *action,
 
 bool is_v2_control_action(const char *action) {
     return action != nullptr &&
-           (strcmp(action, "set_light_profile") == 0 ||
+           (strcmp(action, "save_schedule") == 0 ||
+            strcmp(action, "save_temperature") == 0 ||
+            strcmp(action, "set_light_profile") == 0 ||
             strcmp(action, "set_timed_override") == 0 ||
             strcmp(action, "clear_timed_override") == 0 ||
             strcmp(action, "start_feeding_mode") == 0 ||
@@ -17796,7 +17934,16 @@ bool is_v2_control_action(const char *action) {
 
 uint32_t v2_action_fingerprint(const char *action, const char *command_json) {
     char canonical[160] = {};
-    if (strcmp(action, "set_light_profile") == 0) {
+    if (strcmp(action, "save_schedule") == 0 ||
+        strcmp(action, "save_temperature") == 0) {
+        snprintf(
+            canonical,
+            sizeof(canonical),
+            "%s|%08lx",
+            action,
+            static_cast<unsigned long>(
+                aquarium::IdempotencyLedger::fingerprint(command_json)));
+    } else if (strcmp(action, "set_light_profile") == 0) {
         char target[24] = {};
         char profile[16] = {};
         ble_json_read_string(command_json, "target", target, sizeof(target));
@@ -18050,7 +18197,9 @@ GuiBleCommandResult gui_app_trusted_link_action(const char *action,
     }
     const bool action_allowed =
         action != nullptr &&
-        (strcmp(action, "set_timed_override") == 0 ||
+        (strcmp(action, "save_schedule") == 0 ||
+         strcmp(action, "save_temperature") == 0 ||
+         strcmp(action, "set_timed_override") == 0 ||
          strcmp(action, "start_feeding_mode") == 0);
     if (!action_allowed || command_json == nullptr) {
         return {

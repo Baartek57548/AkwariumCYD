@@ -1,5 +1,26 @@
 # Changelog
 
+## Unreleased — ESP32-P4/C6 HMI v2
+
+### What is included
+
+- Profesjonalny, natywny panel LVGL 9 dla Waveshare 7B z sześcioma ekranami,
+  animowanym startem, stanami offline/stale, alarmami, modalami i pełnym ACK.
+- Edycja harmonogramów obu lamp, filtra i napowietrzania, profili Aquael oraz
+  trybu, nastawy i histerezy termostatu.
+- Telemetria ESP-NOW v2 z kompatybilnym odczytem v1, atomowy zapis w CYD,
+  kontrola rewizji, walidacja zakresów i idempotencja.
+- Trzynaście edytowalnych ramek SVG do importu w Figma, manifest prototypu,
+  tokeny i specyfikacja animacji.
+- Plan instalacji Home Assistant OS na Raspberry Pi 5 4 GB, lokalny Mosquitto,
+  ACL, dashboard oraz skrypty HA używające tego samego kontraktu konfiguracji.
+
+### Verification
+
+- 36 testów natywnych.
+- Kompilacje CYD `esp32dev-espnow`, bramki ESP32-C6 i panelu ESP32-P4.
+- Walidacja JSON, YAML, XML wszystkich ramek oraz kontrola `git diff --check`.
+
 ## mobile-v6.0.0 / firmware-v6.0.0 - 2026-07-29
 
 Produkcyjne wydanie centrum sterowania AquaCYD `6.0.0`.

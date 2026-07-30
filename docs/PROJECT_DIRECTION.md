@@ -23,7 +23,7 @@ nie może zatrzymać podstawowej automatyki akwarium.
 flowchart LR
     CYD["CYD ESP32<br/>pomiary, automatyka, przekaźniki, fail-safe"]
     GW["Stały ESP32-C6<br/>ESP-NOW ↔ MQTT"]
-    HA["Raspberry Pi 4B 2 GB<br/>Home Assistant OS"]
+    HA["Raspberry Pi 5 4 GB<br/>Home Assistant OS"]
     HMI["ESP32-P4 7 cali<br/>natywny panel LVGL"]
     HC6["Pokładowy ESP32-C6<br/>ESP-Hosted Wi-Fi"]
     PHONE["Telefon<br/>Home Assistant Companion"]
@@ -47,7 +47,7 @@ wypięcie albo rozładowanie panelu nie odcina telemetrii Home Assistanta.
 | CYD | działająca baza produkcyjna | harmonogramy, czujniki, przekaźniki, alarmy, BLE, WWW, OTA i fail-safe |
 | Łącze CYD–C6 | zaimplementowane | PMK/LMK, ramki binarne, CRC32, ochrona replay, ACK i idempotencja |
 | Bramka C6 | zaimplementowana | ESP-NOW ↔ MQTT, retry, availability i MQTT Discovery |
-| HMI P4 | działające MVP | podgląd, sterowanie czasowe, ACK, timeout, diagnostyka i jasność w NVS |
+| HMI P4 | kompletny zakres programowy v2 | sześć ekranów, konfiguracja harmonogramów i termostatu, ACK, konflikt rewizji, tryb offline i jasność w NVS |
 | Home Assistant | gotowy pakiet startowy | dashboard, skrypty, alarmy oraz ACL Mosquitto |
 | CI | zaimplementowane | kompilacja CYD, C6 i P4 oraz publikacja artefaktów |
 | Testy sprzętowe | do wykonania | potrzebne rzeczywiste CYD, dwa C6, panel P4, broker i docelowy router |
@@ -86,8 +86,9 @@ Jest głównym lokalnym interfejsem:
 - ustawienia panelu, jasność, wygaszanie oraz informacje systemowe.
 
 Operacje ryzykowne wymagają potwierdzenia, pokazania skutku i jawnego wyniku ACK.
-Grzałka, CO₂ i dolewka pozostają tylko do odczytu, dopóki nie powstanie osobny,
-ściśle walidowany kontrakt konfiguracji.
+Bezpośrednie przełączanie grzałki, CO₂ i dolewki pozostaje zablokowane. Dla
+grzałki istnieje już osobny, ściśle walidowany kontrakt nastawy, histerezy i
+trybu; wykonanie regulacji oraz wszystkie interlocki nadal należą do CYD.
 
 ### Home Assistant
 
@@ -130,8 +131,9 @@ kosztu testów.
 | preferencje ekranu | HMI P4 | lokalne NVS |
 | dane dostępowe | każde urządzenie osobno | nigdy w repozytorium ani retained MQTT |
 
-Następny kontrakt konfiguracji powinien być oddzielony od prostych komend
-sterujących. Każda transakcja konfiguracji musi zawierać:
+Kontrakt konfiguracji jest logicznie oddzielony od prostych komend
+sterujących, choć korzysta ze wspólnej, wersjonowanej ramki transportowej.
+Każda transakcja konfiguracji zawiera:
 
 - wersję schematu;
 - unikatowy identyfikator operacji;
@@ -158,7 +160,7 @@ Status: **ukończony programowo**.
 Status: **następny krok**.
 
 1. Wybrać i kupić referencyjny panel Waveshare 7B.
-2. Przygotować stałą bramkę C6 oraz Raspberry Pi 4B 2 GB z SSD.
+2. Przygotować stałą bramkę C6 oraz Raspberry Pi 5 4 GB z NVMe.
 3. Zmierzyć MAC, ustawić stały kanał Wi-Fi i wygenerować unikatowe PMK/LMK.
 4. Sprawdzić ekran, dotyk, orientację, podświetlenie i ESP-Hosted.
 5. Wykonać testy utraty Wi-Fi, MQTT, HA, C6 i zasilania panelu.
@@ -169,23 +171,36 @@ a telemetria i ACK wracają automatycznie po odtworzeniu łącza.
 
 ### Etap 2 — system projektowy HMI
 
-1. Zatwierdzić mapę ekranów i hierarchię informacji.
-2. Utworzyć komponenty oraz zmienne w Figma dla rozdzielczości 1024×600.
-3. Powiązać tokeny Figma z `design/hmi/aquacyd-hmi.tokens.json`.
-4. Rozdzielić monolityczny ekran P4 na komponenty LVGL.
-5. Dodać stany loading, offline, empty, warning, error i confirmation.
-6. Porównać zrzuty z urządzenia z makietami przy każdej zmianie wizualnej.
+Status: **ukończony programowo, oczekuje porównania na urządzeniu**.
+
+1. Powstała mapa sześciu ekranów i hierarchia informacji.
+2. Pakiet zawiera 13 edytowalnych ramek 1024×600 do importu w Figma.
+3. Tokeny i animacje są wersjonowane w `design/hmi`.
+4. Kod P4 rozdziela transport od kompletnego modułu `hmi_ui`.
+5. Dostępne są stany startu, offline, stale, warning, error, confirmation,
+   command pending i conflict.
+6. Generator i podglądy SVG są sprawdzane programowo; końcowe porównanie
+   pikselowe wymaga panelu Waveshare.
 
 Kryterium zakończenia: każdy ekran ma zatwierdzoną makietę, komplet stanów oraz
 odpowiadający jej komponent LVGL bez dynamicznej alokacji w pętli odświeżania.
 
 ### Etap 3 — bezpieczna edycja konfiguracji
 
-1. Rozszerzyć wspólny protokół o wersjonowany payload konfiguracji.
-2. Dodać atomową walidację i zapis po stronie CYD.
-3. Dodać formularze HMI dla harmonogramów, profili i kalibracji.
-4. Udostępnić te same operacje Home Assistantowi bez duplikowania walidacji.
-5. Dodać testy konfliktów rewizji, przerwania zapisu i ponowienia MQTT.
+Status: **rdzeń ukończony programowo, kalibracja pozostaje funkcją serwisową**.
+
+1. Telemetria v2 przenosi harmonogramy, profile lamp i konfigurację termostatu,
+   zachowując odczyt telemetrii v1.
+2. CYD waliduje i zapisuje pojedynczy kompletny formularz atomowo, a HMI używa
+   optymistycznej kontroli rewizji.
+3. Panel ma formularze dla obu lamp, filtra, napowietrzania i termostatu.
+4. Te same akcje MQTT mogą być wywoływane przez Home Assistanta bez powielania
+   walidacji.
+5. Kodeki, wartości brzegowe, replay i idempotencja są objęte testami natywnymi.
+
+Kalibracja pH/EC celowo pozostaje w lokalnym trybie serwisowym CYD/BLE, ponieważ
+wymaga fizycznego dostępu do sond i roztworów referencyjnych. Nie powinna być
+udostępniana jako zwykła operacja zdalnego panelu.
 
 Kryterium zakończenia: HMI i HA edytują tę samą konfigurację, a konflikt lub
 nieprawidłowa wartość nigdy nie zmienia części danych.

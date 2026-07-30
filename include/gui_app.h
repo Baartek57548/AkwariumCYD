@@ -116,6 +116,13 @@ bool gui_app_runtime_ready(void);
 /** OTA health gate: validates hardware required by the active configuration. */
 bool gui_app_ota_health_ready(void);
 
+struct GuiScheduleSnapshot {
+    uint8_t mode;
+    uint8_t profile;
+    uint16_t start_minute;
+    uint16_t end_minute;
+};
+
 struct GuiBleSnapshot {
     uint8_t protocol_version;
     bool developer_mode;
@@ -125,6 +132,12 @@ struct GuiBleSnapshot {
     float temperature;
     bool temperature_valid;
     float target_temperature;
+    float temperature_hysteresis;
+    uint8_t heater_mode;
+    GuiScheduleSnapshot light_schedule;
+    GuiScheduleSnapshot plant_light_schedule;
+    GuiScheduleSnapshot filter_schedule;
+    GuiScheduleSnapshot aeration_schedule;
     float ph;
     bool ph_valid;
     float ec;

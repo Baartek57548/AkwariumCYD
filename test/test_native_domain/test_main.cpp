@@ -989,7 +989,8 @@ static void test_aquacyd_link_payload_codecs_preserve_signed_values() {
         static_cast<uint16_t>(
             aquacyd::link::TelemetryTemperatureValid |
             aquacyd::link::TelemetryPhValid |
-            aquacyd::link::TelemetryControllerSafe),
+            aquacyd::link::TelemetryControllerSafe |
+            aquacyd::link::TelemetryConfigurationValid),
         -1250,
         6987,
         1234567,
@@ -999,7 +1000,14 @@ static void test_aquacyd_link_payload_codecs_preserve_signed_values() {
         123456U,
         64000U,
         -71,
-        19U
+        19U,
+        25000,
+        500U,
+        0U,
+        {0U, 0U, 600U, 1320U},
+        {0U, 2U, 630U, 1200U},
+        {0U, 0U, 630U, 1230U},
+        {2U, 0U, 1200U, 600U}
     };
     uint8_t payload[aquacyd::link::kMaximumPayloadSize] = {};
     uint16_t payload_length = 0U;
@@ -1027,6 +1035,84 @@ static void test_aquacyd_link_payload_codecs_preserve_signed_values() {
     TEST_ASSERT_EQUAL_UINT32(
         telemetry.configuration_revision,
         decoded_telemetry.configuration_revision);
+    TEST_ASSERT_EQUAL_INT32(
+        25000, decoded_telemetry.target_temperature_milli_c);
+    TEST_ASSERT_EQUAL_UINT16(
+        500U, decoded_telemetry.temperature_hysteresis_milli_c);
+    TEST_ASSERT_EQUAL_UINT16(
+        600U,
+        decoded_telemetry.light_primary_schedule.start_minute);
+    TEST_ASSERT_EQUAL_UINT8(
+        2U, decoded_telemetry.light_secondary_schedule.profile);
+    TEST_ASSERT_EQUAL_UINT8(
+        2U, decoded_telemetry.aerator_schedule.mode);
+
+    int32_t packed_value = 0;
+    uint32_t packed_duration = 0U;
+    TEST_ASSERT_TRUE(aquacyd::link::pack_schedule_command(
+        0U,
+        3U,
+        1320U,
+        60U,
+        &packed_value,
+        &packed_duration));
+    aquacyd::link::SchedulePayload decoded_schedule = {};
+    TEST_ASSERT_TRUE(aquacyd::link::unpack_schedule_command(
+        packed_value, packed_duration, &decoded_schedule));
+    TEST_ASSERT_EQUAL_UINT8(3U, decoded_schedule.profile);
+    TEST_ASSERT_EQUAL_UINT16(1320U, decoded_schedule.start_minute);
+    TEST_ASSERT_EQUAL_UINT16(60U, decoded_schedule.end_minute);
+    TEST_ASSERT_FALSE(aquacyd::link::pack_schedule_command(
+        3U,
+        0U,
+        0U,
+        0U,
+        &packed_value,
+        &packed_duration));
+    TEST_ASSERT_FALSE(aquacyd::link::unpack_schedule_command(
+        -1, 0U, &decoded_schedule));
+
+    uint8_t decoded_heater_mode = 0U;
+    int32_t decoded_target = 0;
+    uint16_t decoded_hysteresis = 0U;
+    TEST_ASSERT_TRUE(aquacyd::link::pack_temperature_command(
+        1U,
+        24750,
+        600U,
+        &packed_value,
+        &packed_duration));
+    TEST_ASSERT_TRUE(aquacyd::link::unpack_temperature_command(
+        packed_value,
+        packed_duration,
+        &decoded_heater_mode,
+        &decoded_target,
+        &decoded_hysteresis));
+    TEST_ASSERT_EQUAL_UINT8(1U, decoded_heater_mode);
+    TEST_ASSERT_EQUAL_INT32(24750, decoded_target);
+    TEST_ASSERT_EQUAL_UINT16(600U, decoded_hysteresis);
+    TEST_ASSERT_FALSE(aquacyd::link::pack_temperature_command(
+        0U,
+        31000,
+        600U,
+        &packed_value,
+        &packed_duration));
+
+    uint8_t legacy_telemetry[39] = {};
+    legacy_telemetry[0] = 1U;
+    legacy_telemetry[1] =
+        static_cast<uint8_t>(
+            aquacyd::link::TelemetryConfigurationValid);
+    TelemetryPayload decoded_legacy = {};
+    TEST_ASSERT_EQUAL_UINT8(
+        static_cast<uint8_t>(DecodeStatus::Ok),
+        static_cast<uint8_t>(
+            aquacyd::link::decode_telemetry_payload(
+                legacy_telemetry,
+                sizeof(legacy_telemetry),
+                &decoded_legacy)));
+    TEST_ASSERT_FALSE(
+        (decoded_legacy.flags &
+         aquacyd::link::TelemetryConfigurationValid) != 0U);
 
     const CommandPayload command = {
         0x0102030405060708ULL,

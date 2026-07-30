@@ -170,49 +170,75 @@ bool parse_mac_address(const char *text, uint8_t *output) {
            (output[0] & 0x01U) == 0U;
 }
 
-bool configuration_is_valid() {
-    if (strlen(CONFIG_AQUACYD_WIFI_SSID) == 0U ||
-        strlen(CONFIG_AQUACYD_WIFI_PASSWORD) == 0U ||
-        strlen(CONFIG_AQUACYD_MQTT_BROKER_URI) == 0U ||
-        strlen(CONFIG_AQUACYD_MQTT_USERNAME) == 0U ||
-        strlen(CONFIG_AQUACYD_MQTT_PASSWORD) == 0U ||
-        strlen(CONFIG_AQUACYD_MQTT_BASE_TOPIC) == 0U ||
-        strlen(CONFIG_AQUACYD_DEVICE_ID) == 0U) {
+const char *runtime_configuration_text(const char *text) {
+    const char *volatile runtime_pointer = text;
+    return runtime_pointer;
+}
+
+__attribute__((noinline)) bool configuration_is_valid() {
+    const char *wifi_ssid =
+        runtime_configuration_text(CONFIG_AQUACYD_WIFI_SSID);
+    const char *wifi_password =
+        runtime_configuration_text(CONFIG_AQUACYD_WIFI_PASSWORD);
+    const char *mqtt_uri =
+        runtime_configuration_text(CONFIG_AQUACYD_MQTT_BROKER_URI);
+    const char *mqtt_username =
+        runtime_configuration_text(CONFIG_AQUACYD_MQTT_USERNAME);
+    const char *mqtt_password =
+        runtime_configuration_text(CONFIG_AQUACYD_MQTT_PASSWORD);
+    const char *mqtt_base =
+        runtime_configuration_text(CONFIG_AQUACYD_MQTT_BASE_TOPIC);
+    const char *device_id =
+        runtime_configuration_text(CONFIG_AQUACYD_DEVICE_ID);
+    const char *controller_mac_text =
+        runtime_configuration_text(CONFIG_AQUACYD_CONTROLLER_MAC);
+    const char *pmk_text =
+        runtime_configuration_text(CONFIG_AQUACYD_ESPNOW_PMK);
+    const char *lmk_text =
+        runtime_configuration_text(CONFIG_AQUACYD_ESPNOW_LMK);
+
+    if (strlen(wifi_ssid) == 0U ||
+        strlen(wifi_password) == 0U ||
+        strlen(mqtt_uri) == 0U ||
+        strlen(mqtt_username) == 0U ||
+        strlen(mqtt_password) == 0U ||
+        strlen(mqtt_base) == 0U ||
+        strlen(device_id) == 0U) {
         ESP_LOGE(
             kTag,
             "Wi-Fi, MQTT credentials and device settings must not be empty");
         return false;
     }
-    if (!parse_mac_address(CONFIG_AQUACYD_CONTROLLER_MAC, controller_mac)) {
+    if (!parse_mac_address(controller_mac_text, controller_mac)) {
         ESP_LOGE(kTag, "CONFIG_AQUACYD_CONTROLLER_MAC is invalid");
         return false;
     }
     if (!parse_hexadecimal(
-            CONFIG_AQUACYD_ESPNOW_PMK, espnow_pmk, sizeof(espnow_pmk)) ||
+            pmk_text, espnow_pmk, sizeof(espnow_pmk)) ||
         !parse_hexadecimal(
-            CONFIG_AQUACYD_ESPNOW_LMK, espnow_lmk, sizeof(espnow_lmk))) {
+            lmk_text, espnow_lmk, sizeof(espnow_lmk))) {
         ESP_LOGE(kTag, "ESP-NOW PMK and LMK must each contain 32 hex characters");
         return false;
     }
     if (!append_topic(
             state_topic,
             sizeof(state_topic),
-            CONFIG_AQUACYD_MQTT_BASE_TOPIC,
+            mqtt_base,
             "state") ||
         !append_topic(
             availability_topic,
             sizeof(availability_topic),
-            CONFIG_AQUACYD_MQTT_BASE_TOPIC,
+            mqtt_base,
             "availability") ||
         !append_topic(
             command_topic,
             sizeof(command_topic),
-            CONFIG_AQUACYD_MQTT_BASE_TOPIC,
+            mqtt_base,
             "command/set") ||
         !append_topic(
             acknowledgement_topic,
             sizeof(acknowledgement_topic),
-            CONFIG_AQUACYD_MQTT_BASE_TOPIC,
+            mqtt_base,
             "command/ack")) {
         ESP_LOGE(kTag, "MQTT base topic is too long");
         return false;
@@ -404,6 +430,22 @@ void publish_discovery() {
         "");
     publish_discovery_entity(
         "sensor",
+        "target_temperature",
+        "Temperatura docelowa",
+        "{{ value_json.target_temperature_c | default(none) }}",
+        "°C",
+        "temperature",
+        "measurement");
+    publish_discovery_entity(
+        "sensor",
+        "temperature_hysteresis",
+        "Histereza temperatury",
+        "{{ value_json.temperature_hysteresis_c | default(none) }}",
+        "°C",
+        "",
+        "measurement");
+    publish_discovery_entity(
+        "sensor",
         "alarms",
         "Flagi alarmów",
         "{{ value_json.alarm_flags }}",
@@ -433,6 +475,14 @@ void publish_discovery() {
         "{{ 'ON' if value_json.controller_safe else 'OFF' }}",
         "",
         "",
+        "");
+    publish_discovery_entity(
+        "binary_sensor",
+        "configuration_valid",
+        "Konfiguracja zdalna dostępna",
+        "{{ 'ON' if value_json.configuration_valid | default(false) else 'OFF' }}",
+        "",
+        "connectivity",
         "");
     publish_discovery_entity(
         "binary_sensor",
@@ -545,6 +595,48 @@ void publish_telemetry(const aquacyd::link::Frame &frame,
     cJSON_AddNumberToObject(root, "espnow_rssi_dbm", espnow_rssi);
     cJSON_AddNumberToObject(
         root, "configuration_revision", telemetry.configuration_revision);
+    const bool configuration_valid =
+        (flags & aquacyd::link::TelemetryConfigurationValid) != 0U;
+    cJSON_AddBoolToObject(
+        root, "configuration_valid", configuration_valid);
+    if (configuration_valid) {
+        cJSON_AddNumberToObject(
+            root,
+            "target_temperature_c",
+            static_cast<double>(
+                telemetry.target_temperature_milli_c) /
+                1000.0);
+        cJSON_AddNumberToObject(
+            root,
+            "temperature_hysteresis_c",
+            static_cast<double>(
+                telemetry.temperature_hysteresis_milli_c) /
+                1000.0);
+        cJSON_AddNumberToObject(
+            root, "heater_mode", telemetry.heater_mode);
+        const struct {
+            const char *prefix;
+            const aquacyd::link::SchedulePayload *schedule;
+        } schedules[] = {
+            {"light_primary", &telemetry.light_primary_schedule},
+            {"light_secondary", &telemetry.light_secondary_schedule},
+            {"filter", &telemetry.filter_schedule},
+            {"aerator", &telemetry.aerator_schedule}
+        };
+        for (const auto &entry : schedules) {
+            char key[48] = {};
+            snprintf(key, sizeof(key), "%s_mode", entry.prefix);
+            cJSON_AddNumberToObject(root, key, entry.schedule->mode);
+            snprintf(key, sizeof(key), "%s_profile", entry.prefix);
+            cJSON_AddNumberToObject(root, key, entry.schedule->profile);
+            snprintf(key, sizeof(key), "%s_start_minute", entry.prefix);
+            cJSON_AddNumberToObject(
+                root, key, entry.schedule->start_minute);
+            snprintf(key, sizeof(key), "%s_end_minute", entry.prefix);
+            cJSON_AddNumberToObject(
+                root, key, entry.schedule->end_minute);
+        }
+    }
     cJSON_AddNumberToObject(root, "sequence", frame.sequence);
     cJSON_AddBoolToObject(
         root,
@@ -786,7 +878,8 @@ bool parse_action(const char *text, aquacyd::link::CommandAction *output) {
         {"request_snapshot",
          aquacyd::link::CommandAction::RequestSnapshot},
         {"synchronize_time",
-         aquacyd::link::CommandAction::SynchronizeTime}
+         aquacyd::link::CommandAction::SynchronizeTime},
+        {"set_schedule", aquacyd::link::CommandAction::SetSchedule}
     };
     for (const Mapping &mapping : mappings) {
         if (strcmp(text, mapping.name) == 0) {
@@ -863,7 +956,7 @@ bool parse_mqtt_command(const MqttCommand &message,
             value_item, INT32_MIN, INT32_MAX, &numeric_value) &&
         (duration_item == nullptr ||
          json_integer_in_range(
-             duration_item, 0, 86400000, &duration)) &&
+             duration_item, 0, UINT32_MAX, &duration)) &&
         (revision_item == nullptr ||
          json_integer_in_range(
              revision_item, 0, UINT32_MAX, &revision));

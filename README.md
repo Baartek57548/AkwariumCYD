@@ -88,9 +88,11 @@ budowane w CI i lokalnie jednym poleceniem:
 .\tools\build-p4-c6.ps1 -IdfPath C:\esp\v5.4.4-full\esp-idf
 ```
 
-Panel pokazuje pomiary, alarmy, stany wyjść i diagnostykę, potwierdza każdą
-komendę oraz zapisuje jasność w NVS. Pakiet Home Assistanta zawiera dashboard,
-czasowe sterowanie, alarmy i przykład najmniejszych uprawnień MQTT.
+Panel pokazuje pomiary, alarmy, stany wyjść i diagnostykę, edytuje harmonogramy,
+profile obu lamp oraz ustawienia temperatury, potwierdza każdą komendę i
+zapisuje jasność w NVS. CYD pozostaje źródłem prawdy i atomowo zatwierdza
+konfigurację. Pakiet Home Assistanta zawiera dashboard, czasowe sterowanie,
+alarmy i przykład najmniejszych uprawnień MQTT.
 
 Pełny opis odpowiedzialności, sprzętu, protokołu, provisioningu i kolejności
 migracji znajduje się w
@@ -103,3 +105,8 @@ projektowania ekranów w Figma i implementowania ich jako natywny LVGL znajdują
 się w
 [docs/HMI_LVGL_FIGMA_WORKFLOW.md](docs/HMI_LVGL_FIGMA_WORKFLOW.md), a wspólne
 tokeny wizualne w `design/hmi/aquacyd-hmi.tokens.json`.
+
+Gotowy pakiet projektu zawiera 11 edytowalnych ramek Figma, manifest prototypu
+i specyfikację animacji w `design/hmi`. Docelową instalację lokalnego serwera
+na Raspberry Pi 5 4 GB opisuje
+[deployment/raspberry-pi5/README.md](deployment/raspberry-pi5/README.md).

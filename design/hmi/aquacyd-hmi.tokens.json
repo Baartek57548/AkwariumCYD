@@ -1,26 +1,26 @@
 {
   "meta": {
     "name": "AquaCYD ESP32-P4 HMI",
-    "version": "1.0.0",
+    "version": "2.0.0",
     "frameWidth": 1024,
     "frameHeight": 600,
     "baseGrid": 4
   },
   "color": {
     "background": {
-      "canvas": "#0B1020",
-      "surface": "#10182A",
-      "card": "#172033",
-      "elevated": "#1D2940"
+      "canvas": "#07101F",
+      "surface": "#0D192C",
+      "card": "#142238",
+      "elevated": "#1B2D48"
     },
     "border": {
-      "default": "#2A3B59",
+      "default": "#29405F",
       "focused": "#4D8DFF"
     },
     "text": {
-      "primary": "#F4F7FC",
-      "secondary": "#8FA7C7",
-      "disabled": "#5F708A",
+      "primary": "#F4F8FF",
+      "secondary": "#91A8C7",
+      "disabled": "#60748F",
       "inverse": "#08111F"
     },
     "accent": {
@@ -28,9 +28,9 @@
       "pressed": "#326FD6"
     },
     "feedback": {
-      "success": "#65D69B",
+      "success": "#5CDBA2",
       "warning": "#FFB45C",
-      "danger": "#FF6B6B",
+      "danger": "#FF6878",
       "info": "#68C5FF"
     }
   },
@@ -53,12 +53,13 @@
   },
   "size": {
     "touchMinimum": 48,
-    "headerHeight": 82,
-    "tabBarHeight": 56,
-    "controlButtonWidth": 280,
-    "controlButtonHeight": 64,
-    "metricCardWidth": 290,
-    "metricCardHeight": 150
+    "sidebarWidth": 184,
+    "headerHeight": 76,
+    "navigationButtonWidth": 160,
+    "navigationButtonHeight": 50,
+    "controlButtonHeight": 52,
+    "metricCardWidth": 256,
+    "metricCardHeight": 136
   },
   "font": {
     "family": "Montserrat",
@@ -70,8 +71,8 @@
   },
   "motion": {
     "fastMs": 120,
-    "normalMs": 200,
-    "slowMs": 320
+    "normalMs": 220,
+    "slowMs": 360
   },
   "opacity": {
     "disabled": 0.45,

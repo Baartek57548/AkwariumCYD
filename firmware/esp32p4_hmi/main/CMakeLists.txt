@@ -1,9 +1,11 @@
 idf_component_register(
     SRCS
         "app_main.cpp"
+        "hmi_ui.cpp"
     INCLUDE_DIRS
         "."
     REQUIRES
+        aquacyd_link
         esp_event
         esp_netif
         esp_system

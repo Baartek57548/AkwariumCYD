@@ -70,7 +70,8 @@ enum TelemetryFlags : uint16_t {
     TelemetryLdrValid = 1U << 3U,
     TelemetryWaterLevelLow = 1U << 4U,
     TelemetryLeakDetected = 1U << 5U,
-    TelemetryControllerSafe = 1U << 6U
+    TelemetryControllerSafe = 1U << 6U,
+    TelemetryConfigurationValid = 1U << 7U
 };
 
 enum RelayStateFlags : uint16_t {
@@ -79,6 +80,13 @@ enum RelayStateFlags : uint16_t {
     RelayFilterOn = 1U << 2U,
     RelayAeratorOn = 1U << 3U,
     RelayHeaterOn = 1U << 4U
+};
+
+struct SchedulePayload {
+    uint8_t mode;
+    uint8_t profile;
+    uint16_t start_minute;
+    uint16_t end_minute;
 };
 
 struct TelemetryPayload {
@@ -93,6 +101,13 @@ struct TelemetryPayload {
     uint32_t free_heap_bytes;
     int16_t wifi_rssi_dbm;
     uint32_t configuration_revision;
+    int32_t target_temperature_milli_c;
+    uint16_t temperature_hysteresis_milli_c;
+    uint8_t heater_mode;
+    SchedulePayload light_primary_schedule;
+    SchedulePayload light_secondary_schedule;
+    SchedulePayload filter_schedule;
+    SchedulePayload aerator_schedule;
 };
 
 enum class CommandAction : uint8_t {
@@ -102,7 +117,8 @@ enum class CommandAction : uint8_t {
     TriggerFeed = 4U,
     AcknowledgeAlarm = 5U,
     RequestSnapshot = 6U,
-    SynchronizeTime = 7U
+    SynchronizeTime = 7U,
+    SetSchedule = 8U
 };
 
 enum class CommandTarget : uint8_t {
@@ -185,6 +201,41 @@ DecodeStatus encode_command_payload(const CommandPayload &payload,
 DecodeStatus decode_command_payload(const uint8_t *data,
                                     size_t length,
                                     CommandPayload *output);
+
+/**
+ * Packs one complete schedule into the fixed command fields. Modes 0..2,
+ * profiles 0..3 (automatic cycle, day, daybreak, night) and minutes 0..1439
+ * are accepted. Non-light consumers ignore profile but it must be in range.
+ */
+bool pack_schedule_command(uint8_t mode,
+                           uint8_t profile,
+                           uint16_t start_minute,
+                           uint16_t end_minute,
+                           int32_t *value,
+                           uint32_t *duration);
+
+/** Validates and unpacks a schedule encoded by pack_schedule_command(). */
+bool unpack_schedule_command(int32_t value,
+                             uint32_t duration,
+                             SchedulePayload *output);
+
+/**
+ * Packs the complete thermostat setting. Heater mode 0 means threshold
+ * regulation and 1 means off. Target is 18..30 °C in milli-degrees and
+ * hysteresis is 0.1..5 °C in milli-degrees.
+ */
+bool pack_temperature_command(uint8_t heater_mode,
+                              int32_t target_milli_c,
+                              uint16_t hysteresis_milli_c,
+                              int32_t *value,
+                              uint32_t *duration);
+
+/** Validates and unpacks a thermostat command. */
+bool unpack_temperature_command(int32_t value,
+                                uint32_t duration,
+                                uint8_t *heater_mode,
+                                int32_t *target_milli_c,
+                                uint16_t *hysteresis_milli_c);
 
 DecodeStatus encode_acknowledgement_payload(
     const AcknowledgementPayload &payload,

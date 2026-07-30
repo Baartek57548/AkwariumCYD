@@ -50,7 +50,7 @@ script:
         selector:
           number:
             min: 0
-            max: 86400000
+            max: 4294967295
             mode: box
     variables:
       command_id: >-
@@ -204,6 +204,143 @@ script:
           command_target: controller
           command_value: 0
           command_duration_ms: 0
+
+  aquacyd_save_schedule:
+    alias: AquaCYD - zapisz harmonogram CYD
+    description: >-
+      Zapisuje jeden kompletny harmonogram. Walidacja i atomowy zapis są
+      wykonywane przez sterownik CYD.
+    icon: mdi:calendar-clock
+    mode: single
+    fields:
+      schedule_target:
+        name: Urządzenie
+        required: true
+        selector:
+          select:
+            options:
+              - label: Światło główne
+                value: light_primary
+              - label: Światło roślinne
+                value: light_secondary
+              - label: Filtr
+                value: filter
+              - label: Napowietrzanie
+                value: aerator
+      schedule_mode:
+        name: Tryb
+        required: true
+        selector:
+          select:
+            options:
+              - label: Harmonogram
+                value: schedule
+              - label: Zawsze włączone
+                value: always_on
+              - label: Zawsze wyłączone
+                value: always_off
+      schedule_profile:
+        name: Profil lampy
+        description: Dla filtra i napowietrzania wartość jest ignorowana.
+        required: true
+        default: auto
+        selector:
+          select:
+            options:
+              - label: Cykl automatyczny
+                value: auto
+              - label: Day
+                value: day
+              - label: Daybreak
+                value: daybreak
+              - label: Night
+                value: night
+      schedule_start:
+        name: Początek
+        required: true
+        selector:
+          time: {}
+      schedule_end:
+        name: Koniec
+        required: true
+        selector:
+          time: {}
+    variables:
+      encoded_mode: >-
+        {% if schedule_mode == "always_on" %}1
+        {% elif schedule_mode == "always_off" %}2
+        {% else %}0{% endif %}
+      encoded_profile: >-
+        {% if schedule_profile == "day" %}1
+        {% elif schedule_profile == "daybreak" %}2
+        {% elif schedule_profile == "night" %}3
+        {% else %}0{% endif %}
+      start_parts: "{{ schedule_start.split(':') }}"
+      end_parts: "{{ schedule_end.split(':') }}"
+      start_minute: >-
+        {{ (start_parts[0] | int) * 60 + (start_parts[1] | int) }}
+      end_minute: >-
+        {{ (end_parts[0] | int) * 60 + (end_parts[1] | int) }}
+    sequence:
+      - action: script.aquacyd_publish_command
+        data:
+          command_action: set_schedule
+          command_target: "{{ schedule_target }}"
+          command_value: >-
+            {{ (encoded_mode | int) + (encoded_profile | int) * 256 }}
+          command_duration_ms: >-
+            {{ (start_minute | int) + (end_minute | int) * 65536 }}
+
+  aquacyd_save_thermostat:
+    alias: AquaCYD - zapisz termostat CYD
+    description: >-
+      Zapisuje tryb, temperaturę docelową i histerezę po walidacji w CYD.
+    icon: mdi:thermostat-cog
+    mode: single
+    fields:
+      heater_mode:
+        name: Tryb grzałki
+        required: true
+        selector:
+          select:
+            options:
+              - label: Regulacja progowa
+                value: threshold
+              - label: Wyłączona
+                value: "off"
+      target_temperature:
+        name: Temperatura docelowa
+        required: true
+        selector:
+          number:
+            min: 18
+            max: 30
+            step: 0.1
+            unit_of_measurement: °C
+            mode: box
+      temperature_hysteresis:
+        name: Histereza
+        required: true
+        selector:
+          number:
+            min: 0.1
+            max: 5
+            step: 0.1
+            unit_of_measurement: °C
+            mode: box
+    variables:
+      encoded_heater_mode: >-
+        {{ 2147483648 if heater_mode == "off" else 0 }}
+    sequence:
+      - action: script.aquacyd_publish_command
+        data:
+          command_action: set_setpoint
+          command_target: heater
+          command_value: >-
+            {{ (target_temperature | float * 1000) | round(0) | int }}
+          command_duration_ms: >-
+            {{ (encoded_heater_mode | int) +
+               ((temperature_hysteresis | float * 1000) | round(0) | int) }}
 
 automation:
   - id: aquacyd_controller_availability
