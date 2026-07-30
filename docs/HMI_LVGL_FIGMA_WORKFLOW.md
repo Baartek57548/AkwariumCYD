@@ -123,7 +123,8 @@ Każda akcja ma stany `Ready`, `Confirm`, `Pending`, `Accepted`, `Rejected`,
 - podsumowanie zmian przed zapisem;
 - obsługa konfliktu rewizji.
 
-Ekran zostanie włączony dopiero po wdrożeniu atomowego protokołu konfiguracji.
+Ekran korzysta z wdrożonego atomowego protokołu konfiguracji i kontroli
+oczekiwanej rewizji.
 
 ### 7. System
 
@@ -222,6 +223,7 @@ Jeżeli integracja nie jest podłączona, można nadal projektować i implemento
 ekrany przez:
 
 - tokeny JSON w `design/hmi`;
+- kompaktowe tokeny i ramki sterownika w `design/cyd-hmi`;
 - SVG importowane do Figma;
 - zrzuty referencyjne;
 - specyfikacje wymiarów i stanów w repozytorium.

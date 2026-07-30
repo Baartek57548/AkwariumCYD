@@ -106,7 +106,10 @@ się w
 [docs/HMI_LVGL_FIGMA_WORKFLOW.md](docs/HMI_LVGL_FIGMA_WORKFLOW.md), a wspólne
 tokeny wizualne w `design/hmi/aquacyd-hmi.tokens.json`.
 
-Gotowy pakiet projektu zawiera 11 edytowalnych ramek Figma, manifest prototypu
-i specyfikację animacji w `design/hmi`. Docelową instalację lokalnego serwera
-na Raspberry Pi 5 4 GB opisuje
+Gotowy pakiet dużego panelu zawiera 13 edytowalnych ramek Figma, manifest
+prototypu i specyfikację animacji w `design/hmi`. Mały ekran sterownika CYD
+korzysta z tego samego języka wizualnego; jego pięć bieżących stron i wariant
+alarmowy są odwzorowane w sześciu ramkach 320×240 w
+[`design/cyd-hmi`](design/cyd-hmi/README.md). Docelową instalację lokalnego
+serwera na Raspberry Pi 5 4 GB opisuje
 [deployment/raspberry-pi5/README.md](deployment/raspberry-pi5/README.md).

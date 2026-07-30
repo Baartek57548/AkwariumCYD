@@ -72,6 +72,11 @@ Ma pozostać prosty i niezależny:
 Nie należy rozbudowywać małego ekranu o wielopoziomowe formularze, historię i
 dużą liczbę wykresów.
 
+Interfejs CYD korzysta z kompaktowej odmiany systemu wizualnego P4: wspólnej
+palety, płaskich kart, statusów w formie chipów oraz pięciu stałych pozycji
+nawigacji. Sześć edytowalnych ramek 320×240 w `design/cyd-hmi` odwzorowuje
+strony Start, Plan, Moduły, Wykres, System i wariant alarmowy.
+
 ### Panel ESP32-P4
 
 Jest głównym lokalnym interfejsem:

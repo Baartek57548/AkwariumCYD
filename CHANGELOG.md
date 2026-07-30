@@ -14,6 +14,9 @@
   tokeny i specyfikacja animacji.
 - Plan instalacji Home Assistant OS na Raspberry Pi 5 4 GB, lokalny Mosquitto,
   ACL, dashboard oraz skrypty HA używające tego samego kontraktu konfiguracji.
+- Odświeżony interfejs 320×240 na ESP32-CYD: wspólna paleta z P4, płaskie karty,
+  czytelne statusy urządzeń, alarm w pasku kondycji oraz sześć edytowalnych
+  ramek SVG przedstawiających wszystkie główne strony i stan alarmowy.
 
 ### Verification
 
