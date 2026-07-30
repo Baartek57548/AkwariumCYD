@@ -1,5 +1,11 @@
 # cydAquarium
 
+Repozytorium zawiera dwie aplikacje Flutter: `mobile_app` komunikuje się
+bezpośrednio ze sterownikiem CYD, a nowa `home_assistant_app` jest lekkim,
+responsywnym klientem REST/WebSocket Home Assistanta. Architektura drugiej
+aplikacji i procedura wdrożenia są opisane w
+[docs/HOME_ASSISTANT_FLUTTER_APP.md](docs/HOME_ASSISTANT_FLUTTER_APP.md).
+
 Sterownik akwarium dla ESP32 CYD z interfejsem LVGL, panelem WWW, BLE,
 obsługą OTA i aplikacją Flutter.
 

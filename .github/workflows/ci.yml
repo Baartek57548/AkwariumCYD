@@ -306,6 +306,13 @@ jobs:
       - name: Run Flutter tests
         working-directory: mobile_app
         run: flutter test --coverage
+      - name: Validate AquaCYD Home application
+        working-directory: home_assistant_app
+        run: |
+          flutter pub get
+          flutter analyze
+          flutter test --coverage
+          flutter build web --release
       - name: Run Android unit tests
         working-directory: mobile_app/android
         run: ./gradlew testCurrentDebugUnitTest --no-daemon --console=plain
@@ -377,6 +384,7 @@ jobs:
           path: |
             mobile_app/coverage/lcov.info
             mobile_app/build/reports/tests/
+            home_assistant_app/coverage/lcov.info
           if-no-files-found: warn
           retention-days: 14
       - name: Upload unsigned validation APK

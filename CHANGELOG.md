@@ -4,6 +4,14 @@
 
 ### What is included
 
+- Druga, niezależna aplikacja Flutter `AquaCYD Home` dla Androida, iOS i web,
+  łącząca się z REST/WebSocket Home Assistanta, z sześcioma responsywnymi
+  ekranami, historią, alarmami, sterowaniem i edycją automatyki.
+- Bezpieczny magazyn tokenu, walidacja lokalnego HTTP, automatyczny reconnect
+  WebSocket oraz diagnostyka brakujących encji MQTT Discovery.
+- Bramka ESP32-C6 publikuje dodatkowo tryb grzałki i szesnaście pól czterech
+  harmonogramów potrzebnych aplikacji i panelom operatorskim.
+
 - Profesjonalny, natywny panel LVGL 9 dla Waveshare 7B z sześcioma ekranami,
   animowanym startem, stanami offline/stale, alarmami, modalami i pełnym ACK.
 - Edycja harmonogramów obu lamp, filtra i napowietrzania, profili Aquael oraz

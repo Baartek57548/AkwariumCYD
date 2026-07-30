@@ -446,6 +446,81 @@ void publish_discovery() {
         "measurement");
     publish_discovery_entity(
         "sensor",
+        "heater_mode",
+        "Tryb grzałki",
+        "{{ value_json.heater_mode | default(none) }}",
+        "",
+        "",
+        "");
+    const struct {
+        const char *target;
+        const char *name;
+    } schedule_targets[] = {
+        {"light_primary", "Światło główne"},
+        {"light_secondary", "Światło roślinne"},
+        {"filter", "Filtr"},
+        {"aerator", "Napowietrzanie"}
+    };
+    const struct {
+        const char *entity_suffix;
+        const char *json_suffix;
+        const char *label;
+        const char *unit;
+    } schedule_fields[] = {
+        {"mode", "mode", "tryb", ""},
+        {"profile", "profile", "profil", ""},
+        {"start", "start_minute", "początek", "min"},
+        {"end", "end_minute", "koniec", "min"}
+    };
+    for (const auto &target : schedule_targets) {
+        for (const auto &field : schedule_fields) {
+            char object_suffix[80] = {};
+            char display_name[96] = {};
+            char value_template[128] = {};
+            const int suffix_length = snprintf(
+                object_suffix,
+                sizeof(object_suffix),
+                "%s_schedule_%s",
+                target.target,
+                field.entity_suffix);
+            const int name_length = snprintf(
+                display_name,
+                sizeof(display_name),
+                "%s harmonogram %s",
+                target.name,
+                field.label);
+            const int template_length = snprintf(
+                value_template,
+                sizeof(value_template),
+                "{{ value_json.%s_%s | default(none) }}",
+                target.target,
+                field.json_suffix);
+            if (suffix_length <= 0 ||
+                static_cast<size_t>(suffix_length) >= sizeof(object_suffix) ||
+                name_length <= 0 ||
+                static_cast<size_t>(name_length) >= sizeof(display_name) ||
+                template_length <= 0 ||
+                static_cast<size_t>(template_length) >=
+                    sizeof(value_template)) {
+                ESP_LOGE(
+                    kTag,
+                    "Schedule discovery metadata is too long for %s/%s",
+                    target.target,
+                    field.entity_suffix);
+                continue;
+            }
+            publish_discovery_entity(
+                "sensor",
+                object_suffix,
+                display_name,
+                value_template,
+                field.unit,
+                "",
+                "");
+        }
+    }
+    publish_discovery_entity(
+        "sensor",
         "alarms",
         "Flagi alarmów",
         "{{ value_json.alarm_flags }}",
