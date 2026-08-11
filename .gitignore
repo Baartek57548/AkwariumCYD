@@ -18,3 +18,4 @@ firmware/**/build/
 firmware/**/managed_components/
 firmware/**/sdkconfig
 firmware/**/sdkconfig.old
+firmware/esp32c6_gateway/main/aquahub.pem

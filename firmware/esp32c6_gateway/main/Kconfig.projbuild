@@ -10,7 +10,14 @@ config AQUACYD_WIFI_PASSWORD
 
 config AQUACYD_MQTT_BROKER_URI
     string "MQTT broker URI"
-    default "mqtt://homeassistant.local:1883"
+    default "mqtts://aquahub.local:8883"
+
+config AQUACYD_MQTT_EMBED_HUB_CERTIFICATE
+    bool "Embed the verified AquaHub TLS certificate"
+    default n
+    help
+        Requires main/aquahub.pem generated with tools/pin-aquahub-certificate.ps1.
+        The gateway refuses mqtts:// connections when this option is disabled.
 
 config AQUACYD_MQTT_USERNAME
     string "MQTT username"

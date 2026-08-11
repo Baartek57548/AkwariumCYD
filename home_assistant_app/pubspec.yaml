@@ -1,5 +1,5 @@
 name: aquacyd_home
-description: AquaCYD Home — niezależny klient Home Assistant dla akwarium.
+description: AquaHub — uniwersalny klient centrum urządzeń ESP32-P4.
 publish_to: 'none'
 version: 1.0.0+1
 
@@ -7,6 +7,7 @@ environment:
   sdk: ^3.11.3
 
 dependencies:
+  crypto: ^3.0.6
   cupertino_icons: ^1.0.8
   flutter:
     sdk: flutter

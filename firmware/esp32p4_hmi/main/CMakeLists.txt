@@ -1,17 +1,27 @@
 idf_component_register(
     SRCS
         "app_main.cpp"
+        "aquahub_api.cpp"
+        "aquahub_broker.cpp"
+        "aquahub_identity.cpp"
+        "aquahub_service.cpp"
         "hmi_ui.cpp"
     INCLUDE_DIRS
         "."
     REQUIRES
         aquacyd_link
+        aquahub_core
         esp_event
+        esp_https_server
         esp_netif
         esp_system
         esp_timer
+        esp-tls
         esp_wifi
         json
+        mbedtls
+        mdns
+        mosquitto
         mqtt
         nvs_flash
 )

@@ -1,0 +1,9 @@
+{
+  "name": "AquaHub Core",
+  "version": "1.0.0",
+  "description": "Bounded device registry, state model and automation engine shared by AquaHub targets",
+  "build": {
+    "includeDir": "include",
+    "srcDir": "src"
+  }
+}

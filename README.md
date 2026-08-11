@@ -1,10 +1,10 @@
 # cydAquarium
 
-Repozytorium zawiera dwie aplikacje Flutter: `mobile_app` komunikuje się
-bezpośrednio ze sterownikiem CYD, a nowa `home_assistant_app` jest lekkim,
-responsywnym klientem REST/WebSocket Home Assistanta. Architektura drugiej
-aplikacji i procedura wdrożenia są opisane w
-[docs/HOME_ASSISTANT_FLUTTER_APP.md](docs/HOME_ASSISTANT_FLUTTER_APP.md).
+Repozytorium zawiera autonomiczny sterownik CYD oraz nowe centrum **AquaHub**.
+`mobile_app` pozostaje aplikacją serwisową łączącą się bezpośrednio z CYD, a
+`home_assistant_app` jest teraz uniwersalnym klientem HTTPS własnego centrum na
+ESP32-P4. Poprzedni klient oficjalnego Home Assistanta pozostaje w kodzie jako
+warstwa zgodności, ale nie jest wymagany do działania systemu.
 
 Sterownik akwarium dla ESP32 CYD z interfejsem LVGL, panelem WWW, BLE,
 obsługą OTA i aplikacją Flutter.
@@ -81,13 +81,12 @@ względem wbudowanego trust anchora. Sprzętowe Secure Boot v2 i Flash Encryptio
 wymagają dodatkowo kontrolowanego provisioningu każdej płytki; żaden workflow
 ani skrypt w repozytorium nie przepala eFuse automatycznie.
 
-## Panel ESP32-P4, bramka ESP32-C6 i Home Assistant
+## AquaHub ESP32-P4, bramka ESP32-C6 i opcjonalny Home Assistant
 
-Nowa, opcjonalna architektura zachowuje CYD jako autonomiczny sterownik, a
-duży panel Waveshare ESP32-P4 7" traktuje jako odpinany klient LVGL/MQTT.
-Nieruchomy ESP32-C6 przekazuje szyfrowany ESP-NOW do MQTT, więc wyłączenie
-panelu nie odcina Home Assistanta. Projekty znajdują się w
-`firmware/esp32p4_hmi`, `firmware/esp32c6_gateway` i `home_assistant`.
+Architektura zachowuje CYD jako autonomiczny sterownik, a duży panel Waveshare
+ESP32-P4 7" staje się własnym centrum urządzeń z LVGL, brokerem MQTTS i HTTPS
+API. Nieruchomy ESP32-C6 przekazuje szyfrowany ESP-NOW do AquaHub. Oficjalny
+Home Assistant można podłączyć opcjonalnie dzięki zgodnemu MQTT Discovery.
 Oba firmware’y są przypięte plikami `dependencies.lock` do ESP-IDF 5.4.4,
 budowane w CI i lokalnie jednym poleceniem:
 
@@ -95,15 +94,13 @@ budowane w CI i lokalnie jednym poleceniem:
 .\tools\build-p4-c6.ps1 -IdfPath C:\esp\v5.4.4-full\esp-idf
 ```
 
-Panel pokazuje pomiary, alarmy, stany wyjść i diagnostykę, edytuje harmonogramy,
-profile obu lamp oraz ustawienia temperatury, potwierdza każdą komendę i
-zapisuje jasność w NVS. CYD pozostaje źródłem prawdy i atomowo zatwierdza
-konfigurację. Pakiet Home Assistanta zawiera dashboard, czasowe sterowanie,
-alarmy i przykład najmniejszych uprawnień MQTT.
+Panel rejestruje uniwersalne urządzenia i encje, przechowuje krótką historię,
+pokazuje pomiary, alarmy i diagnostykę oraz wystawia bezpieczne API aplikacji.
+CYD pozostaje źródłem prawdy i atomowo zatwierdza konfigurację.
 
-Pełny opis odpowiedzialności, sprzętu, protokołu, provisioningu i kolejności
-migracji znajduje się w
-[docs/ESP32_P4_C6_HOME_ASSISTANT_ARCHITECTURE.md](docs/ESP32_P4_C6_HOME_ASSISTANT_ARCHITECTURE.md).
+Aktualnym źródłem prawdy dla odpowiedzialności, protokołu, parowania,
+bezpieczeństwa i etapów sprzętowych jest
+[docs/AQUAHUB_ARCHITECTURE.md](docs/AQUAHUB_ARCHITECTURE.md).
 
 Kierunek produktu, granice odpowiedzialności oraz etapy dojścia od działającego
 MVP do instalacji produkcyjnej opisuje

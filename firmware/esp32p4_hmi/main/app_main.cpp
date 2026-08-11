@@ -8,6 +8,10 @@
 
 #include "bsp/display.h"
 #include "bsp/esp-bsp.h"
+#include "aquahub_api.h"
+#include "aquahub_broker.h"
+#include "aquahub_identity.h"
+#include "aquahub_service.h"
 #include "cJSON.h"
 #include "esp_event.h"
 #include "esp_log.h"
@@ -22,6 +26,7 @@
 #include "hmi_ui.h"
 #include "lvgl.h"
 #include "mqtt_client.h"
+#include "mdns.h"
 #include "nvs.h"
 #include "nvs_flash.h"
 
@@ -39,6 +44,8 @@ constexpr uint8_t kDefaultBrightness = 80U;
 constexpr uint8_t kMinimumBrightness = 10U;
 constexpr EventBits_t kWifiConnectedBit = 1U << 0U;
 constexpr EventBits_t kMqttConnectedBit = 1U << 1U;
+constexpr char kAquaHubHostname[] = "aquahub";
+constexpr char kAquaHubInstanceName[] = "AquaHub Aquarium Controller";
 
 struct OutgoingCommand {
     size_t length;
@@ -58,6 +65,8 @@ QueueHandle_t snapshot_queue = nullptr;
 QueueHandle_t outgoing_command_queue = nullptr;
 QueueHandle_t feedback_queue = nullptr;
 esp_mqtt_client_handle_t mqtt_client = nullptr;
+bool network_services_started = false;
+char local_broker_uri[48] = {};
 
 char state_topic[kTopicBytes] = {};
 char availability_topic[kTopicBytes] = {};
@@ -70,6 +79,7 @@ HmiSnapshot latest_snapshot = {};
 
 uint64_t pending_command_id = 0U;
 uint32_t pending_command_started_ms = 0U;
+uint32_t last_hub_summary_ui_ms = 0U;
 uint8_t display_brightness = kDefaultBrightness;
 
 uint32_t monotonic_ms() {
@@ -133,13 +143,19 @@ bool append_topic(char *destination,
 }
 
 bool initialize_topics() {
+    const size_t username_length =
+        strnlen(CONFIG_AQUACYD_HMI_MQTT_USERNAME, 65U);
+    const size_t password_length =
+        strnlen(CONFIG_AQUACYD_HMI_MQTT_PASSWORD, 65U);
     if (strlen(CONFIG_AQUACYD_HMI_WIFI_SSID) == 0U ||
-        strlen(CONFIG_AQUACYD_HMI_WIFI_PASSWORD) == 0U ||
+#if !CONFIG_AQUAHUB_LOCAL_BROKER
         strlen(CONFIG_AQUACYD_HMI_MQTT_BROKER_URI) == 0U ||
-        strlen(CONFIG_AQUACYD_HMI_MQTT_USERNAME) == 0U ||
-        strlen(CONFIG_AQUACYD_HMI_MQTT_PASSWORD) == 0U ||
+#endif
+        username_length < 4U || username_length >= 65U ||
+        password_length < 12U || password_length >= 65U ||
         strlen(CONFIG_AQUACYD_HMI_MQTT_BASE_TOPIC) == 0U) {
-        ESP_LOGE(kTag, "Wi-Fi and MQTT credentials must not be empty");
+        ESP_LOGE(kTag,
+                 "Wi-Fi SSID, MQTT topic and valid MQTT credentials are required");
         return false;
     }
     return append_topic(
@@ -658,6 +674,35 @@ void professional_ui_timer_callback(lv_timer_t *) {
         (bits & kWifiConnectedBit) != 0U,
         (bits & kMqttConnectedBit) != 0U,
         controller_online);
+    if (last_hub_summary_ui_ms == 0U ||
+        static_cast<uint32_t>(now - last_hub_summary_ui_ms) >= 1000U) {
+        last_hub_summary_ui_ms = now;
+        const AquaHubSummary service_summary = aquahub_service_summary();
+        HmiHubSummary ui_summary = {};
+        ui_summary.device_count = service_summary.device_count;
+        ui_summary.online_device_count = service_summary.online_device_count;
+        ui_summary.entity_count = service_summary.entity_count;
+        ui_summary.writable_entity_count =
+            service_summary.writable_entity_count;
+        ui_summary.api_port = CONFIG_AQUAHUB_API_PORT;
+#if CONFIG_AQUAHUB_LOCAL_BROKER
+        ui_summary.broker_port = CONFIG_AQUAHUB_MQTT_BROKER_PORT;
+        ui_summary.broker_running = aquahub_broker_running();
+#else
+        ui_summary.broker_port = 0U;
+        ui_summary.broker_running = true;
+#endif
+        ui_summary.api_running = aquahub_api_running();
+        ui_summary.pairing_code = aquahub_identity_pairing_code();
+        ui_summary.pairing_seconds_remaining =
+            aquahub_identity_pairing_seconds_remaining();
+        ui_summary.free_heap_bytes =
+            static_cast<uint32_t>(esp_get_free_heap_size());
+        strlcpy(ui_summary.tls_fingerprint,
+                aquahub_identity_fingerprint(),
+                sizeof(ui_summary.tls_fingerprint));
+        hmi_ui_apply_hub_summary(ui_summary);
+    }
     hmi_ui_tick(
         now, static_cast<uint32_t>(esp_get_free_heap_size()));
 }
@@ -714,6 +759,9 @@ void mqtt_event_handler(void *,
         esp_mqtt_client_subscribe(mqtt_client, state_topic, 1);
         esp_mqtt_client_subscribe(mqtt_client, availability_topic, 1);
         esp_mqtt_client_subscribe(mqtt_client, acknowledgement_topic, 1);
+#if !CONFIG_AQUAHUB_LOCAL_BROKER
+        esp_mqtt_client_subscribe(mqtt_client, "#", 1);
+#endif
         esp_mqtt_client_publish(
             mqtt_client,
             hmi_availability_topic,
@@ -748,9 +796,42 @@ void mqtt_event_handler(void *,
             parse_acknowledgement_message(
                 event->data, static_cast<size_t>(event->data_len));
         }
+#if !CONFIG_AQUAHUB_LOCAL_BROKER
+        char topic_buffer[kTopicBytes] = {};
+        if (event->topic_len > 0 &&
+            static_cast<size_t>(event->topic_len) < sizeof(topic_buffer)) {
+            memcpy(topic_buffer,
+                   event->topic,
+                   static_cast<size_t>(event->topic_len));
+            aquahub_service_handle_mqtt(
+                "aquahub-external",
+                topic_buffer,
+                event->data,
+                static_cast<size_t>(event->data_len),
+                event->qos,
+                event->retain,
+                static_cast<uint64_t>(esp_timer_get_time()) / 1000ULL);
+        }
+#endif
     } else if (event_id == MQTT_EVENT_ERROR) {
         ESP_LOGE(kTag, "MQTT transport error");
     }
+}
+
+bool publish_aquahub_command(const char *topic,
+                             const char *payload,
+                             int qos,
+                             bool retained,
+                             void *) {
+    if (mqtt_client == nullptr || topic == nullptr || payload == nullptr) {
+        return false;
+    }
+    return esp_mqtt_client_publish(mqtt_client,
+                                   topic,
+                                   payload,
+                                   0,
+                                   qos,
+                                   retained ? 1 : 0) >= 0;
 }
 
 void start_mqtt() {
@@ -758,12 +839,37 @@ void start_mqtt() {
         return;
     }
     esp_mqtt_client_config_t configuration = {};
+#if CONFIG_AQUAHUB_LOCAL_BROKER
+    const int uri_length = snprintf(local_broker_uri,
+                                    sizeof(local_broker_uri),
+                                    "mqtts://127.0.0.1:%d",
+                                    CONFIG_AQUAHUB_MQTT_BROKER_PORT);
+    if (uri_length <= 0 ||
+        static_cast<size_t>(uri_length) >= sizeof(local_broker_uri)) {
+        ESP_LOGE(kTag, "Local broker URI is invalid");
+        return;
+    }
+    size_t certificate_length = 0U;
+    const uint8_t *certificate =
+        aquahub_identity_certificate(&certificate_length);
+    if (certificate == nullptr || certificate_length == 0U) {
+        ESP_LOGE(kTag, "AquaHub TLS certificate is unavailable");
+        return;
+    }
+    configuration.broker.address.uri = local_broker_uri;
+    configuration.broker.verification.certificate =
+        reinterpret_cast<const char *>(certificate);
+    configuration.broker.verification.certificate_len = certificate_length;
+    configuration.broker.verification.common_name = "aquahub.local";
+#else
     configuration.broker.address.uri =
         CONFIG_AQUACYD_HMI_MQTT_BROKER_URI;
+#endif
     configuration.credentials.username =
         CONFIG_AQUACYD_HMI_MQTT_USERNAME;
     configuration.credentials.authentication.password =
         CONFIG_AQUACYD_HMI_MQTT_PASSWORD;
+    configuration.credentials.client_id = "aquahub-p4-core";
     configuration.session.last_will.topic = hmi_availability_topic;
     configuration.session.last_will.msg = "offline";
     configuration.session.last_will.qos = 1;
@@ -782,6 +888,55 @@ void start_mqtt() {
     ESP_ERROR_CHECK(esp_mqtt_client_start(mqtt_client));
 }
 
+void start_mdns() {
+    const esp_err_t init_result = mdns_init();
+    if (init_result != ESP_OK && init_result != ESP_ERR_INVALID_STATE) {
+        ESP_LOGE(kTag, "mDNS initialization failed: %s",
+                 esp_err_to_name(init_result));
+        return;
+    }
+    ESP_ERROR_CHECK(mdns_hostname_set(kAquaHubHostname));
+    ESP_ERROR_CHECK(mdns_instance_name_set(kAquaHubInstanceName));
+    ESP_ERROR_CHECK(mdns_service_add(kAquaHubInstanceName,
+                                     "_aquahub",
+                                     "_tcp",
+                                     CONFIG_AQUAHUB_API_PORT,
+                                     nullptr,
+                                     0U));
+#if CONFIG_AQUAHUB_LOCAL_BROKER
+    ESP_ERROR_CHECK(mdns_service_add("AquaHub secure MQTT",
+                                     "_mqtts",
+                                     "_tcp",
+                                     CONFIG_AQUAHUB_MQTT_BROKER_PORT,
+                                     nullptr,
+                                     0U));
+#endif
+}
+
+void start_network_services() {
+    if (network_services_started) {
+        return;
+    }
+    start_mdns();
+#if CONFIG_AQUAHUB_LOCAL_BROKER
+    if (!aquahub_broker_start(CONFIG_AQUACYD_HMI_MQTT_USERNAME,
+                              CONFIG_AQUACYD_HMI_MQTT_PASSWORD,
+                              CONFIG_AQUAHUB_MQTT_BROKER_PORT)) {
+        ESP_LOGE(kTag, "Unable to start local MQTTS broker");
+        return;
+    }
+#endif
+    if (!aquahub_api_start(publish_aquahub_command, nullptr)) {
+        ESP_LOGE(kTag, "Unable to start AquaHub HTTPS API");
+#if CONFIG_AQUAHUB_LOCAL_BROKER
+        aquahub_broker_stop();
+#endif
+        return;
+    }
+    network_services_started = true;
+    start_mqtt();
+}
+
 void wifi_event_handler(void *,
                         esp_event_base_t event_base,
                         int32_t event_id,
@@ -797,7 +952,7 @@ void wifi_event_handler(void *,
         event_base == IP_EVENT &&
         event_id == IP_EVENT_STA_GOT_IP) {
         xEventGroupSetBits(connection_events, kWifiConnectedBit);
-        start_mqtt();
+        start_network_services();
     }
 }
 
@@ -873,6 +1028,11 @@ extern "C" void app_main(void) {
         nvs_result = nvs_flash_init();
     }
     ESP_ERROR_CHECK(nvs_result);
+    if (!aquahub_identity_initialize() ||
+        !aquahub_service_initialize()) {
+        ESP_LOGE(kTag, "Unable to initialize AquaHub identity or registry");
+        abort();
+    }
     display_brightness = load_display_brightness();
     const bool connectivity_configured = initialize_topics();
 
@@ -913,5 +1073,7 @@ extern "C" void app_main(void) {
         abort();
     }
     initialize_wifi();
-    ESP_LOGI(kTag, "AquaCYD ESP32-P4 HMI started");
+    ESP_LOGI(kTag,
+             "AquaHub ESP32-P4 started; pairing code %06" PRIu32,
+             aquahub_identity_pairing_code());
 }

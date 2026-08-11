@@ -1,11 +1,11 @@
 {
-    "name": "AquaCYD Home",
-    "short_name": "AquaCYD",
+    "name": "AquaHub",
+    "short_name": "AquaHub",
     "start_url": ".",
     "display": "standalone",
     "background_color": "#07151C",
     "theme_color": "#0D2029",
-    "description": "Niezależny panel Home Assistant dla sterownika akwarium AquaCYD.",
+    "description": "Uniwersalny panel urządzeń dla centrum AquaHub ESP32-P4.",
     "orientation": "any",
     "prefer_related_applications": false,
     "icons": [

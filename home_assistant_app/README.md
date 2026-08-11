@@ -1,37 +1,26 @@
-# AquaCYD Home
+# AquaHub — aplikacja Flutter
 
-Druga, niezależna aplikacja Flutter dla systemu AquaCYD. Łączy się bezpośrednio
-z Home Assistantem przez oficjalne REST API i WebSocket API. Nie komunikuje się
-bezpośrednio z CYD, dzięki czemu działa w domu, przez VPN lub przez bezpieczny
-adres HTTPS Home Assistanta.
+Druga aplikacja mobilna projektu. Łączy wszystkie urządzenia i czujniki przez
+HTTPS API własnego centrum AquaHub na ESP32-P4. Nie komunikuje się bezpośrednio
+z CYD i nie wymaga Home Assistant Core ani Raspberry Pi.
 
-## Zakres aplikacji
+## Zakres
 
-- responsywny interfejs Android, iOS i web;
-- konfiguracja adresu HA oraz długoterminowego tokenu dostępu;
-- bezpieczne przechowywanie tokenu w magazynie systemowym;
-- bieżące pomiary, stany urządzeń i diagnostyka ESP32-C6;
-- ręczne sterowanie z limitem czasu;
-- historia temperatury, pH, EC i światła;
-- dekodowanie wszystkich dziesięciu lokalnych flag alarmowych CYD;
-- edycja harmonogramów obu lamp, filtra i napowietrzania;
-- edycja trybu, nastawy i histerezy termostatu;
-- automatyczne ponawianie WebSocket z REST jako ścieżką awaryjną.
+- Android, iOS i web z responsywną nawigacją;
+- pierwsze parowanie sześciocyfrowym kodem z fizycznego panelu;
+- porównanie i pinning SHA-256 certyfikatu P4 na Androidzie i iOS;
+- token Bearer w systemowym secure storage;
+- uniwersalne urządzenia i encje bez listy nazw zaszytej w aplikacji;
+- obsługa `sensor`, `binary_sensor`, `switch`, `light`, `number`, `select` i
+  `button`;
+- pulpit stanu, alarmy krytyczne, grupowanie urządzeń, historia i diagnostyka;
+- odświeżanie co 5 sekund z blokadą równoległych żądań;
+- limit odpowiedzi 1 MiB, timeout 10 s i jawna klasyfikacja błędów;
+- bezpośredni dostęp zdalny wyłącznie przez VPN.
 
-CYD pozostaje źródłem prawdy. Home Assistant i aplikacja wysyłają wyłącznie
-polecenia przez skrypty z `home_assistant/packages/aquacyd.yaml`; ostateczna
-walidacja, interlocki i zapis konfiguracji są wykonywane w sterowniku.
-
-## Wymagania
-
-1. Home Assistant z brokerem MQTT i pakietem
-   `home_assistant/packages/aquacyd.yaml`.
-2. Bramka `firmware/esp32c6_gateway` połączona z CYD przez szyfrowany ESP-NOW.
-3. Użytkownik HA z długoterminowym tokenem dostępu.
-4. Flutter 3.41.5 / Dart 3.11.3 do lokalnej kompilacji.
-
-Po pierwszym uruchomieniu bramka publikuje MQTT Discovery również dla trybu
-grzałki oraz szesnastu pól harmonogramów wymaganych przez ekran Automatyka.
+Starszy klient oficjalnego Home Assistanta pozostaje w `lib/src/data`,
+`lib/src/state` i `lib/src/ui` jako warstwa zgodności i dokumentacja migracji.
+Punkt wejścia `lib/main.dart` uruchamia aplikację AquaHub.
 
 ## Uruchomienie
 
@@ -43,49 +32,29 @@ flutter test
 flutter run
 ```
 
-W profilu użytkownika Home Assistanta otwórz sekcję „Długoterminowe tokeny
-dostępu”, utwórz osobny token dla AquaCYD Home i wklej go na ekranie połączenia.
-Adres musi zawierać schemat i port, np. `http://homeassistant.local:8123` albo
-`https://ha.example.net`.
+Domyślny adres to `https://aquahub.local:8443`. Na panelu P4 należy otworzyć
+ekran System, porównać pełny odcisk certyfikatu i wpisać aktualny kod parowania.
+Zmiana klucza lub certyfikatu P4 powoduje celową odmowę połączenia i wymaga
+ponownego parowania przy panelu.
 
-## Bezpieczeństwo
+## Platformy i TLS
 
-- nieszyfrowane HTTP jest akceptowane tylko dla `localhost`, domen `.local`,
-  `.lan` i prywatnych adresów IPv4;
-- do zdalnego dostępu należy użyć HTTPS lub VPN;
-- token nie jest wyświetlany w diagnostyce ani zapisywany w logach;
-- Android nie wykonuje kopii zapasowej danych aplikacji;
-- aplikacja web wymaga HTTPS albo `localhost`, aby bezpieczny magazyn
-  `flutter_secure_storage` mógł użyć WebCrypto;
-- wdrożenie web na innym originie niż HA wymaga prawidłowego CORS w
-  `configuration.yaml` Home Assistanta.
+Na Androidzie i iOS aplikacja oblicza SHA-256 z certyfikatu podczas handshake i
+porównuje go z zapisanym odciskiem. Wersja webowa nie otrzymuje certyfikatu z API
+przeglądarki, dlatego wymaga certyfikatu zaufanego przez system lub lokalnego
+reverse proxy z prawidłowym TLS. Nie należy wyłączać weryfikacji w przeglądarce.
+Jeżeli aplikacja webowa działa na innym originie niż API, w menu P4 trzeba
+ustawić dokładny adres HTTPS w `AQUAHUB_CORS_ORIGIN`. Wartość `*` nie jest
+obsługiwana.
 
-Przykład CORS dla lokalnego serwera deweloperskiego:
+Android ma wyłączony cleartext HTTP i kopie zapasowe danych aplikacji. iOS
+deklaruje dostęp do sieci lokalnej oraz usługę Bonjour `_aquahub._tcp`.
 
-```yaml
-http:
-  cors_allowed_origins:
-    - http://localhost:8080
-```
+## Testy
 
-Nie dodawaj szerokiego originu `*`. Produkcyjnie wpisz dokładny adres hostingu
-aplikacji.
+Testy obejmują modele, kontrakt API, paginację, komendy, onboarding AquaHub oraz
+zachowaną warstwę kompatybilności Home Assistanta. Klient HTTP jest wstrzykiwany
+w testach, a kod produkcyjny tworzy transport z pinningiem certyfikatu.
 
-## Kompilacje
-
-```powershell
-flutter build apk --debug
-flutter build web --release
-```
-
-Podpisany Android release używa opcjonalnego `android/key.properties` z polami
-`storePassword`, `keyPassword`, `keyAlias` i `storeFile`. Klucz oraz plik
-properties pozostają poza repozytorium. Bez tego pliku Gradle tworzy
-niepodpisany wariant release przeznaczony do dalszego podpisania w CI.
-
-Oficjalne, podpisane APK publikuje tag `home-vX.Y.Z`. Workflow sprawdza zgodność
-tagu z `pubspec.yaml`, podpis, package ID i sumę SHA-256, po czym tworzy osobny
-GitHub Release bez zastępowania najnowszego wydania AquaCYD Control.
-
-Szczegółowa architektura, kontrakt danych i strategia wdrożenia są opisane w
-[`docs/HOME_ASSISTANT_FLUTTER_APP.md`](../docs/HOME_ASSISTANT_FLUTTER_APP.md).
+Pełny podział odpowiedzialności i procedura provisioningu znajdują się w
+[`docs/AQUAHUB_ARCHITECTURE.md`](../docs/AQUAHUB_ARCHITECTURE.md).

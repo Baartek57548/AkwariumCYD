@@ -49,6 +49,21 @@ struct HmiCommandRequest {
     uint32_t duration_ms;
 };
 
+struct HmiHubSummary {
+    uint16_t device_count;
+    uint16_t online_device_count;
+    uint16_t entity_count;
+    uint16_t writable_entity_count;
+    uint16_t api_port;
+    uint16_t broker_port;
+    uint32_t pairing_code;
+    uint32_t pairing_seconds_remaining;
+    uint32_t free_heap_bytes;
+    bool api_running;
+    bool broker_running;
+    char tls_fingerprint[65];
+};
+
 enum class HmiFeedbackKind : uint8_t {
     Information = 0U,
     Success,
@@ -77,6 +92,9 @@ bool hmi_ui_create(const HmiUiCallbacks &callbacks,
 /** Updates widgets from a coherent controller snapshot. */
 void hmi_ui_apply_snapshot(const HmiSnapshot &snapshot,
                            uint32_t received_at_ms);
+
+/** Updates the local AquaHub service, pairing and registry diagnostics. */
+void hmi_ui_apply_hub_summary(const HmiHubSummary &summary);
 
 /** Updates link chips and the global command interlock. */
 void hmi_ui_set_connectivity(bool wifi_connected,

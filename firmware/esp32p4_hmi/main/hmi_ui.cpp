@@ -102,6 +102,7 @@ struct UiState {
     Page active_page;
     HmiUiCallbacks callbacks;
     HmiSnapshot snapshot;
+    HmiHubSummary hub_summary;
     uint32_t snapshot_received_ms;
     uint32_t last_age_refresh_ms;
     uint32_t toast_hide_at_ms;
@@ -178,6 +179,7 @@ struct UiState {
     lv_obj_t *system_cyd;
     lv_obj_t *system_hmi;
     lv_obj_t *system_network;
+    lv_obj_t *system_fingerprint;
     lv_obj_t *brightness_label;
 
     lv_obj_t *toast;
@@ -1176,17 +1178,18 @@ void create_system_page(uint8_t initial_brightness) {
     lv_obj_set_style_text_line_space(ui.system_cyd, 14, 0);
     lv_obj_align(ui.system_cyd, LV_ALIGN_TOP_LEFT, 0, 42);
 
-    lv_obj_t *hmi_card = create_system_card(page, 434, "Panel ESP32-P4");
+    lv_obj_t *hmi_card = create_system_card(page, 434, "AquaHub ESP32-P4");
     ui.system_hmi = create_label(
         hmi_card,
-        "Status                 online\n"
+        "Status                 start\n"
         "Wolna pamięć           —\n"
-        "Wyświetlacz            1024×600\n"
-        "Interfejs              LVGL 9.2\n"
-        "BSP                    Waveshare 7B",
+        "Urządzenia             0 / 0 online\n"
+        "Encje                  0 / 0 ster.\n"
+        "HTTPS / MQTTS          start\n"
+        "Parowanie              ------",
         &lv_font_montserrat_16,
         kColorTextSecondary);
-    lv_obj_set_style_text_line_space(ui.system_hmi, 14, 0);
+    lv_obj_set_style_text_line_space(ui.system_hmi, 9, 0);
     lv_obj_align(ui.system_hmi, LV_ALIGN_TOP_LEFT, 0, 42);
 
     lv_obj_t *display_card = lv_obj_create(page);
@@ -1254,6 +1257,14 @@ void create_system_page(uint8_t initial_brightness) {
         &lv_font_montserrat_16,
         kColorWarning);
     lv_obj_align(ui.system_network, LV_ALIGN_BOTTOM_LEFT, 0, 0);
+    ui.system_fingerprint = create_label(
+        network,
+        "TLS SHA-256: —",
+        &lv_font_montserrat_14,
+        kColorTextSecondary);
+    lv_obj_set_width(ui.system_fingerprint, 766);
+    lv_label_set_long_mode(ui.system_fingerprint, LV_LABEL_LONG_CLIP);
+    lv_obj_align(ui.system_fingerprint, LV_ALIGN_TOP_LEFT, 0, 28);
 }
 
 void hide_automation_editor() {
@@ -2398,6 +2409,55 @@ void hmi_ui_apply_snapshot(const HmiSnapshot &snapshot,
     update_age(received_at_ms);
 }
 
+void hmi_ui_apply_hub_summary(const HmiHubSummary &summary) {
+    if (!ui.created) {
+        return;
+    }
+    ui.hub_summary = summary;
+    const bool service_healthy =
+        summary.api_running &&
+        (summary.broker_port == 0U || summary.broker_running);
+    char pairing[40] = {};
+    if (summary.pairing_code >= 100000U &&
+        summary.pairing_code <= 999999U &&
+        summary.pairing_seconds_remaining > 0U) {
+        snprintf(pairing,
+                 sizeof(pairing),
+                 "%06" PRIu32 " (%" PRIu32 " s)",
+                 summary.pairing_code,
+                 summary.pairing_seconds_remaining);
+    } else {
+        strlcpy(pairing, "wygasło", sizeof(pairing));
+    }
+    lv_label_set_text_fmt(
+        ui.system_hmi,
+        "Status                 %s\n"
+        "Wolna pamięć           %" PRIu32 " B\n"
+        "Urządzenia             %u / %u online\n"
+        "Encje                  %u / %u ster.\n"
+        "HTTPS / MQTTS          %u / %u\n"
+        "Parowanie              %s",
+        service_healthy ? "online" : "ograniczony",
+        summary.free_heap_bytes,
+        static_cast<unsigned int>(summary.online_device_count),
+        static_cast<unsigned int>(summary.device_count),
+        static_cast<unsigned int>(summary.entity_count),
+        static_cast<unsigned int>(summary.writable_entity_count),
+        static_cast<unsigned int>(summary.api_port),
+        static_cast<unsigned int>(summary.broker_port),
+        pairing);
+    lv_obj_set_style_text_color(
+        ui.system_hmi,
+        color(service_healthy ? kColorTextSecondary : kColorWarning),
+        0);
+    lv_label_set_text_fmt(
+        ui.system_fingerprint,
+        "TLS SHA-256: %s",
+        summary.tls_fingerprint[0] != '\0'
+            ? summary.tls_fingerprint
+            : "—");
+}
+
 void hmi_ui_set_connectivity(bool wifi_connected,
                              bool mqtt_connected,
                              bool controller_online_value) {
@@ -2522,14 +2582,8 @@ void hmi_ui_tick(uint32_t now_ms, uint32_t hmi_free_heap_bytes) {
     if (static_cast<uint32_t>(now_ms - ui.last_age_refresh_ms) >= 1000U) {
         ui.last_age_refresh_ms = now_ms;
         update_age(now_ms);
-        lv_label_set_text_fmt(
-            ui.system_hmi,
-            "Status                 online\n"
-            "Wolna pamięć           %" PRIu32 " B\n"
-            "Wyświetlacz            1024×600\n"
-            "Interfejs              LVGL 9.2\n"
-            "BSP                    Waveshare 7B",
-            hmi_free_heap_bytes);
+        ui.hub_summary.free_heap_bytes = hmi_free_heap_bytes;
+        hmi_ui_apply_hub_summary(ui.hub_summary);
     }
     if (ui.toast_hide_at_ms != 0U &&
         static_cast<int32_t>(now_ms - ui.toast_hide_at_ms) >= 0) {

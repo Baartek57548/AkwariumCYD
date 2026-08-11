@@ -1,5 +1,10 @@
 # Kierunek rozwoju AquaCYD
 
+> Aktualizacja decyzji: rolę głównego centrum przejął własny AquaHub na
+> ESP32-P4. Home Assistant Core i Raspberry Pi są opcjonalne. Obowiązującą
+> architekturę opisuje [`AQUAHUB_ARCHITECTURE.md`](AQUAHUB_ARCHITECTURE.md), a
+> poniższy tekst zachowuje wcześniejszy plan jako kontekst decyzji.
+
 ## Cel produktu
 
 AquaCYD ma być odpornym na awarie sterownikiem akwarium z trzema poziomami

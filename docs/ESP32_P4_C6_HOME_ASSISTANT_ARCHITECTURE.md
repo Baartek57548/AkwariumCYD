@@ -1,5 +1,10 @@
 # Architektura AquaCYD: ESP32-P4, ESP32-C6 i Home Assistant
 
+> Dokument opisuje wcześniejszy wariant z Home Assistant Core na Raspberry Pi.
+> Aktualna decyzja produktowa przenosi centrum do AquaHub na ESP32-P4 i jest
+> opisana w [`AQUAHUB_ARCHITECTURE.md`](AQUAHUB_ARCHITECTURE.md). Ten plik
+> pozostaje jako ADR odrzuconego wariantu i instrukcja opcjonalnej zgodności HA.
+
 ## Decyzja architektoniczna
 
 CYD pozostaje autonomicznym sterownikiem czasu rzeczywistego i jedynym

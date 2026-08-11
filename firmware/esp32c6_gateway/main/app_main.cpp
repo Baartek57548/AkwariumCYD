@@ -9,6 +9,7 @@
 #include "aquacyd_link_protocol.h"
 #include "cJSON.h"
 #include "esp_event.h"
+#include "esp_app_desc.h"
 #include "esp_log.h"
 #include "esp_mac.h"
 #include "esp_now.h"
@@ -22,6 +23,13 @@
 #include "mqtt_client.h"
 #include "nvs_flash.h"
 
+#if CONFIG_AQUACYD_MQTT_EMBED_HUB_CERTIFICATE
+extern const uint8_t aquahub_certificate_start[]
+    asm("_binary_aquahub_pem_start");
+extern const uint8_t aquahub_certificate_end[]
+    asm("_binary_aquahub_pem_end");
+#endif
+
 namespace {
 
 constexpr char kTag[] = "aquacyd_gateway";
@@ -32,6 +40,7 @@ constexpr size_t kMqttTopicBytes = 160U;
 constexpr uint32_t kCommandTtlMs = 5000U;
 constexpr uint32_t kCommandAckTimeoutMs = 450U;
 constexpr uint8_t kCommandMaximumAttempts = 4U;
+constexpr uint32_t kGenericOverrideDurationMs = 60U * 60U * 1000U;
 constexpr EventBits_t kWifiConnectedBit = 1U << 0U;
 constexpr EventBits_t kMqttConnectedBit = 1U << 1U;
 constexpr uint16_t kTransportTimeoutReason = 100U;
@@ -45,6 +54,7 @@ struct ReceivedDatagram {
 
 struct MqttCommand {
     size_t length;
+    char topic[kMqttTopicBytes];
     char json[kMaximumMqttCommandBytes + 1U];
 };
 
@@ -72,6 +82,8 @@ char state_topic[kMqttTopicBytes] = {};
 char availability_topic[kMqttTopicBytes] = {};
 char command_topic[kMqttTopicBytes] = {};
 char acknowledgement_topic[kMqttTopicBytes] = {};
+char generic_command_prefix[kMqttTopicBytes] = {};
+char generic_command_subscription[kMqttTopicBytes] = {};
 
 uint32_t monotonic_ms() {
     return static_cast<uint32_t>(
@@ -209,6 +221,21 @@ __attribute__((noinline)) bool configuration_is_valid() {
             "Wi-Fi, MQTT credentials and device settings must not be empty");
         return false;
     }
+    if (strncmp(mqtt_uri, "mqtts://", 8U) != 0) {
+        ESP_LOGE(kTag, "Only encrypted mqtts:// connections are supported");
+        return false;
+    }
+#if !CONFIG_AQUACYD_MQTT_EMBED_HUB_CERTIFICATE
+    ESP_LOGE(kTag,
+             "Pin the AquaHub certificate and enable "
+             "CONFIG_AQUACYD_MQTT_EMBED_HUB_CERTIFICATE");
+    return false;
+#endif
+    if (strlen(mqtt_username) < 4U || strlen(mqtt_username) > 64U ||
+        strlen(mqtt_password) < 12U || strlen(mqtt_password) > 64U) {
+        ESP_LOGE(kTag, "MQTT credentials do not meet the security policy");
+        return false;
+    }
     if (!parse_mac_address(controller_mac_text, controller_mac)) {
         ESP_LOGE(kTag, "CONFIG_AQUACYD_CONTROLLER_MAC is invalid");
         return false;
@@ -239,8 +266,24 @@ __attribute__((noinline)) bool configuration_is_valid() {
             acknowledgement_topic,
             sizeof(acknowledgement_topic),
             mqtt_base,
-            "command/ack")) {
+            "command/ack") ||
+        !append_topic(
+            generic_command_prefix,
+            sizeof(generic_command_prefix),
+            mqtt_base,
+            "command/entity")) {
         ESP_LOGE(kTag, "MQTT base topic is too long");
+        return false;
+    }
+    const int subscription_length = snprintf(
+        generic_command_subscription,
+        sizeof(generic_command_subscription),
+        "%s/+/set",
+        generic_command_prefix);
+    if (subscription_length <= 0 ||
+        static_cast<size_t>(subscription_length) >=
+            sizeof(generic_command_subscription)) {
+        ESP_LOGE(kTag, "Generic command subscription is too long");
         return false;
     }
     return true;
@@ -271,6 +314,12 @@ void add_device_descriptor(cJSON *root) {
     cJSON_AddStringToObject(device, "name", "AquaCYD Aquarium");
     cJSON_AddStringToObject(device, "manufacturer", "AquaCYD");
     cJSON_AddStringToObject(device, "model", "CYD + ESP32-C6 gateway");
+    const esp_app_desc_t *application = esp_app_get_description();
+    cJSON_AddStringToObject(
+        device,
+        "sw_version",
+        application != nullptr ? application->version : "unknown");
+    cJSON_AddStringToObject(device, "suggested_area", "Akwarium");
 }
 
 void publish_discovery_entity(const char *component,
@@ -279,7 +328,8 @@ void publish_discovery_entity(const char *component,
                               const char *value_template,
                               const char *unit,
                               const char *device_class,
-                              const char *state_class) {
+                              const char *state_class,
+                              const char *command_target = nullptr) {
     char topic[kMqttTopicBytes] = {};
     const int topic_length = snprintf(
         topic,
@@ -334,6 +384,28 @@ void publish_discovery_entity(const char *component,
     cJSON_AddStringToObject(root, "state_topic", state_topic);
     cJSON_AddStringToObject(root, "value_template", value_template);
     cJSON_AddStringToObject(root, "availability_topic", availability_topic);
+    cJSON_AddNumberToObject(root, "aquahub_schema", 1U);
+    if (strcmp(object_suffix, "leak") == 0) {
+        cJSON_AddBoolToObject(root, "aquahub_critical", true);
+    }
+    if (command_target != nullptr && command_target[0] != '\0') {
+        char entity_command_topic[kMqttTopicBytes] = {};
+        const int command_length = snprintf(entity_command_topic,
+                                            sizeof(entity_command_topic),
+                                            "%s/%s/set",
+                                            generic_command_prefix,
+                                            command_target);
+        if (command_length <= 0 ||
+            static_cast<size_t>(command_length) >=
+                sizeof(entity_command_topic)) {
+            ESP_LOGE(kTag,
+                     "Command topic is too long for %s",
+                     object_suffix);
+            cJSON_Delete(root);
+            return;
+        }
+        cJSON_AddStringToObject(root, "command_topic", entity_command_topic);
+    }
     if (unit != nullptr && unit[0] != '\0') {
         cJSON_AddStringToObject(root, "unit_of_measurement", unit);
     }
@@ -355,7 +427,26 @@ void publish_discovery_entity(const char *component,
     cJSON_Delete(root);
 }
 
+void remove_legacy_discovery_entity(const char *component,
+                                    const char *object_suffix) {
+    char topic[kMqttTopicBytes] = {};
+    const int written = snprintf(topic,
+                                 sizeof(topic),
+                                 "homeassistant/%s/%s/%s_%s/config",
+                                 component,
+                                 CONFIG_AQUACYD_DEVICE_ID,
+                                 CONFIG_AQUACYD_DEVICE_ID,
+                                 object_suffix);
+    if (written > 0 && static_cast<size_t>(written) < sizeof(topic)) {
+        publish_mqtt(topic, "", 1, true);
+    }
+}
+
 void publish_discovery() {
+    remove_legacy_discovery_entity("binary_sensor", "light_primary");
+    remove_legacy_discovery_entity("binary_sensor", "light_secondary");
+    remove_legacy_discovery_entity("binary_sensor", "filter");
+    remove_legacy_discovery_entity("binary_sensor", "aerator");
     publish_discovery_entity(
         "sensor",
         "temperature",
@@ -560,37 +651,41 @@ void publish_discovery() {
         "connectivity",
         "");
     publish_discovery_entity(
-        "binary_sensor",
+        "switch",
         "light_primary",
         "Światło główne",
         "{{ 'ON' if value_json.light_primary_on else 'OFF' }}",
         "",
         "",
-        "");
+        "",
+        "light_primary");
     publish_discovery_entity(
-        "binary_sensor",
+        "switch",
         "light_secondary",
         "Światło roślinne",
         "{{ 'ON' if value_json.light_secondary_on else 'OFF' }}",
         "",
         "",
-        "");
+        "",
+        "light_secondary");
     publish_discovery_entity(
-        "binary_sensor",
+        "switch",
         "filter",
         "Filtr",
         "{{ 'ON' if value_json.filter_on else 'OFF' }}",
         "",
         "",
-        "");
+        "",
+        "filter");
     publish_discovery_entity(
-        "binary_sensor",
+        "switch",
         "aerator",
         "Napowietrzanie",
         "{{ 'ON' if value_json.aerator_on else 'OFF' }}",
         "",
         "",
-        "");
+        "",
+        "aerator");
     publish_discovery_entity(
         "binary_sensor",
         "heater",
@@ -712,7 +807,9 @@ void publish_telemetry(const aquacyd::link::Frame &frame,
                 root, key, entry.schedule->end_minute);
         }
     }
+    cJSON_AddNumberToObject(root, "boot_id", frame.boot_id);
     cJSON_AddNumberToObject(root, "sequence", frame.sequence);
+    cJSON_AddNumberToObject(root, "gateway_boot_id", gateway_boot_id);
     cJSON_AddBoolToObject(
         root,
         "water_level_low",
@@ -993,11 +1090,70 @@ bool parse_target(const char *text, aquacyd::link::CommandTarget *output) {
     return false;
 }
 
+bool parse_generic_command_topic(
+    const char *topic,
+    aquacyd::link::CommandTarget *output) {
+    if (topic == nullptr || output == nullptr) {
+        return false;
+    }
+    const size_t prefix_length = strlen(generic_command_prefix);
+    const size_t topic_length = strnlen(topic, kMqttTopicBytes);
+    constexpr char suffix[] = "/set";
+    if (topic_length >= kMqttTopicBytes ||
+        topic_length <= prefix_length + sizeof(suffix) ||
+        strncmp(topic, generic_command_prefix, prefix_length) != 0 ||
+        topic[prefix_length] != '/' ||
+        strcmp(topic + topic_length - (sizeof(suffix) - 1U), suffix) != 0) {
+        return false;
+    }
+    const size_t target_length =
+        topic_length - prefix_length - 1U - (sizeof(suffix) - 1U);
+    char target[32] = {};
+    if (target_length == 0U || target_length >= sizeof(target)) {
+        return false;
+    }
+    memcpy(target, topic + prefix_length + 1U, target_length);
+    target[target_length] = '\0';
+    if (!parse_target(target, output)) {
+        return false;
+    }
+    return *output == aquacyd::link::CommandTarget::LightPrimary ||
+           *output == aquacyd::link::CommandTarget::LightSecondary ||
+           *output == aquacyd::link::CommandTarget::Filter ||
+           *output == aquacyd::link::CommandTarget::Aerator;
+}
+
+uint64_t create_command_id() {
+    uint64_t command_id =
+        (static_cast<uint64_t>(esp_random()) << 32U) |
+        static_cast<uint64_t>(esp_random());
+    command_id ^= static_cast<uint64_t>(esp_timer_get_time());
+    return command_id == 0U ? 1U : command_id;
+}
+
 bool parse_mqtt_command(const MqttCommand &message,
                         aquacyd::link::CommandPayload *output) {
     if (output == nullptr || message.length == 0U ||
         message.length > kMaximumMqttCommandBytes) {
         return false;
+    }
+    if (strcmp(message.topic, command_topic) != 0) {
+        aquacyd::link::CommandPayload parsed = {};
+        const bool enabled =
+            message.length == 2U && memcmp(message.json, "ON", 2U) == 0;
+        const bool disabled =
+            message.length == 3U && memcmp(message.json, "OFF", 3U) == 0;
+        if ((!enabled && !disabled) ||
+            !parse_generic_command_topic(message.topic, &parsed.target)) {
+            return false;
+        }
+        parsed.command_id = create_command_id();
+        parsed.action = aquacyd::link::CommandAction::SetOutput;
+        parsed.value = enabled ? 1 : 0;
+        parsed.duration_ms = kGenericOverrideDurationMs;
+        parsed.expected_configuration_revision = 0U;
+        *output = parsed;
+        return true;
     }
     cJSON *root = cJSON_ParseWithLength(message.json, message.length);
     if (root == nullptr || !cJSON_IsObject(root)) {
@@ -1166,6 +1322,8 @@ void mqtt_event_handler(void *,
     if (event_id == MQTT_EVENT_CONNECTED) {
         xEventGroupSetBits(connection_events, kMqttConnectedBit);
         esp_mqtt_client_subscribe(mqtt_client, command_topic, 1);
+        esp_mqtt_client_subscribe(
+            mqtt_client, generic_command_subscription, 1);
         publish_discovery();
         if (last_telemetry_ms != 0U) {
             publish_availability(true);
@@ -1181,17 +1339,24 @@ void mqtt_event_handler(void *,
         if (event->current_data_offset != 0 ||
             event->data_len != event->total_data_len ||
             event->topic_len <= 0 ||
-            static_cast<size_t>(event->topic_len) != strlen(command_topic) ||
-            memcmp(
-                event->topic,
-                command_topic,
-                static_cast<size_t>(event->topic_len)) != 0 ||
+            static_cast<size_t>(event->topic_len) >= kMqttTopicBytes ||
             event->data_len <= 0 ||
             static_cast<size_t>(event->data_len) >
                 kMaximumMqttCommandBytes) {
             return;
         }
         MqttCommand command = {};
+        const size_t topic_length = static_cast<size_t>(event->topic_len);
+        memcpy(command.topic, event->topic, topic_length);
+        command.topic[topic_length] = '\0';
+        aquacyd::link::CommandTarget generic_target =
+            aquacyd::link::CommandTarget::Controller;
+        const bool dedicated_topic = strcmp(command.topic, command_topic) == 0;
+        const bool generic_topic =
+            parse_generic_command_topic(command.topic, &generic_target);
+        if (!dedicated_topic && !generic_topic) {
+            return;
+        }
         command.length = static_cast<size_t>(event->data_len);
         memcpy(command.json, event->data, command.length);
         command.json[command.length] = '\0';
@@ -1209,6 +1374,13 @@ void start_mqtt() {
     }
     esp_mqtt_client_config_t configuration = {};
     configuration.broker.address.uri = CONFIG_AQUACYD_MQTT_BROKER_URI;
+#if CONFIG_AQUACYD_MQTT_EMBED_HUB_CERTIFICATE
+    configuration.broker.verification.certificate =
+        reinterpret_cast<const char *>(aquahub_certificate_start);
+    configuration.broker.verification.certificate_len =
+        static_cast<size_t>(aquahub_certificate_end -
+                            aquahub_certificate_start);
+#endif
     configuration.credentials.username = CONFIG_AQUACYD_MQTT_USERNAME;
     configuration.credentials.authentication.password =
         CONFIG_AQUACYD_MQTT_PASSWORD;

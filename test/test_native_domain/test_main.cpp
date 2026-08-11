@@ -11,6 +11,8 @@
 #include "admin_session.h"
 #include "aquael_light_controller.h"
 #include "aquacyd_link_protocol.h"
+#include "aquahub_automation.h"
+#include "aquahub_registry.h"
 #include "ble_pairing_policy.h"
 #include "control_modes.h"
 #include "dev_simulator.h"
@@ -1199,6 +1201,250 @@ static void test_aquacyd_link_cobs_and_sequence_window() {
     TEST_ASSERT_EQUAL_UINT32(1U, window.newest_sequence());
 }
 
+static aquahub::DiscoveryDescriptor aquahub_temperature_descriptor(
+    const char *node_id,
+    const char *unique_id) {
+    aquahub::DiscoveryDescriptor descriptor = {};
+    descriptor.schema_version = aquahub::kDiscoverySchemaVersion;
+    snprintf(descriptor.device.node_id,
+             sizeof(descriptor.device.node_id),
+             "%s",
+             node_id);
+    snprintf(descriptor.device.name,
+             sizeof(descriptor.device.name),
+             "Węzeł %s",
+             node_id);
+    snprintf(descriptor.device.model,
+             sizeof(descriptor.device.model),
+             "AquaHub Sensor");
+    snprintf(descriptor.device.manufacturer,
+             sizeof(descriptor.device.manufacturer),
+             "AquaCYD");
+    snprintf(descriptor.device.firmware_version,
+             sizeof(descriptor.device.firmware_version),
+             "1.0.0");
+    snprintf(descriptor.unique_id,
+             sizeof(descriptor.unique_id),
+             "%s",
+             unique_id);
+    snprintf(descriptor.name,
+             sizeof(descriptor.name),
+             "Temperatura");
+    snprintf(descriptor.discovery_topic,
+             sizeof(descriptor.discovery_topic),
+             "homeassistant/sensor/%s/%s/config",
+             node_id,
+             unique_id);
+    snprintf(descriptor.state_topic,
+             sizeof(descriptor.state_topic),
+             "aquahub/nodes/%s/state",
+             node_id);
+    snprintf(descriptor.availability_topic,
+             sizeof(descriptor.availability_topic),
+             "aquahub/nodes/%s/availability",
+             node_id);
+    snprintf(descriptor.value_key,
+             sizeof(descriptor.value_key),
+             "temperature_c");
+    snprintf(descriptor.unit, sizeof(descriptor.unit), "°C");
+    descriptor.kind = aquahub::EntityKind::Sensor;
+    descriptor.value_type = aquahub::ValueType::Number;
+    descriptor.minimum = -40.0;
+    descriptor.maximum = 125.0;
+    descriptor.step = 0.1;
+    return descriptor;
+}
+
+static aquahub::StateValue aquahub_number(double value) {
+    aquahub::StateValue state = {};
+    state.type = aquahub::ValueType::Number;
+    state.valid = true;
+    state.number_value = value;
+    return state;
+}
+
+static aquahub::StateValue aquahub_boolean(bool value) {
+    aquahub::StateValue state = {};
+    state.type = aquahub::ValueType::Boolean;
+    state.valid = true;
+    state.boolean_value = value;
+    return state;
+}
+
+static void test_aquahub_registry_validates_discovery_and_state() {
+    aquahub::Registry registry;
+    aquahub::DiscoveryDescriptor descriptor =
+        aquahub_temperature_descriptor("aquarium", "aquarium_temperature");
+    TEST_ASSERT_EQUAL_UINT8(
+        static_cast<uint8_t>(aquahub::RegistryStatus::Ok),
+        static_cast<uint8_t>(registry.upsert_discovery(descriptor)));
+    TEST_ASSERT_EQUAL_size_t(1U, registry.device_count());
+    TEST_ASSERT_EQUAL_size_t(1U, registry.entity_count());
+
+    bool changed = false;
+    TEST_ASSERT_EQUAL_UINT8(
+        static_cast<uint8_t>(aquahub::RegistryStatus::Ok),
+        static_cast<uint8_t>(registry.update_state(
+            "aquarium_temperature", aquahub_number(24.5), 1000U, &changed)));
+    TEST_ASSERT_TRUE(changed);
+    TEST_ASSERT_FLOAT_WITHIN(
+        0.001f,
+        24.5f,
+        static_cast<float>(
+            registry.entity("aquarium_temperature")->state.number_value));
+    TEST_ASSERT_EQUAL_UINT8(
+        static_cast<uint8_t>(aquahub::RegistryStatus::Ok),
+        static_cast<uint8_t>(registry.update_state(
+            "aquarium_temperature", aquahub_number(24.5), 1100U, &changed)));
+    TEST_ASSERT_FALSE(changed);
+    TEST_ASSERT_TRUE(
+        registry.entity("aquarium_temperature")->state_changed_ms == 1000U);
+    TEST_ASSERT_TRUE(
+        registry.entity("aquarium_temperature")->state_updated_ms == 1100U);
+
+    TEST_ASSERT_EQUAL_UINT8(
+        static_cast<uint8_t>(aquahub::RegistryStatus::InvalidValue),
+        static_cast<uint8_t>(registry.update_state(
+            "aquarium_temperature", aquahub_number(130.0), 1200U)));
+    descriptor.state_topic[0] = '#';
+    TEST_ASSERT_EQUAL_UINT8(
+        static_cast<uint8_t>(aquahub::RegistryStatus::InvalidTopic),
+        static_cast<uint8_t>(registry.upsert_discovery(descriptor)));
+}
+
+static void test_aquahub_registry_rejects_identity_conflict_and_replay() {
+    aquahub::Registry registry;
+    aquahub::DiscoveryDescriptor descriptor =
+        aquahub_temperature_descriptor("aquarium", "aquarium_temperature");
+    TEST_ASSERT_EQUAL_UINT8(
+        static_cast<uint8_t>(aquahub::RegistryStatus::Ok),
+        static_cast<uint8_t>(registry.upsert_discovery(descriptor)));
+    TEST_ASSERT_EQUAL_UINT8(
+        static_cast<uint8_t>(aquahub::RegistryStatus::Ok),
+        static_cast<uint8_t>(
+            registry.accept_message("aquarium", 7U, UINT32_MAX, 100U)));
+    TEST_ASSERT_EQUAL_UINT8(
+        static_cast<uint8_t>(aquahub::RegistryStatus::Ok),
+        static_cast<uint8_t>(
+            registry.accept_message("aquarium", 7U, 1U, 110U)));
+    TEST_ASSERT_EQUAL_UINT8(
+        static_cast<uint8_t>(aquahub::RegistryStatus::ReplayRejected),
+        static_cast<uint8_t>(
+            registry.accept_message("aquarium", 7U, UINT32_MAX, 120U)));
+    TEST_ASSERT_EQUAL_UINT8(
+        static_cast<uint8_t>(aquahub::RegistryStatus::Ok),
+        static_cast<uint8_t>(
+            registry.accept_message("aquarium", 8U, 1U, 130U)));
+
+    aquahub::DiscoveryDescriptor conflict =
+        aquahub_temperature_descriptor("terrarium", "aquarium_temperature");
+    TEST_ASSERT_EQUAL_UINT8(
+        static_cast<uint8_t>(aquahub::RegistryStatus::IdentityConflict),
+        static_cast<uint8_t>(registry.upsert_discovery(conflict)));
+}
+
+static void test_aquahub_registry_enforces_bounded_capacity() {
+    aquahub::Registry registry;
+    for (size_t index = 0U; index < aquahub::kMaximumDevices; ++index) {
+        char node_id[aquahub::kNodeIdBytes] = {};
+        char entity_id[aquahub::kEntityIdBytes] = {};
+        snprintf(node_id, sizeof(node_id), "node_%u", static_cast<unsigned>(index));
+        snprintf(entity_id,
+                 sizeof(entity_id),
+                 "node_%u_temperature",
+                 static_cast<unsigned>(index));
+        const aquahub::DiscoveryDescriptor descriptor =
+            aquahub_temperature_descriptor(node_id, entity_id);
+        TEST_ASSERT_EQUAL_UINT8(
+            static_cast<uint8_t>(aquahub::RegistryStatus::Ok),
+            static_cast<uint8_t>(registry.upsert_discovery(descriptor)));
+    }
+    const aquahub::DiscoveryDescriptor overflow =
+        aquahub_temperature_descriptor("node_overflow", "overflow_temperature");
+    TEST_ASSERT_EQUAL_UINT8(
+        static_cast<uint8_t>(aquahub::RegistryStatus::DeviceCapacityReached),
+        static_cast<uint8_t>(registry.upsert_discovery(overflow)));
+    TEST_ASSERT_EQUAL_size_t(aquahub::kMaximumDevices, registry.device_count());
+}
+
+static void test_aquahub_automation_evaluates_condition_and_cooldown() {
+    aquahub::Registry registry;
+    aquahub::DiscoveryDescriptor temperature =
+        aquahub_temperature_descriptor("aquarium", "aquarium_temperature");
+    TEST_ASSERT_EQUAL_UINT8(
+        static_cast<uint8_t>(aquahub::RegistryStatus::Ok),
+        static_cast<uint8_t>(registry.upsert_discovery(temperature)));
+
+    aquahub::DiscoveryDescriptor fan = temperature;
+    snprintf(fan.unique_id, sizeof(fan.unique_id), "aquarium_fan");
+    snprintf(fan.name, sizeof(fan.name), "Wentylator");
+    snprintf(fan.command_topic,
+             sizeof(fan.command_topic),
+             "aquahub/nodes/aquarium/command/set");
+    snprintf(fan.value_key, sizeof(fan.value_key), "fan");
+    fan.kind = aquahub::EntityKind::Switch;
+    fan.value_type = aquahub::ValueType::Boolean;
+    fan.writable = true;
+    fan.minimum = 0.0;
+    fan.maximum = 0.0;
+    fan.step = 0.0;
+    TEST_ASSERT_EQUAL_UINT8(
+        static_cast<uint8_t>(aquahub::RegistryStatus::Ok),
+        static_cast<uint8_t>(registry.upsert_discovery(fan)));
+    TEST_ASSERT_EQUAL_UINT8(
+        static_cast<uint8_t>(aquahub::RegistryStatus::Ok),
+        static_cast<uint8_t>(registry.update_state(
+            "aquarium_temperature", aquahub_number(27.0), 1000U)));
+
+    aquahub::AutomationRule rule = {};
+    snprintf(rule.id, sizeof(rule.id), "cooling");
+    snprintf(rule.name, sizeof(rule.name), "Chłodzenie akwarium");
+    rule.enabled = true;
+    snprintf(rule.trigger_entity,
+             sizeof(rule.trigger_entity),
+             "aquarium_temperature");
+    rule.trigger_comparison = aquahub::Comparison::Above;
+    rule.trigger_value = aquahub_number(26.0);
+    snprintf(rule.action_entity,
+             sizeof(rule.action_entity),
+             "aquarium_fan");
+    rule.action_value = aquahub_boolean(true);
+    rule.cooldown_ms = 60000U;
+
+    aquahub::AutomationEngine engine;
+    TEST_ASSERT_EQUAL_UINT8(
+        static_cast<uint8_t>(aquahub::AutomationStatus::Ok),
+        static_cast<uint8_t>(engine.upsert(rule)));
+    aquahub::PendingAction actions[2] = {};
+    const aquahub::StateValue previous = aquahub_number(25.0);
+    TEST_ASSERT_EQUAL_size_t(
+        1U,
+        engine.evaluate(registry,
+                        "aquarium_temperature",
+                        previous,
+                        1000U,
+                        actions,
+                        2U));
+    TEST_ASSERT_EQUAL_STRING("aquarium_fan", actions[0].entity_id);
+    TEST_ASSERT_TRUE(actions[0].value.boolean_value);
+    TEST_ASSERT_EQUAL_size_t(
+        0U,
+        engine.evaluate(registry,
+                        "aquarium_temperature",
+                        previous,
+                        2000U,
+                        actions,
+                        2U));
+    TEST_ASSERT_EQUAL_size_t(
+        1U,
+        engine.evaluate(registry,
+                        "aquarium_temperature",
+                        previous,
+                        61001U,
+                        actions,
+                        2U));
+}
+
 int main(int, char **) {
     UNITY_BEGIN();
     RUN_TEST(test_regular_and_wrapped_windows);
@@ -1237,5 +1483,9 @@ int main(int, char **) {
     RUN_TEST(test_aquacyd_link_frame_round_trip_and_crc_rejection);
     RUN_TEST(test_aquacyd_link_payload_codecs_preserve_signed_values);
     RUN_TEST(test_aquacyd_link_cobs_and_sequence_window);
+    RUN_TEST(test_aquahub_registry_validates_discovery_and_state);
+    RUN_TEST(test_aquahub_registry_rejects_identity_conflict_and_replay);
+    RUN_TEST(test_aquahub_registry_enforces_bounded_capacity);
+    RUN_TEST(test_aquahub_automation_evaluates_condition_and_cooldown);
     return UNITY_END();
 }
