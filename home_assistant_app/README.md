@@ -14,7 +14,11 @@ z CYD i nie wymaga Home Assistant Core ani Raspberry Pi.
 - obsługa `sensor`, `binary_sensor`, `switch`, `light`, `number`, `select` i
   `button`;
 - pulpit stanu, alarmy krytyczne, grupowanie urządzeń, historia i diagnostyka;
+- lokalne automatyzacje przechowywane i wykonywane przez P4 bez telefonu;
+- centrum aktualizacji P4 z postępem OTA, świadomym potwierdzeniem i rollbackiem;
+- tolerancja nowych typów encji, aby przyszłe urządzenie nie blokowało rejestru;
 - odświeżanie co 5 sekund z blokadą równoległych żądań;
+- zatrzymywanie pollingu w tle i natychmiastowe odświeżenie po wznowieniu;
 - limit odpowiedzi 1 MiB, timeout 10 s i jawna klasyfikacja błędów;
 - bezpośredni dostęp zdalny wyłącznie przez VPN.
 
@@ -31,6 +35,15 @@ flutter analyze
 flutter test
 flutter run
 ```
+
+Do prezentacji kompletnego UI bez sprzętu służy deterministyczny tryb demo:
+
+```powershell
+flutter run -d chrome --dart-define=AQUAHUB_DEMO=true
+```
+
+Tryb demo jest wybierany podczas kompilacji, nie używa sieci ani danych
+produkcyjnych i korzysta z tego samego parsera kontraktu co prawdziwy panel.
 
 Domyślny adres to `https://aquahub.local:8443`. Na panelu P4 należy otworzyć
 ekran System, porównać pełny odcisk certyfikatu i wpisać aktualny kod parowania.
@@ -52,9 +65,12 @@ deklaruje dostęp do sieci lokalnej oraz usługę Bonjour `_aquahub._tcp`.
 
 ## Testy
 
-Testy obejmują modele, kontrakt API, paginację, komendy, onboarding AquaHub oraz
-zachowaną warstwę kompatybilności Home Assistanta. Klient HTTP jest wstrzykiwany
-w testach, a kod produkcyjny tworzy transport z pinningiem certyfikatu.
+Testy obejmują modele, kontrakt API, paginację, komendy, onboarding, OTA,
+automatyzacje, przyszłe typy encji i pełną nawigację AquaHub. Klient HTTP jest
+wstrzykiwany w testach, a kod produkcyjny tworzy transport z pinningiem
+certyfikatu. Wydanie aplikacji ma wersję `1.1.0+2`.
 
 Pełny podział odpowiedzialności i procedura provisioningu znajdują się w
 [`docs/AQUAHUB_ARCHITECTURE.md`](../docs/AQUAHUB_ARCHITECTURE.md).
+Procedura wydawania firmware’u P4 znajduje się w
+[`docs/AQUAHUB_OTA_RELEASES.md`](../docs/AQUAHUB_OTA_RELEASES.md).

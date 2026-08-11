@@ -101,6 +101,10 @@ CYD pozostaje źródłem prawdy i atomowo zatwierdza konfigurację.
 Aktualnym źródłem prawdy dla odpowiedzialności, protokołu, parowania,
 bezpieczeństwa i etapów sprzętowych jest
 [docs/AQUAHUB_ARCHITECTURE.md](docs/AQUAHUB_ARCHITECTURE.md).
+Pakowanie, publikację i rollback OTA panelu P4 opisuje
+[docs/AQUAHUB_OTA_RELEASES.md](docs/AQUAHUB_OTA_RELEASES.md), a kompletny prompt
+do kolejnych rund autonomicznej finalizacji znajduje się w
+[docs/CODEX_FINAL_PRODUCT_PROMPT.md](docs/CODEX_FINAL_PRODUCT_PROMPT.md).
 
 Kierunek produktu, granice odpowiedzialności oraz etapy dojścia od działającego
 MVP do instalacji produkcyjnej opisuje

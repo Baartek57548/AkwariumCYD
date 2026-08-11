@@ -4,6 +4,7 @@ idf_component_register(
         "aquahub_api.cpp"
         "aquahub_broker.cpp"
         "aquahub_identity.cpp"
+        "aquahub_ota.cpp"
         "aquahub_service.cpp"
         "hmi_ui.cpp"
     INCLUDE_DIRS
@@ -11,7 +12,9 @@ idf_component_register(
     REQUIRES
         aquacyd_link
         aquahub_core
+        app_update
         esp_event
+        esp_http_client
         esp_https_server
         esp_netif
         esp_system

@@ -11,6 +11,7 @@
 #include "aquahub_api.h"
 #include "aquahub_broker.h"
 #include "aquahub_identity.h"
+#include "aquahub_ota.h"
 #include "aquahub_service.h"
 #include "cJSON.h"
 #include "esp_event.h"
@@ -926,6 +927,7 @@ void start_network_services() {
         return;
     }
 #endif
+    aquahub_service_set_publisher(publish_aquahub_command, nullptr);
     if (!aquahub_api_start(publish_aquahub_command, nullptr)) {
         ESP_LOGE(kTag, "Unable to start AquaHub HTTPS API");
 #if CONFIG_AQUAHUB_LOCAL_BROKER
@@ -935,6 +937,9 @@ void start_network_services() {
     }
     network_services_started = true;
     start_mqtt();
+    if (!aquahub_ota_confirm_running_image()) {
+        ESP_LOGE(kTag, "Unable to confirm the running OTA image");
+    }
 }
 
 void wifi_event_handler(void *,
@@ -1029,8 +1034,10 @@ extern "C" void app_main(void) {
     }
     ESP_ERROR_CHECK(nvs_result);
     if (!aquahub_identity_initialize() ||
+        !aquahub_ota_initialize() ||
         !aquahub_service_initialize()) {
-        ESP_LOGE(kTag, "Unable to initialize AquaHub identity or registry");
+        ESP_LOGE(kTag,
+                 "Unable to initialize AquaHub identity, OTA or registry");
         abort();
     }
     display_brightness = load_display_brightness();

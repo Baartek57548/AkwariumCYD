@@ -76,8 +76,8 @@ AquaHub:
 ```
 
 Obsługiwane typy to `sensor`, `binary_sensor`, `switch`, `number`, `select`,
-`button` i `light`. Rejestr P4 ma stałe limity 16 urządzeń, 128 encji i 32
-reguł automatyzacji. Identyfikatory, tematy, zakresy, listy opcji i konflikty
+`button` i `light`. Rejestr P4 ma stałe limity 16 urządzeń, 128 encji i 8
+trwałych reguł automatyzacji. Identyfikatory, tematy, zakresy, listy opcji i konflikty
 tożsamości są walidowane przed rejestracją.
 
 Stan AquaCYD zawiera `boot_id` sterownika oraz rosnące `sequence`. AquaHub
@@ -123,6 +123,12 @@ P4 udostępnia wyłącznie HTTPS:
 | `GET /api/v1/entities` | Bearer | stronicowana lista encji |
 | `GET /api/v1/history` | Bearer | do 512 zmian w pierścieniu PSRAM |
 | `POST /api/v1/entities/{id}/command` | Bearer | walidowana komenda |
+| `GET /api/v1/automations` | Bearer | lista trwałych reguł lokalnych |
+| `POST /api/v1/automations` | Bearer | walidowany zapis reguły |
+| `DELETE /api/v1/automations/{id}` | Bearer | usunięcie reguły |
+| `GET /api/v1/updates` | Bearer | wersja, wydanie i postęp OTA |
+| `POST /api/v1/updates/check` | Bearer | pobranie manifestu HTTPS |
+| `POST /api/v1/updates/install` | Bearer | instalacja zweryfikowanego obrazu |
 | `GET /api/v1/events` | Bearer | WebSocket zmian rejestru |
 
 Klucz P-256 i samopodpisany certyfikat powstają na P4 przy pierwszym
@@ -162,24 +168,25 @@ Retained Discovery odbudowuje rejestr urządzeń po ponownym połączeniu broker
 
 ## Aktualizacje
 
-Obecne sloty partycji P4 i C6 są przygotowane do A/B OTA, a CYD zachowuje swój
-istniejący podpisany format aktualizacji. Automatyczne pobieranie aktualizacji
-przez AquaHub nie jest jeszcze włączone, ponieważ bez gotowej infrastruktury
-podpisów i rollbacku stworzyłoby zdalny mechanizm wykonania kodu bez pełnego
-łańcucha zaufania.
+P4 ma kompletną ścieżkę OTA A/B: pobiera wyłącznie `manifest.json` ze stałego
+adresu HTTPS, odrzuca przekierowania i nazwy zawierające ścieżki, ogranicza
+obraz do 5 MiB, porównuje rozmiar i SHA-256, zapisuje nieaktywną partycję,
+ustawia ją jako startową i potwierdza zdrowie dopiero po uruchomieniu usług.
+Nieudany start powoduje rollback dzięki `CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE`.
+Telefon nie przekazuje adresu ani pliku, tylko uruchamia sprawdzenie lub
+instalację już zweryfikowanego wydania.
 
-Kolejny etap musi wdrożyć równocześnie:
+Kanał wydawniczy ustala się przez `AQUAHUB_OTA_BASE_URL`. Instrukcja hostingu,
+format manifestu i generator pakietu są w `AQUAHUB_OTA_RELEASES.md`. CYD nadal
+korzysta z istniejącego podpisanego `.aqfw`, natomiast dystrybucja OTA dla
+stałego C6 będzie osobnym targetem po dodaniu encji `update` do Discovery.
+Interfejs pokazuje tę różnicę jawnie i nie symuluje dostępnej aktualizacji.
 
-- manifest wersji podpisany kluczem wydaniowym offline;
-- weryfikację SHA-256 obrazu i podpisu przed zapisem;
-- osobne kanały stabilny/testowy;
-- A/B OTA z potwierdzeniem zdrowia i automatycznym rollbackiem;
-- zgodność wersji protokołu CYD–C6–P4;
-- brak zdalnej aktualizacji CYD w czasie aktywnego alarmu;
-- ręczne zatwierdzenie na panelu dla pierwszego wdrożenia.
-
-Do tego czasu aktualizacje P4 i C6 wykonuje się świadomie przez USB. Jest to
-ograniczenie bezpieczeństwa, a nie brakujący przycisk w UI.
+SHA-256 i zaufany HTTPS chronią transport i wykrywają uszkodzenie obrazu.
+Docelowe urządzenia produkcyjne muszą dodatkowo przejść kontrolowany provisioning
+Secure Boot v2 oraz Flash Encryption; firmware i skrypty nie przepalają eFuse
+automatycznie. Pierwsze wdrożenie i każda zmiana klucza wymagają testu na
+fizycznym panelu.
 
 ## Stany awarii
 

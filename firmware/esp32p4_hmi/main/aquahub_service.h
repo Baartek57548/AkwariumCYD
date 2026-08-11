@@ -5,6 +5,14 @@
 #include <stdint.h>
 
 #include "aquahub_registry.h"
+#include "aquahub_automation.h"
+
+using AquaHubServicePublishCallback =
+    bool (*)(const char *topic,
+             const char *payload,
+             int qos,
+             bool retained,
+             void *context);
 
 struct AquaHubSummary {
     uint16_t device_count;
@@ -17,6 +25,8 @@ struct AquaHubSummary {
 };
 
 bool aquahub_service_initialize();
+void aquahub_service_set_publisher(AquaHubServicePublishCallback publisher,
+                                   void *context);
 
 /**
  * Ingests one message observed by the local MQTT broker. The broker callback
@@ -46,6 +56,11 @@ bool aquahub_service_write_history_json(char *output,
                                         size_t output_capacity,
                                         const char *entity_id,
                                         size_t limit);
+bool aquahub_service_write_automations_json(char *output,
+                                            size_t output_capacity);
+aquahub::AutomationStatus aquahub_service_upsert_automation(
+    const aquahub::AutomationRule &rule);
+aquahub::AutomationStatus aquahub_service_remove_automation(const char *id);
 
 /**
  * Validates a generic entity command and serializes the MQTT topic/payload.

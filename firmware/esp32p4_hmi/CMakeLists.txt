@@ -6,4 +6,5 @@ set(EXTRA_COMPONENT_DIRS
 )
 
 include($ENV{IDF_PATH}/tools/cmake/project.cmake)
+set(PROJECT_VER "1.1.0")
 project(aquahub_esp32p4)

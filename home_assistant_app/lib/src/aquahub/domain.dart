@@ -5,7 +5,8 @@ enum HubEntityKind {
   number,
   select,
   button,
-  light;
+  light,
+  unknown;
 
   static HubEntityKind parse(Object? value) => switch (value) {
     'sensor' => sensor,
@@ -15,11 +16,278 @@ enum HubEntityKind {
     'select' => select,
     'button' => button,
     'light' => light,
-    _ => throw const FormatException('Nieznany typ encji AquaHub.'),
+    _ => unknown,
   };
 
   bool get isBoolean =>
       this == binarySensor || this == switchEntity || this == light;
+
+  bool get supportsHistory => this == sensor || this == number;
+}
+
+enum HubUpdatePhase {
+  disabled,
+  idle,
+  checking,
+  available,
+  upToDate,
+  downloading,
+  verifying,
+  rebooting,
+  failed;
+
+  static HubUpdatePhase parse(Object? value) => switch (value) {
+    'disabled' => disabled,
+    'idle' => idle,
+    'checking' => checking,
+    'available' => available,
+    'up_to_date' => upToDate,
+    'downloading' => downloading,
+    'verifying' => verifying,
+    'rebooting' => rebooting,
+    'failed' => failed,
+    _ => throw const FormatException('Nieznany stan aktualizacji AquaHub.'),
+  };
+
+  bool get busy =>
+      this == checking ||
+      this == downloading ||
+      this == verifying ||
+      this == rebooting;
+}
+
+final class HubUpdateRelease {
+  const HubUpdateRelease({
+    required this.id,
+    required this.version,
+    required this.sizeBytes,
+    required this.securityVersion,
+    required this.mandatory,
+    required this.notes,
+  });
+
+  factory HubUpdateRelease.fromJson(Map<String, Object?> json) =>
+      HubUpdateRelease(
+        id: _requiredText(json, 'release_id'),
+        version: _requiredText(json, 'version'),
+        sizeBytes: _integer(json, 'size'),
+        securityVersion: _integer(json, 'security_version'),
+        mandatory: json['mandatory'] == true,
+        notes: _longText(json, 'notes', maximumLength: 1024),
+      );
+
+  final String id;
+  final String version;
+  final int sizeBytes;
+  final int securityVersion;
+  final bool mandatory;
+  final String notes;
+}
+
+final class HubUpdateStatus {
+  const HubUpdateStatus({
+    required this.supported,
+    required this.target,
+    required this.currentVersion,
+    required this.currentSecurityVersion,
+    required this.phase,
+    required this.progressPercent,
+    required this.bytesReceived,
+    required this.totalBytes,
+    required this.error,
+    required this.release,
+  });
+
+  factory HubUpdateStatus.fromJson(Map<String, Object?> json) {
+    final progress = _integer(json, 'progress_percent');
+    if (progress > 100) {
+      throw const FormatException('Postęp OTA wykracza poza dozwolony zakres.');
+    }
+    final rawRelease = json['release'];
+    if (rawRelease != null && rawRelease is! Map<String, Object?>) {
+      throw const FormatException('Nieprawidłowy opis wydania OTA.');
+    }
+    return HubUpdateStatus(
+      supported: json['supported'] == true,
+      target: _requiredText(json, 'target'),
+      currentVersion: _requiredText(json, 'current_version'),
+      currentSecurityVersion: _integer(json, 'current_security_version'),
+      phase: HubUpdatePhase.parse(json['phase']),
+      progressPercent: progress,
+      bytesReceived: _integer(json, 'bytes_received'),
+      totalBytes: _integer(json, 'total_bytes'),
+      error: _longText(json, 'error', maximumLength: 512),
+      release: rawRelease == null
+          ? null
+          : HubUpdateRelease.fromJson(rawRelease as Map<String, Object?>),
+    );
+  }
+
+  final bool supported;
+  final String target;
+  final String currentVersion;
+  final int currentSecurityVersion;
+  final HubUpdatePhase phase;
+  final int progressPercent;
+  final int bytesReceived;
+  final int totalBytes;
+  final String error;
+  final HubUpdateRelease? release;
+}
+
+enum HubAutomationComparison {
+  changed,
+  equals,
+  above,
+  below;
+
+  static HubAutomationComparison parse(Object? value) => switch (value) {
+    'changed' => changed,
+    'equals' => equals,
+    'above' => above,
+    'below' => below,
+    _ => throw const FormatException('Nieznane porównanie automatyzacji.'),
+  };
+
+  String get wireName => switch (this) {
+    changed => 'changed',
+    equals => 'equals',
+    above => 'above',
+    below => 'below',
+  };
+}
+
+final class HubAutomationClause {
+  const HubAutomationClause({
+    required this.entityId,
+    required this.comparison,
+    required this.value,
+  });
+
+  factory HubAutomationClause.fromJson(Map<String, Object?> json) =>
+      HubAutomationClause(
+        entityId: _requiredText(json, 'entity_id'),
+        comparison: HubAutomationComparison.parse(json['comparison']),
+        value: _automationValue(json['value'], allowNull: true),
+      );
+
+  final String entityId;
+  final HubAutomationComparison comparison;
+  final Object? value;
+
+  Map<String, Object?> toJson() => <String, Object?>{
+    'entity_id': entityId,
+    'comparison': comparison.wireName,
+    'value': value,
+  };
+}
+
+final class HubAutomationAction {
+  const HubAutomationAction({required this.entityId, required this.value});
+
+  factory HubAutomationAction.fromJson(Map<String, Object?> json) =>
+      HubAutomationAction(
+        entityId: _requiredText(json, 'entity_id'),
+        value: _automationValue(json['value'], allowNull: false)!,
+      );
+
+  final String entityId;
+  final Object value;
+
+  Map<String, Object?> toJson() => <String, Object?>{
+    'entity_id': entityId,
+    'value': value,
+  };
+}
+
+final class HubAutomationRule {
+  const HubAutomationRule({
+    required this.id,
+    required this.name,
+    required this.enabled,
+    required this.cooldown,
+    required this.trigger,
+    required this.condition,
+    required this.action,
+  });
+
+  factory HubAutomationRule.fromJson(Map<String, Object?> json) {
+    final trigger = json['trigger'];
+    final condition = json['condition'];
+    final action = json['action'];
+    if (trigger is! Map<String, Object?> ||
+        (condition != null && condition is! Map<String, Object?>) ||
+        action is! Map<String, Object?>) {
+      throw const FormatException('Nieprawidłowa struktura automatyzacji.');
+    }
+    return HubAutomationRule(
+      id: _requiredText(json, 'id'),
+      name: _requiredText(json, 'name'),
+      enabled: json['enabled'] == true,
+      cooldown: Duration(milliseconds: _integer(json, 'cooldown_ms')),
+      trigger: HubAutomationClause.fromJson(trigger),
+      condition: condition == null
+          ? null
+          : HubAutomationClause.fromJson(condition as Map<String, Object?>),
+      action: HubAutomationAction.fromJson(action),
+    );
+  }
+
+  final String id;
+  final String name;
+  final bool enabled;
+  final Duration cooldown;
+  final HubAutomationClause trigger;
+  final HubAutomationClause? condition;
+  final HubAutomationAction action;
+
+  HubAutomationRule copyWith({bool? enabled}) => HubAutomationRule(
+    id: id,
+    name: name,
+    enabled: enabled ?? this.enabled,
+    cooldown: cooldown,
+    trigger: trigger,
+    condition: condition,
+    action: action,
+  );
+
+  Map<String, Object?> toJson() => <String, Object?>{
+    'id': id,
+    'name': name,
+    'enabled': enabled,
+    'cooldown_ms': cooldown.inMilliseconds,
+    'trigger': trigger.toJson(),
+    'condition': condition?.toJson(),
+    'action': action.toJson(),
+  };
+}
+
+final class HubAutomationCollection {
+  const HubAutomationCollection({required this.capacity, required this.rules});
+
+  factory HubAutomationCollection.fromJson(Map<String, Object?> json) {
+    final capacity = _integer(json, 'capacity');
+    final count = _integer(json, 'count');
+    final items = json['items'];
+    if (capacity < 1 || capacity > 32 || items is! List<Object?>) {
+      throw const FormatException('Nieprawidłowa lista automatyzacji.');
+    }
+    final rules = items
+        .map((item) {
+          if (item is! Map<String, Object?>) {
+            throw const FormatException('Nieprawidłowa automatyzacja.');
+          }
+          return HubAutomationRule.fromJson(item);
+        })
+        .toList(growable: false);
+    if (rules.length != count || rules.length > capacity) {
+      throw const FormatException('Niespójna liczba automatyzacji.');
+    }
+    return HubAutomationCollection(capacity: capacity, rules: rules);
+  }
+
+  final int capacity;
+  final List<HubAutomationRule> rules;
 }
 
 final class HubCredentials {
@@ -315,10 +583,30 @@ String _text(Map<String, Object?> json, String key) {
   return value;
 }
 
+String _longText(
+  Map<String, Object?> json,
+  String key, {
+  required int maximumLength,
+}) {
+  final value = json[key];
+  if (value == null) return '';
+  if (value is! String || value.length > maximumLength) {
+    throw FormatException('Pole $key nie jest poprawnym tekstem.');
+  }
+  return value;
+}
+
 double? _optionalNumber(Object? value) {
   if (value == null) return null;
   if (value is! num || !value.isFinite) {
     throw const FormatException('Nieprawidłowy zakres encji.');
   }
   return value.toDouble();
+}
+
+Object? _automationValue(Object? value, {required bool allowNull}) {
+  if (value == null && allowNull) return null;
+  if (value is bool || value is String) return value;
+  if (value is num && value.isFinite) return value;
+  throw const FormatException('Nieprawidłowa wartość automatyzacji.');
 }

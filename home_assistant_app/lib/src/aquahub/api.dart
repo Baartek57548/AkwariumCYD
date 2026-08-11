@@ -167,6 +167,46 @@ final class HubApi {
         .toList(growable: false);
   }
 
+  Future<HubUpdateStatus> fetchUpdateStatus() async => HubUpdateStatus.fromJson(
+    _object(await _requestJson('GET', '/api/v1/updates')),
+  );
+
+  Future<HubAutomationCollection> fetchAutomations() async =>
+      HubAutomationCollection.fromJson(
+        _object(await _requestJson('GET', '/api/v1/automations')),
+      );
+
+  Future<void> saveAutomation(HubAutomationRule rule) async {
+    _expectAccepted(
+      await _requestJson('POST', '/api/v1/automations', body: rule.toJson()),
+      operation: 'zapisu automatyzacji',
+    );
+  }
+
+  Future<void> deleteAutomation(String id) async {
+    if (!_validAutomationId(id)) {
+      throw ArgumentError.value(id, 'id');
+    }
+    _expectAccepted(
+      await _requestJson('DELETE', '/api/v1/automations/$id'),
+      operation: 'usunięcia automatyzacji',
+    );
+  }
+
+  Future<void> checkForUpdates() async {
+    _expectAccepted(
+      await _requestJson('POST', '/api/v1/updates/check'),
+      operation: 'sprawdzania aktualizacji',
+    );
+  }
+
+  Future<void> installUpdate() async {
+    _expectAccepted(
+      await _requestJson('POST', '/api/v1/updates/install'),
+      operation: 'instalacji aktualizacji',
+    );
+  }
+
   Future<void> sendCommand(String entityId, Object? value) async {
     if (!_validEntityId(entityId) ||
         (value != null &&
@@ -329,6 +369,21 @@ bool _validEntityId(String value) =>
     value.isNotEmpty &&
     value.length < 64 &&
     RegExp(r'^[A-Za-z0-9_.:-]+$').hasMatch(value);
+
+bool _validAutomationId(String value) =>
+    value.isNotEmpty &&
+    value.length < 33 &&
+    RegExp(r'^[A-Za-z0-9_.:-]+$').hasMatch(value);
+
+void _expectAccepted(Object? value, {required String operation}) {
+  final object = _object(value);
+  if (object['accepted'] != true) {
+    throw HubFailure(
+      HubFailureType.invalidResponse,
+      'AquaHub nie potwierdził $operation.',
+    );
+  }
+}
 
 String? _serverMessage(String body) {
   try {

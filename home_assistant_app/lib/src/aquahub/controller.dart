@@ -39,25 +39,41 @@ final class HubController extends ChangeNotifier {
   HubApi? _bootstrapApi;
   HubInfo? _discoveredInfo;
   HubSystem? _system;
+  HubUpdateStatus? _updateStatus;
+  HubAutomationCollection _automations = const HubAutomationCollection(
+    capacity: 8,
+    rules: <HubAutomationRule>[],
+  );
   List<HubDevice> _devices = const <HubDevice>[];
   List<HubEntity> _entities = const <HubEntity>[];
   String? _observedFingerprint;
   String? _errorMessage;
   Timer? _pollTimer;
   bool _refreshing = false;
+  bool _updating = false;
+  bool _appActive = true;
+  DateTime? _lastSuccessfulRefresh;
+  int _consecutiveRefreshFailures = 0;
   final Set<String> _commanding = <String>{};
+  final Set<String> _editingAutomations = <String>{};
   bool _disposed = false;
 
   HubAppPhase get phase => _phase;
   HubCredentials? get credentials => _credentials;
   HubInfo? get discoveredInfo => _discoveredInfo;
   HubSystem? get system => _system;
+  HubUpdateStatus? get updateStatus => _updateStatus;
+  HubAutomationCollection get automations => _automations;
   List<HubDevice> get devices => _devices;
   List<HubEntity> get entities => _entities;
   String? get observedFingerprint => _observedFingerprint;
   String? get errorMessage => _errorMessage;
   bool get refreshing => _refreshing;
+  bool get updating => _updating;
+  bool get connectionHealthy => _consecutiveRefreshFailures == 0;
+  DateTime? get lastSuccessfulRefresh => _lastSuccessfulRefresh;
   bool isCommanding(String entityId) => _commanding.contains(entityId);
+  bool isEditingAutomation(String id) => _editingAutomations.contains(id);
 
   Future<void> initialize() async {
     try {
@@ -210,13 +226,20 @@ final class HubController extends ChangeNotifier {
         api.fetchSystem(),
         api.fetchDevices(),
         api.fetchEntities(),
+        api.fetchUpdateStatus(),
+        api.fetchAutomations(),
       ]);
       _system = results[0] as HubSystem;
       _devices = results[1] as List<HubDevice>;
       _entities = results[2] as List<HubEntity>;
+      _updateStatus = results[3] as HubUpdateStatus;
+      _automations = results[4] as HubAutomationCollection;
       _errorMessage = null;
+      _consecutiveRefreshFailures = 0;
+      _lastSuccessfulRefresh = DateTime.now();
     } on HubFailure catch (error) {
       _errorMessage = error.message;
+      _consecutiveRefreshFailures++;
       if (failConnection || error.type == HubFailureType.authentication) {
         rethrow;
       }
@@ -252,6 +275,90 @@ final class HubController extends ChangeNotifier {
     return api.fetchHistory(entityId);
   }
 
+  Future<bool> checkForUpdates() async {
+    final api = _api;
+    if (api == null || _updating || _updateStatus?.phase.busy == true) {
+      return false;
+    }
+    _updating = true;
+    _errorMessage = null;
+    notifyListeners();
+    try {
+      await api.checkForUpdates();
+      await Future<void>.delayed(const Duration(milliseconds: 500));
+      _updateStatus = await api.fetchUpdateStatus();
+      return true;
+    } on HubFailure catch (error) {
+      _errorMessage = error.message;
+      return false;
+    } finally {
+      _updating = false;
+      if (!_disposed) notifyListeners();
+    }
+  }
+
+  Future<bool> installUpdate() async {
+    final api = _api;
+    if (api == null ||
+        _updating ||
+        _updateStatus?.phase != HubUpdatePhase.available) {
+      return false;
+    }
+    _updating = true;
+    _errorMessage = null;
+    notifyListeners();
+    try {
+      await api.installUpdate();
+      await Future<void>.delayed(const Duration(milliseconds: 500));
+      _updateStatus = await api.fetchUpdateStatus();
+      return true;
+    } on HubFailure catch (error) {
+      _errorMessage = error.message;
+      return false;
+    } finally {
+      _updating = false;
+      if (!_disposed) notifyListeners();
+    }
+  }
+
+  Future<bool> saveAutomation(HubAutomationRule rule) async {
+    final api = _api;
+    if (api == null || _editingAutomations.contains(rule.id)) return false;
+    _editingAutomations.add(rule.id);
+    _errorMessage = null;
+    notifyListeners();
+    try {
+      await api.saveAutomation(rule);
+      _automations = await api.fetchAutomations();
+      return true;
+    } on HubFailure catch (error) {
+      _errorMessage = error.message;
+      return false;
+    } finally {
+      _editingAutomations.remove(rule.id);
+      if (!_disposed) notifyListeners();
+    }
+  }
+
+  Future<bool> deleteAutomation(String id) async {
+    final api = _api;
+    if (api == null || _editingAutomations.contains(id)) return false;
+    _editingAutomations.add(id);
+    _errorMessage = null;
+    notifyListeners();
+    try {
+      await api.deleteAutomation(id);
+      _automations = await api.fetchAutomations();
+      return true;
+    } on HubFailure catch (error) {
+      _errorMessage = error.message;
+      return false;
+    } finally {
+      _editingAutomations.remove(id);
+      if (!_disposed) notifyListeners();
+    }
+  }
+
   Future<void> retry() async {
     final credentials = _credentials;
     if (credentials == null) {
@@ -268,8 +375,15 @@ final class HubController extends ChangeNotifier {
     _api = null;
     _credentials = null;
     _system = null;
+    _updateStatus = null;
+    _automations = const HubAutomationCollection(
+      capacity: 8,
+      rules: <HubAutomationRule>[],
+    );
     _devices = const <HubDevice>[];
     _entities = const <HubEntity>[];
+    _lastSuccessfulRefresh = null;
+    _consecutiveRefreshFailures = 0;
     await _credentialsStore.clear();
     _phase = HubAppPhase.setup;
     _errorMessage = null;
@@ -278,11 +392,25 @@ final class HubController extends ChangeNotifier {
 
   void _startPolling() {
     _pollTimer?.cancel();
-    if (!enablePolling) return;
+    if (!enablePolling || !_appActive) return;
     _pollTimer = Timer.periodic(
       const Duration(seconds: 5),
       (_) => unawaited(refresh()),
     );
+  }
+
+  void setAppActive(bool active) {
+    if (_disposed || _appActive == active) return;
+    _appActive = active;
+    if (!active) {
+      _pollTimer?.cancel();
+      _pollTimer = null;
+      return;
+    }
+    if (_phase == HubAppPhase.ready) {
+      _startPolling();
+      unawaited(refresh());
+    }
   }
 
   void _closeBootstrap() {

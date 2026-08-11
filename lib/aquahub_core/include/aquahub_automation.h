@@ -23,7 +23,8 @@ enum class AutomationStatus : uint8_t {
     Ok = 0U,
     InvalidRule,
     CapacityReached,
-    NotFound
+    NotFound,
+    PersistenceFailed
 };
 
 struct AutomationRule {

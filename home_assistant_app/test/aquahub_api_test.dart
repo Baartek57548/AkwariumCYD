@@ -119,6 +119,135 @@ void main() {
     expect(api.fetchInfo(), throwsA(isA<FormatException>()));
     api.close();
   });
+
+  test('odczytuje zweryfikowane wydanie i postęp OTA', () async {
+    final credentials = HubCredentials.parse(
+      baseUrl: 'https://aquahub.local:8443',
+      accessToken: '12345678901234567890123456789012',
+      tlsFingerprint: fingerprint,
+    );
+    final api = HubApi.authenticated(
+      credentials,
+      client: MockClient((request) async {
+        expect(request.url.path, '/api/v1/updates');
+        return http.Response(
+          jsonEncode(<String, Object?>{
+            'supported': true,
+            'target': 'aquahub-p4',
+            'current_version': '1.0.0',
+            'current_security_version': 1,
+            'phase': 'available',
+            'progress_percent': 0,
+            'bytes_received': 0,
+            'total_bytes': 1114112,
+            'error': '',
+            'release': <String, Object?>{
+              'release_id': 'stable-1.1.0',
+              'version': '1.1.0',
+              'size': 1114112,
+              'security_version': 1,
+              'mandatory': false,
+              'notes': 'Poprawki stabilności i centrum automatyzacji.',
+            },
+          }),
+          200,
+          headers: <String, String>{
+            'content-type': 'application/json; charset=utf-8',
+          },
+        );
+      }),
+    );
+
+    final status = await api.fetchUpdateStatus();
+
+    expect(status.phase, HubUpdatePhase.available);
+    expect(status.release?.version, '1.1.0');
+    expect(status.release?.sizeBytes, 1114112);
+    api.close();
+  });
+
+  test('zapisuje, pobiera i usuwa automatyzację', () async {
+    final credentials = HubCredentials.parse(
+      baseUrl: 'https://aquahub.local:8443',
+      accessToken: '12345678901234567890123456789012',
+      tlsFingerprint: fingerprint,
+    );
+    final rule = HubAutomationRule(
+      id: 'auto_temperature',
+      name: 'Chłodzenie awaryjne',
+      enabled: true,
+      cooldown: const Duration(minutes: 1),
+      trigger: const HubAutomationClause(
+        entityId: 'temperature',
+        comparison: HubAutomationComparison.above,
+        value: 27.5,
+      ),
+      condition: null,
+      action: const HubAutomationAction(entityId: 'aerator', value: true),
+    );
+    var saved = false;
+    var deleted = false;
+    final api = HubApi.authenticated(
+      credentials,
+      client: MockClient((request) async {
+        if (request.method == 'POST') {
+          expect(request.url.path, '/api/v1/automations');
+          final body = jsonDecode(request.body) as Map<String, Object?>;
+          expect(body['id'], rule.id);
+          expect(body['cooldown_ms'], 60000);
+          saved = true;
+          return http.Response(
+            '{"accepted":true}',
+            200,
+            headers: <String, String>{
+              'content-type': 'application/json; charset=utf-8',
+            },
+          );
+        }
+        if (request.method == 'DELETE') {
+          expect(request.url.path, '/api/v1/automations/${rule.id}');
+          deleted = true;
+          return http.Response(
+            '{"accepted":true}',
+            200,
+            headers: <String, String>{
+              'content-type': 'application/json; charset=utf-8',
+            },
+          );
+        }
+        return http.Response(
+          jsonEncode(<String, Object?>{
+            'capacity': 8,
+            'count': 1,
+            'items': <Object?>[rule.toJson()],
+          }),
+          200,
+          headers: <String, String>{
+            'content-type': 'application/json; charset=utf-8',
+          },
+        );
+      }),
+    );
+
+    await api.saveAutomation(rule);
+    final collection = await api.fetchAutomations();
+    await api.deleteAutomation(rule.id);
+
+    expect(saved, isTrue);
+    expect(deleted, isTrue);
+    expect(collection.rules.single.trigger.value, 27.5);
+    api.close();
+  });
+
+  test('nieznany przyszły typ encji nie blokuje całego rejestru', () {
+    final entity = HubEntity.fromJson(<String, Object?>{
+      ..._entityJson('pump_speed', 'Prędkość pompy', 'auto'),
+      'kind': 'fan',
+    });
+
+    expect(entity.kind, HubEntityKind.unknown);
+    expect(entity.formattedState, 'auto');
+  });
 }
 
 Map<String, Object?> _entityJson(

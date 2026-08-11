@@ -3,8 +3,10 @@ import 'dart:math' as math;
 import 'package:flutter/material.dart';
 
 import '../design/app_theme.dart';
+import 'automations_page.dart';
 import 'controller.dart';
 import 'domain.dart';
+import 'updates_page.dart';
 
 final class HubShell extends StatefulWidget {
   const HubShell({required this.controller, super.key});
@@ -29,8 +31,13 @@ final class _HubShellState extends State<HubShell> {
       Icons.devices_other_outlined,
       Icons.devices_other,
     ),
+    _Destination(
+      'Automatyzacje',
+      Icons.account_tree_outlined,
+      Icons.account_tree_rounded,
+    ),
     _Destination('Historia', Icons.show_chart_outlined, Icons.show_chart),
-    _Destination('System', Icons.settings_outlined, Icons.settings),
+    _Destination('Więcej', Icons.more_horiz_rounded, Icons.more_rounded),
   ];
 
   @override
@@ -39,8 +46,9 @@ final class _HubShellState extends State<HubShell> {
     final content = switch (index) {
       0 => _OverviewPage(controller: widget.controller),
       1 => _DevicesPage(controller: widget.controller),
-      2 => _HistoryPage(controller: widget.controller),
-      _ => _SystemPage(controller: widget.controller),
+      2 => HubAutomationsPage(controller: widget.controller),
+      3 => _HistoryPage(controller: widget.controller),
+      _ => _MorePage(controller: widget.controller),
     };
     return Scaffold(
       appBar: AppBar(
@@ -70,28 +78,38 @@ final class _HubShellState extends State<HubShell> {
           const SizedBox(width: 8),
         ],
       ),
-      body: Row(
+      body: Column(
         children: <Widget>[
-          if (wide)
-            NavigationRail(
-              selectedIndex: index,
-              labelType: NavigationRailLabelType.all,
-              leading: const Padding(
-                padding: EdgeInsets.only(bottom: 18),
-                child: _SmallHubMark(),
-              ),
-              destinations: destinations
-                  .map(
-                    (destination) => NavigationRailDestination(
-                      icon: Icon(destination.icon),
-                      selectedIcon: Icon(destination.selectedIcon),
-                      label: Text(destination.label),
+          if (!widget.controller.connectionHealthy &&
+              widget.controller.errorMessage != null)
+            _ConnectionBanner(controller: widget.controller),
+          Expanded(
+            child: Row(
+              children: <Widget>[
+                if (wide)
+                  NavigationRail(
+                    selectedIndex: index,
+                    labelType: NavigationRailLabelType.all,
+                    leading: const Padding(
+                      padding: EdgeInsets.only(bottom: 18),
+                      child: _SmallHubMark(),
                     ),
-                  )
-                  .toList(growable: false),
-              onDestinationSelected: (value) => setState(() => index = value),
+                    destinations: destinations
+                        .map(
+                          (destination) => NavigationRailDestination(
+                            icon: Icon(destination.icon),
+                            selectedIcon: Icon(destination.selectedIcon),
+                            label: Text(destination.label),
+                          ),
+                        )
+                        .toList(growable: false),
+                    onDestinationSelected: (value) =>
+                        setState(() => index = value),
+                  ),
+                Expanded(child: content),
+              ],
             ),
-          Expanded(child: content),
+          ),
         ],
       ),
       bottomNavigationBar: wide
@@ -109,6 +127,46 @@ final class _HubShellState extends State<HubShell> {
                   )
                   .toList(growable: false),
             ),
+    );
+  }
+}
+
+final class _ConnectionBanner extends StatelessWidget {
+  const _ConnectionBanner({required this.controller});
+
+  final HubController controller;
+
+  @override
+  Widget build(BuildContext context) {
+    return Material(
+      color: Theme.of(context).colorScheme.errorContainer,
+      child: SafeArea(
+        top: false,
+        bottom: false,
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 9),
+          child: Row(
+            children: <Widget>[
+              Icon(
+                Icons.cloud_off_outlined,
+                color: Theme.of(context).colorScheme.onErrorContainer,
+              ),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Text(
+                  '${controller.errorMessage} Wyświetlane są ostatnie poprawne dane.',
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                ),
+              ),
+              TextButton(
+                onPressed: controller.refreshing ? null : controller.refresh,
+                child: const Text('Ponów'),
+              ),
+            ],
+          ),
+        ),
+      ),
     );
   }
 }
@@ -214,13 +272,60 @@ final class _OverviewPage extends StatelessWidget {
   }
 }
 
-final class _DevicesPage extends StatelessWidget {
+final class _DevicesPage extends StatefulWidget {
   const _DevicesPage({required this.controller});
 
   final HubController controller;
 
   @override
+  State<_DevicesPage> createState() => _DevicesPageState();
+}
+
+final class _DevicesPageState extends State<_DevicesPage> {
+  final searchController = TextEditingController();
+  bool onlineOnly = false;
+  String selectedArea = '';
+
+  @override
+  void dispose() {
+    searchController.dispose();
+    super.dispose();
+  }
+
+  @override
   Widget build(BuildContext context) {
+    final controller = widget.controller;
+    final areas =
+        controller.devices
+            .map((device) => device.area)
+            .where((area) => area.isNotEmpty)
+            .toSet()
+            .toList()
+          ..sort();
+    if (selectedArea.isNotEmpty && !areas.contains(selectedArea)) {
+      selectedArea = '';
+    }
+    final query = searchController.text.trim().toLowerCase();
+    final devices = controller.devices
+        .where((device) {
+          if (onlineOnly && !device.online) return false;
+          if (selectedArea.isNotEmpty && device.area != selectedArea) {
+            return false;
+          }
+          if (query.isEmpty) return true;
+          final entities = controller.entities.where(
+            (entity) => entity.deviceId == device.id,
+          );
+          return device.name.toLowerCase().contains(query) ||
+              device.id.toLowerCase().contains(query) ||
+              device.model.toLowerCase().contains(query) ||
+              entities.any(
+                (entity) =>
+                    entity.name.toLowerCase().contains(query) ||
+                    entity.id.toLowerCase().contains(query),
+              );
+        })
+        .toList(growable: false);
     return _PageBody(
       children: <Widget>[
         _SectionHeader(
@@ -229,13 +334,79 @@ final class _DevicesPage extends StatelessWidget {
               '${controller.devices.length} urządzeń · ${controller.entities.length} encji',
         ),
         const SizedBox(height: 14),
+        TextField(
+          controller: searchController,
+          onChanged: (_) => setState(() {}),
+          decoration: InputDecoration(
+            labelText: 'Szukaj urządzenia lub encji',
+            prefixIcon: const Icon(Icons.search_rounded),
+            suffixIcon: searchController.text.isEmpty
+                ? null
+                : IconButton(
+                    tooltip: 'Wyczyść',
+                    onPressed: () {
+                      searchController.clear();
+                      setState(() {});
+                    },
+                    icon: const Icon(Icons.close_rounded),
+                  ),
+          ),
+        ),
+        const SizedBox(height: 12),
+        Wrap(
+          spacing: 8,
+          runSpacing: 8,
+          crossAxisAlignment: WrapCrossAlignment.center,
+          children: <Widget>[
+            FilterChip(
+              selected: onlineOnly,
+              onSelected: (value) => setState(() => onlineOnly = value),
+              avatar: const Icon(Icons.wifi_rounded, size: 18),
+              label: const Text('Tylko online'),
+            ),
+            if (areas.isNotEmpty)
+              SizedBox(
+                width: 220,
+                child: DropdownButtonFormField<String>(
+                  key: ValueKey<String>('area:$selectedArea'),
+                  initialValue: selectedArea,
+                  decoration: const InputDecoration(
+                    labelText: 'Strefa',
+                    prefixIcon: Icon(Icons.location_on_outlined),
+                    isDense: true,
+                  ),
+                  items: <DropdownMenuItem<String>>[
+                    const DropdownMenuItem<String>(
+                      value: '',
+                      child: Text('Wszystkie strefy'),
+                    ),
+                    ...areas.map(
+                      (area) => DropdownMenuItem<String>(
+                        value: area,
+                        child: Text(area),
+                      ),
+                    ),
+                  ],
+                  onChanged: (value) =>
+                      setState(() => selectedArea = value ?? ''),
+                ),
+              ),
+            Text('${devices.length} wyników'),
+          ],
+        ),
+        const SizedBox(height: 14),
         if (controller.devices.isEmpty)
           const _EmptyState(
             icon: Icons.radar_outlined,
             text: 'AquaHub nie odebrał jeszcze komunikatu discovery.',
           )
+        else if (devices.isEmpty)
+          const _EmptyState(
+            icon: Icons.search_off_rounded,
+            text: 'Żadne urządzenie nie spełnia wybranych filtrów.',
+          )
         else
-          ...controller.devices.map(
+          ...devices.map(
             (device) => Padding(
               padding: const EdgeInsets.only(bottom: 12),
               child: _DeviceCard(
@@ -401,6 +572,7 @@ final class _EntityTile extends StatelessWidget {
         value = await _showButtonDialog(context, entity) ? null : _cancelled;
       case HubEntityKind.sensor:
       case HubEntityKind.binarySensor:
+      case HubEntityKind.unknown:
         return;
     }
     if (value != _cancelled && context.mounted) {
@@ -527,7 +699,7 @@ final class _HistoryPageState extends State<_HistoryPage> {
   @override
   Widget build(BuildContext context) {
     final candidates = widget.controller.entities
-        .where((entity) => entity.kind == HubEntityKind.sensor)
+        .where((entity) => entity.kind.supportsHistory)
         .toList(growable: false);
     if (candidates.isNotEmpty &&
         !candidates.any((entity) => entity.id == selectedId)) {
@@ -713,6 +885,43 @@ final class _HistoryPainter extends CustomPainter {
       oldDelegate.points != points ||
       oldDelegate.lineColor != lineColor ||
       oldDelegate.gridColor != gridColor;
+}
+
+final class _MorePage extends StatelessWidget {
+  const _MorePage({required this.controller});
+
+  final HubController controller;
+
+  @override
+  Widget build(BuildContext context) {
+    return DefaultTabController(
+      length: 2,
+      child: Column(
+        children: <Widget>[
+          const Material(
+            color: Colors.transparent,
+            child: TabBar(
+              tabs: <Widget>[
+                Tab(
+                  icon: Icon(Icons.system_update_alt_rounded),
+                  text: 'Aktualizacje',
+                ),
+                Tab(icon: Icon(Icons.settings_rounded), text: 'System'),
+              ],
+            ),
+          ),
+          Expanded(
+            child: TabBarView(
+              children: <Widget>[
+                HubUpdatesPage(controller: controller),
+                _SystemPage(controller: controller),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
 }
 
 final class _SystemPage extends StatelessWidget {
@@ -1127,6 +1336,7 @@ IconData _iconFor(HubEntityKind kind) => switch (kind) {
   HubEntityKind.select => Icons.list_alt_outlined,
   HubEntityKind.button => Icons.smart_button_outlined,
   HubEntityKind.light => Icons.lightbulb_outline_rounded,
+  HubEntityKind.unknown => Icons.extension_outlined,
 };
 
 String _duration(Duration value) {

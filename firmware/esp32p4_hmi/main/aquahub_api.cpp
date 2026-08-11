@@ -6,6 +6,7 @@
 #include <string.h>
 
 #include "aquahub_identity.h"
+#include "aquahub_ota.h"
 #include "aquahub_service.h"
 #include "cJSON.h"
 #include "esp_heap_caps.h"
@@ -26,6 +27,8 @@ constexpr size_t kSystemResponseBytes = 2048U;
 constexpr size_t kDevicesResponseBytes = 12288U;
 constexpr size_t kEntitiesResponseBytes = 28672U;
 constexpr size_t kHistoryResponseBytes = 28672U;
+constexpr size_t kUpdatesResponseBytes = 2048U;
+constexpr size_t kAutomationsResponseBytes = 12288U;
 constexpr size_t kQueryBytes = 256U;
 constexpr uint32_t kEventPollMs = 250U;
 
@@ -114,7 +117,7 @@ esp_err_t cors_handler(httpd_req_t *request) {
                        CONFIG_AQUAHUB_CORS_ORIGIN);
     httpd_resp_set_hdr(request,
                        "Access-Control-Allow-Methods",
-                       "GET, POST, OPTIONS");
+                       "GET, POST, DELETE, OPTIONS");
     httpd_resp_set_hdr(request,
                        "Access-Control-Allow-Headers",
                        "Authorization, Content-Type");
@@ -207,6 +210,14 @@ bool write_system(char *output, size_t capacity) {
         capacity,
         static_cast<uint64_t>(esp_timer_get_time()) / 1000ULL,
         esp_get_free_heap_size());
+}
+
+bool write_updates(char *output, size_t capacity) {
+    return aquahub_ota_write_json(output, capacity);
+}
+
+bool write_automations(char *output, size_t capacity) {
+    return aquahub_service_write_automations_json(output, capacity);
 }
 
 esp_err_t info_handler(httpd_req_t *request) {
@@ -408,6 +419,40 @@ esp_err_t history_handler(httpd_req_t *request) {
     return result;
 }
 
+esp_err_t updates_handler(httpd_req_t *request) {
+    if (require_authorization(request) != ESP_OK) {
+        return ESP_OK;
+    }
+    return send_generated_json(
+        request, kUpdatesResponseBytes, write_updates);
+}
+
+esp_err_t update_action_handler(httpd_req_t *request) {
+    if (require_authorization(request) != ESP_OK) {
+        return ESP_OK;
+    }
+    bool accepted = false;
+    if (strcmp(request->uri, "/api/v1/updates/check") == 0) {
+        accepted = aquahub_ota_request_check();
+    } else if (strcmp(request->uri, "/api/v1/updates/install") == 0) {
+        accepted = aquahub_ota_request_install();
+    } else {
+        return send_error(request,
+                          "404 Not Found",
+                          "not_found",
+                          "Nie znaleziono operacji aktualizacji.");
+    }
+    if (!accepted) {
+        return send_error(request,
+                          "409 Conflict",
+                          "update_rejected",
+                          "Kanał OTA nie jest gotowy albo inna operacja już trwa.");
+    }
+    prepare_json_response(request);
+    httpd_resp_set_status(request, "202 Accepted");
+    return httpd_resp_sendstr(request, "{\"accepted\":true}");
+}
+
 bool parse_command_value(cJSON *item, aquahub::StateValue *output) {
     if (item == nullptr || output == nullptr) {
         return false;
@@ -440,6 +485,225 @@ bool parse_command_value(cJSON *item, aquahub::StateValue *output) {
         return true;
     }
     return false;
+}
+
+bool copy_rule_text(cJSON *object,
+                    const char *name,
+                    char *output,
+                    size_t output_capacity) {
+    cJSON *item = cJSON_IsObject(object)
+                      ? cJSON_GetObjectItemCaseSensitive(object, name)
+                      : nullptr;
+    if (!cJSON_IsString(item) || item->valuestring == nullptr ||
+        output == nullptr || output_capacity == 0U) {
+        return false;
+    }
+    const size_t length = strnlen(item->valuestring, output_capacity);
+    if (length == 0U || length >= output_capacity) {
+        return false;
+    }
+    memcpy(output, item->valuestring, length + 1U);
+    return true;
+}
+
+bool parse_comparison(cJSON *object,
+                      aquahub::Comparison *comparison) {
+    cJSON *item = cJSON_IsObject(object)
+                      ? cJSON_GetObjectItemCaseSensitive(object, "comparison")
+                      : nullptr;
+    if (!cJSON_IsString(item) || item->valuestring == nullptr ||
+        comparison == nullptr) {
+        return false;
+    }
+    if (strcmp(item->valuestring, "changed") == 0) {
+        *comparison = aquahub::Comparison::Changed;
+        return true;
+    }
+    if (strcmp(item->valuestring, "equals") == 0) {
+        *comparison = aquahub::Comparison::Equals;
+        return true;
+    }
+    if (strcmp(item->valuestring, "above") == 0) {
+        *comparison = aquahub::Comparison::Above;
+        return true;
+    }
+    if (strcmp(item->valuestring, "below") == 0) {
+        *comparison = aquahub::Comparison::Below;
+        return true;
+    }
+    return false;
+}
+
+bool parse_automation_rule(cJSON *root,
+                           aquahub::AutomationRule *output) {
+    if (!cJSON_IsObject(root) || output == nullptr) {
+        return false;
+    }
+    memset(output, 0, sizeof(*output));
+    cJSON *enabled = cJSON_GetObjectItemCaseSensitive(root, "enabled");
+    cJSON *cooldown = cJSON_GetObjectItemCaseSensitive(root, "cooldown_ms");
+    cJSON *trigger = cJSON_GetObjectItemCaseSensitive(root, "trigger");
+    cJSON *condition = cJSON_GetObjectItemCaseSensitive(root, "condition");
+    cJSON *action = cJSON_GetObjectItemCaseSensitive(root, "action");
+    if (!cJSON_IsBool(enabled) || !cJSON_IsNumber(cooldown) ||
+        cooldown->valuedouble < 0.0 ||
+        cooldown->valuedouble > 86400000.0 ||
+        cooldown->valuedouble != static_cast<double>(
+                                         static_cast<uint32_t>(
+                                             cooldown->valuedouble)) ||
+        !cJSON_IsObject(trigger) || !cJSON_IsObject(action) ||
+        !copy_rule_text(root,
+                        "id",
+                        output->id,
+                        sizeof(output->id)) ||
+        !copy_rule_text(root,
+                        "name",
+                        output->name,
+                        sizeof(output->name)) ||
+        !copy_rule_text(trigger,
+                        "entity_id",
+                        output->trigger_entity,
+                        sizeof(output->trigger_entity)) ||
+        !parse_comparison(trigger, &output->trigger_comparison) ||
+        !copy_rule_text(action,
+                        "entity_id",
+                        output->action_entity,
+                        sizeof(output->action_entity)) ||
+        !parse_command_value(
+            cJSON_GetObjectItemCaseSensitive(action, "value"),
+            &output->action_value) ||
+        !output->action_value.valid) {
+        return false;
+    }
+    output->enabled = cJSON_IsTrue(enabled);
+    output->cooldown_ms = static_cast<uint32_t>(cooldown->valuedouble);
+    cJSON *trigger_value =
+        cJSON_GetObjectItemCaseSensitive(trigger, "value");
+    if (trigger_value != nullptr) {
+        if (!parse_command_value(trigger_value, &output->trigger_value)) {
+            return false;
+        }
+    } else if (output->trigger_comparison !=
+               aquahub::Comparison::Changed) {
+        return false;
+    }
+
+    if (cJSON_IsObject(condition)) {
+        output->condition_enabled = true;
+        if (!copy_rule_text(condition,
+                            "entity_id",
+                            output->condition_entity,
+                            sizeof(output->condition_entity)) ||
+            !parse_comparison(condition,
+                              &output->condition_comparison)) {
+            return false;
+        }
+        cJSON *condition_value =
+            cJSON_GetObjectItemCaseSensitive(condition, "value");
+        if (condition_value != nullptr) {
+            if (!parse_command_value(condition_value,
+                                     &output->condition_value)) {
+                return false;
+            }
+        } else if (output->condition_comparison !=
+                   aquahub::Comparison::Changed) {
+            return false;
+        }
+    } else if (!cJSON_IsNull(condition)) {
+        return false;
+    }
+    return true;
+}
+
+esp_err_t automation_status_error(
+    httpd_req_t *request,
+    aquahub::AutomationStatus status) {
+    switch (status) {
+    case aquahub::AutomationStatus::Ok:
+        prepare_json_response(request);
+        return httpd_resp_sendstr(request, "{\"accepted\":true}");
+    case aquahub::AutomationStatus::InvalidRule:
+        return send_error(request,
+                          "400 Bad Request",
+                          "invalid_automation",
+                          "Reguła automatyzacji jest nieprawidłowa.");
+    case aquahub::AutomationStatus::CapacityReached:
+        return send_error(request,
+                          "409 Conflict",
+                          "automation_capacity",
+                          "Osiągnięto limit automatyzacji centrum.");
+    case aquahub::AutomationStatus::NotFound:
+        return send_error(request,
+                          "404 Not Found",
+                          "automation_not_found",
+                          "Nie znaleziono automatyzacji.");
+    case aquahub::AutomationStatus::PersistenceFailed:
+        return send_error(request,
+                          "503 Service Unavailable",
+                          "automation_storage",
+                          "Nie udało się bezpiecznie zapisać automatyzacji.");
+    }
+    return httpd_resp_send_500(request);
+}
+
+esp_err_t automations_handler(httpd_req_t *request) {
+    if (require_authorization(request) != ESP_OK) {
+        return ESP_OK;
+    }
+    return send_generated_json(request,
+                               kAutomationsResponseBytes,
+                               write_automations);
+}
+
+esp_err_t automation_upsert_handler(httpd_req_t *request) {
+    if (require_authorization(request) != ESP_OK) {
+        return ESP_OK;
+    }
+    if (request->content_len <= 0 ||
+        request->content_len >= static_cast<int>(kRequestBytes)) {
+        return send_error(request,
+                          "400 Bad Request",
+                          "invalid_body",
+                          "Nieprawidłowy rozmiar automatyzacji.");
+    }
+    char body[kRequestBytes] = {};
+    size_t received = 0U;
+    if (!receive_request_body(request, body, sizeof(body), &received)) {
+        secure_zero(body, sizeof(body));
+        return send_error(request,
+                          "400 Bad Request",
+                          "truncated_body",
+                          "Automatyzacja jest niekompletna.");
+    }
+    cJSON *root = cJSON_ParseWithLength(body, received);
+    secure_zero(body, sizeof(body));
+    aquahub::AutomationRule rule = {};
+    const bool parsed = parse_automation_rule(root, &rule);
+    cJSON_Delete(root);
+    if (!parsed) {
+        return automation_status_error(
+            request, aquahub::AutomationStatus::InvalidRule);
+    }
+    return automation_status_error(
+        request, aquahub_service_upsert_automation(rule));
+}
+
+esp_err_t automation_delete_handler(httpd_req_t *request) {
+    if (require_authorization(request) != ESP_OK) {
+        return ESP_OK;
+    }
+    static constexpr char prefix[] = "/api/v1/automations/";
+    if (strncmp(request->uri, prefix, sizeof(prefix) - 1U) != 0) {
+        return automation_status_error(
+            request, aquahub::AutomationStatus::NotFound);
+    }
+    const char *id = request->uri + sizeof(prefix) - 1U;
+    if (!aquahub::valid_identifier(id, aquahub::kAutomationIdBytes)) {
+        return automation_status_error(
+            request, aquahub::AutomationStatus::InvalidRule);
+    }
+    return automation_status_error(
+        request, aquahub_service_remove_automation(id));
 }
 
 esp_err_t command_handler(httpd_req_t *request) {
@@ -612,7 +876,7 @@ void event_task(void *) {
 }
 
 bool register_handlers() {
-    httpd_uri_t handlers[9] = {};
+    httpd_uri_t handlers[15] = {};
     handlers[0].uri = "/api/v1/info";
     handlers[0].method = HTTP_GET;
     handlers[0].handler = info_handler;
@@ -638,9 +902,27 @@ bool register_handlers() {
     handlers[7].method = HTTP_GET;
     handlers[7].handler = websocket_handler;
     handlers[7].is_websocket = true;
-    handlers[8].uri = "/api/v1/*";
-    handlers[8].method = HTTP_OPTIONS;
-    handlers[8].handler = cors_handler;
+    handlers[8].uri = "/api/v1/updates";
+    handlers[8].method = HTTP_GET;
+    handlers[8].handler = updates_handler;
+    handlers[9].uri = "/api/v1/updates/check";
+    handlers[9].method = HTTP_POST;
+    handlers[9].handler = update_action_handler;
+    handlers[10].uri = "/api/v1/updates/install";
+    handlers[10].method = HTTP_POST;
+    handlers[10].handler = update_action_handler;
+    handlers[11].uri = "/api/v1/automations";
+    handlers[11].method = HTTP_GET;
+    handlers[11].handler = automations_handler;
+    handlers[12].uri = "/api/v1/automations";
+    handlers[12].method = HTTP_POST;
+    handlers[12].handler = automation_upsert_handler;
+    handlers[13].uri = "/api/v1/automations/*";
+    handlers[13].method = HTTP_DELETE;
+    handlers[13].handler = automation_delete_handler;
+    handlers[14].uri = "/api/v1/*";
+    handlers[14].method = HTTP_OPTIONS;
+    handlers[14].handler = cors_handler;
     for (const httpd_uri_t &handler : handlers) {
         if (httpd_register_uri_handler(server, &handler) != ESP_OK) {
             return false;
@@ -671,7 +953,7 @@ bool aquahub_api_start(AquaHubPublishCallback publish,
     configuration.prvtkey_pem = private_key;
     configuration.prvtkey_len = private_key_length;
     configuration.httpd.server_port = CONFIG_AQUAHUB_API_PORT;
-    configuration.httpd.max_uri_handlers = 12U;
+    configuration.httpd.max_uri_handlers = 18U;
     configuration.httpd.max_open_sockets = 6U;
     configuration.httpd.stack_size = 12288U;
     configuration.httpd.uri_match_fn = httpd_uri_match_wildcard;

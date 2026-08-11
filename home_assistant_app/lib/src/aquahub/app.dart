@@ -25,12 +25,14 @@ final class AquaHubApp extends StatefulWidget {
   State<AquaHubApp> createState() => _AquaHubAppState();
 }
 
-final class _AquaHubAppState extends State<AquaHubApp> {
+final class _AquaHubAppState extends State<AquaHubApp>
+    with WidgetsBindingObserver {
   late final HubController controller;
 
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     controller = HubController(
       credentialsStore: widget.credentialsStore,
       apiFactory: widget.apiFactory,
@@ -42,8 +44,14 @@ final class _AquaHubAppState extends State<AquaHubApp> {
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     controller.dispose();
     super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    controller.setAppActive(state == AppLifecycleState.resumed);
   }
 
   @override
@@ -55,7 +63,7 @@ final class _AquaHubAppState extends State<AquaHubApp> {
       darkTheme: AquaTheme.dark(),
       themeMode: ThemeMode.system,
       locale: const Locale('pl'),
-      supportedLocales: const <Locale>[Locale('pl'), Locale('en')],
+      supportedLocales: const <Locale>[Locale('pl')],
       localizationsDelegates: const <LocalizationsDelegate<Object>>[
         GlobalMaterialLocalizations.delegate,
         GlobalWidgetsLocalizations.delegate,

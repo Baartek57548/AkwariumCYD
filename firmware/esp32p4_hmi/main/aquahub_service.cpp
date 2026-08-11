@@ -11,7 +11,10 @@
 #include "esp_heap_caps.h"
 #include "esp_log.h"
 #include "freertos/FreeRTOS.h"
+#include "freertos/queue.h"
 #include "freertos/semphr.h"
+#include "freertos/task.h"
+#include "nvs.h"
 
 namespace {
 
@@ -21,6 +24,9 @@ constexpr size_t kMaximumIncomingJsonBytes = 4096U;
 constexpr size_t kHistoryCapacity = 512U;
 constexpr size_t kDefaultEntityPageSize = 32U;
 constexpr size_t kMaximumEntityPageSize = 48U;
+constexpr size_t kPersistedAutomationCapacity = 8U;
+constexpr uint32_t kAutomationStoreMagic = 0x4155544FU;
+constexpr uint16_t kAutomationStoreVersion = 1U;
 
 struct HistoryRecord {
     bool occupied;
@@ -29,14 +35,26 @@ struct HistoryRecord {
     aquahub::StateValue value;
 };
 
+struct AutomationStore {
+    uint32_t magic;
+    uint16_t version;
+    uint16_t count;
+    aquahub::AutomationRule rules[kPersistedAutomationCapacity];
+};
+
 aquahub::Registry *registry = nullptr;
+aquahub::AutomationEngine *automation_engine = nullptr;
 SemaphoreHandle_t registry_mutex = nullptr;
+QueueHandle_t automation_queue = nullptr;
+TaskHandle_t automation_task_handle = nullptr;
 HistoryRecord *history = nullptr;
 size_t history_head = 0U;
 size_t history_count = 0U;
 uint32_t accepted_messages = 0U;
 uint32_t rejected_messages = 0U;
 uint32_t registry_revision = 0U;
+AquaHubServicePublishCallback service_publisher = nullptr;
+void *service_publisher_context = nullptr;
 
 class RegistryLock {
 public:
@@ -59,6 +77,116 @@ public:
 private:
     bool locked_;
 };
+
+bool automation_exists_locked(const char *id) {
+    if (automation_engine == nullptr || id == nullptr) {
+        return false;
+    }
+    for (size_t index = 0U; index < automation_engine->count(); ++index) {
+        const aquahub::AutomationRule *rule =
+            automation_engine->rule_at(index);
+        if (rule != nullptr &&
+            strncmp(rule->id, id, aquahub::kAutomationIdBytes) == 0) {
+            return true;
+        }
+    }
+    return false;
+}
+
+bool save_automations_locked() {
+    if (automation_engine == nullptr ||
+        automation_engine->count() > kPersistedAutomationCapacity) {
+        return false;
+    }
+    AutomationStore store = {};
+    store.magic = kAutomationStoreMagic;
+    store.version = kAutomationStoreVersion;
+    store.count = static_cast<uint16_t>(automation_engine->count());
+    for (size_t index = 0U; index < store.count; ++index) {
+        const aquahub::AutomationRule *rule =
+            automation_engine->rule_at(index);
+        if (rule == nullptr) {
+            return false;
+        }
+        store.rules[index] = *rule;
+    }
+    nvs_handle_t handle = 0U;
+    if (nvs_open("aquahub_auto", NVS_READWRITE, &handle) != ESP_OK) {
+        return false;
+    }
+    const esp_err_t write_result =
+        nvs_set_blob(handle, "rules_v1", &store, sizeof(store));
+    const esp_err_t commit_result =
+        write_result == ESP_OK ? nvs_commit(handle) : write_result;
+    nvs_close(handle);
+    memset(&store, 0, sizeof(store));
+    return write_result == ESP_OK && commit_result == ESP_OK;
+}
+
+void load_automations() {
+    if (automation_engine == nullptr) {
+        return;
+    }
+    nvs_handle_t handle = 0U;
+    if (nvs_open("aquahub_auto", NVS_READONLY, &handle) != ESP_OK) {
+        return;
+    }
+    AutomationStore store = {};
+    size_t length = sizeof(store);
+    const esp_err_t result =
+        nvs_get_blob(handle, "rules_v1", &store, &length);
+    nvs_close(handle);
+    if (result != ESP_OK || length != sizeof(store) ||
+        store.magic != kAutomationStoreMagic ||
+        store.version != kAutomationStoreVersion ||
+        store.count > kPersistedAutomationCapacity) {
+        memset(&store, 0, sizeof(store));
+        return;
+    }
+    for (size_t index = 0U; index < store.count; ++index) {
+        if (automation_engine->upsert(store.rules[index]) !=
+            aquahub::AutomationStatus::Ok) {
+            ESP_LOGW(kTag, "Ignored an invalid persisted automation");
+        }
+    }
+    memset(&store, 0, sizeof(store));
+}
+
+void automation_worker(void *) {
+    aquahub::PendingAction action = {};
+    while (true) {
+        if (xQueueReceive(automation_queue,
+                          &action,
+                          portMAX_DELAY) != pdTRUE) {
+            continue;
+        }
+        char topic[aquahub::kTopicBytes] = {};
+        char payload[160] = {};
+        if (service_publisher == nullptr ||
+            !aquahub_service_build_command(action.entity_id,
+                                            action.value,
+                                            topic,
+                                            sizeof(topic),
+                                            payload,
+                                            sizeof(payload)) ||
+            !service_publisher(topic,
+                               payload,
+                               1,
+                               false,
+                               service_publisher_context)) {
+            ESP_LOGW(kTag,
+                     "Automation %s could not publish action for %s",
+                     action.automation_id,
+                     action.entity_id);
+        } else {
+            ESP_LOGI(kTag,
+                     "Automation %s published action for %s",
+                     action.automation_id,
+                     action.entity_id);
+        }
+        memset(&action, 0, sizeof(action));
+    }
+}
 
 template <size_t Capacity>
 bool copy_json_string(cJSON *root,
@@ -511,6 +639,7 @@ void handle_state(const char *topic,
                   sizeof(unique_id),
                   record->descriptor.unique_id);
         const aquahub::DiscoveryDescriptor descriptor = record->descriptor;
+        const aquahub::StateValue previous_value = record->state;
         cJSON *item = cJSON_GetObjectItemCaseSensitive(
             root, descriptor.value_key);
         const aquahub::StateValue value =
@@ -525,6 +654,28 @@ void handle_state(const char *topic,
             if (changed) {
                 append_history(unique_id, value, received_at_ms);
                 ++registry_revision;
+                if (automation_engine != nullptr &&
+                    automation_queue != nullptr) {
+                    aquahub::PendingAction actions[
+                        aquahub::kMaximumAutomationActionsPerEvaluation] = {};
+                    const size_t action_count = automation_engine->evaluate(
+                        *registry,
+                        unique_id,
+                        previous_value,
+                        received_at_ms,
+                        actions,
+                        aquahub::kMaximumAutomationActionsPerEvaluation);
+                    for (size_t action_index = 0U;
+                         action_index < action_count;
+                         ++action_index) {
+                        if (xQueueSend(automation_queue,
+                                       &actions[action_index],
+                                       0U) != pdTRUE) {
+                            ESP_LOGW(kTag,
+                                     "Automation action queue is full");
+                        }
+                    }
+                }
             }
         }
     }
@@ -614,6 +765,43 @@ const char *kind_name(aquahub::EntityKind kind) {
     return "unknown";
 }
 
+const char *comparison_name(aquahub::Comparison comparison) {
+    switch (comparison) {
+    case aquahub::Comparison::Changed:
+        return "changed";
+    case aquahub::Comparison::Equals:
+        return "equals";
+    case aquahub::Comparison::Above:
+        return "above";
+    case aquahub::Comparison::Below:
+        return "below";
+    }
+    return "changed";
+}
+
+void add_value_json(cJSON *root,
+                    const char *name,
+                    const aquahub::StateValue &value) {
+    if (!value.valid || value.type == aquahub::ValueType::None) {
+        cJSON_AddNullToObject(root, name);
+        return;
+    }
+    switch (value.type) {
+    case aquahub::ValueType::Boolean:
+        cJSON_AddBoolToObject(root, name, value.boolean_value);
+        break;
+    case aquahub::ValueType::Number:
+        cJSON_AddNumberToObject(root, name, value.number_value);
+        break;
+    case aquahub::ValueType::Text:
+        cJSON_AddStringToObject(root, name, value.text_value);
+        break;
+    case aquahub::ValueType::None:
+        cJSON_AddNullToObject(root, name);
+        break;
+    }
+}
+
 bool print_json(cJSON *root, char *output, size_t output_capacity) {
     if (root == nullptr || output == nullptr || output_capacity < 3U ||
         output_capacity > static_cast<size_t>(INT_MAX)) {
@@ -629,7 +817,9 @@ bool print_json(cJSON *root, char *output, size_t output_capacity) {
 } // namespace
 
 bool aquahub_service_initialize() {
-    if (registry_mutex != nullptr && registry != nullptr && history != nullptr) {
+    if (registry_mutex != nullptr && registry != nullptr && history != nullptr &&
+        automation_engine != nullptr && automation_queue != nullptr &&
+        automation_task_handle != nullptr) {
         return true;
     }
     registry = static_cast<aquahub::Registry *>(heap_caps_malloc(
@@ -638,32 +828,81 @@ bool aquahub_service_initialize() {
         kHistoryCapacity,
         sizeof(HistoryRecord),
         MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
-    if (registry == nullptr || history == nullptr) {
+    automation_engine = static_cast<aquahub::AutomationEngine *>(
+        heap_caps_malloc(sizeof(aquahub::AutomationEngine),
+                         MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
+    if (registry == nullptr || history == nullptr ||
+        automation_engine == nullptr) {
         heap_caps_free(registry);
         heap_caps_free(history);
+        heap_caps_free(automation_engine);
         registry = nullptr;
         history = nullptr;
+        automation_engine = nullptr;
         ESP_LOGE(kTag, "PSRAM allocation for AquaHub registry failed");
         return false;
     }
     new (registry) aquahub::Registry();
+    new (automation_engine) aquahub::AutomationEngine();
     registry_mutex = xSemaphoreCreateMutex();
-    if (registry_mutex == nullptr) {
+    automation_queue = xQueueCreate(
+        aquahub::kMaximumAutomationActionsPerEvaluation * 2U,
+        sizeof(aquahub::PendingAction));
+    if (registry_mutex == nullptr || automation_queue == nullptr) {
+        if (registry_mutex != nullptr) {
+            vSemaphoreDelete(registry_mutex);
+        }
+        if (automation_queue != nullptr) {
+            vQueueDelete(automation_queue);
+        }
         registry->~Registry();
+        automation_engine->~AutomationEngine();
         heap_caps_free(registry);
         heap_caps_free(history);
+        heap_caps_free(automation_engine);
         registry = nullptr;
         history = nullptr;
+        automation_engine = nullptr;
+        registry_mutex = nullptr;
+        automation_queue = nullptr;
         return false;
     }
     registry->clear();
+    automation_engine->clear();
+    load_automations();
     memset(history, 0, sizeof(HistoryRecord) * kHistoryCapacity);
     history_head = 0U;
     history_count = 0U;
     accepted_messages = 0U;
     rejected_messages = 0U;
     registry_revision = 0U;
+    if (xTaskCreate(automation_worker,
+                    "hub_automation",
+                    6144U,
+                    nullptr,
+                    4U,
+                    &automation_task_handle) != pdPASS) {
+        vQueueDelete(automation_queue);
+        vSemaphoreDelete(registry_mutex);
+        registry->~Registry();
+        automation_engine->~AutomationEngine();
+        heap_caps_free(registry);
+        heap_caps_free(history);
+        heap_caps_free(automation_engine);
+        registry = nullptr;
+        history = nullptr;
+        automation_engine = nullptr;
+        registry_mutex = nullptr;
+        automation_queue = nullptr;
+        return false;
+    }
     return true;
+}
+
+void aquahub_service_set_publisher(AquaHubServicePublishCallback publisher,
+                                   void *context) {
+    service_publisher = publisher;
+    service_publisher_context = context;
 }
 
 void aquahub_service_handle_mqtt(const char *,
@@ -933,6 +1172,142 @@ bool aquahub_service_write_history_json(char *output,
     }
     cJSON_AddNumberToObject(root, "count", emitted);
     return print_json(root, output, output_capacity);
+}
+
+bool aquahub_service_write_automations_json(char *output,
+                                            size_t output_capacity) {
+    RegistryLock lock;
+    if (!lock.locked() || automation_engine == nullptr) {
+        return false;
+    }
+    cJSON *root = cJSON_CreateObject();
+    if (root == nullptr) {
+        return false;
+    }
+    cJSON_AddNumberToObject(root,
+                            "capacity",
+                            kPersistedAutomationCapacity);
+    cJSON_AddNumberToObject(root, "count", automation_engine->count());
+    cJSON *items = cJSON_AddArrayToObject(root, "items");
+    for (size_t index = 0U; index < automation_engine->count(); ++index) {
+        const aquahub::AutomationRule *rule =
+            automation_engine->rule_at(index);
+        if (rule == nullptr) {
+            continue;
+        }
+        cJSON *item = cJSON_CreateObject();
+        cJSON_AddStringToObject(item, "id", rule->id);
+        cJSON_AddStringToObject(item, "name", rule->name);
+        cJSON_AddBoolToObject(item, "enabled", rule->enabled);
+        cJSON_AddNumberToObject(item, "cooldown_ms", rule->cooldown_ms);
+
+        cJSON *trigger = cJSON_AddObjectToObject(item, "trigger");
+        cJSON_AddStringToObject(trigger,
+                                "entity_id",
+                                rule->trigger_entity);
+        cJSON_AddStringToObject(trigger,
+                                "comparison",
+                                comparison_name(rule->trigger_comparison));
+        add_value_json(trigger, "value", rule->trigger_value);
+
+        if (rule->condition_enabled) {
+            cJSON *condition = cJSON_AddObjectToObject(item, "condition");
+            cJSON_AddStringToObject(condition,
+                                    "entity_id",
+                                    rule->condition_entity);
+            cJSON_AddStringToObject(condition,
+                                    "comparison",
+                                    comparison_name(
+                                        rule->condition_comparison));
+            add_value_json(condition, "value", rule->condition_value);
+        } else {
+            cJSON_AddNullToObject(item, "condition");
+        }
+
+        cJSON *action = cJSON_AddObjectToObject(item, "action");
+        cJSON_AddStringToObject(action,
+                                "entity_id",
+                                rule->action_entity);
+        add_value_json(action, "value", rule->action_value);
+        cJSON_AddItemToArray(items, item);
+    }
+    return print_json(root, output, output_capacity);
+}
+
+aquahub::AutomationStatus aquahub_service_upsert_automation(
+    const aquahub::AutomationRule &rule) {
+    RegistryLock lock;
+    if (!lock.locked() || automation_engine == nullptr) {
+        return aquahub::AutomationStatus::PersistenceFailed;
+    }
+    const bool existed = automation_exists_locked(rule.id);
+    aquahub::AutomationRule previous = {};
+    if (existed) {
+        for (size_t index = 0U; index < automation_engine->count(); ++index) {
+            const aquahub::AutomationRule *candidate =
+                automation_engine->rule_at(index);
+            if (candidate != nullptr &&
+                strncmp(candidate->id,
+                        rule.id,
+                        aquahub::kAutomationIdBytes) == 0) {
+                previous = *candidate;
+                break;
+            }
+        }
+    } else if (automation_engine->count() >=
+               kPersistedAutomationCapacity) {
+        return aquahub::AutomationStatus::CapacityReached;
+    }
+    const aquahub::AutomationStatus status =
+        automation_engine->upsert(rule);
+    if (status != aquahub::AutomationStatus::Ok) {
+        return status;
+    }
+    if (!save_automations_locked()) {
+        if (existed) {
+            automation_engine->upsert(previous);
+        } else {
+            automation_engine->remove(rule.id);
+        }
+        return aquahub::AutomationStatus::PersistenceFailed;
+    }
+    ++registry_revision;
+    return aquahub::AutomationStatus::Ok;
+}
+
+aquahub::AutomationStatus aquahub_service_remove_automation(const char *id) {
+    RegistryLock lock;
+    if (!lock.locked() || automation_engine == nullptr || id == nullptr) {
+        return aquahub::AutomationStatus::NotFound;
+    }
+    aquahub::AutomationRule previous = {};
+    bool found = false;
+    for (size_t index = 0U; index < automation_engine->count(); ++index) {
+        const aquahub::AutomationRule *candidate =
+            automation_engine->rule_at(index);
+        if (candidate != nullptr &&
+            strncmp(candidate->id,
+                    id,
+                    aquahub::kAutomationIdBytes) == 0) {
+            previous = *candidate;
+            found = true;
+            break;
+        }
+    }
+    if (!found) {
+        return aquahub::AutomationStatus::NotFound;
+    }
+    const aquahub::AutomationStatus status =
+        automation_engine->remove(id);
+    if (status != aquahub::AutomationStatus::Ok) {
+        return status;
+    }
+    if (!save_automations_locked()) {
+        automation_engine->upsert(previous);
+        return aquahub::AutomationStatus::PersistenceFailed;
+    }
+    ++registry_revision;
+    return aquahub::AutomationStatus::Ok;
 }
 
 bool aquahub_service_build_command(const char *entity_id,
