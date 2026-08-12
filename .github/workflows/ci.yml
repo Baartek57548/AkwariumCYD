@@ -266,11 +266,13 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          source "$IDF_PATH/export.sh"
           idf.py -C firmware/esp32c6_gateway build
       - name: Build ESP32-P4 HMI
         shell: bash
         run: |
           set -euo pipefail
+          source "$IDF_PATH/export.sh"
           idf.py -C firmware/esp32p4_hub build
       - name: Collect flashable images and checksums
         shell: bash
