@@ -11,7 +11,7 @@ brakuje fizycznego stanowiska CYD/P4/C6 oraz kluczy właściciela.
 | Obszar | Wykonana brama | Wynik |
 | --- | --- | --- |
 | Home Control | `flutter analyze`, pełne `flutter test` | PASS, 0 problemów, 48 testów |
-| Home Control | web release, Android debug/release | PASS, APK release 55,1 MB |
+| Home Control | web release, Android debug/release | PASS, APK release 55,1 MB; debug APK publikowany przez CI |
 | AquaCYD Service | analyze, pełne testy | PASS, 0 problemów, 240 testów |
 | AquaCYD Service | Android debug/release z jednorazowym kluczem walidacyjnym | PASS, APK release 65,5 MB |
 | Pakiety Dart | analyze/test każdego pakietu | PASS, 5 testów |

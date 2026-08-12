@@ -393,6 +393,12 @@ jobs:
       - name: Resolve Flutter dependencies
         working-directory: apps/aquacyd_service
         run: flutter pub get
+      - name: Check Dart formatting
+        shell: bash
+        run: |
+          set -euo pipefail
+          git ls-files -z -- '*.dart' |
+            xargs -0 dart format --output=none --set-exit-if-changed
       - name: Analyze and test shared Dart packages
         shell: bash
         run: |
@@ -421,6 +427,7 @@ jobs:
           flutter analyze
           flutter test --coverage
           flutter build web --release
+          flutter build apk --debug
       - name: Run Android unit tests
         working-directory: apps/aquacyd_service/android
         run: ./gradlew testCurrentDebugUnitTest --no-daemon --console=plain
@@ -498,6 +505,11 @@ jobs:
           )"
           test -n "$mobile_version"
           test -n "$home_version"
+          cp \
+            apps/home_control/build/app/outputs/flutter-apk/app-debug.apk \
+            artifacts/Home-Control-ci-debug.apk
+          sha256sum artifacts/Home-Control-ci-debug.apk \
+            > artifacts/Home-Control-ci-debug.apk.sha256
           python tools/generate_sbom.py \
             --kind mobile \
             --version "$mobile_version" \
@@ -506,7 +518,7 @@ jobs:
           python tools/generate_sbom.py \
             --kind home \
             --version "$home_version" \
-            --artifact apps/home_control/build/web/main.dart.js \
+            --artifact artifacts/Home-Control-ci-debug.apk \
             --output artifacts/Home-Control-ci.cdx.json
       - name: Upload Flutter coverage and Android test reports
         if: always()
@@ -533,6 +545,13 @@ jobs:
           path: artifacts/*.cdx.json
           if-no-files-found: error
           retention-days: 14
+      - name: Upload Home Control debug APK
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: home-control-android-debug
+          path: artifacts/Home-Control-ci-debug.apk*
+          if-no-files-found: error
+          retention-days: 7
 
   flutter-emulator-smoke:
     name: Android notification smoke (API 35)
