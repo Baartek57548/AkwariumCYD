@@ -7,7 +7,7 @@
 	<key>CFBundleDevelopmentRegion</key>
 	<string>$(DEVELOPMENT_LANGUAGE)</string>
 	<key>CFBundleDisplayName</key>
-	<string>AquaHub</string>
+	<string>Home Control</string>
 	<key>CFBundleExecutable</key>
 	<string>$(EXECUTABLE_NAME)</string>
 	<key>CFBundleIdentifier</key>
@@ -15,7 +15,7 @@
 	<key>CFBundleInfoDictionaryVersion</key>
 	<string>6.0</string>
 	<key>CFBundleName</key>
-	<string>AquaHub</string>
+	<string>Home Control</string>
 	<key>CFBundlePackageType</key>
 	<string>APPL</string>
 	<key>CFBundleShortVersionString</key>
@@ -36,7 +36,7 @@
 		<string>_aquahub._tcp</string>
 	</array>
 	<key>NSLocalNetworkUsageDescription</key>
-	<string>AquaHub łączy się z prywatnym panelem ESP32-P4 w Twojej sieci lokalnej.</string>
+	<string>Home Control wykrywa prywatne źródła danych w Twojej sieci lokalnej.</string>
 	<key>UIApplicationSceneManifest</key>
 	<dict>
 		<key>UIApplicationSupportsMultipleScenes</key>

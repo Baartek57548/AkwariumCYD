@@ -5,7 +5,7 @@
     <uses-permission android:name="android.permission.CHANGE_WIFI_MULTICAST_STATE" />
     <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
     <application
-        android:label="AquaHub"
+        android:label="Home Control"
         android:name="${applicationName}"
         android:allowBackup="false"
         android:usesCleartextTraffic="false"

@@ -20,7 +20,7 @@ class MainActivity : FlutterActivity() {
         private const val CHANNEL = "pl.aquacyd.aquacyd_home/app_update"
         private const val MINIMUM_APK_BYTES = 1024L * 1024L
         private const val MAXIMUM_APK_BYTES = 250L * 1024L * 1024L
-        private val APK_NAME_PATTERN = Regex("^AquaCYD-Home-[0-9]+\\.[0-9]+\\.[0-9]+\\.apk$")
+        private val APK_NAME_PATTERN = Regex("^Home-Control-[0-9]+\\.[0-9]+\\.[0-9]+\\.apk$")
     }
 
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
