@@ -9,9 +9,10 @@ import 'domain.dart';
 import 'updates_page.dart';
 
 final class HubShell extends StatefulWidget {
-  const HubShell({required this.controller, super.key});
+  const HubShell({required this.controller, this.demoMode = false, super.key});
 
   final HubController controller;
+  final bool demoMode;
 
   @override
   State<HubShell> createState() => _HubShellState();
@@ -80,6 +81,7 @@ final class _HubShellState extends State<HubShell> {
       ),
       body: Column(
         children: <Widget>[
+          if (widget.demoMode) const _DemoBanner(),
           if (!widget.controller.connectionHealthy &&
               widget.controller.errorMessage != null)
             _ConnectionBanner(controller: widget.controller),
@@ -127,6 +129,39 @@ final class _HubShellState extends State<HubShell> {
                   )
                   .toList(growable: false),
             ),
+    );
+  }
+}
+
+final class _DemoBanner extends StatelessWidget {
+  const _DemoBanner();
+
+  @override
+  Widget build(BuildContext context) {
+    return Material(
+      color: Theme.of(context).colorScheme.tertiaryContainer,
+      child: SafeArea(
+        top: false,
+        bottom: false,
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+          child: Row(
+            children: <Widget>[
+              Icon(
+                Icons.science_outlined,
+                color: Theme.of(context).colorScheme.onTertiaryContainer,
+              ),
+              const SizedBox(width: 10),
+              const Expanded(
+                child: Text(
+                  'Tryb demonstracyjny · dane i komendy są symulowane',
+                  maxLines: 2,
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
     );
   }
 }

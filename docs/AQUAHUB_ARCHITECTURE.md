@@ -136,6 +136,13 @@ uruchomieniu i są przechowywane w NVS. Kod parowania ma sześć cyfr i ogranicz
 czas życia. Aplikacja wymaga porównania SHA-256 z ekranem panelu, przypina
 certyfikat i zapisuje token w systemowym secure storage.
 
+Na Androidzie i iOS pierwszy ekran automatycznie wykrywa usługę
+`_aquahub._tcp` przez systemowe NSD/Bonjour. Użytkownik wybiera panel z listy,
+porównuje fingerprint i podaje kod; ręczny URL jest wyłącznie ścieżką awaryjną
+dla sieci blokujących multicast. Bez sprzętu można wejść do pełnego, wyraźnie
+oznaczonego trybu demo. Dane demonstracyjne nigdy nie są zapisywane jako sesja
+produkcyjna.
+
 ## Provisioning MQTTS stałego C6
 
 1. Uruchomić P4 i otworzyć ekran `System`.

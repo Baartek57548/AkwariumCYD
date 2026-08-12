@@ -4,6 +4,7 @@ import 'package:flutter_localizations/flutter_localizations.dart';
 import '../design/app_theme.dart';
 import 'controller.dart';
 import 'credentials_store.dart';
+import 'hub_discovery.dart';
 import 'setup_page.dart';
 import 'shell.dart';
 
@@ -12,6 +13,7 @@ final class AquaHubApp extends StatefulWidget {
     required this.credentialsStore,
     this.apiFactory,
     this.bootstrapFactory,
+    this.discoveryService,
     this.enablePolling = true,
     super.key,
   });
@@ -19,6 +21,7 @@ final class AquaHubApp extends StatefulWidget {
   final HubCredentialsStore credentialsStore;
   final AuthenticatedHubApiFactory? apiFactory;
   final BootstrapHubApiFactory? bootstrapFactory;
+  final HubDiscoveryService? discoveryService;
   final bool enablePolling;
 
   @override
@@ -80,7 +83,11 @@ final class _AquaHubAppState extends State<AquaHubApp>
             title: 'Łączenie z AquaHub',
             subtitle: 'Weryfikuję certyfikat, token i rejestr urządzeń…',
           ),
-          HubAppPhase.setup => HubSetupPage(controller: controller),
+          HubAppPhase.setup => HubSetupPage(
+            controller: controller,
+            discoveryService:
+                widget.discoveryService ?? NativeHubDiscoveryService(),
+          ),
           HubAppPhase.ready => HubShell(controller: controller),
           HubAppPhase.failure => _HubFailure(controller: controller),
         },

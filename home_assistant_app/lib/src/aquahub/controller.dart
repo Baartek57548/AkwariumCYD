@@ -138,6 +138,14 @@ final class HubController extends ChangeNotifier {
     return false;
   }
 
+  void resetDiscovery() {
+    _closeBootstrap();
+    _discoveredInfo = null;
+    _observedFingerprint = null;
+    _errorMessage = null;
+    notifyListeners();
+  }
+
   Future<bool> pair({
     required String baseUrl,
     required String code,

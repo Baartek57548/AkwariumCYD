@@ -8,6 +8,7 @@ z CYD i nie wymaga Home Assistant Core ani Raspberry Pi.
 
 - Android, iOS i web z responsywną nawigacją;
 - pierwsze parowanie sześciocyfrowym kodem z fizycznego panelu;
+- natywne wykrywanie paneli przez Bonjour/mDNS bez wpisywania adresu;
 - porównanie i pinning SHA-256 certyfikatu P4 na Androidzie i iOS;
 - token Bearer w systemowym secure storage;
 - uniwersalne urządzenia i encje bez listy nazw zaszytej w aplikacji;
@@ -16,6 +17,7 @@ z CYD i nie wymaga Home Assistant Core ani Raspberry Pi.
 - pulpit stanu, alarmy krytyczne, grupowanie urządzeń, historia i diagnostyka;
 - lokalne automatyzacje przechowywane i wykonywane przez P4 bez telefonu;
 - centrum aktualizacji P4 z postępem OTA, świadomym potwierdzeniem i rollbackiem;
+- pełny, jawnie oznaczony tryb demonstracyjny dostępny z pierwszego ekranu;
 - tolerancja nowych typów encji, aby przyszłe urządzenie nie blokowało rejestru;
 - odświeżanie co 5 sekund z blokadą równoległych żądań;
 - zatrzymywanie pollingu w tle i natychmiastowe odświeżenie po wznowieniu;
@@ -45,17 +47,22 @@ flutter run -d chrome --dart-define=AQUAHUB_DEMO=true
 Tryb demo jest wybierany podczas kompilacji, nie używa sieci ani danych
 produkcyjnych i korzysta z tego samego parsera kontraktu co prawdziwy panel.
 
-Domyślny adres to `https://aquahub.local:8443`. Na panelu P4 należy otworzyć
-ekran System, porównać pełny odcisk certyfikatu i wpisać aktualny kod parowania.
-Zmiana klucza lub certyfikatu P4 powoduje celową odmowę połączenia i wymaga
-ponownego parowania przy panelu.
+Aplikacja automatycznie wyszukuje usługę `_aquahub._tcp` i pokazuje znalezione
+panele. Przy jednym panelu od razu przechodzi do potwierdzenia tożsamości.
+Ręczny adres `https://aquahub.local:8443` pozostaje w sekcji zaawansowanej na
+wypadek sieci blokującej multicast. Na panelu P4 należy otworzyć ekran System,
+porównać pełny odcisk certyfikatu i wpisać aktualny kod parowania. Zmiana klucza
+lub certyfikatu P4 powoduje celową odmowę połączenia i wymaga ponownego
+parowania przy panelu.
 
 ## Platformy i TLS
 
-Na Androidzie i iOS aplikacja oblicza SHA-256 z certyfikatu podczas handshake i
+Na Androidzie i iOS aplikacja używa natywnego mechanizmu NSD/Bonjour, a potem
+oblicza SHA-256 z certyfikatu podczas handshake i
 porównuje go z zapisanym odciskiem. Wersja webowa nie otrzymuje certyfikatu z API
-przeglądarki, dlatego wymaga certyfikatu zaufanego przez system lub lokalnego
-reverse proxy z prawidłowym TLS. Nie należy wyłączać weryfikacji w przeglądarce.
+przeglądarki ani natywnego discovery, dlatego wymaga ręcznego adresu i
+certyfikatu zaufanego przez system lub lokalnego reverse proxy z prawidłowym
+TLS. Nie należy wyłączać weryfikacji w przeglądarce.
 Jeżeli aplikacja webowa działa na innym originie niż API, w menu P4 trzeba
 ustawić dokładny adres HTTPS w `AQUAHUB_CORS_ORIGIN`. Wartość `*` nie jest
 obsługiwana.
@@ -66,9 +73,10 @@ deklaruje dostęp do sieci lokalnej oraz usługę Bonjour `_aquahub._tcp`.
 ## Testy
 
 Testy obejmują modele, kontrakt API, paginację, komendy, onboarding, OTA,
-automatyzacje, przyszłe typy encji i pełną nawigację AquaHub. Klient HTTP jest
+automatyzacje, natywne discovery, jego awarię, przyszłe typy encji i pełną
+nawigację AquaHub. Klient HTTP jest
 wstrzykiwany w testach, a kod produkcyjny tworzy transport z pinningiem
-certyfikatu. Wydanie aplikacji ma wersję `1.1.0+2`.
+certyfikatu. Wydanie aplikacji ma wersję `1.1.1+3`.
 
 Pełny podział odpowiedzialności i procedura provisioningu znajdują się w
 [`docs/AQUAHUB_ARCHITECTURE.md`](../docs/AQUAHUB_ARCHITECTURE.md).
