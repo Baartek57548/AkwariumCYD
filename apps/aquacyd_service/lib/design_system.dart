@@ -1,22 +1,23 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:aquacyd_design_system/aquacyd_design_system.dart';
 
 /// Wspólne tokeny wizualne aplikacji. Interfejs sterownika korzysta z jednej
 /// skali odstępów i promieni, dzięki czemu ekrany operacyjne i formularze
 /// administracyjne zachowują tę samą hierarchię.
 abstract final class AquaSpacing {
-  static const double xxs = 4;
-  static const double xs = 8;
-  static const double sm = 12;
-  static const double md = 16;
-  static const double lg = 24;
-  static const double xl = 32;
+  static const double xxs = ProductSpacing.xxs;
+  static const double xs = ProductSpacing.xs;
+  static const double sm = ProductSpacing.sm;
+  static const double md = ProductSpacing.md;
+  static const double lg = ProductSpacing.lg;
+  static const double xl = ProductSpacing.xl;
 }
 
 abstract final class AquaRadius {
-  static const double control = 12;
-  static const double card = 18;
-  static const double hero = 24;
+  static const double control = ProductRadius.control;
+  static const double card = ProductRadius.card;
+  static const double hero = ProductRadius.hero;
 }
 
 @immutable
@@ -157,7 +158,7 @@ extension AquaThemeContext on BuildContext {
 }
 
 abstract final class AquaTheme {
-  static const Color _seed = Color(0xFF19C6B3);
+  static const Color _seed = ProductColors.aqua;
 
   static ThemeData light() => _build(Brightness.light);
 

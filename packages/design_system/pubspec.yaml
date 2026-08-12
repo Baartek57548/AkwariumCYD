@@ -1,0 +1,11 @@
+name: aquacyd_design_system
+description: Shared AquaCYD and Home Control visual tokens.
+version: 1.0.0
+publish_to: none
+
+environment:
+  sdk: ^3.11.3
+
+dependencies:
+  flutter:
+    sdk: flutter

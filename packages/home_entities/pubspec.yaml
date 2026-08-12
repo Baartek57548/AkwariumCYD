@@ -1,0 +1,10 @@
+name: home_entities
+description: Versioned, source-agnostic Home Control domain models.
+version: 1.0.0
+publish_to: none
+
+environment:
+  sdk: ^3.11.3
+
+dev_dependencies:
+  test: ^1.29.0

@@ -1,0 +1,14 @@
+name: aquacyd_protocol
+description: Stable aquarium semantics shared by Home Control and AquaCYD Service.
+version: 1.0.0
+publish_to: none
+
+environment:
+  sdk: ^3.11.3
+
+dependencies:
+  home_entities:
+    path: ../home_entities
+
+dev_dependencies:
+  test: ^1.29.0

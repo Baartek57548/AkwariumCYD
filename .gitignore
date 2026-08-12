@@ -1,4 +1,6 @@
 .pio
+.dart_tool/
+**/.dart_tool/
 compile_commands.json
 **/compile_commands.json
 .vscode/.browse.c_cpp.db*
@@ -13,6 +15,8 @@ artifacts/
 __pycache__/
 *.py[cod]
 flutter_*.log
+packages/*/build/
+packages/*/pubspec.lock
 services/remote_gateway/gateway-state/
 services/remote_gateway/aquacyd-gateway-secrets.json
 services/remote_gateway/firebase-service-account.json

@@ -7,6 +7,8 @@ environment:
   sdk: ^3.11.3
 
 dependencies:
+  aquacyd_design_system:
+    path: ../../packages/design_system
   flutter:
     sdk: flutter
   flutter_localizations:
