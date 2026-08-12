@@ -544,7 +544,7 @@ jobs:
           profile: pixel_7
           disable-animations: true
           working-directory: apps/aquacyd_service
-          script: bash ../tools/android-emulator-smoke.sh
+          script: bash ../../tools/android-emulator-smoke.sh
       - name: Upload Android emulator diagnostics
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
