@@ -296,7 +296,7 @@ jobs:
             "$output/p4/"
           cp firmware/esp32p4_hub/build/ota_data_initial.bin \
             "$output/p4/"
-          cp firmware/esp32p4_hub/build/aquacyd_esp32p4_hmi.bin \
+          cp firmware/esp32p4_hub/build/aquahub_esp32p4.bin \
             "$output/p4/"
           cp firmware/esp32p4_hub/build/flash_args \
             "$output/p4/"
