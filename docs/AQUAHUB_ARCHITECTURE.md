@@ -1,5 +1,9 @@
 # AquaHub — architektura docelowa ESP32-P4 + ESP32-C6 + CYD
 
+> Dokument zachowuje szczegóły AquaHub. Granice całego systemu i aplikacji
+> określają [PRODUCT_SPEC.md](PRODUCT_SPEC.md) oraz
+> [HOME_CONTROL_ARCHITECTURE.md](HOME_CONTROL_ARCHITECTURE.md).
+
 ## Decyzja
 
 AquaHub jest własnym, lekkim centrum urządzeń uruchamianym na panelu
@@ -175,7 +179,7 @@ Retained Discovery odbudowuje rejestr urządzeń po ponownym połączeniu broker
 
 ## Aktualizacje
 
-Aplikacja AquaCYD Home na Androidzie sprawdza kanał GitHub `home-v*` przy każdym
+Aplikacja Home Control na Androidzie sprawdza kanał GitHub `home-v*` przy każdym
 uruchomieniu. Pobiera wyłącznie wydanie produkcyjne, wiąże APK z
 `release-manifest.json`, kontroluje rozmiar i SHA-256, a następnie w natywnej
 warstwie Androida sprawdza nazwę pakietu, wzrost `versionCode` oraz zgodność

@@ -98,7 +98,7 @@ Nazwa APK musi być dokładnie
 `AquaCYD-Control-X.Y.Z-current.apk`. Istniejące wydanie nie jest nadpisywane.
 Zmiana gotowego pliku wymaga nowego numeru wersji i tagu.
 
-## Wydanie aplikacji AquaCYD Home
+## Wydanie aplikacji Home Control
 
 1. Zwiększ `version: X.Y.Z+N` w `apps/home_control/pubspec.yaml`.
 2. Uruchom analizę, testy oraz kompilację web i Android.
@@ -111,7 +111,7 @@ Zmiana gotowego pliku wymaga nowego numeru wersji i tagu.
    `release-manifest.json`, CycloneDX SBOM oraz atestację pochodzenia.
 
 Tag musi wskazywać commit osiągalny z co najmniej jednej zdalnej gałęzi.
-Workflow odmawia nadpisania istniejącego wydania i nie ustawia AquaCYD Home jako
+Workflow odmawia nadpisania istniejącego wydania i nie ustawia Home Control jako
 „Latest”, dzięki czemu głównym wydaniem pozostaje AquaCYD Control.
 
 ## Wydanie firmware

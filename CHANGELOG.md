@@ -1,17 +1,26 @@
 # Changelog
 
-## Unreleased — ESP32-P4/C6 HMI v2
+## Unreleased — Home Control 2.0 i monorepo produktowe
 
 ### What is included
 
-- Druga, niezależna aplikacja Flutter `AquaCYD Home` dla Androida, iOS i web,
-  łącząca się z REST/WebSocket Home Assistanta, z sześcioma responsywnymi
-  ekranami, historią, alarmami, sterowaniem i edycją automatyki.
-- Bezpieczny magazyn tokenu, walidacja lokalnego HTTP, automatyczny reconnect
-  WebSocket oraz diagnostyka brakujących encji MQTT Discovery.
+- Natywna aplikacja Flutter **Home Control** dla Androida, iOS i web z własnym
+  Material 3 UI; Home Assistant jest adapterem danych, a nie stroną w WebView.
+- Trzy źródła: AquaHub, wiele instancji Home Assistant i pełne Demo offline,
+  wspólny model pomieszczeń, urządzeń, 28 typów encji, historii i aktualizacji.
+- Bezpieczne profile HA, oficjalne REST/WebSocket oraz rejestry areas, devices,
+  entities i services, reconnect, snapshot cache i selektywne usuwanie danych.
+- Poprawne natywne sterowanie m.in. klimatem, roletami, zamkami, alarmem,
+  odkurzaczem, scenami, skryptami, liczbami, listami i tekstem z ACK/rollbackiem.
+- Autoaktualizacja Home Control przy wejściu i wznowieniu, osobny asset
+  `Home-Control-X.Y.Z.apk`, hash, certyfikat, manifest, SBOM i provenance.
+- AquaCYD Service zachowany jako osobny produkt serwisowy bez regresji funkcji.
+- Monorepo podzielone na `apps`, `firmware`, `packages`, `services` i
+  `integrations` z kanoniczną dokumentacją architektury, bezpieczeństwa, OTA,
+  QA, HIL i release.
 - Bramka ESP32-C6 publikuje dodatkowo tryb grzałki i szesnaście pól czterech
   harmonogramów potrzebnych aplikacji i panelom operatorskim.
-- Osobny, chroniony pipeline `home-vX.Y.Z` podpisuje AquaCYD Home, waliduje
+- Osobny, chroniony pipeline `home-vX.Y.Z` podpisuje Home Control, waliduje
   package i certyfikat oraz publikuje APK, SHA-256, manifest, SBOM i atestację
   pochodzenia bez zastępowania wydania AquaCYD Control.
 
@@ -31,9 +40,10 @@
 
 ### Verification
 
-- 36 testów natywnych.
-- Kompilacje CYD `esp32dev-espnow`, bramki ESP32-C6 i panelu ESP32-P4.
-- Walidacja JSON, YAML, XML wszystkich ramek oraz kontrola `git diff --check`.
+- Aktualne wyniki pełnej macierzy i jawne blokery właściciela są utrzymywane w
+  `docs/QA_REPORT.md`.
+- Produkcyjny tag pozostaje zablokowany do czasu fizycznego HIL bez skipów i
+  użycia kluczy podpisu właściciela.
 
 ## mobile-v6.0.0 / firmware-v6.0.0 - 2026-07-29
 

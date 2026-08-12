@@ -84,9 +84,23 @@ Aktualne źródła prawdy:
 
 - [specyfikacja produktów](docs/PRODUCT_SPEC.md),
 - [architektura monorepo](docs/MONOREPO_ARCHITECTURE.md),
+- [architektura Home Control](docs/HOME_CONTROL_ARCHITECTURE.md),
+- [granice AquaCYD Service](docs/AQUACYD_SERVICE.md),
+- [kontrakt urządzeń](docs/DEVICE_CONTRACT.md),
+- [bezpieczeństwo](docs/SECURITY.md),
+- [OTA](docs/OTA.md) i [proces wydania](docs/RELEASE.md),
+- [raport QA](docs/QA_REPORT.md) i [checklista HIL](docs/HIL_CHECKLIST.md),
+- [pomysły i roadmapa](docs/IDEAS_AND_ROADMAP.md),
 - [audyt bazowy](docs/BASELINE_AUDIT.md),
 - [plan migracji](docs/MIGRATION_PLAN.md),
 - [bezpieczeństwo runtime CYD](docs/FIRMWARE_RUNTIME_SAFETY.md),
 - [podpisywanie firmware](docs/FIRMWARE_SIGNING_AND_PROVISIONING.md).
 
 Artefakty instalacyjne są publikowane w [GitHub Releases](https://github.com/Baartek57548/AkwariumCYD/releases), nie w drzewie źródłowym. Brak kluczy produkcyjnych lub fizycznego HIL blokuje publikację produkcyjną i jest zawsze raportowany jawnie.
+
+## Projekty HMI
+
+Kod panelu 7″ LVGL znajduje się w `firmware/esp32p4_hub`, a importowalne do
+Figma ramki w `design/hmi`. Wizualizacje aktualnych ekranów CYD 320×240 są w
+`design/cyd-hmi`. Repozytorium zawiera tokeny, manifesty i generator, dzięki
+czemu Figma pozostaje warstwą projektową, a LVGL źródłem produkcyjnym.

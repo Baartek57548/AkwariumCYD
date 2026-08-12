@@ -1,4 +1,7 @@
-# Gotowy prompt do finalizacji AquaHub przez Codex
+# Dokument historyczny — wcześniejszy prompt finalizacji AquaHub
+
+> Ten prompt nie jest już źródłem wymagań. Zastępują go zrealizowana
+> specyfikacja Home Control i kanoniczne dokumenty w katalogu `docs`.
 
 Poniższy prompt jest dopasowany do tego repozytorium. Wymusza pracę na kodzie,
 debugowanie, testy wizualne, uczciwe granice sprzętowe i końcowy push zamiast

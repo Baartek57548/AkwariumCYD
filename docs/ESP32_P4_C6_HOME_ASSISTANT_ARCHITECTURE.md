@@ -1,4 +1,8 @@
-# Architektura AquaCYD: ESP32-P4, ESP32-C6 i Home Assistant
+# Dokument historyczny — ESP32-P4, ESP32-C6 i Home Assistant
+
+> Zachowany jako zapis wcześniejszego wariantu. Aktualne granice określają
+> [PRODUCT_SPEC.md](PRODUCT_SPEC.md), [HOME_CONTROL_ARCHITECTURE.md](HOME_CONTROL_ARCHITECTURE.md)
+> i [DEVICE_CONTRACT.md](DEVICE_CONTRACT.md).
 
 > Dokument opisuje wcześniejszy wariant z Home Assistant Core na Raspberry Pi.
 > Aktualna decyzja produktowa przenosi centrum do AquaHub na ESP32-P4 i jest

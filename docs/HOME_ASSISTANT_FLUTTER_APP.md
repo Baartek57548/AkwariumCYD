@@ -1,4 +1,7 @@
-# AquaCYD Home — aplikacja Flutter dla Home Assistanta
+# Dokument historyczny — AquaCYD Home dla Home Assistanta
+
+> Zastąpiony przez natywny, uniwersalny Home Control. Aktualnym źródłem prawdy
+> jest [HOME_CONTROL_ARCHITECTURE.md](HOME_CONTROL_ARCHITECTURE.md).
 
 > Punkt wejścia `home_assistant_app/lib/main.dart` uruchamia obecnie klienta
 > własnego AquaHub. Opis niżej dotyczy zachowanej warstwy zgodności z oficjalnym
