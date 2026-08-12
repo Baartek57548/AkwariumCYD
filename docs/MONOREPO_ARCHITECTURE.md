@@ -53,4 +53,3 @@ Usunięcie źródła kasuje jego token, sesję, fingerprint i cache. Przełącze
 ## Własność testów
 
 Testy jednostkowe mieszkają przy produkcie lub pakiecie. Testy kontraktowe danych współdzielonych należą do odpowiedniego pakietu. Playwright testuje panel web, a HIL testuje prawdziwy CYD/P4/C6. Raport końcowy zawsze rozróżnia testy symulowane od wykonanych na urządzeniu.
-

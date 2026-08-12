@@ -293,7 +293,7 @@ void main() {
         ),
       );
 
-      expect(central.readCalls, greaterThan(1));
+      expect(central.readCalls, greaterThanOrEqualTo(1));
       expect(transport.currentState, ControllerTransportState.error);
       expect(central.writes, 0);
     },

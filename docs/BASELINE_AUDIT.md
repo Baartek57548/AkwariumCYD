@@ -1,7 +1,7 @@
 # Audyt stanu bazowego repozytorium
 
-Data audytu: 2026-08-12, Europe/Warsaw  
-Gałąź robocza: `codex/home-control-monorepo`  
+Data audytu: 2026-08-12, Europe/Warsaw.
+Gałąź robocza: `codex/home-control-monorepo`.
 Punkt bazowy: `a0663f20cc4e4f0429974c1a383d662007e73fee`
 
 ## Zakres i wynik
@@ -119,4 +119,3 @@ Audyt wykrył następujące nieśledzone elementy i wyłączył je z migracji or
 - ESP32-C6 ma kompilowalny firmware mostu, lecz nie wolno opisywać jego OTA jako gotowego przed implementacją A/B i testem na sprzęcie.
 - Bootloader P4 ma niewielki margines rozmiaru; aktualizacja ESP-IDF lub konfiguracji secure boot wymaga kontroli mapy pamięci.
 - Każda operacja potencjalnie niebezpieczna musi pozostać potwierdzana w UI i autorytatywnie odrzucana przez CYD, niezależnie od stanu sieci i aplikacji.
-

@@ -7,6 +7,9 @@ param(
 
     [string]$IdfToolsPath = $env:IDF_TOOLS_PATH,
 
+    [ValidateRange(1, 32)]
+    [int]$Jobs = 1,
+
     [switch]$Flash,
 
     [string]$Port,
@@ -41,6 +44,10 @@ if ([string]::IsNullOrWhiteSpace($IdfToolsPath) -or
     throw "Podaj poprawny katalog narzędzi przez -IdfToolsPath."
 }
 $env:IDF_TOOLS_PATH = (Resolve-Path -LiteralPath $IdfToolsPath).Path
+$env:CMAKE_BUILD_PARALLEL_LEVEL = $Jobs.ToString(
+    [System.Globalization.CultureInfo]::InvariantCulture
+)
+$env:NINJAFLAGS = "-j$Jobs"
 
 $exportMessages = . $exportScript
 $exportMessages | Out-Null

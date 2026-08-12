@@ -19,4 +19,3 @@ Po pobraniu pliku należy zweryfikować jego SHA-256 względem śledzonych plik�
 Obrazy `cydAquarium-CYD-2026.07.26-ILI9341.bin` i `cydAquarium-CYD-2026.07.26-ST7789.bin` nie występują jako osobne zasoby aktualnych GitHub Releases. Pozostają dostępne w historii Git, a zalecaną metodą jest odtworzenie ich z właściwego historycznego commita i przypiętego toolchainu PlatformIO. Oczekiwane sumy znajdują się w sąsiednich plikach `.sha256`.
 
 Aktualnych obrazów nie należy kopiować do tego katalogu. Pipeline release publikuje binaria jako zasoby GitHub Release razem z sumami kontrolnymi i SBOM.
-

@@ -257,6 +257,9 @@ jobs:
     timeout-minutes: 35
     container:
       image: espressif/idf:v5.4.4
+    env:
+      CMAKE_BUILD_PARALLEL_LEVEL: "2"
+      NINJAFLAGS: "-j2"
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
       - name: Build ESP32-C6 gateway

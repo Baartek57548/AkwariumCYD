@@ -34,4 +34,3 @@ Home Assistant jest opcjonalnym adapterem danych i automatyki. MQTT jest transpo
 - Aktualizacje Home Control, AquaCYD Service, CYD, P4 i C6 są osobnymi procesami z osobnymi kompatybilnościami i statusami.
 - Kompilacje, testy i skany działają lokalnie oraz w CI z filtrowaniem ścieżek i przypiętymi wersjami narzędzi.
 - Brak testu fizycznego, klucza podpisu lub decyzji właściciela jest raportowany wprost i blokuje wyłącznie odpowiednią publikację, nie jest ukrywany jako sukces.
-

@@ -58,4 +58,3 @@ Każdy etap strukturalny jest akceptowany dopiero po potwierdzeniu, że ścieżk
 ## Strategia wycofania
 
 Każdy logiczny etap ma osobny commit, dlatego awaria migracji może zostać wycofana przez standardowy revert bez utraty historii. Artefakty usunięte z bieżącego drzewa są dostępne w historycznych commitach, istniejących GitHub Releases albo odtwarzalne z przypiętego toolchainu. Nie jest planowany force-push ani rebase publicznej historii.
-
