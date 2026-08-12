@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
 
 import '../design/app_theme.dart';
+import 'app_update.dart';
 import 'controller.dart';
 import 'credentials_store.dart';
 import 'hub_discovery.dart';
@@ -14,6 +15,7 @@ final class AquaHubApp extends StatefulWidget {
     this.apiFactory,
     this.bootstrapFactory,
     this.discoveryService,
+    this.appUpdateService,
     this.enablePolling = true,
     super.key,
   });
@@ -22,6 +24,7 @@ final class AquaHubApp extends StatefulWidget {
   final AuthenticatedHubApiFactory? apiFactory;
   final BootstrapHubApiFactory? bootstrapFactory;
   final HubDiscoveryService? discoveryService;
+  final AppUpdateService? appUpdateService;
   final bool enablePolling;
 
   @override
@@ -31,6 +34,10 @@ final class AquaHubApp extends StatefulWidget {
 final class _AquaHubAppState extends State<AquaHubApp>
     with WidgetsBindingObserver {
   late final HubController controller;
+  late final AppUpdateController appUpdateController;
+  final GlobalKey<NavigatorState> _navigatorKey = GlobalKey<NavigatorState>();
+  bool _updateDialogOpen = false;
+  String? _promptedUpdateVersion;
 
   @override
   void initState() {
@@ -42,12 +49,19 @@ final class _AquaHubAppState extends State<AquaHubApp>
       bootstrapFactory: widget.bootstrapFactory,
       enablePolling: widget.enablePolling,
     );
+    appUpdateController = AppUpdateController(
+      service: widget.appUpdateService ?? createDefaultAppUpdateService(),
+    )..addListener(_handleAppUpdateState);
     controller.initialize();
+    appUpdateController.initialize();
   }
 
   @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
+    appUpdateController
+      ..removeListener(_handleAppUpdateState)
+      ..dispose();
     controller.dispose();
     super.dispose();
   }
@@ -55,11 +69,41 @@ final class _AquaHubAppState extends State<AquaHubApp>
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
     controller.setAppActive(state == AppLifecycleState.resumed);
+    if (state == AppLifecycleState.resumed) {
+      appUpdateController.onAppResumed();
+    }
+  }
+
+  void _handleAppUpdateState() {
+    final release = appUpdateController.release;
+    if (!mounted ||
+        release == null ||
+        appUpdateController.phase != AppUpdatePhase.available ||
+        _updateDialogOpen ||
+        _promptedUpdateVersion == release.version) {
+      return;
+    }
+    _promptedUpdateVersion = release.version;
+    _updateDialogOpen = true;
+    WidgetsBinding.instance.addPostFrameCallback((_) async {
+      final context = _navigatorKey.currentContext;
+      if (!mounted || context == null) {
+        _updateDialogOpen = false;
+        return;
+      }
+      await showDialog<void>(
+        context: context,
+        barrierDismissible: false,
+        builder: (_) => AppUpdateDialog(controller: appUpdateController),
+      );
+      _updateDialogOpen = false;
+    });
   }
 
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
+      navigatorKey: _navigatorKey,
       debugShowCheckedModeBanner: false,
       title: 'AquaHub',
       theme: AquaTheme.light(),
@@ -72,6 +116,10 @@ final class _AquaHubAppState extends State<AquaHubApp>
         GlobalWidgetsLocalizations.delegate,
         GlobalCupertinoLocalizations.delegate,
       ],
+      builder: (context, child) => AppUpdateScope(
+        controller: appUpdateController,
+        child: child ?? const SizedBox.shrink(),
+      ),
       home: AnimatedBuilder(
         animation: controller,
         builder: (context, _) => switch (controller.phase) {

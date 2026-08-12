@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../design/app_theme.dart';
+import 'app_update.dart';
 import 'controller.dart';
 import 'domain.dart';
 
@@ -202,22 +203,136 @@ final class _HubFirmwareCard extends StatelessWidget {
 final class _AppReleaseCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
-    return Card(
-      child: ListTile(
-        contentPadding: const EdgeInsets.all(18),
-        leading: const CircleAvatar(child: Icon(Icons.phone_android_rounded)),
-        title: const Text(
-          'Aplikacja AquaHub 1.1.0',
-          style: TextStyle(fontWeight: FontWeight.w700),
+    final controller = AppUpdateScope.maybeOf(context);
+    if (controller == null) {
+      return const _Notice(
+        icon: Icons.phone_android_rounded,
+        title: 'Aktualizacja aplikacji',
+        text: 'Stan kanału aktualizacji nie jest dostępny.',
+      );
+    }
+    return AnimatedBuilder(
+      animation: controller,
+      builder: (context, _) => Card(
+        child: Padding(
+          padding: const EdgeInsets.all(20),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: <Widget>[
+              Row(
+                children: <Widget>[
+                  const CircleAvatar(child: Icon(Icons.phone_android_rounded)),
+                  const SizedBox(width: 14),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: <Widget>[
+                        Text(
+                          'Aplikacja AquaCYD Home',
+                          style: Theme.of(context).textTheme.titleLarge
+                              ?.copyWith(fontWeight: FontWeight.w800),
+                        ),
+                        Text(
+                          controller.installed == null
+                              ? _appUpdateStatus(controller.phase)
+                              : 'Wersja ${controller.installed!.label} · ${_appUpdateStatus(controller.phase)}',
+                          style: TextStyle(
+                            color: Theme.of(
+                              context,
+                            ).colorScheme.onSurfaceVariant,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  Icon(
+                    controller.phase == AppUpdatePhase.failed
+                        ? Icons.error_outline_rounded
+                        : controller.phase == AppUpdatePhase.available
+                        ? Icons.new_releases_outlined
+                        : Icons.verified_user_outlined,
+                    color: controller.phase == AppUpdatePhase.failed
+                        ? Theme.of(context).colorScheme.error
+                        : null,
+                  ),
+                ],
+              ),
+              if (controller.phase == AppUpdatePhase.downloading) ...<Widget>[
+                const SizedBox(height: 18),
+                LinearProgressIndicator(value: controller.progress),
+                const SizedBox(height: 6),
+                Text(
+                  'Pobieranie i weryfikacja · ${(controller.progress * 100).round()}%',
+                  textAlign: TextAlign.center,
+                ),
+              ],
+              if (controller.phase == AppUpdatePhase.failed &&
+                  controller.errorMessage != null) ...<Widget>[
+                const SizedBox(height: 14),
+                Text(
+                  controller.errorMessage!,
+                  style: TextStyle(color: Theme.of(context).colorScheme.error),
+                ),
+              ],
+              if (controller.phase ==
+                  AppUpdatePhase.permissionRequired) ...<Widget>[
+                const SizedBox(height: 14),
+                const Text(
+                  'Zezwól Androidowi na instalowanie aktualizacji z AquaHub, a następnie wróć do aplikacji.',
+                ),
+              ],
+              const SizedBox(height: 14),
+              Wrap(
+                alignment: WrapAlignment.end,
+                spacing: 10,
+                runSpacing: 10,
+                children: <Widget>[
+                  OutlinedButton.icon(
+                    onPressed: controller.busy ? null : controller.check,
+                    icon: controller.phase == AppUpdatePhase.checking
+                        ? const SizedBox.square(
+                            dimension: 18,
+                            child: CircularProgressIndicator(strokeWidth: 2),
+                          )
+                        : const Icon(Icons.refresh_rounded),
+                    label: const Text('Sprawdź aplikację'),
+                  ),
+                  if (controller.phase == AppUpdatePhase.available ||
+                      controller.phase == AppUpdatePhase.failed)
+                    FilledButton.icon(
+                      onPressed: controller.busy
+                          ? null
+                          : controller.downloadAndInstall,
+                      icon: const Icon(Icons.download_rounded),
+                      label: const Text('Aktualizuj'),
+                    ),
+                  if (controller.phase == AppUpdatePhase.permissionRequired)
+                    FilledButton.icon(
+                      onPressed: controller.retryInstaller,
+                      icon: const Icon(Icons.security_rounded),
+                      label: const Text('Kontynuuj instalację'),
+                    ),
+                ],
+              ),
+            ],
+          ),
         ),
-        subtitle: const Text(
-          'Aktualizacje Android/iOS są dystrybuowane przez podpisany sklep lub firmowy kanał MDM. Firmware urządzeń aktualizuje centrala, nie telefon.',
-        ),
-        trailing: const Icon(Icons.verified_user_outlined),
       ),
     );
   }
 }
+
+String _appUpdateStatus(AppUpdatePhase phase) => switch (phase) {
+  AppUpdatePhase.idle => 'oczekuje na sprawdzenie',
+  AppUpdatePhase.checking => 'sprawdzanie aktualizacji',
+  AppUpdatePhase.upToDate => 'wersja aktualna',
+  AppUpdatePhase.available => 'dostępna aktualizacja',
+  AppUpdatePhase.downloading => 'pobieranie aktualizacji',
+  AppUpdatePhase.launchingInstaller => 'uruchamianie instalatora',
+  AppUpdatePhase.permissionRequired => 'wymagana zgoda Androida',
+  AppUpdatePhase.failed => 'błąd kanału aktualizacji',
+  AppUpdatePhase.unsupported => 'OTA APK dostępne na Androidzie',
+};
 
 final class _DeviceFirmwareCard extends StatelessWidget {
   const _DeviceFirmwareCard({required this.controller});

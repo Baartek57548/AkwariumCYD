@@ -17,6 +17,9 @@ z CYD i nie wymaga Home Assistant Core ani Raspberry Pi.
 - pulpit stanu, alarmy krytyczne, grupowanie urządzeń, historia i diagnostyka;
 - lokalne automatyzacje przechowywane i wykonywane przez P4 bez telefonu;
 - centrum aktualizacji P4 z postępem OTA, świadomym potwierdzeniem i rollbackiem;
+- automatyczne sprawdzanie OTA aplikacji Android przy każdym uruchomieniu;
+- pobieranie APK z wydania `home-v*`, kontrola manifestu, rozmiaru i SHA-256 oraz
+  natywna weryfikacja nazwy pakietu, wyższego `versionCode` i certyfikatu;
 - pełny, jawnie oznaczony tryb demonstracyjny dostępny z pierwszego ekranu;
 - tolerancja nowych typów encji, aby przyszłe urządzenie nie blokowało rejestru;
 - odświeżanie co 5 sekund z blokadą równoległych żądań;
@@ -70,13 +73,31 @@ obsługiwana.
 Android ma wyłączony cleartext HTTP i kopie zapasowe danych aplikacji. iOS
 deklaruje dostęp do sieci lokalnej oraz usługę Bonjour `_aquahub._tcp`.
 
+## Automatyczna aktualizacja aplikacji
+
+Na Androidzie AquaCYD Home sprawdza przy każdym uruchomieniu najnowsze
+nieprzedpremierowe wydanie `home-v*` w repozytorium projektu. Gdy wersja ma
+wyższy numer kompilacji, aplikacja pokazuje natywny komunikat, pobiera APK do
+prywatnego cache i porównuje rozmiar oraz SHA-256 z `release-manifest.json`.
+Przed przekazaniem pliku instalatorowi kod Androida dodatkowo wymaga identycznej
+nazwy pakietu, wyższego `versionCode` oraz dokładnie tego samego certyfikatu co
+zainstalowana aplikacja.
+
+Pierwsza aktualizacja spoza sklepu wymaga jednorazowego zezwolenia Androida na
+instalowanie z aplikacji AquaHub. Końcowe potwierdzenie instalatora pozostaje
+obowiązkowe — Android nie zezwala zwykłej aplikacji na cichą podmianę własnego
+APK. Po powrocie z ekranu uprawnień proces jest automatycznie wznawiany. Błąd
+sieci lub kanału wydawniczego nie blokuje uruchomienia pulpitu. iOS wymaga
+dystrybucji aktualizacji przez App Store, TestFlight albo zarządzany kanał MDM.
+
 ## Testy
 
-Testy obejmują modele, kontrakt API, paginację, komendy, onboarding, OTA,
-automatyzacje, natywne discovery, jego awarię, przyszłe typy encji i pełną
+Testy obejmują modele, kontrakt API, paginację, komendy, onboarding, OTA P4,
+automatyczne OTA aplikacji, kontrolę SHA-256, natywne discovery, jego awarię,
+przyszłe typy encji i pełną
 nawigację AquaHub. Klient HTTP jest
 wstrzykiwany w testach, a kod produkcyjny tworzy transport z pinningiem
-certyfikatu. Wydanie aplikacji ma wersję `1.1.1+3`.
+certyfikatu. Wydanie aplikacji ma wersję `1.1.2+4`.
 
 Pełny podział odpowiedzialności i procedura provisioningu znajdują się w
 [`docs/AQUAHUB_ARCHITECTURE.md`](../docs/AQUAHUB_ARCHITECTURE.md).

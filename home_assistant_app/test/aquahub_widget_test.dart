@@ -2,6 +2,7 @@ import 'dart:convert';
 
 import 'package:aquacyd_home/src/aquahub/api.dart';
 import 'package:aquacyd_home/src/aquahub/app.dart';
+import 'package:aquacyd_home/src/aquahub/app_update.dart';
 import 'package:aquacyd_home/src/aquahub/credentials_store.dart';
 import 'package:aquacyd_home/src/aquahub/demo.dart';
 import 'package:aquacyd_home/src/aquahub/domain.dart';
@@ -18,6 +19,7 @@ void main() {
     await tester.pumpWidget(
       AquaHubApp(
         credentialsStore: _MemoryHubCredentialsStore(),
+        appUpdateService: const UnsupportedAppUpdateService(),
         discoveryService: const _FakeHubDiscoveryService(<DiscoveredHub>[]),
         enablePolling: false,
       ),
@@ -46,6 +48,7 @@ void main() {
     await tester.pumpWidget(
       AquaHubApp(
         credentialsStore: _MemoryHubCredentialsStore(),
+        appUpdateService: const UnsupportedAppUpdateService(),
         discoveryService: const _FakeHubDiscoveryService(<DiscoveredHub>[
           DiscoveredHub(
             name: 'AquaHub Salon',
@@ -87,6 +90,7 @@ void main() {
     await tester.pumpWidget(
       AquaHubApp(
         credentialsStore: _MemoryHubCredentialsStore(),
+        appUpdateService: const UnsupportedAppUpdateService(),
         discoveryService: const _FailingHubDiscoveryService(),
         enablePolling: false,
       ),
@@ -96,6 +100,24 @@ void main() {
     expect(find.text('Brak uprawnienia do sieci lokalnej.'), findsOneWidget);
     expect(find.text('Połączenie zaawansowane'), findsOneWidget);
     expect(find.text('Zobacz pełną aplikację w trybie demo'), findsOneWidget);
+  });
+
+  testWidgets('dostępne OTA aplikacji pojawia się automatycznie po starcie', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      AquaHubApp(
+        credentialsStore: _MemoryHubCredentialsStore(),
+        discoveryService: const _FakeHubDiscoveryService(<DiscoveredHub>[]),
+        appUpdateService: _AvailableAppUpdateService(),
+        enablePolling: false,
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.text('Dostępna wersja 1.1.2'), findsOneWidget);
+    expect(find.text('Pobierz i zainstaluj'), findsOneWidget);
+    expect(find.text('Automatyczna aktualizacja testowa.'), findsOneWidget);
   });
 
   testWidgets('kompletna sesja pokazuje pulpit, automatyzacje i OTA', (
@@ -109,6 +131,7 @@ void main() {
     await tester.pumpWidget(
       AquaHubApp(
         credentialsStore: DemoHubCredentialsStore(),
+        appUpdateService: const UnsupportedAppUpdateService(),
         apiFactory: createDemoHubApi,
         enablePolling: false,
       ),
@@ -167,4 +190,41 @@ final class _MemoryHubCredentialsStore implements HubCredentialsStore {
 
   @override
   Future<void> save(HubCredentials value) async => credentials = value;
+}
+
+final class _AvailableAppUpdateService implements AppUpdateService {
+  @override
+  bool get supported => true;
+
+  @override
+  Future<InstalledAppVersion> installedVersion() async =>
+      const InstalledAppVersion(version: '1.1.1', buildNumber: 3);
+
+  @override
+  Future<AppUpdateRelease?> findUpdate(InstalledAppVersion installed) async =>
+      AppUpdateRelease(
+        version: '1.1.2',
+        buildNumber: 4,
+        apkName: 'AquaCYD-Home-1.1.2.apk',
+        apkUri: Uri.parse('https://github.com/example/update.apk'),
+        bytes: 1024 * 1024,
+        sha256Digest: List<String>.filled(64, '0').join(),
+        notes: 'Automatyczna aktualizacja testowa.',
+      );
+
+  @override
+  Future<String> download(
+    AppUpdateRelease release, {
+    required ValueChanged<double> onProgress,
+  }) async {
+    onProgress(1);
+    return 'verified.apk';
+  }
+
+  @override
+  Future<AppInstallerResult> install(String apkPath) async =>
+      AppInstallerResult.launched;
+
+  @override
+  void close() {}
 }

@@ -175,6 +175,16 @@ Retained Discovery odbudowuje rejestr urządzeń po ponownym połączeniu broker
 
 ## Aktualizacje
 
+Aplikacja AquaCYD Home na Androidzie sprawdza kanał GitHub `home-v*` przy każdym
+uruchomieniu. Pobiera wyłącznie wydanie produkcyjne, wiąże APK z
+`release-manifest.json`, kontroluje rozmiar i SHA-256, a następnie w natywnej
+warstwie Androida sprawdza nazwę pakietu, wzrost `versionCode` oraz zgodność
+certyfikatów z już zainstalowaną aplikacją. Plik leży wyłącznie w prywatnym
+cache udostępnianym instalatorowi przez nieeksportowany `FileProvider`.
+Pierwsza instalacja wymaga zgody na zaufanie temu źródłu, a każda instalacja
+końcowego potwierdzenia użytkownika. Nie jest to cicha instalacja i mechanizm
+nie wymaga dostępu roota ani trybu administratora urządzenia.
+
 P4 ma kompletną ścieżkę OTA A/B: pobiera wyłącznie `manifest.json` ze stałego
 adresu HTTPS, odrzuca przekierowania i nazwy zawierające ścieżki, ogranicza
 obraz do 5 MiB, porównuje rozmiar i SHA-256, zapisuje nieaktywną partycję,

@@ -543,7 +543,7 @@ jobs:
             --verify-tag \
             --latest=false \
             --title "AquaCYD Home $RELEASE_VERSION" \
-            --notes "Niezależna aplikacja AquaHub do obsługi panelu ESP32-P4, urządzeń i czujników. Zawiera responsywny pulpit, historię, automatyzacje lokalne oraz centrum OTA. Nie wymaga Home Assistant Core i może być zainstalowana równolegle z AquaCYD Control."
+            --notes "Niezależna aplikacja AquaHub do obsługi panelu ESP32-P4, urządzeń i czujników. Zawiera responsywny pulpit, historię, automatyzacje lokalne, centrum OTA urządzeń oraz bezpieczne automatyczne aktualizacje aplikacji na Androidzie. Nie wymaga Home Assistant Core i może być zainstalowana równolegle z AquaCYD Control."
       - name: Remove AquaCYD Home signing material
         if: always()
         run: |
