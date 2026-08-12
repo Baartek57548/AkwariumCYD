@@ -402,6 +402,23 @@ jobs:
             "$android_sdk" "$flutter_sdk" \
             > apps/home_control/android/local.properties
           chmod +x apps/home_control/android/gradlew
+      - name: Prewarm Home Control Gradle wrapper
+        working-directory: apps/home_control/android
+        shell: bash
+        run: |
+          set -euo pipefail
+          for attempt in 1 2 3; do
+            if ./gradlew --version --no-daemon; then
+              break
+            fi
+            if [[ "$attempt" -eq 3 ]]; then
+              echo "Gradle wrapper bootstrap failed after $attempt attempts" >&2
+              exit 1
+            fi
+            delay_seconds=$((attempt * 10))
+            echo "Gradle wrapper bootstrap failed; retrying in ${delay_seconds}s" >&2
+            sleep "$delay_seconds"
+          done
       - name: Analyze and test Home Control
         working-directory: apps/home_control
         run: |
