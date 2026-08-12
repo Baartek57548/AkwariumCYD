@@ -30,36 +30,42 @@ final class _HomeControlShellState extends State<HomeControlShell> {
     final destinations = <_ShellDestination>[
       _ShellDestination(
         label: strings.t('dashboard'),
+        compactLabel: strings.t('navDashboard'),
         icon: Icons.space_dashboard_outlined,
         selectedIcon: Icons.space_dashboard_rounded,
         page: HomeDashboardPage(controller: widget.controller),
       ),
       _ShellDestination(
         label: strings.t('rooms'),
+        compactLabel: strings.t('navRooms'),
         icon: Icons.meeting_room_outlined,
         selectedIcon: Icons.meeting_room_rounded,
         page: RoomsPage(controller: widget.controller),
       ),
       _ShellDestination(
         label: strings.t('devices'),
+        compactLabel: strings.t('navDevices'),
         icon: Icons.devices_other_outlined,
         selectedIcon: Icons.devices_other_rounded,
         page: DevicesPage(controller: widget.controller),
       ),
       _ShellDestination(
         label: strings.t('automations'),
+        compactLabel: strings.t('navAutomations'),
         icon: Icons.account_tree_outlined,
         selectedIcon: Icons.account_tree_rounded,
         page: AutomationsPage(controller: widget.controller),
       ),
       _ShellDestination(
         label: strings.t('updates'),
+        compactLabel: strings.t('navUpdates'),
         icon: Icons.system_update_outlined,
         selectedIcon: Icons.system_update_rounded,
         page: UpdatesPage(controller: widget.controller),
       ),
       _ShellDestination(
         label: strings.t('settings'),
+        compactLabel: strings.t('navSettings'),
         icon: Icons.settings_outlined,
         selectedIcon: Icons.settings_rounded,
         page: SettingsPage(controller: widget.controller),
@@ -135,7 +141,7 @@ final class _HomeControlShellState extends State<HomeControlShell> {
                         (destination) => NavigationDestination(
                           icon: Icon(destination.icon),
                           selectedIcon: Icon(destination.selectedIcon),
-                          label: destination.label,
+                          label: destination.compactLabel,
                         ),
                       )
                       .toList(growable: false),
@@ -225,12 +231,14 @@ final class _HomeControlAppBar extends StatelessWidget
 final class _ShellDestination {
   const _ShellDestination({
     required this.label,
+    required this.compactLabel,
     required this.icon,
     required this.selectedIcon,
     required this.page,
   });
 
   final String label;
+  final String compactLabel;
   final IconData icon;
   final IconData selectedIcon;
   final Widget page;

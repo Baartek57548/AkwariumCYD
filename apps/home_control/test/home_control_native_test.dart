@@ -46,10 +46,10 @@ void main() {
 
     expect(find.text('Akwarium'), findsWidgets);
     expect(find.text('Pulpit'), findsWidgets);
-    expect(find.text('Pomieszczenia'), findsWidgets);
-    expect(find.text('Urządzenia'), findsWidgets);
+    expect(find.text('Pokoje'), findsOneWidget);
+    expect(find.text('Sprzęt'), findsOneWidget);
 
-    await tester.tap(find.text('Pomieszczenia').last);
+    await tester.tap(find.text('Pokoje'));
     await tester.pumpAndSettle();
     expect(find.byType(TextField), findsOneWidget);
 
