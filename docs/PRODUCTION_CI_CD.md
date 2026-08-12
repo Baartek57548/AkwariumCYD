@@ -85,7 +85,7 @@ Po buildzie usuwa materializowane pliki również przy błędzie.
 
 ## Wydanie aplikacji
 
-1. Zwiększ `version: X.Y.Z+N` w `mobile_app/pubspec.yaml`.
+1. Zwiększ `version: X.Y.Z+N` w `apps/aquacyd_service/pubspec.yaml`.
 2. Upewnij się, że cały CI jest zielony.
 3. Utwórz podpisany lub chroniony tag `mobile-vX.Y.Z` na zweryfikowanym commicie.
 4. Workflow sprawdzi tag względem pubspec, zweryfikuje konfigurację
@@ -100,7 +100,7 @@ Zmiana gotowego pliku wymaga nowego numeru wersji i tagu.
 
 ## Wydanie aplikacji AquaCYD Home
 
-1. Zwiększ `version: X.Y.Z+N` w `home_assistant_app/pubspec.yaml`.
+1. Zwiększ `version: X.Y.Z+N` w `apps/home_control/pubspec.yaml`.
 2. Uruchom analizę, testy oraz kompilację web i Android.
 3. Wypchnij commit na zdalną gałąź, a następnie utwórz tag `home-vX.Y.Z`.
 4. Workflow użyje tego samego chronionego certyfikatu Android, ale zbuduje
@@ -117,7 +117,7 @@ Workflow odmawia nadpisania istniejącego wydania i nie ustawia AquaCYD Home jak
 ## Wydanie firmware
 
 1. Zakończ test na obu profilach ekranu oraz na stanowisku HIL.
-2. Zwiększ `FirmwareInfo::VERSION` w `include/config.h`. Jeśli wydanie wycofuje
+2. Zwiększ `FirmwareInfo::VERSION` w `firmware/cyd_controller/include/config.h`. Jeśli wydanie wycofuje
    starszy, poprawnie podpisany obraz, zwiększ również
    `FirmwareInfo::SECURITY_VERSION`.
 3. Po scaleniu zmian do `main` utwórz chroniony tag `firmware-vX.Y.Z` zgodny
@@ -159,7 +159,7 @@ python tools/hil/runner.py --dry-run
 actionlint
 npm ci
 npm run test:api
-pio test --environment native
+pio test --project-dir firmware/cyd_controller --environment native
 ```
 
 Self-test i dry-run nie zapisują eFuse ani nie wysyłają żądań do urządzenia.

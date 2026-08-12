@@ -212,9 +212,9 @@ błędu, bazowy URL i identyfikator urządzenia.
 Minimalny zestaw przed publikacją firmware:
 
 ```powershell
-pio test -e native
-pio run -e esp32dev
-pio run -e esp32dev-st7789
+pio test -d firmware/cyd_controller -e native
+pio run -d firmware/cyd_controller -e esp32dev
+pio run -d firmware/cyd_controller -e esp32dev-st7789
 ```
 
 Oba obrazy zajmują obecnie około 96% partycji aplikacji `min_spiffs.csv`.

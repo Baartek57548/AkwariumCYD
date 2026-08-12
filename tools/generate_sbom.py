@@ -219,15 +219,19 @@ def build_sbom(
         dependencies = npm_components(project_root / "package-lock.json")
         application_name = "AquaCYD Web"
     elif kind == "mobile":
-        dependencies = pub_components(project_root / "mobile_app" / "pubspec.lock")
+        dependencies = pub_components(
+            project_root / "apps" / "aquacyd_service" / "pubspec.lock"
+        )
         application_name = "AquaCYD Control"
     elif kind == "home":
         dependencies = pub_components(
-            project_root / "home_assistant_app" / "pubspec.lock"
+            project_root / "apps" / "home_control" / "pubspec.lock"
         )
         application_name = "AquaCYD Home"
     else:
-        dependencies = platformio_components(project_root / "platformio.ini")
+        dependencies = platformio_components(
+            project_root / "firmware" / "cyd_controller" / "platformio.ini"
+        )
         application_name = "AquaCYD Firmware"
 
     digest_seed = "|".join(

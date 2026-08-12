@@ -163,11 +163,11 @@ routerze należy wyłączyć.
 1. Zainstalować Home Assistant OS na Raspberry Pi 5 4 GB.
 2. Podłączyć Pi przez Ethernet i przenieść dysk danych na NVMe.
 3. Dodać oficjalną integrację MQTT i lokalnego brokera Mosquitto.
-4. Skopiować `home_assistant/packages/aquacyd.yaml` i
-   `home_assistant/dashboards/aquacyd.yaml` zgodnie z
-   `home_assistant/README.md`.
+4. Skopiować `integrations/home_assistant/packages/aquacyd.yaml` i
+   `integrations/home_assistant/dashboards/aquacyd.yaml` zgodnie z
+   `integrations/home_assistant/README.md`.
 5. Utworzyć osobne konta MQTT dla bramki, HMI i HA. Dla samodzielnego Mosquitto
-   użyć minimalnych uprawnień z `home_assistant/mosquitto/aquacyd.acl`.
+   użyć minimalnych uprawnień z `integrations/home_assistant/mosquitto/aquacyd.acl`.
 6. Nie wystawiać MQTT ani CYD bezpośrednio do Internetu; użyć Home Assistant
    Cloud albo VPN.
 
@@ -191,8 +191,8 @@ Zwykłe profile `esp32dev` i `esp32dev-st7789` zachowują dotychczasowe
 zachowanie. Nowy transport jest opt-in:
 
 ```powershell
-pio run -e esp32dev-espnow
-pio run -e esp32dev-espnow -t upload
+pio run -d firmware/cyd_controller -e esp32dev-espnow
+pio run -d firmware/cyd_controller -e esp32dev-espnow -t upload
 ```
 
 Po wgraniu trzeba zestawić szyfrowane BLE v2, uzyskać krótkotrwałą sesję
@@ -221,7 +221,7 @@ sesją administratora. Po zapisie należy kontrolowanie zrestartować CYD.
 
 ### 4. Panel ESP32-P4
 
-W `firmware/esp32p4_hmi` ustawić Wi-Fi i MQTT przez `idf.py menuconfig`, następnie
+W `firmware/esp32p4_hub` ustawić Wi-Fi i MQTT przez `idf.py menuconfig`, następnie
 zbudować ESP-IDF 5.4.4. Panel subskrybuje retained state i availability. Przy
 braku CYD blokuje przyciski, a przy braku danych dostępowych uruchamia pełny
 interfejs w trybie offline. Zakładki pokazują pomiary, alarmy, stany pięciu

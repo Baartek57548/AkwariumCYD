@@ -129,7 +129,7 @@ def main() -> int:
     )
     parser.add_argument(
         "--trust-anchor",
-        default="include/firmware_trust_anchor.h",
+        default="firmware/cyd_controller/include/firmware_trust_anchor.h",
     )
     args = parser.parse_args()
     try:

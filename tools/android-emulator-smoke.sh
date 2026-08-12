@@ -5,7 +5,7 @@ repository_root="$(
   cd "$(dirname "${BASH_SOURCE[0]}")/.." &&
     pwd
 )"
-mobile_directory="$repository_root/mobile_app"
+mobile_directory="$repository_root/apps/aquacyd_service"
 diagnostics_directory="$repository_root/artifacts/android-emulator"
 package_name="pl.cydakwarium.cyd_aquarium_mobile"
 runtime_directory="${RUNNER_TEMP:-${TMPDIR:-/tmp}}"

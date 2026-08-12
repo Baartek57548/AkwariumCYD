@@ -268,7 +268,10 @@ test('every panel action is accepted and reflected by status where applicable', 
 
 test('web action contract has matching firmware handlers', () => {
     const projectRoot = path.resolve(__dirname, '..', '..', '..');
-    const firmwareSource = fs.readFileSync(path.join(projectRoot, 'src', 'gui_app.cpp'), 'utf8');
+    const firmwareSource = fs.readFileSync(
+        path.join(projectRoot, 'firmware', 'cyd_controller', 'src', 'gui_app.cpp'),
+        'utf8'
+    );
     const expectedActions = [
         'auth_check', 'clear_critical_logs', 'factory_reset', 'feed_now', 'restart_device',
         'save_co2', 'save_display', 'save_leak', 'save_network', 'save_relays', 'save_schedule',

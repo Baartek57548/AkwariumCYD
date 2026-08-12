@@ -63,7 +63,7 @@ jobs:
         run: >
           python scripts/validate_release.py
           --tag "$GITHUB_REF_NAME"
-          --pubspec mobile_app/pubspec.yaml
+          --pubspec apps/aquacyd_service/pubspec.yaml
           --dry-run
       - name: Materialize signing identity and recreate ignored Gradle wrapper
         shell: bash
@@ -95,30 +95,30 @@ jobs:
             printf 'keyPassword=%s\n' "$ANDROID_KEY_PASSWORD"
             printf 'keyAlias=%s\n' "$ANDROID_KEY_ALIAS"
             printf 'storeFile=%s\n' "$key_path"
-          } > mobile_app/android/key.properties
+          } > apps/aquacyd_service/android/key.properties
           flutter_sdk="$(dirname "$(dirname "$(command -v flutter)")")"
           android_sdk="${ANDROID_SDK_ROOT:-${ANDROID_HOME:-}}"
           test -n "$android_sdk"
           printf 'sdk.dir=%s\nflutter.sdk=%s\n' \
             "$android_sdk" "$flutter_sdk" \
-            > mobile_app/android/local.properties
+            > apps/aquacyd_service/android/local.properties
           gradle \
-            --project-dir mobile_app/android \
+            --project-dir apps/aquacyd_service/android \
             wrapper \
             --gradle-version 8.14 \
             --distribution-type all
-          chmod +x mobile_app/android/gradlew
+          chmod +x apps/aquacyd_service/android/gradlew
       - name: Resolve and analyze Flutter
-        working-directory: mobile_app
+        working-directory: apps/aquacyd_service
         run: |
           flutter pub get
           flutter analyze
           flutter test
       - name: Run Android unit tests
-        working-directory: mobile_app/android
+        working-directory: apps/aquacyd_service/android
         run: ./gradlew testCurrentDebugUnitTest --no-daemon --console=plain
       - name: Build signed APK
-        working-directory: mobile_app
+        working-directory: apps/aquacyd_service
         shell: bash
         env:
           AQUACYD_FIREBASE_API_KEY: ${{ vars.AQUACYD_FIREBASE_API_KEY }}
@@ -183,7 +183,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          apk="mobile_app/build/app/outputs/flutter-apk/app-current-release.apk"
+          apk="apps/aquacyd_service/build/app/outputs/flutter-apk/app-current-release.apk"
           build_tools="${ANDROID_SDK_ROOT:-$ANDROID_HOME}/build-tools"
           aapt_path="$(
             find "$build_tools" -type f -name aapt -print |
@@ -212,7 +212,7 @@ jobs:
           apk="$output_dir/AquaCYD-Control-$version-current.apk"
           mkdir -p "$output_dir"
           cp \
-            mobile_app/build/app/outputs/flutter-apk/app-current-release.apk \
+            apps/aquacyd_service/build/app/outputs/flutter-apk/app-current-release.apk \
             "$apk"
           build_tools="${ANDROID_SDK_ROOT:-$ANDROID_HOME}/build-tools"
           aapt_path="$(find "$build_tools" -type f -name aapt -print | sort -V | tail -n 1)"
@@ -249,7 +249,7 @@ jobs:
           python scripts/validate_release.py \
             --tag "$GITHUB_REF_NAME" \
             --asset "$apk" \
-            --pubspec mobile_app/pubspec.yaml \
+            --pubspec apps/aquacyd_service/pubspec.yaml \
             --package-name "$package_name" \
             --apk-version-name "$version_name" \
             --apk-version-code "$version_code" \
@@ -312,7 +312,7 @@ jobs:
         if: always()
         run: |
           rm -f \
-            mobile_app/android/key.properties \
+            apps/aquacyd_service/android/key.properties \
             "$RUNNER_TEMP/aquacyd-release.jks"
 
   home:
@@ -367,7 +367,7 @@ jobs:
         run: >
           python scripts/validate_release.py
           --tag "$GITHUB_REF_NAME"
-          --pubspec home_assistant_app/pubspec.yaml
+          --pubspec apps/home_control/pubspec.yaml
           --dry-run
       - name: Materialize signing identity
         shell: bash
@@ -399,27 +399,27 @@ jobs:
             printf 'keyPassword=%s\n' "$ANDROID_KEY_PASSWORD"
             printf 'keyAlias=%s\n' "$ANDROID_KEY_ALIAS"
             printf 'storeFile=%s\n' "$key_path"
-          } > home_assistant_app/android/key.properties
+          } > apps/home_control/android/key.properties
           flutter_sdk="$(dirname "$(dirname "$(command -v flutter)")")"
           android_sdk="${ANDROID_SDK_ROOT:-${ANDROID_HOME:-}}"
           test -n "$android_sdk"
           printf 'sdk.dir=%s\nflutter.sdk=%s\n' \
             "$android_sdk" "$flutter_sdk" \
-            > home_assistant_app/android/local.properties
+            > apps/home_control/android/local.properties
           gradle \
-            --project-dir home_assistant_app/android \
+            --project-dir apps/home_control/android \
             wrapper \
             --gradle-version 8.14 \
             --distribution-type all
-          chmod +x home_assistant_app/android/gradlew
+          chmod +x apps/home_control/android/gradlew
       - name: Analyze and test AquaCYD Home
-        working-directory: home_assistant_app
+        working-directory: apps/home_control
         run: |
           flutter pub get
           flutter analyze
           flutter test
       - name: Build signed AquaCYD Home APK
-        working-directory: home_assistant_app
+        working-directory: apps/home_control
         run: flutter build apk --release
       - name: Verify package, version, signature and SHA-256
         id: home_metadata
@@ -433,7 +433,7 @@ jobs:
           apk="$output_dir/AquaCYD-Home-$version.apk"
           mkdir -p "$output_dir"
           cp \
-            home_assistant_app/build/app/outputs/flutter-apk/app-release.apk \
+            apps/home_control/build/app/outputs/flutter-apk/app-release.apk \
             "$apk"
           build_tools="${ANDROID_SDK_ROOT:-$ANDROID_HOME}/build-tools"
           aapt_path="$(
@@ -484,7 +484,7 @@ jobs:
           python scripts/validate_release.py \
             --tag "$GITHUB_REF_NAME" \
             --asset "$apk" \
-            --pubspec home_assistant_app/pubspec.yaml \
+            --pubspec apps/home_control/pubspec.yaml \
             --package-name "$package_name" \
             --apk-version-name "$version_name" \
             --apk-version-code "$version_code" \
@@ -548,7 +548,7 @@ jobs:
         if: always()
         run: |
           rm -f \
-            home_assistant_app/android/key.properties \
+            apps/home_control/android/key.properties \
             "$RUNNER_TEMP/aquacyd-home-release.jks"
 
   firmware-source:
@@ -586,7 +586,7 @@ jobs:
             }
           python scripts/validate_release.py \
             --tag "$GITHUB_REF_NAME" \
-            --firmware-config include/config.h \
+            --firmware-config firmware/cyd_controller/include/config.h \
             --print-firmware-contract \
             >/dev/null
           echo "exact_sha=$tag_commit" >> "$GITHUB_OUTPUT"
@@ -639,7 +639,7 @@ jobs:
           path: |
             ~/.cache/pip
             ~/.platformio/.cache
-          key: platformio-${{ runner.os }}-${{ hashFiles('platformio.ini') }}
+          key: platformio-${{ runner.os }}-${{ hashFiles('firmware/cyd_controller/platformio.ini') }}
           restore-keys: platformio-${{ runner.os }}-
       - name: Install PlatformIO
         run: python -m pip install --disable-pip-version-check platformio==6.1.19
@@ -649,7 +649,7 @@ jobs:
           python tools/hil/runner.py --self-test
           python tools/hil/runner.py --dry-run
       - name: Run native domain tests
-        run: pio test --environment native
+        run: pio test --project-dir firmware/cyd_controller --environment native
 
   firmware:
     name: Firmware release
@@ -678,13 +678,13 @@ jobs:
           path: |
             ~/.cache/pip
             ~/.platformio/.cache
-          key: platformio-${{ runner.os }}-${{ hashFiles('platformio.ini') }}
+          key: platformio-${{ runner.os }}-${{ hashFiles('firmware/cyd_controller/platformio.ini') }}
           restore-keys: platformio-${{ runner.os }}-
       - name: Validate source contract and package tooling
         run: |
           python scripts/validate_release.py \
             --tag "$GITHUB_REF_NAME" \
-            --firmware-config include/config.h \
+            --firmware-config firmware/cyd_controller/include/config.h \
             --dry-run
           python scripts/verify_firmware_trust.py
           python tools/firmware_package.py self-test
@@ -698,8 +698,8 @@ jobs:
           git diff --exit-code -- sdcard/aq/ota
       - name: Compile both display variants
         run: |
-          pio run --environment esp32dev
-          pio run --environment esp32dev-st7789
+          pio run --project-dir firmware/cyd_controller --environment esp32dev
+          pio run --project-dir firmware/cyd_controller --environment esp32dev-st7789
       - name: Materialize and validate the RSA-3072 signing identity
         id: signing
         shell: bash
@@ -773,7 +773,7 @@ jobs:
           mapfile -t contract < <(
             python scripts/validate_release.py \
               --tag "$GITHUB_REF_NAME" \
-              --firmware-config include/config.h \
+              --firmware-config firmware/cyd_controller/include/config.h \
               --print-firmware-contract |
               python -c '
           import json
@@ -801,7 +801,7 @@ jobs:
           package_target() {
             local environment_name="$1"
             local target_name="$2"
-            local unsigned_image=".pio/build/$environment_name/firmware.bin"
+            local unsigned_image="firmware/cyd_controller/.pio/build/$environment_name/firmware.bin"
             local signed_image="$output_dir/AquaCYD-Firmware-$version-$target_name-sbv2.bin"
             local ota_package="$output_dir/AquaCYD-Firmware-$version-$target_name.aqfw"
             local extracted_image="$RUNNER_TEMP/AquaCYD-$target_name-extracted.bin"
@@ -852,7 +852,7 @@ jobs:
           st7789_aqfw="$output_dir/AquaCYD-Firmware-$version-st7789.aqfw"
           python scripts/validate_release.py \
             --tag "$GITHUB_REF_NAME" \
-            --firmware-config include/config.h \
+            --firmware-config firmware/cyd_controller/include/config.h \
             --asset "$ili9341_bin" \
             --asset "$ili9341_aqfw" \
             --asset "$st7789_bin" \

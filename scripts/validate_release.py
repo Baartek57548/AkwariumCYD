@@ -517,12 +517,12 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--pubspec",
-        default="mobile_app/pubspec.yaml",
+        default="apps/aquacyd_service/pubspec.yaml",
         help="mobile pubspec used as the version source",
     )
     parser.add_argument(
         "--firmware-config",
-        default="include/config.h",
+        default="firmware/cyd_controller/include/config.h",
         help="firmware configuration containing the FirmwareInfo contract",
     )
     parser.add_argument("--package-name", default="")

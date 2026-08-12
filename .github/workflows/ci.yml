@@ -37,22 +37,22 @@ jobs:
         run: |
           mobile_version="$(
             sed -n 's/^version: \([0-9][0-9.]*\)+[0-9][0-9]*$/\1/p' \
-              mobile_app/pubspec.yaml
+              apps/aquacyd_service/pubspec.yaml
           )"
           firmware_version="$(
             sed -n 's/^constexpr char VERSION\[\] = "\([0-9][0-9.]*\)";$/\1/p' \
-              include/config.h
+              firmware/cyd_controller/include/config.h
           )"
           test -n "$mobile_version"
           test -n "$firmware_version"
           python scripts/validate_release.py --self-test
           python scripts/validate_release.py \
             --tag "mobile-v$mobile_version" \
-            --pubspec mobile_app/pubspec.yaml \
+            --pubspec apps/aquacyd_service/pubspec.yaml \
             --dry-run
           python scripts/validate_release.py \
             --tag "firmware-v$firmware_version" \
-            --firmware-config include/config.h \
+            --firmware-config firmware/cyd_controller/include/config.h \
             --dry-run
           python scripts/verify_firmware_trust.py
           python tools/firmware_package.py self-test
@@ -149,27 +149,27 @@ jobs:
           path: |
             ~/.cache/pip
             ~/.platformio/.cache
-          key: platformio-${{ runner.os }}-${{ hashFiles('platformio.ini') }}
+          key: platformio-${{ runner.os }}-${{ hashFiles('firmware/cyd_controller/platformio.ini') }}
           restore-keys: platformio-${{ runner.os }}-
       - name: Install PlatformIO
         run: python -m pip install --disable-pip-version-check platformio==6.1.19
       - name: Run native domain tests
-        run: pio test --environment native
+        run: pio test --project-dir firmware/cyd_controller --environment native
       - name: Build production firmware variants
         run: |
-          pio run --environment esp32dev
-          pio run --environment esp32dev-st7789
-          pio run --environment esp32dev-espnow
+          pio run --project-dir firmware/cyd_controller --environment esp32dev
+          pio run --project-dir firmware/cyd_controller --environment esp32dev-st7789
+          pio run --project-dir firmware/cyd_controller --environment esp32dev-espnow
       - name: Collect firmware binaries and checksums
         shell: pwsh
         run: |
           $artifactDir = Join-Path $env:GITHUB_WORKSPACE "artifacts\firmware"
           New-Item -ItemType Directory -Force -Path $artifactDir | Out-Null
           Copy-Item `
-            ".pio\build\esp32dev\firmware.bin" `
+            "firmware\cyd_controller\.pio\build\esp32dev\firmware.bin" `
             (Join-Path $artifactDir "AquaCYD-Firmware-ci-ili9341.bin")
           Copy-Item `
-            ".pio\build\esp32dev-st7789\firmware.bin" `
+            "firmware\cyd_controller\.pio\build\esp32dev-st7789\firmware.bin" `
             (Join-Path $artifactDir "AquaCYD-Firmware-ci-st7789.bin")
           $checksumLines = Get-ChildItem -LiteralPath $artifactDir -Filter "*.bin" |
             Sort-Object Name |
@@ -206,7 +206,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          idf.py -C firmware/esp32p4_hmi build
+          idf.py -C firmware/esp32p4_hub build
       - name: Collect flashable images and checksums
         shell: bash
         run: |
@@ -223,15 +223,15 @@ jobs:
             "$output/c6/"
           cp firmware/esp32c6_gateway/build/flash_args \
             "$output/c6/"
-          cp firmware/esp32p4_hmi/build/bootloader/bootloader.bin \
+          cp firmware/esp32p4_hub/build/bootloader/bootloader.bin \
             "$output/p4/"
-          cp firmware/esp32p4_hmi/build/partition_table/partition-table.bin \
+          cp firmware/esp32p4_hub/build/partition_table/partition-table.bin \
             "$output/p4/"
-          cp firmware/esp32p4_hmi/build/ota_data_initial.bin \
+          cp firmware/esp32p4_hub/build/ota_data_initial.bin \
             "$output/p4/"
-          cp firmware/esp32p4_hmi/build/aquacyd_esp32p4_hmi.bin \
+          cp firmware/esp32p4_hub/build/aquacyd_esp32p4_hmi.bin \
             "$output/p4/"
-          cp firmware/esp32p4_hmi/build/flash_args \
+          cp firmware/esp32p4_hub/build/flash_args \
             "$output/p4/"
           (
             cd "$output"
@@ -284,40 +284,40 @@ jobs:
             printf 'keyPassword=ci-validation-only\n'
             printf 'keyAlias=ci-validation\n'
             printf 'storeFile=%s\n' "$key_path"
-          } > mobile_app/android/key.properties
+          } > apps/aquacyd_service/android/key.properties
           flutter_sdk="$(dirname "$(dirname "$(command -v flutter)")")"
           android_sdk="${ANDROID_SDK_ROOT:-${ANDROID_HOME:-}}"
           test -n "$android_sdk"
           printf 'sdk.dir=%s\nflutter.sdk=%s\n' \
             "$android_sdk" "$flutter_sdk" \
-            > mobile_app/android/local.properties
+            > apps/aquacyd_service/android/local.properties
           gradle \
-            --project-dir mobile_app/android \
+            --project-dir apps/aquacyd_service/android \
             wrapper \
             --gradle-version 8.14 \
             --distribution-type all
-          chmod +x mobile_app/android/gradlew
+          chmod +x apps/aquacyd_service/android/gradlew
       - name: Resolve Flutter dependencies
-        working-directory: mobile_app
+        working-directory: apps/aquacyd_service
         run: flutter pub get
       - name: Analyze Flutter
-        working-directory: mobile_app
+        working-directory: apps/aquacyd_service
         run: flutter analyze
       - name: Run Flutter tests
-        working-directory: mobile_app
+        working-directory: apps/aquacyd_service
         run: flutter test --coverage
       - name: Validate AquaCYD Home application
-        working-directory: home_assistant_app
+        working-directory: apps/home_control
         run: |
           flutter pub get
           flutter analyze
           flutter test --coverage
           flutter build web --release
       - name: Run Android unit tests
-        working-directory: mobile_app/android
+        working-directory: apps/aquacyd_service/android
         run: ./gradlew testCurrentDebugUnitTest --no-daemon --console=plain
       - name: Compile release variant with disposable identity
-        working-directory: mobile_app
+        working-directory: apps/aquacyd_service
         run: >
           flutter build apk
           --release
@@ -327,7 +327,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          apk="mobile_app/build/app/outputs/flutter-apk/app-current-release.apk"
+          apk="apps/aquacyd_service/build/app/outputs/flutter-apk/app-current-release.apk"
           build_tools="${ANDROID_SDK_ROOT:-$ANDROID_HOME}/build-tools"
           aapt_path="$(
             find "$build_tools" -type f -name aapt -print |
@@ -348,7 +348,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          signed="mobile_app/build/app/outputs/flutter-apk/app-current-release.apk"
+          signed="apps/aquacyd_service/build/app/outputs/flutter-apk/app-current-release.apk"
           unpacked="$RUNNER_TEMP/aquacyd-apk-unpacked"
           output="artifacts/AquaCYD-Control-ci-current-unsigned.apk"
           test -s "$signed"
@@ -374,7 +374,7 @@ jobs:
             exit 1
           fi
           sha256sum "$output" > "$output.sha256"
-          rm -f "$signed" mobile_app/android/key.properties \
+          rm -f "$signed" apps/aquacyd_service/android/key.properties \
             "$RUNNER_TEMP/aquacyd-ci-validation.jks"
       - name: Upload Flutter coverage and Android test reports
         if: always()
@@ -382,9 +382,9 @@ jobs:
         with:
           name: flutter-test-reports
           path: |
-            mobile_app/coverage/lcov.info
-            mobile_app/build/reports/tests/
-            home_assistant_app/coverage/lcov.info
+            apps/aquacyd_service/coverage/lcov.info
+            apps/aquacyd_service/build/reports/tests/
+            apps/home_control/coverage/lcov.info
           if-no-files-found: warn
           retention-days: 14
       - name: Upload unsigned validation APK
@@ -432,21 +432,21 @@ jobs:
             printf 'keyPassword=emulator-validation-only\n'
             printf 'keyAlias=emulator-validation\n'
             printf 'storeFile=%s\n' "$key_path"
-          } > mobile_app/android/key.properties
+          } > apps/aquacyd_service/android/key.properties
           flutter_sdk="$(dirname "$(dirname "$(command -v flutter)")")"
           android_sdk="${ANDROID_SDK_ROOT:-${ANDROID_HOME:-}}"
           test -n "$android_sdk"
           printf 'sdk.dir=%s\nflutter.sdk=%s\n' \
             "$android_sdk" "$flutter_sdk" \
-            > mobile_app/android/local.properties
+            > apps/aquacyd_service/android/local.properties
           gradle \
-            --project-dir mobile_app/android \
+            --project-dir apps/aquacyd_service/android \
             wrapper \
             --gradle-version 8.14 \
             --distribution-type all
-          chmod +x mobile_app/android/gradlew
+          chmod +x apps/aquacyd_service/android/gradlew
           (
-            cd mobile_app
+            cd apps/aquacyd_service
             flutter pub get
             flutter test test/notification_intents_test.dart
           )
@@ -467,7 +467,7 @@ jobs:
           arch: x86_64
           profile: pixel_7
           disable-animations: true
-          working-directory: mobile_app
+          working-directory: apps/aquacyd_service
           script: bash ../tools/android-emulator-smoke.sh
       - name: Upload Android emulator diagnostics
         if: always()

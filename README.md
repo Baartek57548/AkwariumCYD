@@ -58,7 +58,7 @@ flutter run
 Sterownik CYD i testy domenowe:
 
 ```powershell
-pio run -d firmware/cyd_controller -e native -t test
+pio test -d firmware/cyd_controller -e native
 pio run -d firmware/cyd_controller -e esp32dev
 ```
 

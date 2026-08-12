@@ -65,11 +65,11 @@ if ($Monitor -and -not $Flash) {
 $repositoryRoot = (Resolve-Path -LiteralPath (Join-Path $PSScriptRoot "..")).Path
 $projects = switch ($Target) {
     "c6" { @("firmware\esp32c6_gateway") }
-    "p4" { @("firmware\esp32p4_hmi") }
+    "p4" { @("firmware\esp32p4_hub") }
     default {
         @(
             "firmware\esp32c6_gateway",
-            "firmware\esp32p4_hmi"
+            "firmware\esp32p4_hub"
         )
     }
 }
