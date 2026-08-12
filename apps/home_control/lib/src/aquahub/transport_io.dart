@@ -15,7 +15,9 @@ http.Client createHubHttpClient({
   final expected = expectedFingerprint == null
       ? null
       : normalizeFingerprint(expectedFingerprint);
-  final native = HttpClient()..connectionTimeout = const Duration(seconds: 8);
+  final context = SecurityContext(withTrustedRoots: false);
+  final native = HttpClient(context: context)
+    ..connectionTimeout = const Duration(seconds: 8);
   native.badCertificateCallback = (certificate, host, port) {
     final fingerprint = _sha256Fingerprint(certificate);
     onCertificate?.call(fingerprint);

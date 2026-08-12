@@ -18,15 +18,19 @@ final class HomeAssistantSocket {
   HomeAssistantSocket(
     this.credentials, {
     this.connectionTimeout = const Duration(seconds: 12),
+    this.filterAquariumOnly = true,
   });
 
   final HomeAssistantCredentials credentials;
   final Duration connectionTimeout;
+  final bool filterAquariumOnly;
 
   final StreamController<HaEntityState> _states =
       StreamController<HaEntityState>.broadcast();
   final StreamController<HomeAssistantSocketStatus> _statuses =
       StreamController<HomeAssistantSocketStatus>.broadcast();
+  final Map<int, Completer<Object?>> _pending = <int, Completer<Object?>>{};
+  final Completer<void> _authenticated = Completer<void>();
 
   WebSocketChannel? _channel;
   StreamSubscription<Object?>? _subscription;
@@ -79,6 +83,22 @@ final class HomeAssistantSocket {
     }
   }
 
+  Future<HaRegistryMetadata> fetchRegistryMetadata() async {
+    await _authenticated.future.timeout(connectionTimeout);
+    final responses = await Future.wait<Object?>(<Future<Object?>>[
+      _command('config/area_registry/list'),
+      _command('config/device_registry/list'),
+      _command('config/entity_registry/list'),
+      _command('get_services'),
+    ]);
+    return HaRegistryMetadata.fromResponses(
+      areas: responses[0],
+      devices: responses[1],
+      entities: responses[2],
+      services: responses[3],
+    );
+  }
+
   Future<void> disconnect() async {
     if (_disposed) {
       return;
@@ -100,6 +120,14 @@ final class HomeAssistantSocket {
     _generation++;
     _reconnectTimer?.cancel();
     _pingTimer?.cancel();
+    for (final completer in _pending.values) {
+      if (!completer.isCompleted) {
+        completer.completeError(
+          const FormatException('Home Assistant socket closed.'),
+        );
+      }
+    }
+    _pending.clear();
     await _closeChannel();
     await _states.close();
     await _statuses.close();
@@ -143,6 +171,7 @@ final class HomeAssistantSocket {
           });
         case 'auth_ok':
           _reconnectAttempt = 0;
+          if (!_authenticated.isCompleted) _authenticated.complete();
           _send(<String, Object?>{
             'id': 1,
             'type': 'subscribe_events',
@@ -156,6 +185,21 @@ final class HomeAssistantSocket {
           if (payload['id'] == 1 && payload['success'] == true) {
             _setStatus(HomeAssistantSocketStatus.connected);
             _startPing(generation);
+          } else if (payload['id'] is int) {
+            final completer = _pending.remove(payload['id']);
+            if (completer != null && !completer.isCompleted) {
+              if (payload['success'] == true) {
+                completer.complete(payload['result']);
+              } else {
+                final error = _objectMap(payload['error']);
+                completer.completeError(
+                  FormatException(
+                    error?['message']?.toString() ??
+                        'Home Assistant rejected a WebSocket command.',
+                  ),
+                );
+              }
+            }
           }
         case 'event':
           _handleEvent(payload);
@@ -174,7 +218,9 @@ final class HomeAssistantSocket {
     }
     try {
       final entity = HaEntityState.fromJson(newState);
-      if (AquaEntityIds.all.contains(entity.entityId) && !_states.isClosed) {
+      if ((!filterAquariumOnly ||
+              AquaEntityIds.all.contains(entity.entityId)) &&
+          !_states.isClosed) {
         _states.add(entity);
       }
     } on FormatException {
@@ -229,6 +275,23 @@ final class HomeAssistantSocket {
     _channel?.sink.add(jsonEncode(payload));
   }
 
+  Future<Object?> _command(String type) {
+    if (_disposed || _channel == null || type.isEmpty) {
+      throw StateError('Home Assistant socket is not connected.');
+    }
+    final id = _requestId++;
+    final completer = Completer<Object?>();
+    _pending[id] = completer;
+    _send(<String, Object?>{'id': id, 'type': type});
+    return completer.future.timeout(
+      connectionTimeout,
+      onTimeout: () {
+        _pending.remove(id);
+        throw TimeoutException('Home Assistant command timed out.');
+      },
+    );
+  }
+
   void _setStatus(HomeAssistantSocketStatus value) {
     if (_status == value) {
       return;
@@ -257,4 +320,135 @@ final class HomeAssistantSocket {
         if (entry.key is String) entry.key! as String: entry.value,
     };
   }
+}
+
+final class HaRegistryArea {
+  const HaRegistryArea({required this.id, required this.name, this.icon});
+
+  final String id;
+  final String name;
+  final String? icon;
+}
+
+final class HaRegistryDevice {
+  const HaRegistryDevice({
+    required this.id,
+    required this.name,
+    required this.areaId,
+    required this.manufacturer,
+    required this.model,
+    required this.softwareVersion,
+  });
+
+  final String id;
+  final String name;
+  final String? areaId;
+  final String manufacturer;
+  final String model;
+  final String softwareVersion;
+}
+
+final class HaRegistryEntity {
+  const HaRegistryEntity({
+    required this.entityId,
+    required this.deviceId,
+    required this.areaId,
+    required this.name,
+  });
+
+  final String entityId;
+  final String? deviceId;
+  final String? areaId;
+  final String? name;
+}
+
+final class HaRegistryMetadata {
+  const HaRegistryMetadata({
+    required this.areas,
+    required this.devices,
+    required this.entities,
+    required this.serviceDomains,
+  });
+
+  const HaRegistryMetadata.empty()
+    : areas = const <String, HaRegistryArea>{},
+      devices = const <String, HaRegistryDevice>{},
+      entities = const <String, HaRegistryEntity>{},
+      serviceDomains = const <String>{};
+
+  factory HaRegistryMetadata.fromResponses({
+    required Object? areas,
+    required Object? devices,
+    required Object? entities,
+    required Object? services,
+  }) {
+    Map<String, Object?>? map(Object? value) =>
+        HomeAssistantSocket._objectMap(value);
+    final areaResult = <String, HaRegistryArea>{};
+    if (areas is List<Object?>) {
+      for (final raw in areas) {
+        final item = map(raw);
+        final id = item?['area_id'];
+        final name = item?['name'];
+        if (id is String &&
+            name is String &&
+            id.isNotEmpty &&
+            name.isNotEmpty) {
+          areaResult[id] = HaRegistryArea(
+            id: id,
+            name: name,
+            icon: item?['icon'] as String?,
+          );
+        }
+      }
+    }
+    final deviceResult = <String, HaRegistryDevice>{};
+    if (devices is List<Object?>) {
+      for (final raw in devices) {
+        final item = map(raw);
+        final id = item?['id'];
+        if (id is! String || id.isEmpty) continue;
+        final name = item?['name_by_user'] ?? item?['name'];
+        deviceResult[id] = HaRegistryDevice(
+          id: id,
+          name: name is String && name.isNotEmpty ? name : id,
+          areaId: item?['area_id'] as String?,
+          manufacturer: item?['manufacturer']?.toString() ?? '',
+          model: item?['model']?.toString() ?? '',
+          softwareVersion: item?['sw_version']?.toString() ?? '',
+        );
+      }
+    }
+    final entityResult = <String, HaRegistryEntity>{};
+    if (entities is List<Object?>) {
+      for (final raw in entities) {
+        final item = map(raw);
+        final id = item?['entity_id'];
+        if (id is! String || id.isEmpty || item?['disabled_by'] != null) {
+          continue;
+        }
+        final name = item?['name'] ?? item?['original_name'];
+        entityResult[id] = HaRegistryEntity(
+          entityId: id,
+          deviceId: item?['device_id'] as String?,
+          areaId: item?['area_id'] as String?,
+          name: name is String && name.isNotEmpty ? name : null,
+        );
+      }
+    }
+    final serviceMap = map(services);
+    return HaRegistryMetadata(
+      areas: Map<String, HaRegistryArea>.unmodifiable(areaResult),
+      devices: Map<String, HaRegistryDevice>.unmodifiable(deviceResult),
+      entities: Map<String, HaRegistryEntity>.unmodifiable(entityResult),
+      serviceDomains: Set<String>.unmodifiable(
+        serviceMap?.keys ?? const <String>[],
+      ),
+    );
+  }
+
+  final Map<String, HaRegistryArea> areas;
+  final Map<String, HaRegistryDevice> devices;
+  final Map<String, HaRegistryEntity> entities;
+  final Set<String> serviceDomains;
 }

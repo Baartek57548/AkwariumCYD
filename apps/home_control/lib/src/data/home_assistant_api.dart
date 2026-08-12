@@ -52,6 +52,14 @@ final class HomeAssistantApi {
   }
 
   Future<Map<String, HaEntityState>> fetchAquaStates() async {
+    final states = await fetchAllStates();
+    return <String, HaEntityState>{
+      for (final entry in states.entries)
+        if (AquaEntityIds.all.contains(entry.key)) entry.key: entry.value,
+    };
+  }
+
+  Future<Map<String, HaEntityState>> fetchAllStates() async {
     final response = await _get(_apiUri('states'));
     return _parseResponse(() {
       final decoded = _decodeList(response.body);
@@ -63,9 +71,7 @@ final class HomeAssistantApi {
         }
         try {
           final state = HaEntityState.fromJson(map);
-          if (AquaEntityIds.all.contains(state.entityId)) {
-            result[state.entityId] = state;
-          }
+          result[state.entityId] = state;
         } on FormatException {
           continue;
         }
@@ -106,6 +112,16 @@ final class HomeAssistantApi {
   ) async {
     if (!AquaEntityIds.all.contains(entityId)) {
       throw ArgumentError.value(entityId, 'entityId', 'Nieznana encja AquaCYD');
+    }
+    return fetchEntityHistory(entityId, period);
+  }
+
+  Future<List<HistorySample>> fetchEntityHistory(
+    String entityId,
+    Duration period,
+  ) async {
+    if (!RegExp(r'^[a-z0-9_]+\.[a-z0-9_]+$').hasMatch(entityId)) {
+      throw ArgumentError.value(entityId, 'entityId', 'Invalid entity ID');
     }
     if (period <= Duration.zero || period > const Duration(days: 31)) {
       throw ArgumentError.value(
