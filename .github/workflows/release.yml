@@ -65,7 +65,7 @@ jobs:
           --tag "$GITHUB_REF_NAME"
           --pubspec apps/aquacyd_service/pubspec.yaml
           --dry-run
-      - name: Materialize signing identity and recreate ignored Gradle wrapper
+      - name: Materialize signing identity and prepare Gradle wrapper
         shell: bash
         env:
           ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
@@ -102,11 +102,6 @@ jobs:
           printf 'sdk.dir=%s\nflutter.sdk=%s\n' \
             "$android_sdk" "$flutter_sdk" \
             > apps/aquacyd_service/android/local.properties
-          gradle \
-            --project-dir apps/aquacyd_service/android \
-            wrapper \
-            --gradle-version 8.14 \
-            --distribution-type all
           chmod +x apps/aquacyd_service/android/gradlew
       - name: Resolve and analyze Flutter
         working-directory: apps/aquacyd_service
@@ -406,11 +401,6 @@ jobs:
           printf 'sdk.dir=%s\nflutter.sdk=%s\n' \
             "$android_sdk" "$flutter_sdk" \
             > apps/home_control/android/local.properties
-          gradle \
-            --project-dir apps/home_control/android \
-            wrapper \
-            --gradle-version 8.14 \
-            --distribution-type all
           chmod +x apps/home_control/android/gradlew
       - name: Analyze and test Home Control
         working-directory: apps/home_control

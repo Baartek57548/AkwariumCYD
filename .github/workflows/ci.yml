@@ -334,7 +334,7 @@ jobs:
           flutter-version: "3.41.5"
           channel: stable
           cache: true
-      - name: Create validation identity and recreate ignored Gradle wrapper
+      - name: Create validation identity and prepare Gradle wrapper
         shell: bash
         run: |
           set -euo pipefail
@@ -360,11 +360,6 @@ jobs:
           printf 'sdk.dir=%s\nflutter.sdk=%s\n' \
             "$android_sdk" "$flutter_sdk" \
             > apps/aquacyd_service/android/local.properties
-          gradle \
-            --project-dir apps/aquacyd_service/android \
-            wrapper \
-            --gradle-version 8.14 \
-            --distribution-type all
           chmod +x apps/aquacyd_service/android/gradlew
       - name: Resolve Flutter dependencies
         working-directory: apps/aquacyd_service
@@ -525,11 +520,6 @@ jobs:
           printf 'sdk.dir=%s\nflutter.sdk=%s\n' \
             "$android_sdk" "$flutter_sdk" \
             > apps/aquacyd_service/android/local.properties
-          gradle \
-            --project-dir apps/aquacyd_service/android \
-            wrapper \
-            --gradle-version 8.14 \
-            --distribution-type all
           chmod +x apps/aquacyd_service/android/gradlew
           (
             cd apps/aquacyd_service
