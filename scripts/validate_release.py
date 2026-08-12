@@ -148,7 +148,7 @@ def expected_asset_names(identity: ReleaseIdentity) -> list[str]:
     if identity.kind == "mobile":
         return [f"AquaCYD-Control-{identity.version}-current.apk"]
     if identity.kind == "home":
-        return [f"AquaCYD-Home-{identity.version}.apk"]
+        return [f"Home-Control-{identity.version}.apk"]
     names: list[str] = []
     for target in FIRMWARE_TARGETS:
         names.extend(
@@ -383,7 +383,7 @@ def run_self_test() -> int:
         else:
             raise ValidationError("self-test accepted a mismatched release")
 
-        home_apk = root / "AquaCYD-Home-4.2.1.apk"
+        home_apk = root / "Home-Control-4.2.1.apk"
         home_apk.write_bytes(b"self-test-home-apk")
         home_identity, home_assets, home_build, home_contract = validate_release(
             tag="home-v4.2.1",

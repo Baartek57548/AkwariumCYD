@@ -316,7 +316,7 @@ jobs:
             "$RUNNER_TEMP/aquacyd-release.jks"
 
   home:
-    name: Signed AquaCYD Home release
+    name: Signed Home Control release
     if: ${{ startsWith(github.ref_name, 'home-v') }}
     runs-on: ubuntu-latest
     timeout-minutes: 35
@@ -363,7 +363,7 @@ jobs:
           flutter-version: "3.41.5"
           channel: stable
           cache: true
-      - name: Validate AquaCYD Home tag
+      - name: Validate Home Control tag
         run: >
           python scripts/validate_release.py
           --tag "$GITHUB_REF_NAME"
@@ -412,13 +412,13 @@ jobs:
             --gradle-version 8.14 \
             --distribution-type all
           chmod +x apps/home_control/android/gradlew
-      - name: Analyze and test AquaCYD Home
+      - name: Analyze and test Home Control
         working-directory: apps/home_control
         run: |
           flutter pub get
           flutter analyze
           flutter test
-      - name: Build signed AquaCYD Home APK
+      - name: Build signed Home Control APK
         working-directory: apps/home_control
         run: flutter build apk --release
       - name: Verify package, version, signature and SHA-256
@@ -430,7 +430,7 @@ jobs:
           set -euo pipefail
           version="${GITHUB_REF_NAME#home-v}"
           output_dir="$RUNNER_TEMP/home-release"
-          apk="$output_dir/AquaCYD-Home-$version.apk"
+          apk="$output_dir/Home-Control-$version.apk"
           mkdir -p "$output_dir"
           cp \
             apps/home_control/build/app/outputs/flutter-apk/app-release.apk \
@@ -499,7 +499,7 @@ jobs:
             echo "apk=$apk"
             echo "version=$version"
           } >> "$GITHUB_OUTPUT"
-      - name: Generate AquaCYD Home CycloneDX SBOM
+      - name: Generate Home Control CycloneDX SBOM
         shell: bash
         env:
           RELEASE_DIR: ${{ steps.home_metadata.outputs.directory }}
@@ -510,17 +510,17 @@ jobs:
             --kind home \
             --version "$RELEASE_VERSION" \
             --artifact "$RELEASE_APK" \
-            --output "$RELEASE_DIR/AquaCYD-Home-$RELEASE_VERSION.cdx.json"
-      - name: Attest AquaCYD Home build provenance
+            --output "$RELEASE_DIR/Home-Control-$RELEASE_VERSION.cdx.json"
+      - name: Attest Home Control build provenance
         uses: actions/attest@f7c74d28b9d84cb8768d0b8ca14a4bac6ef463e6 # v4.2.0
         with:
           subject-path: ${{ steps.home_metadata.outputs.apk }}
-      - name: Attest AquaCYD Home SBOM
+      - name: Attest Home Control SBOM
         uses: actions/attest@f7c74d28b9d84cb8768d0b8ca14a4bac6ef463e6 # v4.2.0
         with:
           subject-path: ${{ steps.home_metadata.outputs.apk }}
-          sbom-path: ${{ steps.home_metadata.outputs.directory }}/AquaCYD-Home-${{ steps.home_metadata.outputs.version }}.cdx.json
-      - name: Refuse overwrite of an existing AquaCYD Home release
+          sbom-path: ${{ steps.home_metadata.outputs.directory }}/Home-Control-${{ steps.home_metadata.outputs.version }}.cdx.json
+      - name: Refuse overwrite of an existing Home Control release
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
@@ -528,7 +528,7 @@ jobs:
             echo "Release $GITHUB_REF_NAME already exists; refusing overwrite" >&2
             exit 1
           fi
-      - name: Publish immutable AquaCYD Home release
+      - name: Publish immutable Home Control release
         env:
           GH_TOKEN: ${{ github.token }}
           RELEASE_DIR: ${{ steps.home_metadata.outputs.directory }}
@@ -539,12 +539,12 @@ jobs:
             "$RELEASE_APK" \
             "$RELEASE_DIR/SHA256SUMS" \
             "$RELEASE_DIR/release-manifest.json" \
-            "$RELEASE_DIR/AquaCYD-Home-$RELEASE_VERSION.cdx.json" \
+            "$RELEASE_DIR/Home-Control-$RELEASE_VERSION.cdx.json" \
             --verify-tag \
             --latest=false \
-            --title "AquaCYD Home $RELEASE_VERSION" \
-            --notes "Niezależna aplikacja AquaHub do obsługi panelu ESP32-P4, urządzeń i czujników. Zawiera responsywny pulpit, historię, automatyzacje lokalne, centrum OTA urządzeń oraz bezpieczne automatyczne aktualizacje aplikacji na Androidzie. Nie wymaga Home Assistant Core i może być zainstalowana równolegle z AquaCYD Control."
-      - name: Remove AquaCYD Home signing material
+            --title "Home Control $RELEASE_VERSION" \
+            --notes "Natywne centrum domu z adapterami AquaHub, Home Assistant i Demo, modułem akwarium oraz bezpiecznymi aktualizacjami aplikacji na Androidzie. Aplikacja może być zainstalowana równolegle z AquaCYD Service."
+      - name: Remove Home Control signing material
         if: always()
         run: |
           rm -f \

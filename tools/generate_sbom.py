@@ -227,7 +227,7 @@ def build_sbom(
         dependencies = pub_components(
             project_root / "apps" / "home_control" / "pubspec.lock"
         )
-        application_name = "AquaCYD Home"
+        application_name = "Home Control"
     else:
         dependencies = platformio_components(
             project_root / "firmware" / "cyd_controller" / "platformio.ini"

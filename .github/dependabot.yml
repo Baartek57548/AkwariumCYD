@@ -1,0 +1,32 @@
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+  - package-ecosystem: npm
+    directory: /
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+  - package-ecosystem: pub
+    directory: /apps/home_control
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+  - package-ecosystem: pub
+    directory: /apps/aquacyd_service
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+  - package-ecosystem: gradle
+    directory: /apps/home_control/android
+    schedule:
+      interval: monthly
+    open-pull-requests-limit: 3
+  - package-ecosystem: gradle
+    directory: /apps/aquacyd_service/android
+    schedule:
+      interval: monthly
+    open-pull-requests-limit: 3

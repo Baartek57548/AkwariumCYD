@@ -15,8 +15,64 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  changes:
+    name: Detect affected products
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      tooling: ${{ steps.filter.outputs.tooling }}
+      web: ${{ steps.filter.outputs.web }}
+      firmware: ${{ steps.filter.outputs.firmware }}
+      esp_idf: ${{ steps.filter.outputs.esp_idf }}
+      flutter: ${{ steps.filter.outputs.flutter }}
+      service: ${{ steps.filter.outputs.service }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          fetch-depth: 0
+      - id: filter
+        name: Classify changed paths
+        shell: bash
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          BEFORE_SHA: ${{ github.event.before }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: |
+          set -euo pipefail
+          if [[ "$EVENT_NAME" == "workflow_dispatch" ]]; then
+            changed="__all__"
+          else
+            base="$BEFORE_SHA"
+            if [[ "$EVENT_NAME" == "pull_request" ]]; then
+              base="$BASE_SHA"
+            fi
+            if [[ -z "$base" || "$base" =~ ^0+$ ]]; then
+              changed="__all__"
+            else
+              changed="$(git diff --name-only "$base" "$GITHUB_SHA")"
+            fi
+          fi
+          classify() {
+            local name="$1"
+            local pattern="$2"
+            if [[ "$changed" == "__all__" ]] ||
+               grep -Eq "$pattern" <<<"$changed"; then
+              echo "$name=true" >> "$GITHUB_OUTPUT"
+            else
+              echo "$name=false" >> "$GITHUB_OUTPUT"
+            fi
+          }
+          classify tooling '^(.github/|scripts/|tools/|package(-lock)?.json|pubspec.yaml)'
+          classify web '^(web/|sdcard/|tools/dev-server/|tools/web-e2e/|services/remote_gateway/|package(-lock)?.json)'
+          classify firmware '^(firmware/cyd_controller/|firmware/shared/|web/|sdcard/|platformio.ini)'
+          classify esp_idf '^(firmware/esp32p4_hub/|firmware/esp32c6_gateway/|firmware/shared/)'
+          classify flutter '^(apps/|packages/)'
+          classify service '^(apps/aquacyd_service/|packages/)'
+
   tooling:
     name: Release and HIL tooling
+    needs: changes
+    if: needs.changes.outputs.tooling == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
@@ -71,6 +127,8 @@ jobs:
 
   web:
     name: Web and Node
+    needs: changes
+    if: needs.changes.outputs.web == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 25
     steps:
@@ -137,6 +195,8 @@ jobs:
 
   firmware:
     name: PlatformIO firmware
+    needs: changes
+    if: needs.changes.outputs.firmware == 'true'
     runs-on: windows-latest
     timeout-minutes: 30
     steps:
@@ -191,6 +251,8 @@ jobs:
 
   esp-idf-firmware:
     name: ESP32-C6 gateway and ESP32-P4 HMI
+    needs: changes
+    if: needs.changes.outputs.esp_idf == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 35
     container:
@@ -249,6 +311,8 @@ jobs:
 
   flutter:
     name: Flutter and Android
+    needs: changes
+    if: needs.changes.outputs.flutter == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 35
     steps:
@@ -300,13 +364,28 @@ jobs:
       - name: Resolve Flutter dependencies
         working-directory: apps/aquacyd_service
         run: flutter pub get
+      - name: Analyze and test shared Dart packages
+        shell: bash
+        run: |
+          set -euo pipefail
+          for package in packages/*; do
+            test -f "$package/pubspec.yaml" || continue
+            (
+              cd "$package"
+              flutter pub get
+              flutter analyze
+              if [[ -d test ]]; then
+                flutter test
+              fi
+            )
+          done
       - name: Analyze Flutter
         working-directory: apps/aquacyd_service
         run: flutter analyze
       - name: Run Flutter tests
         working-directory: apps/aquacyd_service
         run: flutter test --coverage
-      - name: Validate AquaCYD Home application
+      - name: Validate Home Control application
         working-directory: apps/home_control
         run: |
           flutter pub get
@@ -397,6 +476,8 @@ jobs:
 
   flutter-emulator-smoke:
     name: Android notification smoke (API 35)
+    needs: changes
+    if: needs.changes.outputs.service == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 35
     steps:
