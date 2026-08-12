@@ -22,7 +22,7 @@ i tworzy UTF-8 `manifest.json` bez BOM:
 ```powershell
 .\tools\build-p4-c6.ps1 -Target p4 -IdfPath C:\esp\v5.4.4-full\esp-idf -IdfToolsPath C:\Espressif\tools
 .\tools\package-aquahub-ota.ps1 `
-  -FirmwarePath .\firmware\esp32p4_hmi\build\aquahub_esp32p4.bin `
+  -FirmwarePath .\firmware\esp32p4_hub\build\aquahub_esp32p4.bin `
   -Version 1.1.0 `
   -SecurityVersion 1 `
   -Notes 'Automatyzacje lokalne, centrum OTA i poprawki stabilności.'

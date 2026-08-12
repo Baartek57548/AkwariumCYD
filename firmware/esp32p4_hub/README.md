@@ -12,7 +12,7 @@ Projekt wymaga ESP-IDF 5.4.4 i połączenia z internetem podczas pierwszego
 pobrania komponentów:
 
 ```powershell
-cd firmware/esp32p4_hmi
+cd firmware/esp32p4_hub
 idf.py set-target esp32p4
 idf.py menuconfig
 idf.py build

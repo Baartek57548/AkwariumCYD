@@ -13,9 +13,9 @@ artifacts/
 __pycache__/
 *.py[cod]
 flutter_*.log
-gateway/gateway-state/
-gateway/aquacyd-gateway-secrets.json
-gateway/firebase-service-account.json
+services/remote_gateway/gateway-state/
+services/remote_gateway/aquacyd-gateway-secrets.json
+services/remote_gateway/firebase-service-account.json
 firmware/**/build/
 firmware/**/managed_components/
 firmware/**/sdkconfig

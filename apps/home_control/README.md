@@ -34,7 +34,7 @@ Punkt wejścia `lib/main.dart` uruchamia aplikację AquaHub.
 ## Uruchomienie
 
 ```powershell
-cd home_assistant_app
+cd apps/home_control
 flutter pub get
 flutter analyze
 flutter test

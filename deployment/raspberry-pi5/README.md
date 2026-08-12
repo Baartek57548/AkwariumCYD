@@ -92,7 +92,7 @@ Utworzyć trzy osobne, nieadministracyjne konta:
 
 Hasła muszą być unikalne i nie mogą trafić do Git. W przypadku zewnętrznego
 Mosquitto minimalne prawa definiuje
-`../../home_assistant/mosquitto/aquacyd.acl`. Aplikacja Mosquitto w Home
+`../../integrations/home_assistant/mosquitto/aquacyd.acl`. Aplikacja Mosquitto w Home
 Assistant OS może uwierzytelniać użytkowników utworzonych w Home Assistant.
 
 ## Wgranie konfiguracji AquaCYD
@@ -115,9 +115,9 @@ lovelace:
 
 Następnie skopiować:
 
-- `../../home_assistant/packages/aquacyd.yaml` do
+- `../../integrations/home_assistant/packages/aquacyd.yaml` do
   `/config/packages/aquacyd.yaml`;
-- `../../home_assistant/dashboards/aquacyd.yaml` do
+- `../../integrations/home_assistant/dashboards/aquacyd.yaml` do
   `/config/dashboards/aquacyd.yaml`.
 
 Po sprawdzeniu konfiguracji w `Developer tools → YAML` uruchomić Home Assistant

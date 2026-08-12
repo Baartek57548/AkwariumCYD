@@ -87,7 +87,7 @@
   "sourceMapping": {
     "designTokens": "aquacyd-hmi.tokens.json",
     "motion": "motion-spec.json",
-    "firmware": "../../firmware/esp32p4_hmi/main/hmi_ui.cpp",
+    "firmware": "../../firmware/esp32p4_hub/main/hmi_ui.cpp",
     "workflow": "../../docs/HMI_LVGL_FIGMA_WORKFLOW.md"
   }
 }

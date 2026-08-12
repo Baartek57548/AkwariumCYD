@@ -28,5 +28,5 @@ Figma, a nie spłaszczonymi zrzutami. Generator można uruchamiać wielokrotnie;
 tworzy ten sam zestaw ramek bez zasobów zewnętrznych.
 
 Implementacja odpowiada plikowi
-`../../firmware/esp32p4_hmi/main/hmi_ui.cpp`, a pełny proces odbioru opisuje
+`../../firmware/esp32p4_hub/main/hmi_ui.cpp`, a pełny proces odbioru opisuje
 `../../docs/HMI_LVGL_FIGMA_WORKFLOW.md`.

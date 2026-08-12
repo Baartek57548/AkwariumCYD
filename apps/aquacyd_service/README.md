@@ -85,7 +85,7 @@ Kontrakt zdalnej bramki, payloady FCM i parametry `--dart-define` opisuje
 ## Uruchomienie i build
 
 ```powershell
-cd mobile_app
+cd apps/aquacyd_service
 flutter pub get
 
 flutter run --flavor current --target lib/main.dart
