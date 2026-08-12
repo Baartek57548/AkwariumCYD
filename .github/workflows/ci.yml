@@ -69,6 +69,33 @@ jobs:
           classify flutter '^(apps/|packages/)'
           classify service '^(apps/aquacyd_service/|packages/)'
 
+  secret-security:
+    name: Secret history scan
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          fetch-depth: 0
+      - name: Scan commits for credentials and private keys
+        uses: gitleaks/gitleaks-action@dcedce43c6f43de0b836d1fe38946645c9c638dc # v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITLEAKS_ENABLE_COMMENTS: "false"
+          GITLEAKS_ENABLE_UPLOAD_ARTIFACT: "false"
+
+  dependency-security:
+    name: Dependency vulnerability scan
+    permissions:
+      contents: read
+    uses: google/osv-scanner-action/.github/workflows/osv-scanner-reusable.yml@9a498708959aeaef5ef730655706c5a1df1edbc2 # v2.3.8
+    with:
+      scan-args: |-
+        --recursive
+        ./
+      upload-sarif: false
+      fail-on-vuln: true
+
   tooling:
     name: Release and HIL tooling
     needs: changes
@@ -455,6 +482,30 @@ jobs:
           sha256sum "$output" > "$output.sha256"
           rm -f "$signed" apps/aquacyd_service/android/key.properties \
             "$RUNNER_TEMP/aquacyd-ci-validation.jks"
+      - name: Generate validation CycloneDX SBOMs
+        shell: bash
+        run: |
+          set -euo pipefail
+          mobile_version="$(
+            sed -n 's/^version: \([0-9][0-9.]*\)+[0-9][0-9]*$/\1/p' \
+              apps/aquacyd_service/pubspec.yaml
+          )"
+          home_version="$(
+            sed -n 's/^version: \([0-9][0-9.]*\)+[0-9][0-9]*$/\1/p' \
+              apps/home_control/pubspec.yaml
+          )"
+          test -n "$mobile_version"
+          test -n "$home_version"
+          python tools/generate_sbom.py \
+            --kind mobile \
+            --version "$mobile_version" \
+            --artifact artifacts/AquaCYD-Control-ci-current-unsigned.apk \
+            --output artifacts/AquaCYD-Control-ci.cdx.json
+          python tools/generate_sbom.py \
+            --kind home \
+            --version "$home_version" \
+            --artifact apps/home_control/build/web/main.dart.js \
+            --output artifacts/Home-Control-ci.cdx.json
       - name: Upload Flutter coverage and Android test reports
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
@@ -473,6 +524,13 @@ jobs:
           path: artifacts/AquaCYD-Control-ci-current-unsigned.apk*
           if-no-files-found: error
           retention-days: 7
+      - name: Upload validation SBOMs
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: validation-sboms
+          path: artifacts/*.cdx.json
+          if-no-files-found: error
+          retention-days: 14
 
   flutter-emulator-smoke:
     name: Android notification smoke (API 35)

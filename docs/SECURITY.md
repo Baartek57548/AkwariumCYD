@@ -75,6 +75,13 @@ Wymagane są testy, kompilacje release, skan sekretów, audyt zależności, SBOM
 walidacja manifestów, test rollbacku i fizyczny HIL. Symulator nie zastępuje
 urządzenia. Brak klucza lub stanowiska jest jawnym `BLOCKED`, nie sukcesem.
 
+Każdy PR uruchamia Gitleaks na historii commitów oraz OSV-Scanner na wszystkich
+rozpoznanych lockfile'ach Dart, npm i Python. Znane fałszywe trafienie można
+wyciszyć wyłącznie precyzyjnym fingerprintem w `.gitleaksignore` wraz z opisem
+pochodzenia. CI generuje też CycloneDX SBOM dla walidacyjnego APK AquaCYD Service
+i webowego artefaktu Home Control; workflow wydawniczy tworzy osobne, podpisywane
+SBOM-y dla każdego publikowanego produktu.
+
 Szczegóły firmware: [FIRMWARE_RUNTIME_SAFETY.md](FIRMWARE_RUNTIME_SAFETY.md),
 [FIRMWARE_SIGNING_AND_PROVISIONING.md](FIRMWARE_SIGNING_AND_PROVISIONING.md) i
 [PRODUCTION_SECURITY.md](PRODUCTION_SECURITY.md).

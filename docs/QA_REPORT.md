@@ -24,7 +24,9 @@ brakuje fizycznego stanowiska CYD/P4/C6 oraz kluczy właściciela.
 | ESP32-P4 | ESP-IDF 5.4.4, ograniczona równoległość | PASS, 79% partycji aplikacji wolne |
 | Projekty HMI | generator, XML/JSON i brak różnic po regeneracji | PASS, 13 ramek P4 + 6 ramek CYD |
 | Narzędzia | actionlint, compileall, release, firmware, web, SBOM, security | PASS |
-| Sekrety i duże pliki | skan wzorców kluczy, pliki śledzone powyżej 5 MiB | PASS, brak trafień |
+| Sekrety i duże pliki | Gitleaks dla historii gałęzi, pliki śledzone powyżej 5 MiB | PASS, brak rzeczywistych trafień |
+| Podatności zależności | OSV-Scanner 2.3.8, rekurencyjny skan lockfile'i Dart, npm i Python | PASS, brak znanych podatności |
+| SBOM walidacyjny | CycloneDX 1.6 dla Home Control i AquaCYD Service | PASS, generowany i publikowany przez CI |
 | HIL mock | pełny self-test | PASS, 12 scenariuszy + 1 jawny SKIP portu |
 | HIL dry-run | uruchomienie bez stanowiska | 0 FAIL, 13 SKIP z podaną przyczyną |
 | HIL fizyczny | `--require-hardware --forbid-skips` | BLOCKED bez stanowiska |
