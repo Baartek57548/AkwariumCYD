@@ -135,7 +135,7 @@ MockClient _releaseClient({
   required List<int> apkBytes,
   required String digest,
 }) {
-  final apkName = 'AquaCYD-Home-1.1.2.apk';
+  final apkName = 'Home-Control-1.1.2.apk';
   return MockClient((request) async {
     if (request.url.host == 'api.github.com') {
       return http.Response(
@@ -237,7 +237,7 @@ final class _PermissionAppUpdateService implements AppUpdateService {
       AppUpdateRelease(
         version: '1.1.2',
         buildNumber: 4,
-        apkName: 'AquaCYD-Home-1.1.2.apk',
+        apkName: 'Home-Control-1.1.2.apk',
         apkUri: Uri.parse('https://github.com/example/update.apk'),
         bytes: 1024 * 1024,
         sha256Digest: List<String>.filled(64, '0').join(),
