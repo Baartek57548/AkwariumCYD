@@ -2,8 +2,10 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:aquacyd_home/src/aquahub/app_update.dart';
+import 'package:aquacyd_home/src/home_control/strings.dart';
 import 'package:crypto/crypto.dart';
-import 'package:flutter/foundation.dart';
+import 'package:flutter/material.dart';
+import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
@@ -101,6 +103,67 @@ void main() {
     await controller.onAppResumed();
     expect(controller.phase, AppUpdatePhase.upToDate);
     expect(service.installCalls, 2);
+  });
+
+  test('kontroler sprawdza wydanie ponownie po wznowieniu aplikacji', () async {
+    final service = _PermissionAppUpdateService();
+    final controller = AppUpdateController(service: service);
+    addTearDown(controller.dispose);
+
+    await controller.initialize();
+    expect(service.findCalls, 1);
+    expect(controller.phase, AppUpdatePhase.available);
+
+    await controller.onAppResumed();
+    expect(service.findCalls, 2);
+    expect(controller.phase, AppUpdatePhase.available);
+  });
+
+  testWidgets('dialog OTA respektuje biometryczną bramę instalacji', (
+    tester,
+  ) async {
+    final service = _PermissionAppUpdateService();
+    final controller = AppUpdateController(service: service);
+    addTearDown(controller.dispose);
+    await controller.initialize();
+    var authorized = false;
+    var authorizationCalls = 0;
+
+    await tester.pumpWidget(
+      MaterialApp(
+        locale: const Locale('pl'),
+        supportedLocales: const <Locale>[Locale('pl'), Locale('en')],
+        localizationsDelegates: const <LocalizationsDelegate<Object>>[
+          HomeControlStrings.delegate,
+          GlobalMaterialLocalizations.delegate,
+          GlobalWidgetsLocalizations.delegate,
+          GlobalCupertinoLocalizations.delegate,
+        ],
+        home: Scaffold(
+          body: AppUpdateDialog(
+            controller: controller,
+            authorizeInstall: () async {
+              authorizationCalls += 1;
+              return authorized;
+            },
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('Pobierz i zainstaluj'));
+    await tester.pumpAndSettle();
+    expect(authorizationCalls, 1);
+    expect(service.installCalls, 0);
+    expect(controller.phase, AppUpdatePhase.available);
+
+    authorized = true;
+    await tester.tap(find.text('Pobierz i zainstaluj'));
+    await tester.pumpAndSettle();
+    expect(authorizationCalls, 2);
+    expect(service.installCalls, 1);
+    expect(controller.phase, AppUpdatePhase.permissionRequired);
   });
 
   test('odrzuca przekierowanie poza zaufane domeny GitHub', () async {
@@ -224,6 +287,7 @@ final class _FakeAppUpdatePlatform implements AppUpdatePlatform {
 
 final class _PermissionAppUpdateService implements AppUpdateService {
   int installCalls = 0;
+  int findCalls = 0;
 
   @override
   bool get supported => true;
@@ -233,16 +297,18 @@ final class _PermissionAppUpdateService implements AppUpdateService {
       const InstalledAppVersion(version: '1.1.1', buildNumber: 3);
 
   @override
-  Future<AppUpdateRelease?> findUpdate(InstalledAppVersion installed) async =>
-      AppUpdateRelease(
-        version: '1.1.2',
-        buildNumber: 4,
-        apkName: 'Home-Control-1.1.2.apk',
-        apkUri: Uri.parse('https://github.com/example/update.apk'),
-        bytes: 1024 * 1024,
-        sha256Digest: List<String>.filled(64, '0').join(),
-        notes: 'Aktualizacja testowa',
-      );
+  Future<AppUpdateRelease?> findUpdate(InstalledAppVersion installed) async {
+    findCalls += 1;
+    return AppUpdateRelease(
+      version: '1.1.2',
+      buildNumber: 4,
+      apkName: 'Home-Control-1.1.2.apk',
+      apkUri: Uri.parse('https://github.com/example/update.apk'),
+      bytes: 1024 * 1024,
+      sha256Digest: List<String>.filled(64, '0').join(),
+      notes: 'Aktualizacja testowa',
+    );
+  }
 
   @override
   Future<String> download(

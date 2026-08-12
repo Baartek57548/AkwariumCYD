@@ -10,8 +10,8 @@ brakuje fizycznego stanowiska CYD/P4/C6 oraz kluczy właściciela.
 
 | Obszar | Wykonana brama | Wynik |
 | --- | --- | --- |
-| Home Control | `flutter analyze`, pełne `flutter test` | PASS, 0 problemów, 48 testów |
-| Home Control | web release, Android debug/release | PASS, APK release 55,1 MB; debug APK publikowany przez CI |
+| Home Control | `flutter analyze`, pełne `flutter test` | PASS, 0 problemów, 53 testy |
+| Home Control | web release, Android debug/release | PASS, APK release 55,5 MB; debug APK publikowany przez CI |
 | AquaCYD Service | analyze, pełne testy | PASS, 0 problemów, 240 testów |
 | AquaCYD Service | Android debug/release z jednorazowym kluczem walidacyjnym | PASS, APK release 65,5 MB |
 | Pakiety Dart | analyze/test każdego pakietu | PASS, 5 testów |
@@ -55,10 +55,14 @@ flash i testu aktualizacji istniejącego urządzenia.
 - onboarding AquaHub, Home Assistant i Demo;
 - wiele niezależnych profili Home Assistant w systemowym secure storage;
 - natywne REST, WebSocket, registry areas/devices/entities/services i reconnect;
+- historia REST oraz długoterminowe statystyki Recorder przez WebSocket z
+  bezpiecznym fallbackiem dla encji bez statystyk i starszych serwerów;
 - pomieszczenia, urządzenia, 28 typów encji i bezpieczny fallback unknown;
 - kontrolki domenowe, potwierdzenia ryzyka, ACK/rollback i historia;
 - akwarium, alarm, sceny, skrypty, automatyzacje i aktualizacje;
 - edytowalny dashboard, PL/EN, motywy, telefon, tablet i duży tekst;
+- opcjonalna biometria dla krytycznych poleceń i instalacji OTA z bezpiecznym
+  zachowaniem przy anulowaniu, lockoucie lub braku skonfigurowanej biometrii;
 - wersjonowany cache offline odporny na uszkodzony snapshot i mieszanie źródeł;
 - obsługa błędów tokenu, sieci, certyfikatu i serwera;
 - automatyczne sprawdzenie OTA przy starcie oraz wznowieniu aplikacji.

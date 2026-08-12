@@ -22,12 +22,16 @@ zgód mutacji. Wynik mock/self-test jest raportowany osobno i nie spełnia bramy
 
 ## Scenariusze fizyczne
 
+- [ ] 72 godziny ciągłej telemetrii nie powodują utraty próbek, narastania heap ani zawieszenia automatyki;
 - [ ] health API, wersja, reset reason i zegar są poprawne;
 - [ ] dwa identyczne `command_id` wykonują operację najwyżej raz;
+- [ ] celowo utracony ACK uruchamia ograniczone ponowienie, ale nie wykonuje polecenia drugi raz;
 - [ ] konflikt `expected_revision` zwraca NACK i nie zmienia konfiguracji;
 - [ ] przeterminowane, złe CRC i nieznana wersja ramki są odrzucane;
 - [ ] override kończy się sam i każdy przekaźnik wraca do AUTO;
 - [ ] awaria Wi-Fi/MQTT/P4/C6 nie zatrzymuje lokalnych harmonogramów CYD;
+- [ ] restart routera i zmiana dzierżawy DHCP kończą się automatycznym reconnectem bez ingerencji operatora;
+- [ ] zmiana certyfikatu P4 jest odrzucana do czasu jawnego ponownego parowania i zatwierdzenia fingerprintu;
 - [ ] sensor NaN/timeout aktywuje właściwy alarm i bezpieczny stan;
 - [ ] odłączenie SD nie zatrzymuje sterowania, a remount nie uszkadza danych;
 - [ ] brownout i watchdog startują z bezpiecznymi wyjściami;
@@ -35,6 +39,7 @@ zgód mutacji. Wynik mock/self-test jest raportowany osobno i nie spełnia bramy
 - [ ] osobno zmierzono lampy front/rear: DAY → DAYBREAK → NIGHT → DAY;
 - [ ] aktualizacja w obu slotach przechodzi health i potwierdza nowy obraz;
 - [ ] odcięcie zasilania podczas pobierania/zapisu nie brickuje urządzenia;
+- [ ] pełna utrata i powrót zasilania CYD, C6 i P4 przywracają bezpieczne wyjścia oraz ostatnią zatwierdzoną konfigurację;
 - [ ] celowo zły hash/podpis/target/downgrade jest odrzucony;
 - [ ] niezdrowy nowy obraz automatycznie wraca do starego slotu;
 - [ ] po każdym scenariuszu brak aktywnego override, alarmy są znane, wyjścia AUTO.

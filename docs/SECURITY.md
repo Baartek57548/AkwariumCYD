@@ -31,6 +31,10 @@ fail-safe.
 ## Poświadczenia i prywatność
 
 - Tokeny HA i fingerprinty AquaHub są w systemowym secure storage.
+- Opcjonalna blokada biometryczna używa natywnego Android BiometricPrompt lub
+  iOS LocalAuthentication i jest wymagana dla operacji krytycznych oraz instalacji
+  aktualizacji, gdy użytkownik ją włączy. Anulowanie, lockout i brak biometrii
+  blokują polecenie zamiast wyłączać ochronę.
 - Wiele profili HA ma oddzielne rekordy; usunięcie profilu usuwa token i cache.
 - Logowanie redaguje Bearer, token, hasło, PIN, cookie, API key i dane Wi-Fi.
 - Sekrety nie są wpisywane do repo, manifestów, screenshotów ani argumentów URL.

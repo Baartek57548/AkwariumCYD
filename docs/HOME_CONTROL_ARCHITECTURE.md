@@ -53,10 +53,13 @@ SHA-256 fingerprint certyfikatu. Panel P4 nie jest wystawiany do Internetu.
 
 ### Home Assistant
 
-REST pobiera konfigurację, stany, historię i wykonuje usługi. WebSocket
-uwierzytelnia sesję, subskrybuje `state_changed`, utrzymuje ping/backoff i pobiera
-oficjalne rejestry areas/devices/entities oraz katalog usług. Błąd rejestru
-degraduje dane do stanów REST zamiast blokować aplikację.
+REST pobiera konfigurację, stany, surową historię i wykonuje usługi. WebSocket
+uwierzytelnia sesję, subskrybuje `state_changed`, utrzymuje ping/backoff, pobiera
+oficjalne rejestry areas/devices/entities, katalog usług oraz zagregowane dane
+Recorder `recorder/statistics_during_period`. Ponieważ interfejs statystyk może
+zmieniać kształt i nie każda encja ma statystyki długoterminowe, parser toleruje
+brakujące kolumny, a adapter wraca do historii REST zamiast blokować wykres.
+Błąd rejestru analogicznie degraduje dane do stanów REST.
 
 Profile wielu instancji zawierają nazwę, URL i oddzielny token w secure storage.
 Można je dodawać, wybierać i usuwać. Token długoterminowy jest jawną ścieżką

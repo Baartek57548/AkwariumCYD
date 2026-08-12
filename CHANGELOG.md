@@ -10,10 +10,14 @@
   wspólny model pomieszczeń, urządzeń, 28 typów encji, historii i aktualizacji.
 - Bezpieczne profile HA, oficjalne REST/WebSocket oraz rejestry areas, devices,
   entities i services, reconnect, snapshot cache i selektywne usuwanie danych.
+- Długoterminowe statystyki Home Assistant Recorder dla dłuższych wykresów z
+  tolerancyjnym parserem i fallbackiem do historii REST.
 - Poprawne natywne sterowanie m.in. klimatem, roletami, zamkami, alarmem,
   odkurzaczem, scenami, skryptami, liczbami, listami i tekstem z ACK/rollbackiem.
 - Autoaktualizacja Home Control przy wejściu i wznowieniu, osobny asset
   `Home-Control-X.Y.Z.apk`, hash, certyfikat, manifest, SBOM i provenance.
+- Opcjonalna natywna biometria blokująca operacje krytyczne oraz instalację OTA;
+  anulowanie, lockout i brak konfiguracji zachowują tryb fail-closed.
 - AquaCYD Service zachowany jako osobny produkt serwisowy bez regresji funkcji.
 - Monorepo podzielone na `apps`, `firmware`, `packages`, `services` i
   `integrations` z kanoniczną dokumentacją architektury, bezpieczeństwa, OTA,

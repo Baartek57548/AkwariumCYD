@@ -8,6 +8,8 @@
 	<string>$(DEVELOPMENT_LANGUAGE)</string>
 	<key>CFBundleDisplayName</key>
 	<string>Home Control</string>
+	<key>NSFaceIDUsageDescription</key>
+	<string>Home Control używa Face ID do zatwierdzania krytycznych operacji domu i aktualizacji.</string>
 	<key>CFBundleExecutable</key>
 	<string>$(EXECUTABLE_NAME)</string>
 	<key>CFBundleIdentifier</key>

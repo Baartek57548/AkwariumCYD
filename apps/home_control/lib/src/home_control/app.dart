@@ -8,6 +8,7 @@ import '../aquahub/hub_discovery.dart';
 import '../aquahub/setup_page.dart';
 import '../data/credentials_store.dart';
 import '../design/app_theme.dart';
+import 'biometric_gate.dart';
 import 'controller.dart';
 import 'onboarding.dart';
 import 'preferences.dart';
@@ -23,6 +24,7 @@ final class HomeControlApp extends StatefulWidget {
     this.discoveryService,
     this.appUpdateService,
     this.snapshotCache,
+    this.biometricAuthenticator,
     this.enablePolling = true,
     super.key,
   });
@@ -33,6 +35,7 @@ final class HomeControlApp extends StatefulWidget {
   final HubDiscoveryService? discoveryService;
   final AppUpdateService? appUpdateService;
   final HomeSnapshotCache? snapshotCache;
+  final BiometricAuthenticator? biometricAuthenticator;
   final bool enablePolling;
 
   @override
@@ -58,6 +61,7 @@ final class _HomeControlAppState extends State<HomeControlApp>
       homeAssistantCredentialsStore:
           widget.homeAssistantCredentialsStore ?? SecureCredentialsStore(),
       snapshotCache: widget.snapshotCache ?? SecureHomeSnapshotCache(),
+      biometricAuthenticator: widget.biometricAuthenticator,
       enablePolling: widget.enablePolling,
     );
     appUpdateController = AppUpdateController(
@@ -104,7 +108,10 @@ final class _HomeControlAppState extends State<HomeControlApp>
       await showDialog<void>(
         context: context,
         barrierDismissible: false,
-        builder: (_) => AppUpdateDialog(controller: appUpdateController),
+        builder: (_) => AppUpdateDialog(
+          controller: appUpdateController,
+          authorizeInstall: controller.authorizeCriticalOperation,
+        ),
       );
       _updateDialogOpen = false;
     });

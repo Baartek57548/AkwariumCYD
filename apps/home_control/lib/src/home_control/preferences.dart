@@ -38,7 +38,7 @@ final class HomeControlPreferences {
   HomeControlPreferences({SharedPreferencesAsync? storage})
     : _storage = storage ?? SharedPreferencesAsync();
 
-  static const _schemaVersion = 1;
+  static const _schemaVersion = 2;
   static const _schemaKey = 'home_control_schema_version';
   static const _sourceKindKey = 'home_control_active_source_kind';
   static const _themeKey = 'home_control_theme';
@@ -47,17 +47,26 @@ final class HomeControlPreferences {
   static const _dashboardHiddenKey = 'home_control_dashboard_hidden';
   static const _dashboardLargeKey = 'home_control_dashboard_large';
   static const _favoritesKey = 'home_control_favorites';
+  static const _biometricProtectionKey =
+      'home_control_biometric_critical_actions';
 
   final SharedPreferencesAsync _storage;
 
   Future<void> migrate() async {
-    final current = await _storage.getInt(_schemaKey) ?? 0;
+    var current = await _storage.getInt(_schemaKey) ?? 0;
     if (current > _schemaVersion) {
       throw const FormatException('Unsupported Home Control settings schema.');
     }
     if (current < 1) {
-      await _storage.setInt(_schemaKey, _schemaVersion);
+      current = 1;
     }
+    if (current < 2) {
+      if (await _storage.getBool(_biometricProtectionKey) == null) {
+        await _storage.setBool(_biometricProtectionKey, false);
+      }
+      current = 2;
+    }
+    await _storage.setInt(_schemaKey, current);
   }
 
   Future<HomeSourceKind?> loadActiveSource() async {
@@ -90,6 +99,12 @@ final class HomeControlPreferences {
 
   Future<void> saveLocale(Locale locale) =>
       _storage.setString(_localeKey, locale.languageCode);
+
+  Future<bool> loadBiometricProtection() async =>
+      await _storage.getBool(_biometricProtectionKey) ?? false;
+
+  Future<void> saveBiometricProtection(bool enabled) =>
+      _storage.setBool(_biometricProtectionKey, enabled);
 
   Future<DashboardPreferences> loadDashboard() async {
     const defaults = DashboardPreferences.defaults();

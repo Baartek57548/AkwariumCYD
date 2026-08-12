@@ -22,6 +22,7 @@ dependencies:
   home_entities:
     path: ../../packages/home_entities
   intl: ^0.20.2
+  local_auth: ^3.0.2
   nsd: ^5.0.1
   secure_connectivity:
     path: ../../packages/secure_connectivity

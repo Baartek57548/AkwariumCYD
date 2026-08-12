@@ -208,6 +208,14 @@ final class HomeControlStrings {
       'language': 'Język',
       'polish': 'Polski',
       'english': 'English',
+      'security': 'Bezpieczeństwo',
+      'biometricProtection': 'Biometria dla operacji krytycznych',
+      'biometricProtectionDescription':
+          'Wymagaj odcisku palca lub rozpoznania twarzy przed zamkiem, alarmem, bramą i aktualizacją.',
+      'biometricUnavailable':
+          'Na tym urządzeniu nie ma skonfigurowanej biometrii.',
+      'biometricCheckFailed':
+          'Nie udało się sprawdzić biometrii. Krytyczna operacja pozostanie zablokowana.',
       'sourceManagement': 'Zarządzanie źródłem',
       'haInstances': 'Instancje Home Assistant',
       'addHaInstance': 'Dodaj instancję Home Assistant',
@@ -289,6 +297,14 @@ final class HomeControlStrings {
       'errorInvalidCredentials': 'Sprawdź adres i wklej pełny token dostępu.',
       'errorCommandUnavailable':
           'Sterowanie jest zablokowane, gdy encja lub źródło jest niedostępne.',
+      'errorBiometricCancelled':
+          'Autoryzacja biometryczna została anulowana. Operacja nie została wysłana.',
+      'errorBiometricUnavailable':
+          'Biometria jest niedostępna. Skonfiguruj ją w systemie, aby wykonać tę operację.',
+      'errorBiometricLocked':
+          'Biometria została czasowo zablokowana. Odblokuj ją w systemie i spróbuj ponownie.',
+      'errorBiometricFailed':
+          'Nie udało się potwierdzić tożsamości. Operacja krytyczna pozostała zablokowana.',
       'errorUnknown':
           'Wystąpił nieoczekiwany błąd. Dane wrażliwe nie zostały zapisane w logu.',
       'retry': 'Spróbuj ponownie',
@@ -297,6 +313,9 @@ final class HomeControlStrings {
       'noticeRefreshed': 'Dane zostały odświeżone.',
       'noticeCommandAccepted': 'Źródło potwierdziło polecenie.',
       'noticeUpdateStarted': 'Proces aktualizacji został rozpoczęty.',
+      'noticeBiometricEnabled': 'Włączono biometrię dla operacji krytycznych.',
+      'noticeBiometricDisabled':
+          'Wyłączono biometrię dla operacji krytycznych.',
       'justNow': 'przed chwilą',
       'secondsAgo': '{value} s temu',
       'minutesAgo': '{value} min temu',
@@ -457,6 +476,14 @@ final class HomeControlStrings {
       'language': 'Language',
       'polish': 'Polski',
       'english': 'English',
+      'security': 'Security',
+      'biometricProtection': 'Biometrics for critical operations',
+      'biometricProtectionDescription':
+          'Require fingerprint or face recognition before lock, alarm, gate and update operations.',
+      'biometricUnavailable':
+          'No biometric authentication is configured on this device.',
+      'biometricCheckFailed':
+          'Biometric availability could not be checked. Critical operations remain blocked.',
       'sourceManagement': 'Source management',
       'haInstances': 'Home Assistant instances',
       'addHaInstance': 'Add Home Assistant instance',
@@ -539,6 +566,14 @@ final class HomeControlStrings {
           'Check the address and paste the complete access token.',
       'errorCommandUnavailable':
           'Control is locked while the source or entity is unavailable.',
+      'errorBiometricCancelled':
+          'Biometric authorization was cancelled. The operation was not sent.',
+      'errorBiometricUnavailable':
+          'Biometrics are unavailable. Configure them in the operating system to continue.',
+      'errorBiometricLocked':
+          'Biometrics are temporarily locked. Unlock them in the operating system and retry.',
+      'errorBiometricFailed':
+          'Identity could not be confirmed. The critical operation remains blocked.',
       'errorUnknown':
           'An unexpected error occurred. Sensitive data was not recorded in logs.',
       'retry': 'Try again',
@@ -547,6 +582,10 @@ final class HomeControlStrings {
       'noticeRefreshed': 'Data refreshed.',
       'noticeCommandAccepted': 'The source acknowledged the command.',
       'noticeUpdateStarted': 'The update process has started.',
+      'noticeBiometricEnabled':
+          'Biometric protection is enabled for critical operations.',
+      'noticeBiometricDisabled':
+          'Biometric protection is disabled for critical operations.',
       'justNow': 'just now',
       'secondsAgo': '{value} sec ago',
       'minutesAgo': '{value} min ago',

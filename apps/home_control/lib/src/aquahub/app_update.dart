@@ -561,7 +561,9 @@ final class AppUpdateController extends ChangeNotifier {
   Future<void> onAppResumed() async {
     if (phase == AppUpdatePhase.permissionRequired && !busy) {
       await retryInstaller();
+      return;
     }
+    await check();
   }
 
   Future<void> _launchInstaller() async {
@@ -617,9 +619,14 @@ final class AppUpdateScope extends InheritedNotifier<AppUpdateController> {
 }
 
 final class AppUpdateDialog extends StatelessWidget {
-  const AppUpdateDialog({required this.controller, super.key});
+  const AppUpdateDialog({
+    required this.controller,
+    this.authorizeInstall,
+    super.key,
+  });
 
   final AppUpdateController controller;
+  final Future<bool> Function()? authorizeInstall;
 
   @override
   Widget build(BuildContext context) {
@@ -676,7 +683,12 @@ final class AppUpdateDialog extends StatelessWidget {
               ],
             ),
           ),
-          actions: _dialogActions(context, controller, strings),
+          actions: _dialogActions(
+            context,
+            controller,
+            strings,
+            authorizeInstall,
+          ),
         );
       },
     );
@@ -687,6 +699,7 @@ List<Widget> _dialogActions(
   BuildContext context,
   AppUpdateController controller,
   HomeControlStrings strings,
+  Future<bool> Function()? authorizeInstall,
 ) {
   final phase = controller.phase;
   if (phase == AppUpdatePhase.downloading ||
@@ -700,17 +713,27 @@ List<Widget> _dialogActions(
     ),
     if (phase == AppUpdatePhase.available || phase == AppUpdatePhase.failed)
       FilledButton.icon(
-        onPressed: controller.downloadAndInstall,
+        onPressed: () =>
+            _runAuthorized(authorizeInstall, controller.downloadAndInstall),
         icon: const Icon(Icons.download_rounded),
         label: Text(strings.t('downloadAndInstall')),
       ),
     if (phase == AppUpdatePhase.permissionRequired)
       FilledButton.icon(
-        onPressed: controller.retryInstaller,
+        onPressed: () =>
+            _runAuthorized(authorizeInstall, controller.retryInstaller),
         icon: const Icon(Icons.security_rounded),
         label: Text(strings.t('continueInstallation')),
       ),
   ];
+}
+
+Future<void> _runAuthorized(
+  Future<bool> Function()? authorize,
+  Future<void> Function() action,
+) async {
+  if (authorize != null && !await authorize()) return;
+  await action();
 }
 
 String _dialogMessage(

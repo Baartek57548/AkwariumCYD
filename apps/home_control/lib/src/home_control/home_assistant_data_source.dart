@@ -129,6 +129,36 @@ final class HomeAssistantDataSource
     Duration period,
     CancellationToken cancellation,
   ) async {
+    if (period >= const Duration(days: 2)) {
+      final socket = _socket;
+      if (socket != null) {
+        try {
+          final end = DateTime.now();
+          final statistics = await cancellation.bind(
+            socket.fetchStatistics(
+              statisticId: entity.id.localId,
+              start: end.subtract(period),
+              end: end,
+              period: _statisticsPeriod(period),
+            ),
+          );
+          if (statistics.isNotEmpty) {
+            return statistics
+                .map(
+                  (sample) =>
+                      HistoryPoint(time: sample.time, value: sample.value),
+                )
+                .toList(growable: false);
+          }
+        } on OperationCancelled {
+          rethrow;
+        } on Object {
+          // Recorder statistics are optional in Home Assistant. Falling back
+          // preserves history for entities without long-term statistics and
+          // for server versions that reject this evolving WebSocket command.
+        }
+      }
+    }
     try {
       final values = await cancellation.bind(
         _requireApi().fetchEntityHistory(entity.id.localId, period),
@@ -575,6 +605,19 @@ final class HomeAssistantDataSource
 
   static DateTime? _date(Object? value) =>
       value is String ? DateTime.tryParse(value)?.toLocal() : null;
+
+  static HaStatisticPeriod _statisticsPeriod(Duration period) {
+    if (period > const Duration(days: 365)) {
+      return HaStatisticPeriod.month;
+    }
+    if (period > const Duration(days: 90)) {
+      return HaStatisticPeriod.week;
+    }
+    if (period > const Duration(days: 14)) {
+      return HaStatisticPeriod.day;
+    }
+    return HaStatisticPeriod.hour;
+  }
 
   static bool _looksLikeAquarium(String value) {
     final normalized = value.toLowerCase();

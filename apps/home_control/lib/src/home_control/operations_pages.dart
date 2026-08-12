@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:home_entities/home_entities.dart';
 
 import '../aquahub/app_update.dart';
+import 'biometric_gate.dart';
 import 'controller.dart';
 import 'entity_widgets.dart';
 import 'preferences.dart';
@@ -393,6 +394,26 @@ final class SettingsPage extends StatelessWidget {
             selected: <String>{controller.locale.languageCode},
             onSelectionChanged: (values) =>
                 controller.setLocale(Locale(values.first)),
+          ),
+        ),
+        _SettingsSection(
+          title: strings.t('security'),
+          child: SwitchListTile(
+            contentPadding: EdgeInsets.zero,
+            secondary: const Icon(Icons.fingerprint_rounded),
+            title: Text(strings.t('biometricProtection')),
+            subtitle: Text(
+              strings.t(switch (controller.biometricAvailability) {
+                BiometricAvailability.available =>
+                  'biometricProtectionDescription',
+                BiometricAvailability.unavailable => 'biometricUnavailable',
+                BiometricAvailability.failed => 'biometricCheckFailed',
+              }),
+            ),
+            value: controller.biometricProtectionEnabled,
+            onChanged: controller.biometricBusy
+                ? null
+                : (value) => controller.setBiometricProtection(value),
           ),
         ),
         _SettingsSection(

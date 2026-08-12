@@ -61,4 +61,43 @@ void main() {
     expect(metadata.serviceDomains, isEmpty);
     expect(() => metadata.serviceDomains.add('light'), throwsUnsupportedError);
   });
+
+  test('statistics parser selects useful values and normalizes ordering', () {
+    final samples = HaStatisticSample.fromResponse(<String, Object?>{
+      'sensor.temperature': <Object?>[
+        <String, Object?>{'start': 1722506400000, 'mean': null, 'state': 24.2},
+        <String, Object?>{'start': 1722502800000, 'mean': 23.8},
+        <String, Object?>{'start': 1722510000000, 'sum': 72.5},
+        <String, Object?>{'start': 1722513600000, 'mean': double.nan},
+        <String, Object?>{'start': 'invalid', 'mean': 99},
+        'malformed',
+      ],
+    }, 'sensor.temperature');
+
+    expect(samples, hasLength(3));
+    expect(samples.map((sample) => sample.value), <double>[23.8, 24.2, 72.5]);
+    expect(samples.first.time.isBefore(samples.last.time), isTrue);
+  });
+
+  test('statistics parser tolerates missing columns and unknown series', () {
+    final samples = HaStatisticSample.fromResponse(<String, Object?>{
+      'sensor.energy': <Object?>[
+        <String, Object?>{
+          'start': '2026-08-12T10:00:00Z',
+          'mean': null,
+          'state': null,
+          'sum': null,
+          'max': 14,
+        },
+        <String, Object?>{'start': 1722513600000},
+      ],
+    }, 'sensor.energy');
+
+    expect(samples, hasLength(1));
+    expect(samples.single.value, 14);
+    expect(
+      HaStatisticSample.fromResponse(<String, Object?>{}, 'sensor.unknown'),
+      isEmpty,
+    );
+  });
 }

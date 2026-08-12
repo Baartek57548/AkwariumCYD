@@ -1,37 +1,43 @@
-# AquaHub — aplikacja Flutter
+# Home Control
 
-Druga aplikacja mobilna projektu. Łączy wszystkie urządzenia i czujniki przez
-HTTPS API własnego centrum AquaHub na ESP32-P4. Nie komunikuje się bezpośrednio
-z CYD i nie wymaga Home Assistant Core ani Raspberry Pi.
+Home Control jest główną, natywną aplikacją Flutter do obsługi całego domu.
+Nie osadza panelu WWW ani interfejsu Home Assistant w WebView. Te same ekrany
+Material 3 pracują z trzema wymiennymi źródłami danych: AquaHub, jedną lub wieloma
+instancjami Home Assistant oraz deterministycznym Demo offline.
 
-## Zakres
+Wewnętrzna nazwa pakietu Dart `aquacyd_home` i istniejący identyfikator aplikacji
+zostały zachowane, aby nie zerwać ścieżki aktualizacji już zainstalowanych buildów.
+Nazwa produktu, ikony, splash i interfejs użytkownika to **Home Control**.
 
-- Android, iOS i web z responsywną nawigacją;
-- pierwsze parowanie sześciocyfrowym kodem z fizycznego panelu;
-- natywne wykrywanie paneli przez Bonjour/mDNS bez wpisywania adresu;
-- porównanie i pinning SHA-256 certyfikatu P4 na Androidzie i iOS;
-- token Bearer w systemowym secure storage;
-- uniwersalne urządzenia i encje bez listy nazw zaszytej w aplikacji;
-- obsługa `sensor`, `binary_sensor`, `switch`, `light`, `number`, `select` i
-  `button`;
-- pulpit stanu, alarmy krytyczne, grupowanie urządzeń, historia i diagnostyka;
-- lokalne automatyzacje przechowywane i wykonywane przez P4 bez telefonu;
-- centrum aktualizacji P4 z postępem OTA, świadomym potwierdzeniem i rollbackiem;
-- automatyczne sprawdzanie OTA aplikacji Android przy każdym uruchomieniu;
-- pobieranie APK z wydania `home-v*`, kontrola manifestu, rozmiaru i SHA-256 oraz
-  natywna weryfikacja nazwy pakietu, wyższego `versionCode` i certyfikatu;
-- pełny, jawnie oznaczony tryb demonstracyjny dostępny z pierwszego ekranu;
-- tolerancja nowych typów encji, aby przyszłe urządzenie nie blokowało rejestru;
-- odświeżanie co 5 sekund z blokadą równoległych żądań;
-- zatrzymywanie pollingu w tle i natychmiastowe odświeżenie po wznowieniu;
-- limit odpowiedzi 1 MiB, timeout 10 s i jawna klasyfikacja błędów;
-- bezpośredni dostęp zdalny wyłącznie przez VPN.
+## Zakres produktu
 
-Starszy klient oficjalnego Home Assistanta pozostaje w `lib/src/data`,
-`lib/src/state` i `lib/src/ui` jako warstwa zgodności i dokumentacja migracji.
-Punkt wejścia `lib/main.dart` uruchamia aplikację AquaHub.
+- onboarding z wyborem AquaHub, Home Assistant albo Demo;
+- natywne wykrywanie `_aquahub._tcp`, ręczny adres awaryjny, HTTPS, pinning
+  SHA-256 certyfikatu, sześciocyfrowe parowanie i token w secure storage;
+- profile wielu instancji Home Assistant, REST, WebSocket, rejestry obszarów,
+  urządzeń, encji i usług, historia oraz statystyki Recorder;
+- 28 domen encji Home Assistant i bezpieczny widok nieznanego przyszłego typu;
+- pulpit domu, ulubione, obszary, wyszukiwanie, filtry, szybkie akcje, alarmy,
+  automatyzacje, sceny, skrypty, historię, aktualizacje i diagnostykę źródeł;
+- moduł Akwarium wykorzystujący faktyczne możliwości CYD/P4 bez przejmowania
+  autonomicznej automatyki, interlocków ani operacji kalibracyjnych sterownika;
+- edytowalny układ dashboardu, motyw jasny/ciemny/systemowy, język polski i
+  angielski oraz responsywną nawigację telefonu, tabletu i desktopu;
+- wersjonowany cache, stale data, reconnect z backoffem, zatrzymanie pollingu w
+  tle i natychmiastowe odświeżenie po wznowieniu;
+- opcjonalną biometrię dla zamków, alarmów, bram, ryzykownych wartości i
+  instalacji aktualizacji;
+- automatyczną kontrolę dostępności aktualizacji aplikacji przy starcie oraz
+  każdym wznowieniu.
+
+UI komunikuje się wyłącznie z `HomeDataSource`. Transport HTTP, WebSocket,
+discovery, secure storage i cache pozostają poza widżetami. Identyfikatory encji
+są namespacowane źródłem, więc podobne nazwy z AquaHub i Home Assistant nigdy nie
+są automatycznie scalane.
 
 ## Uruchomienie
+
+Wymagane jest Flutter SDK zgodne z Dart `^3.11.3`.
 
 ```powershell
 cd apps/home_control
@@ -41,65 +47,73 @@ flutter test
 flutter run
 ```
 
-Do prezentacji kompletnego UI bez sprzętu służy deterministyczny tryb demo:
+Przy pierwszym uruchomieniu wybierz **Wypróbuj Demo**. Tryb Demo nie wymaga sieci,
+konta ani sekretów, korzysta z produkcyjnego modelu domenowego i zawiera pokoje,
+akwarium, alarm, historię, aktualizację, encję offline oraz nieznany typ encji.
+Dane Demo nie są zapisywane jako sesja produkcyjna.
+
+Przykładowe buildy dostępne na Windows:
 
 ```powershell
-flutter run -d chrome --dart-define=AQUAHUB_DEMO=true
+flutter build web --release
+flutter build apk --debug
+flutter build apk --release
 ```
 
-Tryb demo jest wybierany podczas kompilacji, nie używa sieci ani danych
-produkcyjnych i korzysta z tego samego parsera kontraktu co prawdziwy panel.
+Build iOS wymaga macOS z Xcode oraz tożsamości podpisującej właściciela.
 
-Aplikacja automatycznie wyszukuje usługę `_aquahub._tcp` i pokazuje znalezione
-panele. Przy jednym panelu od razu przechodzi do potwierdzenia tożsamości.
-Ręczny adres `https://aquahub.local:8443` pozostaje w sekcji zaawansowanej na
-wypadek sieci blokującej multicast. Na panelu P4 należy otworzyć ekran System,
-porównać pełny odcisk certyfikatu i wpisać aktualny kod parowania. Zmiana klucza
-lub certyfikatu P4 powoduje celową odmowę połączenia i wymaga ponownego
-parowania przy panelu.
+## AquaHub i TLS
 
-## Platformy i TLS
+Na Androidzie i iOS aplikacja wykrywa AquaHub przez Bonjour/mDNS, a ręczny adres
+HTTPS pozostaje opcją zaawansowaną. Pierwsze połączenie wymaga porównania pełnego
+fingerprintu certyfikatu z fizycznym panelem i wpisania aktualnego kodu parowania.
+Zmiana certyfikatu celowo blokuje połączenie do czasu jawnego ponownego parowania.
 
-Na Androidzie i iOS aplikacja używa natywnego mechanizmu NSD/Bonjour, a potem
-oblicza SHA-256 z certyfikatu podczas handshake i
-porównuje go z zapisanym odciskiem. Wersja webowa nie otrzymuje certyfikatu z API
-przeglądarki ani natywnego discovery, dlatego wymaga ręcznego adresu i
-certyfikatu zaufanego przez system lub lokalnego reverse proxy z prawidłowym
-TLS. Nie należy wyłączać weryfikacji w przeglądarce.
-Jeżeli aplikacja webowa działa na innym originie niż API, w menu P4 trzeba
-ustawić dokładny adres HTTPS w `AQUAHUB_CORS_ORIGIN`. Wartość `*` nie jest
-obsługiwana.
+Przeglądarka nie udostępnia aplikacji certyfikatu serwera ani natywnego discovery.
+Wersja webowa wymaga więc certyfikatu zaufanego przez system lub lokalnego reverse
+proxy TLS oraz ręcznego adresu. Weryfikacja TLS nigdy nie jest wyłączana.
 
-Android ma wyłączony cleartext HTTP i kopie zapasowe danych aplikacji. iOS
-deklaruje dostęp do sieci lokalnej oraz usługę Bonjour `_aquahub._tcp`.
+## Home Assistant
 
-## Automatyczna aktualizacja aplikacji
+Instancję dodaje się przez lokalny lub zdalny adres HTTPS i token zapisany w
+systemowym secure storage. Token długoterminowy jest oznaczony jako opcja
+zaawansowana. Produkcyjny OAuth pozostaje zablokowany do czasu dostarczenia przez
+właściciela publicznego Client ID oraz kontrolowanego redirect URI; aplikacja nie
+udaje w tym miejscu gotowego logowania.
 
-Na Androidzie AquaCYD Home sprawdza przy każdym uruchomieniu najnowsze
-nieprzedpremierowe wydanie `home-v*` w repozytorium projektu. Gdy wersja ma
-wyższy numer kompilacji, aplikacja pokazuje natywny komunikat, pobiera APK do
-prywatnego cache i porównuje rozmiar oraz SHA-256 z `release-manifest.json`.
-Przed przekazaniem pliku instalatorowi kod Androida dodatkowo wymaga identycznej
-nazwy pakietu, wyższego `versionCode` oraz dokładnie tego samego certyfikatu co
-zainstalowana aplikacja.
+REST pobiera konfigurację, stany i historię oraz wywołuje usługi. WebSocket
+subskrybuje zmiany stanu, pobiera rejestry i zagregowane statystyki. Jeżeli encja
+nie ma statystyk długoterminowych albo serwer odrzuca ewoluujący kontrakt Recorder,
+wykres bezpiecznie wraca do surowej historii REST.
 
-Pierwsza aktualizacja spoza sklepu wymaga jednorazowego zezwolenia Androida na
-instalowanie z aplikacji AquaHub. Końcowe potwierdzenie instalatora pozostaje
-obowiązkowe — Android nie zezwala zwykłej aplikacji na cichą podmianę własnego
-APK. Po powrocie z ekranu uprawnień proces jest automatycznie wznawiany. Błąd
-sieci lub kanału wydawniczego nie blokuje uruchomienia pulpitu. iOS wymaga
-dystrybucji aktualizacji przez App Store, TestFlight albo zarządzany kanał MDM.
+## Aktualizacja Home Control
 
-## Testy
+Na Androidzie aplikacja przy starcie i wznowieniu sprawdza najnowsze stabilne
+wydanie `home-v*`. Dla nowszego `versionCode` pokazuje natywny dialog, pobiera APK
+do prywatnego cache i przed uruchomieniem instalatora weryfikuje:
 
-Testy obejmują modele, kontrakt API, paginację, komendy, onboarding, OTA P4,
-automatyczne OTA aplikacji, kontrolę SHA-256, natywne discovery, jego awarię,
-przyszłe typy encji i pełną
-nawigację AquaHub. Klient HTTP jest
-wstrzykiwany w testach, a kod produkcyjny tworzy transport z pinningiem
-certyfikatu. Wydanie aplikacji ma wersję `1.1.2+4`.
+- dozwolony host i format manifestu wydania;
+- nazwę pliku, deklarowany rozmiar oraz SHA-256;
+- identyczny package ID;
+- wyższy `versionCode`;
+- identyczny certyfikat podpisujący jak w zainstalowanej aplikacji.
 
-Pełny podział odpowiedzialności i procedura provisioningu znajdują się w
-[`docs/AQUAHUB_ARCHITECTURE.md`](../docs/AQUAHUB_ARCHITECTURE.md).
-Procedura wydawania firmware’u P4 znajduje się w
-[`docs/AQUAHUB_OTA_RELEASES.md`](../docs/AQUAHUB_OTA_RELEASES.md).
+Włączona ochrona biometryczna blokuje pobranie/instalację do czasu potwierdzenia
+tożsamości. Android nadal pokazuje obowiązkowe systemowe potwierdzenie, a pierwsza
+instalacja spoza sklepu wymaga jednorazowej zgody. Po powrocie z ustawień proces
+jest wznawiany. Błąd kanału aktualizacji nie blokuje pulpitu. iOS korzysta z App
+Store, TestFlight albo zarządzanego MDM; web jest aktualizowany przez hosting.
+
+## Walidacja i bezpieczeństwo
+
+Pełna brama lokalna obejmuje formatowanie, analizę, testy jednostkowe i widgetowe,
+build web release oraz Android debug/release. CI dodatkowo publikuje sumy SHA-256,
+SBOM, uruchamia skan sekretów i zależności oraz waliduje pozostałe części monorepo.
+Sekretów, PIN-ów, prywatnych adresów domu i kluczy podpisujących nie wolno dodawać
+do repozytorium ani logów.
+
+Aktualny produkt ma wersję `2.0.0+5`. Wyniki walidacji są w
+[`docs/QA_REPORT.md`](../../docs/QA_REPORT.md), architektura w
+[`docs/HOME_CONTROL_ARCHITECTURE.md`](../../docs/HOME_CONTROL_ARCHITECTURE.md),
+model zagrożeń w [`docs/SECURITY.md`](../../docs/SECURITY.md), a procedura wydania
+w [`docs/RELEASE.md`](../../docs/RELEASE.md).

@@ -9,6 +9,7 @@ import '../aquahub/credentials_store.dart';
 import '../data/credentials_store.dart';
 import '../domain/models.dart';
 import 'aquahub_data_source.dart';
+import 'biometric_gate.dart';
 import 'data_source.dart';
 import 'demo_data_source.dart';
 import 'home_assistant_data_source.dart';
@@ -32,18 +33,22 @@ final class HomeControlController extends ChangeNotifier {
     required HubCredentialsStore hubCredentialsStore,
     required CredentialsStore homeAssistantCredentialsStore,
     required HomeSnapshotCache snapshotCache,
+    BiometricAuthenticator? biometricAuthenticator,
     RetryPolicy? retryPolicy,
     this.enablePolling = true,
   }) : _preferences = preferences,
        _hubCredentialsStore = hubCredentialsStore,
        _homeAssistantCredentialsStore = homeAssistantCredentialsStore,
        _snapshotCache = snapshotCache,
+       _biometricAuthenticator =
+           biometricAuthenticator ?? DeviceBiometricAuthenticator(),
        _retryPolicy = retryPolicy ?? RetryPolicy();
 
   final HomeControlPreferences _preferences;
   final HubCredentialsStore _hubCredentialsStore;
   final CredentialsStore _homeAssistantCredentialsStore;
   final HomeSnapshotCache _snapshotCache;
+  final BiometricAuthenticator _biometricAuthenticator;
   final RetryPolicy _retryPolicy;
   final bool enablePolling;
 
@@ -60,6 +65,10 @@ final class HomeControlController extends ChangeNotifier {
   ThemeMode _themeMode = ThemeMode.system;
   Locale _locale = const Locale('pl');
   DashboardPreferences _dashboard = const DashboardPreferences.defaults();
+  bool _biometricProtectionEnabled = false;
+  bool _biometricBusy = false;
+  BiometricAvailability _biometricAvailability =
+      BiometricAvailability.unavailable;
   final Set<String> _pending = <String>{};
   List<HistoryPoint> _history = const <HistoryPoint>[];
   SourceScopedId? _historyEntityId;
@@ -82,6 +91,9 @@ final class HomeControlController extends ChangeNotifier {
   ThemeMode get themeMode => _themeMode;
   Locale get locale => _locale;
   DashboardPreferences get dashboard => _dashboard;
+  bool get biometricProtectionEnabled => _biometricProtectionEnabled;
+  bool get biometricBusy => _biometricBusy;
+  BiometricAvailability get biometricAvailability => _biometricAvailability;
   HubController? get hubSetupController => _hubSetupController;
   bool get refreshing => _refreshing;
   bool get historyLoading => _historyLoading;
@@ -101,10 +113,14 @@ final class HomeControlController extends ChangeNotifier {
         _preferences.loadThemeMode(),
         _preferences.loadLocale(),
         _preferences.loadDashboard(),
+        _preferences.loadBiometricProtection(),
+        _biometricAuthenticator.availability(),
       ]);
       _themeMode = loaded[0] as ThemeMode;
       _locale = loaded[1] as Locale;
       _dashboard = loaded[2] as DashboardPreferences;
+      _biometricProtectionEnabled = loaded[3] as bool;
+      _biometricAvailability = loaded[4] as BiometricAvailability;
       await _reloadHomeAssistantProfiles();
       final active = await _preferences.loadActiveSource();
       if (_disposed) return;
@@ -343,6 +359,10 @@ final class HomeControlController extends ChangeNotifier {
       _notify();
       return false;
     }
+    if (entity.risk == HomeCommandRisk.critical &&
+        !await authorizeCriticalOperation()) {
+      return false;
+    }
     _pending.add(entity.id.value);
     _failure = null;
     _snapshot = snapshot.replaceEntity(
@@ -393,6 +413,7 @@ final class HomeControlController extends ChangeNotifier {
   Future<bool> installUpdate(HomeUpdate update) async {
     final source = _source;
     if (source == null || _pending.contains(update.id.value)) return false;
+    if (!await authorizeCriticalOperation()) return false;
     _pending.add(update.id.value);
     _failure = null;
     _notify();
@@ -444,6 +465,85 @@ final class HomeControlController extends ChangeNotifier {
     _locale = value;
     _notify();
     await _preferences.saveLocale(value);
+  }
+
+  Future<bool> setBiometricProtection(bool enabled) async {
+    if (enabled == _biometricProtectionEnabled) return true;
+    if (!await _authenticateBiometrically()) return false;
+    try {
+      await _preferences.saveBiometricProtection(enabled);
+      _biometricProtectionEnabled = enabled;
+      _failure = null;
+      _noticeKey = enabled
+          ? 'noticeBiometricEnabled'
+          : 'noticeBiometricDisabled';
+      _notify();
+      return true;
+    } on Object {
+      _failure = const AppFailure(
+        code: AppFailureCode.storage,
+        messageKey: 'errorStorage',
+      );
+      _notify();
+      return false;
+    }
+  }
+
+  Future<bool> authorizeCriticalOperation() async {
+    if (!_biometricProtectionEnabled) return true;
+    return _authenticateBiometrically();
+  }
+
+  Future<bool> _authenticateBiometrically() async {
+    if (_biometricBusy) return false;
+    _biometricBusy = true;
+    _failure = null;
+    _notify();
+    try {
+      _biometricAvailability = await _biometricAuthenticator.availability();
+      if (_biometricAvailability != BiometricAvailability.available) {
+        _setBiometricFailure(
+          _biometricAvailability == BiometricAvailability.unavailable
+              ? BiometricAuthorization.unavailable
+              : BiometricAuthorization.failed,
+        );
+        return false;
+      }
+      final result = await _biometricAuthenticator.authenticate(
+        localizedReason: _locale.languageCode == 'en'
+            ? 'Confirm a critical Home Control operation.'
+            : 'Potwierdź krytyczną operację w Home Control.',
+      );
+      if (result == BiometricAuthorization.authorized) return true;
+      _setBiometricFailure(result);
+      return false;
+    } on Object {
+      _biometricAvailability = BiometricAvailability.failed;
+      _setBiometricFailure(BiometricAuthorization.failed);
+      return false;
+    } finally {
+      _biometricBusy = false;
+      _notify();
+    }
+  }
+
+  void _setBiometricFailure(BiometricAuthorization result) {
+    final (code, messageKey) = switch (result) {
+      BiometricAuthorization.cancelled => (
+        AppFailureCode.cancelled,
+        'errorBiometricCancelled',
+      ),
+      BiometricAuthorization.unavailable => (
+        AppFailureCode.unsupported,
+        'errorBiometricUnavailable',
+      ),
+      BiometricAuthorization.lockedOut => (
+        AppFailureCode.authentication,
+        'errorBiometricLocked',
+      ),
+      _ => (AppFailureCode.authentication, 'errorBiometricFailed'),
+    };
+    _failure = AppFailure(code: code, messageKey: messageKey);
   }
 
   Future<void> saveDashboard(DashboardPreferences value) async {

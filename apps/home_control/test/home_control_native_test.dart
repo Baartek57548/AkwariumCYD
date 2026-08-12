@@ -4,6 +4,8 @@ import 'package:aquacyd_home/src/aquahub/domain.dart';
 import 'package:aquacyd_home/src/data/credentials_store.dart';
 import 'package:aquacyd_home/src/domain/models.dart';
 import 'package:aquacyd_home/src/home_control/app.dart';
+import 'package:aquacyd_home/src/home_control/biometric_gate.dart';
+import 'package:aquacyd_home/src/home_control/controller.dart';
 import 'package:aquacyd_home/src/home_control/demo_data_source.dart';
 import 'package:aquacyd_home/src/home_control/preferences.dart';
 import 'package:aquacyd_home/src/home_control/snapshot_cache.dart';
@@ -146,6 +148,53 @@ void main() {
       await source.close();
     },
   );
+
+  test(
+    'biometric protection blocks and authorizes critical commands',
+    () async {
+      final preferences = HomeControlPreferences(
+        storage: SharedPreferencesAsync(),
+      );
+      final authenticator = _FakeBiometricAuthenticator();
+      final controller = HomeControlController(
+        preferences: preferences,
+        hubCredentialsStore: _MemoryHubCredentialsStore(),
+        homeAssistantCredentialsStore: _MemoryHaCredentialsStore(),
+        snapshotCache: _MemorySnapshotCache(),
+        biometricAuthenticator: authenticator,
+        enablePolling: false,
+      );
+      addTearDown(controller.dispose);
+
+      await controller.initialize();
+      await controller.selectDemo();
+      authenticator.results.add(BiometricAuthorization.authorized);
+
+      expect(await controller.setBiometricProtection(true), isTrue);
+      expect(await preferences.loadBiometricProtection(), isTrue);
+      expect(controller.biometricProtectionEnabled, isTrue);
+
+      final critical = controller.snapshot!.entities.singleWhere(
+        (entity) => entity.id.localId == 'number.aquacyd_target_temperature',
+      );
+      authenticator.results.add(BiometricAuthorization.cancelled);
+      expect(await controller.sendCommand(critical, 25.5), isFalse);
+      expect(controller.failure?.messageKey, 'errorBiometricCancelled');
+      expect(
+        controller.snapshot!.entity(critical.id)?.numericValue,
+        critical.numericValue,
+      );
+
+      authenticator.results.add(BiometricAuthorization.authorized);
+      expect(await controller.sendCommand(critical, 25.5), isTrue);
+      expect(controller.snapshot!.entity(critical.id)?.numericValue, 25.5);
+
+      authenticator.results.add(BiometricAuthorization.authorized);
+      expect(await controller.setBiometricProtection(false), isTrue);
+      expect(await preferences.loadBiometricProtection(), isFalse);
+      expect(authenticator.localizedReasons, isNotEmpty);
+    },
+  );
 }
 
 Widget _testApp() => HomeControlApp(
@@ -154,6 +203,8 @@ Widget _testApp() => HomeControlApp(
   homeAssistantCredentialsStore: _MemoryHaCredentialsStore(),
   snapshotCache: _MemorySnapshotCache(),
   appUpdateService: const UnsupportedAppUpdateService(),
+  biometricAuthenticator: _FakeBiometricAuthenticator()
+    ..availabilityResult = BiometricAvailability.unavailable,
   enablePolling: false,
 );
 
@@ -214,5 +265,24 @@ final class _MemorySnapshotCache implements HomeSnapshotCache {
   @override
   Future<void> save(HomeSnapshot snapshot) async {
     values[snapshot.sourceKind] = snapshot;
+  }
+}
+
+final class _FakeBiometricAuthenticator implements BiometricAuthenticator {
+  BiometricAvailability availabilityResult = BiometricAvailability.available;
+  final List<BiometricAuthorization> results = <BiometricAuthorization>[];
+  final List<String> localizedReasons = <String>[];
+
+  @override
+  Future<BiometricAvailability> availability() async => availabilityResult;
+
+  @override
+  Future<BiometricAuthorization> authenticate({
+    required String localizedReason,
+  }) async {
+    localizedReasons.add(localizedReason);
+    return results.isEmpty
+        ? BiometricAuthorization.failed
+        : results.removeAt(0);
   }
 }

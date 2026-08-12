@@ -99,6 +99,43 @@ final class HomeAssistantSocket {
     );
   }
 
+  Future<List<HaStatisticSample>> fetchStatistics({
+    required String statisticId,
+    required DateTime start,
+    required DateTime end,
+    HaStatisticPeriod period = HaStatisticPeriod.hour,
+  }) async {
+    if (!RegExp(r'^[a-z0-9_]+\.[a-z0-9_]+$').hasMatch(statisticId)) {
+      throw ArgumentError.value(
+        statisticId,
+        'statisticId',
+        'Invalid Home Assistant statistic ID.',
+      );
+    }
+    if (!start.isBefore(end)) {
+      throw ArgumentError.value(
+        start,
+        'start',
+        'Statistics start must be before end.',
+      );
+    }
+    await _authenticated.future.timeout(connectionTimeout);
+    if (_status != HomeAssistantSocketStatus.connected) {
+      throw StateError('Home Assistant socket is reconnecting.');
+    }
+    final response = await _command(
+      'recorder/statistics_during_period',
+      <String, Object?>{
+        'start_time': start.toUtc().toIso8601String(),
+        'end_time': end.toUtc().toIso8601String(),
+        'statistic_ids': <String>[statisticId],
+        'period': period.wireValue,
+        'types': const <String>['mean', 'state', 'sum', 'max', 'min'],
+      },
+    );
+    return HaStatisticSample.fromResponse(response, statisticId);
+  }
+
   Future<void> disconnect() async {
     if (_disposed) {
       return;
@@ -275,14 +312,20 @@ final class HomeAssistantSocket {
     _channel?.sink.add(jsonEncode(payload));
   }
 
-  Future<Object?> _command(String type) {
+  Future<Object?> _command(
+    String type, [
+    Map<String, Object?> fields = const <String, Object?>{},
+  ]) {
     if (_disposed || _channel == null || type.isEmpty) {
       throw StateError('Home Assistant socket is not connected.');
+    }
+    if (fields.containsKey('id') || fields.containsKey('type')) {
+      throw ArgumentError('Command fields cannot override id or type.');
     }
     final id = _requestId++;
     final completer = Completer<Object?>();
     _pending[id] = completer;
-    _send(<String, Object?>{'id': id, 'type': type});
+    _send(<String, Object?>{'id': id, 'type': type, ...fields});
     return completer.future.timeout(
       connectionTimeout,
       onTimeout: () {
@@ -319,6 +362,85 @@ final class HomeAssistantSocket {
       for (final entry in value.entries)
         if (entry.key is String) entry.key! as String: entry.value,
     };
+  }
+}
+
+enum HaStatisticPeriod {
+  fiveMinutes('5minute'),
+  hour('hour'),
+  day('day'),
+  week('week'),
+  month('month');
+
+  const HaStatisticPeriod(this.wireValue);
+
+  final String wireValue;
+}
+
+final class HaStatisticSample {
+  const HaStatisticSample({required this.time, required this.value});
+
+  final DateTime time;
+  final double value;
+
+  static List<HaStatisticSample> fromResponse(
+    Object? response,
+    String statisticId,
+  ) {
+    final result = HomeAssistantSocket._objectMap(response);
+    final rawSamples = result?[statisticId];
+    if (rawSamples is! List<Object?>) {
+      return const <HaStatisticSample>[];
+    }
+
+    final samplesByTimestamp = <int, HaStatisticSample>{};
+    for (final rawSample in rawSamples) {
+      final sample = HomeAssistantSocket._objectMap(rawSample);
+      if (sample == null) continue;
+      final timestamp = _timestamp(sample['start']);
+      final value = _firstFiniteNumber(<Object?>[
+        sample['mean'],
+        sample['state'],
+        sample['sum'],
+        sample['max'],
+        sample['min'],
+      ]);
+      if (timestamp == null || value == null) continue;
+      samplesByTimestamp[timestamp.millisecondsSinceEpoch] = HaStatisticSample(
+        time: timestamp,
+        value: value,
+      );
+    }
+    final samples = samplesByTimestamp.values.toList(growable: false)
+      ..sort((first, second) => first.time.compareTo(second.time));
+    return samples;
+  }
+
+  static DateTime? _timestamp(Object? value) {
+    if (value is num && value.isFinite) {
+      final milliseconds = value.toInt();
+      if (milliseconds < 0 || milliseconds > 8640000000000000) {
+        return null;
+      }
+      return DateTime.fromMillisecondsSinceEpoch(
+        milliseconds,
+        isUtc: true,
+      ).toLocal();
+    }
+    if (value is String) {
+      return DateTime.tryParse(value)?.toLocal();
+    }
+    return null;
+  }
+
+  static double? _firstFiniteNumber(List<Object?> values) {
+    for (final value in values) {
+      final parsed = value is num
+          ? value.toDouble()
+          : double.tryParse(value?.toString() ?? '');
+      if (parsed != null && parsed.isFinite) return parsed;
+    }
+    return null;
   }
 }
 
