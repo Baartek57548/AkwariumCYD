@@ -312,9 +312,15 @@ final class HomeAssistantDataSource
       _ => EntityAvailability.available,
     };
     final constraints = EntityConstraints(
-      minimum: _number(state.attributes['min']),
-      maximum: _number(state.attributes['max']),
-      step: _number(state.attributes['step']),
+      minimum:
+          _number(state.attributes['min']) ??
+          _number(state.attributes['min_temp']),
+      maximum:
+          _number(state.attributes['max']) ??
+          _number(state.attributes['max_temp']),
+      step:
+          _number(state.attributes['step']) ??
+          _number(state.attributes['target_temp_step']),
       options: _stringList(state.attributes['options']),
       supportedFeatures: _supportedFeatures(state.attributes),
     );
@@ -375,6 +381,18 @@ final class HomeAssistantDataSource
         return enabled ? 'unlock' : 'lock';
       case HomeEntityType.cover:
         return enabled ? 'open_cover' : 'close_cover';
+      case HomeEntityType.alarmControlPanel:
+        final mode = value?.toString() ?? '';
+        return switch (mode) {
+          'disarmed' => 'alarm_disarm',
+          'armed_home' => 'alarm_arm_home',
+          'armed_away' => 'alarm_arm_away',
+          'armed_night' => 'alarm_arm_night',
+          _ => throw const AppFailure(
+            code: AppFailureCode.invalidResponse,
+            messageKey: 'errorInvalidValue',
+          ),
+        };
       case HomeEntityType.button:
       case HomeEntityType.inputButton:
         return 'press';
@@ -416,6 +434,8 @@ final class HomeAssistantDataSource
           return 'set_temperature';
         }
         return enabled ? 'turn_on' : 'turn_off';
+      case HomeEntityType.vacuum:
+        return enabled ? 'start' : 'return_to_base';
       default:
         return enabled ? 'turn_on' : 'turn_off';
     }

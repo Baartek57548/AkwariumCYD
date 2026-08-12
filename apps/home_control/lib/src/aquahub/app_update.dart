@@ -9,6 +9,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:http/http.dart' as http;
 
+import '../home_control/strings.dart';
+
 const _githubReleasesUri =
     'https://api.github.com/repos/Baartek57548/AkwariumCYD/releases?per_page=20';
 const _platformChannelName = 'pl.aquacyd.aquacyd_home/app_update';
@@ -42,6 +44,8 @@ final class AppUpdateRelease {
   final int bytes;
   final String sha256Digest;
   final String notes;
+
+  String get label => '$version+$buildNumber';
 }
 
 enum AppInstallerResult { launched, permissionRequired }
@@ -412,13 +416,13 @@ final class GitHubAppUpdateService implements AppUpdateService {
     Map<String, Object?> manifest,
   ) {
     final version = githubRelease.version.toString();
-    final expectedApkName = 'AquaCYD-Home-$version.apk';
+    final expectedApkName = 'Home-Control-$version.apk';
     if (manifest['schemaVersion'] != 1 ||
         manifest['kind'] != 'home' ||
         manifest['tag'] != 'home-v$version' ||
         manifest['version'] != version) {
       throw const AppUpdateException(
-        'Manifest nie należy do aplikacji AquaCYD Home.',
+        'Manifest nie należy do aplikacji Home Control.',
       );
     }
     final buildNumber = manifest['buildNumber'];
@@ -619,6 +623,7 @@ final class AppUpdateDialog extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final strings = HomeControlStrings.of(context);
     return AnimatedBuilder(
       animation: controller,
       builder: (context, _) {
@@ -639,8 +644,8 @@ final class AppUpdateDialog extends StatelessWidget {
           ),
           title: Text(
             release == null
-                ? 'Aktualizacja AquaCYD Home'
-                : 'Dostępna wersja ${release.version}',
+                ? strings.t('appUpdate')
+                : strings.withValue('availableVersion', release.version),
           ),
           content: SizedBox(
             width: 440,
@@ -648,7 +653,7 @@ final class AppUpdateDialog extends StatelessWidget {
               mainAxisSize: MainAxisSize.min,
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: <Widget>[
-                Text(_dialogMessage(controller)),
+                Text(_dialogMessage(controller, strings)),
                 if (phase == AppUpdatePhase.downloading) ...<Widget>[
                   const SizedBox(height: 18),
                   LinearProgressIndicator(value: controller.progress),
@@ -671,7 +676,7 @@ final class AppUpdateDialog extends StatelessWidget {
               ],
             ),
           ),
-          actions: _dialogActions(context, controller),
+          actions: _dialogActions(context, controller, strings),
         );
       },
     );
@@ -681,6 +686,7 @@ final class AppUpdateDialog extends StatelessWidget {
 List<Widget> _dialogActions(
   BuildContext context,
   AppUpdateController controller,
+  HomeControlStrings strings,
 ) {
   final phase = controller.phase;
   if (phase == AppUpdatePhase.downloading ||
@@ -690,38 +696,38 @@ List<Widget> _dialogActions(
   return <Widget>[
     TextButton(
       onPressed: () => Navigator.of(context).pop(),
-      child: const Text('Później'),
+      child: Text(strings.t('later')),
     ),
     if (phase == AppUpdatePhase.available || phase == AppUpdatePhase.failed)
       FilledButton.icon(
         onPressed: controller.downloadAndInstall,
         icon: const Icon(Icons.download_rounded),
-        label: const Text('Pobierz i zainstaluj'),
+        label: Text(strings.t('downloadAndInstall')),
       ),
     if (phase == AppUpdatePhase.permissionRequired)
       FilledButton.icon(
         onPressed: controller.retryInstaller,
         icon: const Icon(Icons.security_rounded),
-        label: const Text('Kontynuuj instalację'),
+        label: Text(strings.t('continueInstallation')),
       ),
   ];
 }
 
-String _dialogMessage(AppUpdateController controller) {
+String _dialogMessage(
+  AppUpdateController controller,
+  HomeControlStrings strings,
+) {
   final release = controller.release;
   return switch (controller.phase) {
     AppUpdatePhase.available =>
       release?.notes.isNotEmpty == true
           ? release!.notes
-          : 'Aktualizacja zawiera poprawki i usprawnienia. APK zostanie zweryfikowany przed instalacją.',
-    AppUpdatePhase.downloading =>
-      'Pobieram podpisany APK i sprawdzam jego sumę SHA-256.',
-    AppUpdatePhase.launchingInstaller =>
-      'Sprawdzam pakiet, wersję i certyfikat podpisujący.',
-    AppUpdatePhase.permissionRequired =>
-      'Android otworzył ustawienia instalowania z tego źródła. Włącz zgodę dla AquaHub, wróć do aplikacji i kontynuuj.',
-    AppUpdatePhase.failed => 'Aktualizacja nie została zainstalowana.',
-    _ => 'Przygotowuję bezpieczną aktualizację aplikacji.',
+          : strings.t('otaAvailableMessage'),
+    AppUpdatePhase.downloading => strings.t('otaDownloadingMessage'),
+    AppUpdatePhase.launchingInstaller => strings.t('otaVerifyingMessage'),
+    AppUpdatePhase.permissionRequired => strings.t('otaPermissionMessage'),
+    AppUpdatePhase.failed => strings.t('otaFailedMessage'),
+    _ => strings.t('otaPreparingMessage'),
   };
 }
 
@@ -762,7 +768,7 @@ final class _GitHubRelease {
     }
     final version = _SemanticVersion.tryParse(tag.substring('home-v'.length));
     if (version == null) return null;
-    final apkName = 'AquaCYD-Home-$version.apk';
+    final apkName = 'Home-Control-$version.apk';
     Uri? manifestUri;
     Uri? apkUri;
     int? apkBytes;
@@ -844,7 +850,7 @@ final class _DigestSink implements Sink<Digest> {
 const Map<String, String> _headers = <String, String>{
   'accept': 'application/vnd.github+json',
   'x-github-api-version': '2022-11-28',
-  'user-agent': 'AquaCYD-Home-OTA',
+  'user-agent': 'Home-Control-OTA',
 };
 
 const Set<int> _redirectStatusCodes = <int>{

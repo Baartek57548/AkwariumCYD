@@ -32,6 +32,17 @@ final class HomeControlStrings {
   String entityState(HomeEntity entity) {
     if (!entity.available) return t('unavailable');
     if (entity.state == null) return t('noData');
+    if (entity.type == HomeEntityType.lock) {
+      return entity.booleanValue == true ? t('unlocked') : t('locked');
+    }
+    if (entity.type == HomeEntityType.cover) {
+      return entity.booleanValue == true ? t('opened') : t('closed');
+    }
+    if (entity.type == HomeEntityType.alarmControlPanel) {
+      final key = 'alarm_${entity.state}';
+      final translated = t(key);
+      if (translated != key) return translated;
+    }
     final boolean = entity.booleanValue;
     if (boolean != null &&
         (entity.type.supportsToggle ||
@@ -97,12 +108,14 @@ final class HomeControlStrings {
       'connectHa': 'Dodaj Home Assistant',
       'haUrl': 'Adres instancji',
       'haUrlHint': 'https://homeassistant.local:8123',
+      'haProfileName': 'Nazwa profilu',
+      'haProfileNameHint': 'Dom, biuro lub domek',
       'haToken': 'Długoterminowy token dostępu',
       'showToken': 'Pokaż token',
       'hideToken': 'Ukryj token',
       'testAndSave': 'Sprawdź i zapisz',
       'oauthHint':
-          'OAuth jest używany, gdy instancja udostępnia bezpieczny przepływ autoryzacji. Token długoterminowy pozostaje opcją zaawansowaną dla instalacji własnych.',
+          'To zaawansowane logowanie tokenem długoterminowym. OAuth wymaga publicznego Client ID i bezpiecznego redirect URI właściciela aplikacji; gotowa warstwa jest opisana w dokumentacji wydania.',
       'secureStorageHint':
           'Poświadczenia są przechowywane w bezpiecznym magazynie systemu. HTTP jest akceptowane wyłącznie w sieci lokalnej.',
       'dashboard': 'Pulpit',
@@ -134,6 +147,7 @@ final class HomeControlStrings {
       'noAreas': 'Źródło nie zwróciło pomieszczeń.',
       'noDevices': 'Nie znaleziono urządzeń.',
       'noAutomations': 'Brak automatyzacji w tym źródle.',
+      'scenesAndScripts': 'Sceny i skrypty',
       'noUpdates': 'Brak dostępnych aktualizacji.',
       'entitiesCount': '{value} encji',
       'onlineDevices': '{value} urządzeń online',
@@ -146,6 +160,22 @@ final class HomeControlStrings {
       'stateOff': 'Wyłączone',
       'turnOn': 'Włącz',
       'turnOff': 'Wyłącz',
+      'openCover': 'Otwórz',
+      'closeCover': 'Zamknij',
+      'opened': 'Otwarta',
+      'closed': 'Zamknięta',
+      'lockAction': 'Zablokuj',
+      'unlockAction': 'Odblokuj',
+      'locked': 'Zablokowany',
+      'unlocked': 'Odblokowany',
+      'alarmMode': 'Tryb alarmu',
+      'alarm_disarmed': 'Rozbrojony',
+      'alarm_armed_home': 'Czuwanie: dom',
+      'alarm_armed_away': 'Czuwanie: poza domem',
+      'alarm_armed_night': 'Czuwanie: noc',
+      'start': 'Uruchom',
+      'returnToBase': 'Wróć do bazy',
+      'textValue': 'Wartość tekstowa',
       'run': 'Uruchom',
       'setValue': 'Ustaw wartość: {value}',
       'selectOption': 'Wybierz opcję',
@@ -173,6 +203,11 @@ final class HomeControlStrings {
       'polish': 'Polski',
       'english': 'English',
       'sourceManagement': 'Zarządzanie źródłem',
+      'haInstances': 'Instancje Home Assistant',
+      'addHaInstance': 'Dodaj instancję Home Assistant',
+      'removeHaInstance': 'Usuń instancję',
+      'removeHaInstanceConfirm':
+          'Profil „{value}”, jego token i lokalny cache zostaną usunięte z urządzenia.',
       'switchSource': 'Przełącz źródło',
       'removeSource': 'Usuń źródło i dane lokalne',
       'removeSourceConfirm':
@@ -188,7 +223,34 @@ final class HomeControlStrings {
       'upToDate': 'Aktualne',
       'unsupported': 'Jeszcze nieobsługiwane',
       'mandatory': 'Wymagana',
+      'availableVersion': 'Dostępna wersja {value}',
+      'later': 'Później',
+      'downloadAndInstall': 'Pobierz i zainstaluj',
+      'continueInstallation': 'Kontynuuj instalację',
+      'otaAvailableMessage':
+          'Aktualizacja zawiera poprawki i usprawnienia. Pakiet zostanie zweryfikowany przed instalacją.',
+      'otaDownloadingMessage':
+          'Pobieram podpisany pakiet i sprawdzam jego sumę SHA-256.',
+      'otaVerifyingMessage':
+          'Sprawdzam pakiet, wersję i certyfikat podpisujący.',
+      'otaPermissionMessage':
+          'Android otworzył ustawienia instalowania z tego źródła. Włącz zgodę dla Home Control, wróć do aplikacji i kontynuuj.',
+      'otaFailedMessage': 'Aktualizacja nie została zainstalowana.',
+      'otaPreparingMessage': 'Przygotowuję bezpieczną aktualizację aplikacji.',
       'diagnostics': 'Diagnostyka',
+      'entities': 'Encje',
+      'lastSyncLabel': 'Ostatnia synchronizacja',
+      'localCache': 'Cache lokalny',
+      'encrypted': 'Szyfrowany',
+      'privacyAndAbout': 'Prywatność i informacje',
+      'privacy': 'Prywatność',
+      'privacyDescription':
+          'Home Control nie sprzedaje danych. Poświadczenia i ostatni snapshot pozostają w bezpiecznym magazynie urządzenia.',
+      'appVersion': 'Wersja {value}',
+      'openSourceLicenses': 'Licencje open source',
+      'attributes': 'Atrybuty źródłowe',
+      'entitySource': 'Źródło: {value}',
+      'entityUpdated': 'Aktualizacja: {value}',
       'firmware': 'Firmware',
       'manufacturer': 'Producent',
       'model': 'Model',
@@ -289,12 +351,14 @@ final class HomeControlStrings {
       'connectHa': 'Add Home Assistant',
       'haUrl': 'Instance address',
       'haUrlHint': 'https://homeassistant.local:8123',
+      'haProfileName': 'Profile name',
+      'haProfileNameHint': 'Home, office or cabin',
       'haToken': 'Long-lived access token',
       'showToken': 'Show token',
       'hideToken': 'Hide token',
       'testAndSave': 'Test and save',
       'oauthHint':
-          'OAuth is used when the instance exposes a secure authorization flow. A long-lived token remains an advanced option for self-hosted installations.',
+          'This is the advanced long-lived-token sign-in. OAuth requires the app owner public Client ID and a secure redirect URI; the release documentation defines that activation gate.',
       'secureStorageHint':
           'Credentials are kept in the operating system secure storage. HTTP is accepted only on a local network.',
       'dashboard': 'Dashboard',
@@ -326,6 +390,7 @@ final class HomeControlStrings {
       'noAreas': 'The source returned no rooms.',
       'noDevices': 'No devices found.',
       'noAutomations': 'This source has no automations.',
+      'scenesAndScripts': 'Scenes and scripts',
       'noUpdates': 'No updates are available.',
       'entitiesCount': '{value} entities',
       'onlineDevices': '{value} devices online',
@@ -338,6 +403,22 @@ final class HomeControlStrings {
       'stateOff': 'Off',
       'turnOn': 'Turn on',
       'turnOff': 'Turn off',
+      'openCover': 'Open',
+      'closeCover': 'Close',
+      'opened': 'Open',
+      'closed': 'Closed',
+      'lockAction': 'Lock',
+      'unlockAction': 'Unlock',
+      'locked': 'Locked',
+      'unlocked': 'Unlocked',
+      'alarmMode': 'Alarm mode',
+      'alarm_disarmed': 'Disarmed',
+      'alarm_armed_home': 'Armed home',
+      'alarm_armed_away': 'Armed away',
+      'alarm_armed_night': 'Armed night',
+      'start': 'Start',
+      'returnToBase': 'Return to base',
+      'textValue': 'Text value',
       'run': 'Run',
       'setValue': 'Set value: {value}',
       'selectOption': 'Select option',
@@ -365,6 +446,11 @@ final class HomeControlStrings {
       'polish': 'Polski',
       'english': 'English',
       'sourceManagement': 'Source management',
+      'haInstances': 'Home Assistant instances',
+      'addHaInstance': 'Add Home Assistant instance',
+      'removeHaInstance': 'Remove instance',
+      'removeHaInstanceConfirm':
+          'Profile “{value}”, its token and local cache will be removed from this device.',
       'switchSource': 'Switch source',
       'removeSource': 'Remove source and local data',
       'removeSourceConfirm':
@@ -380,7 +466,34 @@ final class HomeControlStrings {
       'upToDate': 'Up to date',
       'unsupported': 'Not safely supported yet',
       'mandatory': 'Required',
+      'availableVersion': 'Version {value} is available',
+      'later': 'Later',
+      'downloadAndInstall': 'Download and install',
+      'continueInstallation': 'Continue installation',
+      'otaAvailableMessage':
+          'This update contains fixes and improvements. The package will be verified before installation.',
+      'otaDownloadingMessage':
+          'Downloading the signed package and verifying its SHA-256 digest.',
+      'otaVerifyingMessage':
+          'Verifying package identity, version and signing certificate.',
+      'otaPermissionMessage':
+          'Android opened the install-source settings. Allow Home Control, return to the app and continue.',
+      'otaFailedMessage': 'The update was not installed.',
+      'otaPreparingMessage': 'Preparing the secure application update.',
       'diagnostics': 'Diagnostics',
+      'entities': 'Entities',
+      'lastSyncLabel': 'Last synchronization',
+      'localCache': 'Local cache',
+      'encrypted': 'Encrypted',
+      'privacyAndAbout': 'Privacy and about',
+      'privacy': 'Privacy',
+      'privacyDescription':
+          'Home Control does not sell data. Credentials and the latest snapshot remain in the device secure storage.',
+      'appVersion': 'Version {value}',
+      'openSourceLicenses': 'Open-source licenses',
+      'attributes': 'Source attributes',
+      'entitySource': 'Source: {value}',
+      'entityUpdated': 'Updated: {value}',
       'firmware': 'Firmware',
       'manufacturer': 'Manufacturer',
       'model': 'Model',

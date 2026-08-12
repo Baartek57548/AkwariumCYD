@@ -154,14 +154,18 @@ final class _DevicesPageState extends State<DevicesPage> {
     final snapshot = widget.controller.snapshot!;
     final strings = HomeControlStrings.of(context);
     final normalized = _query.trim().toLowerCase();
-    final devices = snapshot.devices
-        .where((device) {
-          if (normalized.isEmpty) return true;
-          return '${device.name} ${device.model} ${device.manufacturer}'
-              .toLowerCase()
-              .contains(normalized);
-        })
-        .toList(growable: false);
+    final devices =
+        snapshot.devices
+            .where((device) {
+              if (normalized.isEmpty) return true;
+              return '${device.name} ${device.model} ${device.manufacturer}'
+                  .toLowerCase()
+                  .contains(normalized);
+            })
+            .toList(growable: false)
+          ..sort(
+            (a, b) => a.name.toLowerCase().compareTo(b.name.toLowerCase()),
+          );
     return CustomScrollView(
       key: const PageStorageKey<String>('devices-page'),
       slivers: <Widget>[
@@ -233,6 +237,7 @@ final class _DeviceCard extends ExpansionTile {
          title: Text(device.name),
          subtitle: Text(
            <String>[
+             snapshot.sourceName,
              device.manufacturer,
              device.model,
            ].where((value) => value.isNotEmpty).join(' · '),

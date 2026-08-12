@@ -17,6 +17,16 @@ final class AutomationsPage extends StatelessWidget {
   Widget build(BuildContext context) {
     final strings = HomeControlStrings.of(context);
     final snapshot = controller.snapshot!;
+    final routines =
+        snapshot.entities
+            .where(
+              (entity) => <HomeEntityType>{
+                HomeEntityType.scene,
+                HomeEntityType.script,
+              }.contains(entity.type),
+            )
+            .toList(growable: false)
+          ..sort((a, b) => a.name.compareTo(b.name));
     return CustomScrollView(
       key: const PageStorageKey<String>('automations-page'),
       slivers: <Widget>[
@@ -31,17 +41,17 @@ final class AutomationsPage extends StatelessWidget {
             ),
           ),
         ),
-        if (snapshot.automations.isEmpty)
+        if (snapshot.automations.isEmpty && routines.isEmpty)
           SliverFillRemaining(
             hasScrollBody: false,
             child: _CenteredMessage(
               icon: Icons.account_tree_outlined,
               text: strings.t('noAutomations'),
             ),
-          )
-        else
+          ),
+        if (snapshot.automations.isNotEmpty)
           SliverPadding(
-            padding: const EdgeInsets.fromLTRB(20, 0, 20, 100),
+            padding: const EdgeInsets.fromLTRB(20, 0, 20, 16),
             sliver: SliverList.builder(
               itemCount: snapshot.automations.length,
               itemBuilder: (context, index) {
@@ -75,6 +85,32 @@ final class AutomationsPage extends StatelessWidget {
               },
             ),
           ),
+        if (routines.isNotEmpty) ...<Widget>[
+          SliverPadding(
+            padding: const EdgeInsets.fromLTRB(20, 8, 20, 12),
+            sliver: SliverToBoxAdapter(
+              child: Text(
+                strings.t('scenesAndScripts'),
+                style: Theme.of(
+                  context,
+                ).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w800),
+              ),
+            ),
+          ),
+          SliverPadding(
+            padding: const EdgeInsets.fromLTRB(20, 0, 20, 100),
+            sliver: SliverList.separated(
+              itemCount: routines.length,
+              separatorBuilder: (_, _) =>
+                  const SizedBox(height: ProductSpacing.sm),
+              itemBuilder: (context, index) => EntityCard(
+                entity: routines[index],
+                controller: controller,
+                compact: true,
+              ),
+            ),
+          ),
+        ],
       ],
     );
   }
@@ -416,11 +452,120 @@ final class SettingsPage extends StatelessWidget {
                 icon: const Icon(Icons.swap_horiz_rounded),
                 label: Text(strings.t('switchSource')),
               ),
+              if (controller.activeSourceKind ==
+                  HomeSourceKind.homeAssistant) ...<Widget>[
+                const SizedBox(height: ProductSpacing.md),
+                Align(
+                  alignment: Alignment.centerLeft,
+                  child: Text(
+                    strings.t('haInstances'),
+                    style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                      fontWeight: FontWeight.w800,
+                    ),
+                  ),
+                ),
+                RadioGroup<String>(
+                  groupValue: controller.selectedHomeAssistantProfileId,
+                  onChanged: (value) {
+                    if (value != null) {
+                      controller.selectHomeAssistantProfile(value);
+                    }
+                  },
+                  child: Column(
+                    children: <Widget>[
+                      for (final profile in controller.homeAssistantProfiles)
+                        RadioListTile<String>(
+                          contentPadding: EdgeInsets.zero,
+                          value: profile.id,
+                          title: Text(profile.name),
+                          subtitle: Text(profile.baseUri.toString()),
+                          secondary: IconButton(
+                            tooltip: strings.t('removeHaInstance'),
+                            onPressed:
+                                controller.homeAssistantProfiles.length <= 1
+                                ? null
+                                : () => _confirmDeleteHaProfile(
+                                    context,
+                                    profile.id,
+                                    profile.name,
+                                  ),
+                            icon: const Icon(Icons.delete_outline_rounded),
+                          ),
+                        ),
+                    ],
+                  ),
+                ),
+                OutlinedButton.icon(
+                  onPressed: controller.beginHomeAssistantSetup,
+                  icon: const Icon(Icons.add_home_work_outlined),
+                  label: Text(strings.t('addHaInstance')),
+                ),
+              ],
               const SizedBox(height: ProductSpacing.xs),
               TextButton.icon(
                 onPressed: () => _confirmRemove(context),
                 icon: const Icon(Icons.delete_outline_rounded),
                 label: Text(strings.t('removeSource')),
+              ),
+            ],
+          ),
+        ),
+        _SettingsSection(
+          title: strings.t('diagnostics'),
+          child: Column(
+            children: <Widget>[
+              _DiagnosticRow(
+                label: strings.t('connection'),
+                value: strings.t(
+                  controller.snapshot!.isOffline ? 'offline' : 'connected',
+                ),
+              ),
+              _DiagnosticRow(
+                label: strings.t('lastSyncLabel'),
+                value: strings.relativeTime(
+                  controller.snapshot!.synchronizedAt,
+                ),
+              ),
+              _DiagnosticRow(
+                label: strings.t('entities'),
+                value: '${controller.snapshot!.entities.length}',
+              ),
+              _DiagnosticRow(
+                label: strings.t('devices'),
+                value: '${controller.snapshot!.devices.length}',
+              ),
+              _DiagnosticRow(
+                label: strings.t('localCache'),
+                value: strings.t('encrypted'),
+              ),
+            ],
+          ),
+        ),
+        _SettingsSection(
+          title: strings.t('privacyAndAbout'),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: <Widget>[
+              ListTile(
+                contentPadding: EdgeInsets.zero,
+                leading: const Icon(Icons.verified_user_outlined),
+                title: Text(strings.t('privacy')),
+                subtitle: Text(strings.t('privacyDescription')),
+              ),
+              ListTile(
+                contentPadding: EdgeInsets.zero,
+                leading: const Icon(Icons.info_outline_rounded),
+                title: Text(strings.t('appName')),
+                subtitle: Text(strings.withValue('appVersion', '2.0.0+5')),
+              ),
+              OutlinedButton.icon(
+                onPressed: () => showLicensePage(
+                  context: context,
+                  applicationName: strings.t('appName'),
+                  applicationVersion: '2.0.0+5',
+                ),
+                icon: const Icon(Icons.description_outlined),
+                label: Text(strings.t('openSourceLicenses')),
               ),
             ],
           ),
@@ -451,6 +596,59 @@ final class SettingsPage extends StatelessWidget {
     );
     if (confirmed == true) await controller.removeActiveSource();
   }
+
+  Future<void> _confirmDeleteHaProfile(
+    BuildContext context,
+    String id,
+    String name,
+  ) async {
+    final strings = HomeControlStrings.of(context);
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        icon: const Icon(Icons.delete_outline_rounded),
+        title: Text(strings.t('removeHaInstance')),
+        content: Text(strings.withValue('removeHaInstanceConfirm', name)),
+        actions: <Widget>[
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: Text(strings.t('cancel')),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(context, true),
+            child: Text(strings.t('confirm')),
+          ),
+        ],
+      ),
+    );
+    if (confirmed == true) {
+      await controller.deleteHomeAssistantProfile(id);
+    }
+  }
+}
+
+final class _DiagnosticRow extends StatelessWidget {
+  const _DiagnosticRow({required this.label, required this.value});
+
+  final String label;
+  final String value;
+
+  @override
+  Widget build(BuildContext context) => Padding(
+    padding: const EdgeInsets.symmetric(vertical: ProductSpacing.xs),
+    child: Row(
+      children: <Widget>[
+        Expanded(child: Text(label)),
+        const SizedBox(width: ProductSpacing.sm),
+        Text(
+          value,
+          style: Theme.of(
+            context,
+          ).textTheme.bodyMedium?.copyWith(fontWeight: FontWeight.w700),
+        ),
+      ],
+    ),
+  );
 }
 
 final class DashboardEditorPage extends StatefulWidget {

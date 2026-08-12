@@ -68,7 +68,11 @@ final class HomeControlController extends ChangeNotifier {
   bool _appActive = true;
   bool _disposed = false;
   bool _promotingHub = false;
+  bool _setupFromActiveSource = false;
   int _consecutiveFailures = 0;
+  List<HomeAssistantProfile> _homeAssistantProfiles =
+      const <HomeAssistantProfile>[];
+  String? _selectedHomeAssistantProfileId;
 
   HomeControlPhase get phase => _phase;
   HomeSetupStep get setupStep => _setupStep;
@@ -85,6 +89,9 @@ final class HomeControlController extends ChangeNotifier {
   SourceScopedId? get historyEntityId => _historyEntityId;
   HomeSourceKind? get activeSourceKind => _source?.kind;
   bool get isDemo => _source is DemoDataSource;
+  List<HomeAssistantProfile> get homeAssistantProfiles =>
+      _homeAssistantProfiles;
+  String? get selectedHomeAssistantProfileId => _selectedHomeAssistantProfileId;
   bool isPending(SourceScopedId id) => _pending.contains(id.value);
 
   Future<void> initialize() async {
@@ -98,6 +105,7 @@ final class HomeControlController extends ChangeNotifier {
       _themeMode = loaded[0] as ThemeMode;
       _locale = loaded[1] as Locale;
       _dashboard = loaded[2] as DashboardPreferences;
+      await _reloadHomeAssistantProfiles();
       final active = await _preferences.loadActiveSource();
       if (_disposed) return;
       if (active == null) {
@@ -122,6 +130,7 @@ final class HomeControlController extends ChangeNotifier {
   }
 
   void beginHomeAssistantSetup() {
+    _setupFromActiveSource = _source != null;
     _failure = null;
     _setupStep = HomeSetupStep.homeAssistant;
     _phase = HomeControlPhase.onboarding;
@@ -131,6 +140,7 @@ final class HomeControlController extends ChangeNotifier {
   Future<bool> configureHomeAssistant({
     required String baseUrl,
     required String accessToken,
+    String? profileName,
   }) async {
     final HomeAssistantCredentials credentials;
     try {
@@ -146,14 +156,26 @@ final class HomeControlController extends ChangeNotifier {
       _notify();
       return false;
     }
+    final profileStore = _profileStore;
+    final profileId = profileStore == null ? 'ha-main' : _newProfileId();
     final source = HomeAssistantDataSource(
       credentials: credentials,
       credentialsStore: _homeAssistantCredentialsStore,
+      instanceId: profileId,
     );
     final connected = await _activate(source, persistSelection: false);
     if (!connected) return false;
     try {
-      await _homeAssistantCredentialsStore.save(credentials);
+      if (profileStore == null) {
+        await _homeAssistantCredentialsStore.save(credentials);
+      } else {
+        await profileStore.saveProfile(
+          credentials: credentials,
+          name: _normalizedProfileName(profileName, credentials.baseUri),
+          profileId: profileId,
+        );
+        await _reloadHomeAssistantProfiles();
+      }
       await _preferences.saveActiveSource(HomeSourceKind.homeAssistant);
       return true;
     } on Object {
@@ -168,6 +190,43 @@ final class HomeControlController extends ChangeNotifier {
       _notify();
       return false;
     }
+  }
+
+  Future<bool> selectHomeAssistantProfile(String profileId) async {
+    final store = _profileStore;
+    if (store == null || profileId == _selectedHomeAssistantProfileId) {
+      return false;
+    }
+    final credentials = await store.loadProfile(profileId);
+    if (credentials == null) return false;
+    final connected = await _activate(
+      HomeAssistantDataSource(
+        credentials: credentials,
+        credentialsStore: _homeAssistantCredentialsStore,
+        instanceId: profileId,
+      ),
+      persistSelection: false,
+    );
+    if (!connected) return false;
+    await store.selectProfile(profileId);
+    await _preferences.saveActiveSource(HomeSourceKind.homeAssistant);
+    await _reloadHomeAssistantProfiles();
+    return true;
+  }
+
+  Future<void> deleteHomeAssistantProfile(String profileId) async {
+    final store = _profileStore;
+    if (store == null) return;
+    final deletingActive = profileId == _selectedHomeAssistantProfileId;
+    await store.deleteProfile(profileId);
+    await _snapshotCache.clear(HomeSourceKind.homeAssistant);
+    await _reloadHomeAssistantProfiles();
+    if (!deletingActive) return;
+    if (_homeAssistantProfiles.isEmpty) {
+      await switchSource();
+      return;
+    }
+    await selectHomeAssistantProfile(_homeAssistantProfiles.first.id);
   }
 
   Future<void> beginAquaHubSetup() async {
@@ -188,6 +247,13 @@ final class HomeControlController extends ChangeNotifier {
   Future<void> cancelSetup() async {
     await _disposeHubSetup();
     _failure = null;
+    if (_setupFromActiveSource && _source != null && _snapshot != null) {
+      _setupFromActiveSource = false;
+      _phase = HomeControlPhase.ready;
+      _notify();
+      return;
+    }
+    _setupFromActiveSource = false;
     _setupStep = HomeSetupStep.sourceSelection;
     _phase = HomeControlPhase.onboarding;
     _notify();
@@ -210,6 +276,7 @@ final class HomeControlController extends ChangeNotifier {
     await _preferences.clearActiveSource();
     _failure = null;
     _noticeKey = null;
+    _setupFromActiveSource = false;
     _setupStep = HomeSetupStep.sourceSelection;
     _phase = HomeControlPhase.onboarding;
     _notify();
@@ -440,7 +507,11 @@ final class HomeControlController extends ChangeNotifier {
         );
         break;
       case HomeSourceKind.homeAssistant:
-        final credentials = await _homeAssistantCredentialsStore.load();
+        await _reloadHomeAssistantProfiles();
+        final profileId = _selectedHomeAssistantProfileId;
+        final credentials = profileId == null
+            ? await _homeAssistantCredentialsStore.load()
+            : await _profileStore?.loadProfile(profileId);
         if (credentials == null) {
           await _preferences.clearActiveSource();
           beginHomeAssistantSetup();
@@ -450,6 +521,7 @@ final class HomeControlController extends ChangeNotifier {
           HomeAssistantDataSource(
             credentials: credentials,
             credentialsStore: _homeAssistantCredentialsStore,
+            instanceId: profileId ?? 'ha-main',
           ),
           persistSelection: false,
         );
@@ -486,7 +558,7 @@ final class HomeControlController extends ChangeNotifier {
       return true;
     } on AppFailure catch (failure) {
       _failure = failure;
-      if (!await _restoreCachedSnapshot(source.kind)) {
+      if (!await _restoreCachedSnapshot(source.kind, source.sourceId)) {
         _phase = HomeControlPhase.failure;
       }
     } on OperationCancelled {
@@ -496,7 +568,7 @@ final class HomeControlController extends ChangeNotifier {
         code: AppFailureCode.unknown,
         messageKey: 'errorUnknown',
       );
-      if (!await _restoreCachedSnapshot(source.kind)) {
+      if (!await _restoreCachedSnapshot(source.kind, source.sourceId)) {
         _phase = HomeControlPhase.failure;
       }
     }
@@ -504,11 +576,14 @@ final class HomeControlController extends ChangeNotifier {
     return false;
   }
 
-  Future<bool> _restoreCachedSnapshot(HomeSourceKind kind) async {
+  Future<bool> _restoreCachedSnapshot(
+    HomeSourceKind kind,
+    String expectedSourceId,
+  ) async {
     if (kind == HomeSourceKind.demo) return false;
     try {
       final cached = await _snapshotCache.load(kind);
-      if (cached == null) return false;
+      if (cached == null || cached.sourceId != expectedSourceId) return false;
       _snapshot = cached;
       _phase = HomeControlPhase.ready;
       _consecutiveFailures = 1;
@@ -623,6 +698,29 @@ final class HomeControlController extends ChangeNotifier {
       controller.removeListener(_handleHubSetupChange);
       controller.dispose();
     }
+  }
+
+  HomeAssistantProfileStore? get _profileStore =>
+      _homeAssistantCredentialsStore is HomeAssistantProfileStore
+      ? _homeAssistantCredentialsStore as HomeAssistantProfileStore
+      : null;
+
+  Future<void> _reloadHomeAssistantProfiles() async {
+    final store = _profileStore;
+    if (store == null) return;
+    _homeAssistantProfiles = await store.listProfiles();
+    _selectedHomeAssistantProfileId = await store.selectedProfileId();
+  }
+
+  static String _normalizedProfileName(String? value, Uri baseUri) {
+    final normalized = value?.trim() ?? '';
+    if (normalized.isNotEmpty) return normalized;
+    return baseUri.host.isNotEmpty ? baseUri.host : 'Home Assistant';
+  }
+
+  static String _newProfileId() {
+    final micros = DateTime.now().microsecondsSinceEpoch.toRadixString(36);
+    return 'ha-${micros.padLeft(8, '0')}';
   }
 
   void _notify() {

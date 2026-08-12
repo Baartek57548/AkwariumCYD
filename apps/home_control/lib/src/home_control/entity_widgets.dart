@@ -372,6 +372,10 @@ final class _EntityDetailsState extends State<_EntityDetails> {
                   const SizedBox(height: ProductSpacing.md),
                   if (entity.type == HomeEntityType.unknown)
                     _Hint(text: strings.t('unknownEntityHint')),
+                  if (entity.attributes.isNotEmpty) ...<Widget>[
+                    const SizedBox(height: ProductSpacing.md),
+                    _EntityAttributes(entity: entity),
+                  ],
                   if (entity.writable) ...<Widget>[
                     const SizedBox(height: ProductSpacing.md),
                     _DetailedControl(
@@ -437,6 +441,25 @@ final class _EntityDetailsState extends State<_EntityDetails> {
                   ],
                   const SizedBox(height: ProductSpacing.lg),
                   Text(
+                    strings.withValue(
+                      'entitySource',
+                      widget.controller.snapshot?.sourceName ??
+                          entity.id.sourceId,
+                    ),
+                    style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                      color: Theme.of(context).colorScheme.onSurfaceVariant,
+                    ),
+                  ),
+                  Text(
+                    strings.withValue(
+                      'entityUpdated',
+                      strings.relativeTime(entity.updatedAt),
+                    ),
+                    style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                      color: Theme.of(context).colorScheme.onSurfaceVariant,
+                    ),
+                  ),
+                  Text(
                     entity.id.value,
                     style: Theme.of(context).textTheme.bodySmall?.copyWith(
                       color: Theme.of(context).colorScheme.onSurfaceVariant,
@@ -470,6 +493,96 @@ final class _DetailedControlState extends State<_DetailedControl> {
   @override
   Widget build(BuildContext context) {
     final strings = HomeControlStrings.of(context);
+    if (entity.type == HomeEntityType.cover) {
+      return SegmentedButton<bool>(
+        segments: <ButtonSegment<bool>>[
+          ButtonSegment<bool>(
+            value: false,
+            label: Text(strings.t('closeCover')),
+            icon: const Icon(Icons.vertical_align_bottom_rounded),
+          ),
+          ButtonSegment<bool>(
+            value: true,
+            label: Text(strings.t('openCover')),
+            icon: const Icon(Icons.vertical_align_top_rounded),
+          ),
+        ],
+        selected: <bool>{entity.booleanValue == true},
+        onSelectionChanged: (selection) => widget.onValue(selection.first),
+      );
+    }
+    if (entity.type == HomeEntityType.lock) {
+      return SegmentedButton<bool>(
+        segments: <ButtonSegment<bool>>[
+          ButtonSegment<bool>(
+            value: false,
+            label: Text(strings.t('lockAction')),
+            icon: const Icon(Icons.lock_rounded),
+          ),
+          ButtonSegment<bool>(
+            value: true,
+            label: Text(strings.t('unlockAction')),
+            icon: const Icon(Icons.lock_open_rounded),
+          ),
+        ],
+        selected: <bool>{entity.booleanValue == true},
+        onSelectionChanged: (selection) => widget.onValue(selection.first),
+      );
+    }
+    if (entity.type == HomeEntityType.alarmControlPanel) {
+      const modes = <String>[
+        'disarmed',
+        'armed_home',
+        'armed_away',
+        'armed_night',
+      ];
+      final current = modes.contains(entity.state)
+          ? entity.state as String
+          : null;
+      return DropdownButtonFormField<String>(
+        initialValue: current,
+        decoration: InputDecoration(labelText: strings.t('alarmMode')),
+        items: <DropdownMenuItem<String>>[
+          for (final mode in modes)
+            DropdownMenuItem<String>(
+              value: mode,
+              child: Text(strings.t('alarm_$mode')),
+            ),
+        ],
+        onChanged: (value) {
+          if (value != null) widget.onValue(value);
+        },
+      );
+    }
+    if (entity.type == HomeEntityType.vacuum ||
+        entity.type == HomeEntityType.mediaPlayer) {
+      return SegmentedButton<bool>(
+        segments: <ButtonSegment<bool>>[
+          ButtonSegment<bool>(
+            value: false,
+            label: Text(
+              strings.t(
+                entity.type == HomeEntityType.vacuum
+                    ? 'returnToBase'
+                    : 'turnOff',
+              ),
+            ),
+            icon: const Icon(Icons.stop_rounded),
+          ),
+          ButtonSegment<bool>(
+            value: true,
+            label: Text(
+              strings.t(
+                entity.type == HomeEntityType.vacuum ? 'start' : 'turnOn',
+              ),
+            ),
+            icon: const Icon(Icons.play_arrow_rounded),
+          ),
+        ],
+        selected: <bool>{entity.booleanValue == true},
+        onSelectionChanged: (selection) => widget.onValue(selection.first),
+      );
+    }
     if (entity.type.supportsToggle) {
       final value = entity.booleanValue == true;
       return SegmentedButton<bool>(
@@ -515,13 +628,19 @@ final class _DetailedControlState extends State<_DetailedControl> {
     if (<HomeEntityType>{
       HomeEntityType.number,
       HomeEntityType.inputNumber,
+      HomeEntityType.climate,
     }.contains(entity.type)) {
       final min = entity.constraints.minimum ?? 0;
       final max = entity.constraints.maximum ?? 100;
-      final current = (_draftNumber ?? entity.numericValue ?? min).clamp(
-        min,
-        max,
-      );
+      final attributeTemperature = entity.attributes['temperature'];
+      final temperature = attributeTemperature is num
+          ? attributeTemperature.toDouble()
+          : double.tryParse(attributeTemperature?.toString() ?? '');
+      final current =
+          (_draftNumber ?? entity.numericValue ?? temperature ?? min).clamp(
+            min,
+            max,
+          );
       return Column(
         children: <Widget>[
           Slider(
@@ -540,6 +659,21 @@ final class _DetailedControlState extends State<_DetailedControl> {
         ],
       );
     }
+    if (<HomeEntityType>{
+      HomeEntityType.text,
+      HomeEntityType.inputText,
+    }.contains(entity.type)) {
+      return TextFormField(
+        initialValue: entity.state?.toString() ?? '',
+        maxLength: 255,
+        textInputAction: TextInputAction.done,
+        decoration: InputDecoration(
+          labelText: strings.t('textValue'),
+          suffixIcon: const Icon(Icons.send_rounded),
+        ),
+        onFieldSubmitted: widget.onValue,
+      );
+    }
     return _Hint(text: strings.t('errorUnsupported'));
   }
 
@@ -547,6 +681,55 @@ final class _DetailedControlState extends State<_DetailedControl> {
     final step = entity.constraints.step;
     if (step == null || step <= 0 || max <= min) return null;
     return math.max(1, ((max - min) / step).round()).clamp(1, 1000).toInt();
+  }
+}
+
+final class _EntityAttributes extends StatelessWidget {
+  const _EntityAttributes({required this.entity});
+
+  final HomeEntity entity;
+
+  @override
+  Widget build(BuildContext context) {
+    final strings = HomeControlStrings.of(context);
+    final entries = entity.attributes.entries
+        .where((entry) => !_hiddenAttributes.contains(entry.key))
+        .take(12)
+        .toList(growable: false);
+    if (entries.isEmpty) return const SizedBox.shrink();
+    return ExpansionTile(
+      tilePadding: EdgeInsets.zero,
+      title: Text(strings.t('attributes')),
+      children: <Widget>[
+        for (final entry in entries)
+          ListTile(
+            dense: true,
+            contentPadding: EdgeInsets.zero,
+            title: Text(entry.key.replaceAll('_', ' ')),
+            trailing: ConstrainedBox(
+              constraints: const BoxConstraints(maxWidth: 190),
+              child: Text(
+                _safeAttributeText(entry.value),
+                maxLines: 3,
+                overflow: TextOverflow.ellipsis,
+                textAlign: TextAlign.end,
+              ),
+            ),
+          ),
+      ],
+    );
+  }
+
+  static const Set<String> _hiddenAttributes = <String>{
+    'access_token',
+    'api_key',
+    'password',
+    'token',
+  };
+
+  static String _safeAttributeText(Object? value) {
+    final text = value?.toString() ?? '—';
+    return text.length <= 240 ? text : '${text.substring(0, 237)}…';
   }
 }
 

@@ -206,12 +206,14 @@ final class _HomeAssistantSetupState extends State<_HomeAssistantSetup> {
   final _formKey = GlobalKey<FormState>();
   final _url = TextEditingController();
   final _token = TextEditingController();
+  final _profileName = TextEditingController();
   bool _obscure = true;
 
   @override
   void dispose() {
     _url.dispose();
     _token.dispose();
+    _profileName.dispose();
     super.dispose();
   }
 
@@ -248,6 +250,16 @@ final class _HomeAssistantSetupState extends State<_HomeAssistantSetup> {
                           ?.copyWith(fontWeight: FontWeight.w900),
                     ),
                     const SizedBox(height: ProductSpacing.lg),
+                    TextFormField(
+                      controller: _profileName,
+                      textInputAction: TextInputAction.next,
+                      maxLength: 80,
+                      decoration: InputDecoration(
+                        labelText: strings.t('haProfileName'),
+                        hintText: strings.t('haProfileNameHint'),
+                        prefixIcon: const Icon(Icons.label_outline_rounded),
+                      ),
+                    ),
                     TextFormField(
                       controller: _url,
                       keyboardType: TextInputType.url,
@@ -357,6 +369,7 @@ final class _HomeAssistantSetupState extends State<_HomeAssistantSetup> {
     await widget.controller.configureHomeAssistant(
       baseUrl: _url.text,
       accessToken: _token.text,
+      profileName: _profileName.text,
     );
   }
 }
