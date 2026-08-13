@@ -33,6 +33,8 @@ firmware/esp32c6_gateway/main/aquahub.pem
 # maintained applications live under apps/; these roots contain only generated
 # build caches, IDE state and local signing material.
 .codex-remote-attachments/
+/MASTER_PROMPT_ODYSEUS_CODEX.md
 /home_assistant_app/
 /mobile_app/
 /web — kopia/
+/web/settings_architecture_proposal.png
