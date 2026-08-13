@@ -1,6 +1,9 @@
 import 'dart:convert';
+import 'dart:io';
 
 import 'package:aquacyd_home/src/data/home_assistant_api.dart';
+import 'package:aquacyd_home/src/data/home_assistant_network_policy.dart';
+import 'package:aquacyd_home/src/data/home_assistant_socket.dart';
 import 'package:aquacyd_home/src/domain/entity_ids.dart';
 import 'package:aquacyd_home/src/domain/models.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -168,6 +171,172 @@ void main() {
       () => api.fetchHistory('sensor.unknown', const Duration(hours: 1)),
       throwsArgumentError,
     );
+  });
+
+  test('nie przekazuje tokenu przez przekierowanie HTTP', () async {
+    var requests = 0;
+    final api = HomeAssistantApi(
+      credentials,
+      client: MockClient((_) async {
+        requests++;
+        return http.Response(
+          '',
+          HttpStatus.found,
+          headers: const <String, String>{
+            'location': 'http://public.example.net/steal-token',
+          },
+        );
+      }),
+    );
+
+    await expectLater(
+      api.fetchConfig(),
+      throwsA(
+        isA<HomeAssistantFailure>().having(
+          (failure) => failure.type,
+          'type',
+          HomeAssistantFailureType.server,
+        ),
+      ),
+    );
+    expect(requests, 1);
+  });
+
+  test('odrzuca lokalną nazwę HTTP rozwiązaną do publicznego IP', () async {
+    final localCredentials = HomeAssistantCredentials.parse(
+      baseUrl: 'http://homeassistant.local:8123',
+      accessToken: token,
+    );
+    final api = HomeAssistantApi(
+      localCredentials,
+      hostResolver: (_) async => <InternetAddress>[
+        InternetAddress('203.0.113.10'),
+      ],
+      client: MockClient(
+        (_) async => fail('Publiczny cel HTTP nie może otrzymać żądania.'),
+      ),
+    );
+
+    await expectLater(
+      api.fetchConfig(),
+      throwsA(
+        isA<HomeAssistantFailure>().having(
+          (failure) => failure.type,
+          'type',
+          HomeAssistantFailureType.network,
+        ),
+      ),
+    );
+  });
+
+  test('przypina lokalne żądanie HTTP do zweryfikowanego adresu IP', () async {
+    final localCredentials = HomeAssistantCredentials.parse(
+      baseUrl: 'http://homeassistant.local:8123',
+      accessToken: token,
+    );
+    final api = HomeAssistantApi(
+      localCredentials,
+      hostResolver: (_) async => <InternetAddress>[
+        InternetAddress('192.168.1.25'),
+      ],
+      client: MockClient((request) async {
+        expect(request.url.host, '192.168.1.25');
+        expect(
+          request.headers[HttpHeaders.hostHeader],
+          'homeassistant.local:8123',
+        );
+        expect(
+          request.headers[HttpHeaders.authorizationHeader],
+          'Bearer $token',
+        );
+        return http.Response(
+          jsonEncode(<String, Object?>{
+            'location_name': 'Dom',
+            'version': '2026.8.0',
+            'time_zone': 'Europe/Warsaw',
+          }),
+          200,
+        );
+      }),
+    );
+
+    final config = await api.fetchConfig();
+
+    expect(config.locationName, 'Dom');
+  });
+
+  test(
+    'nie otwiera ws ani nie wysyła tokenu po zmianie DNS na publiczny',
+    () async {
+      final localCredentials = HomeAssistantCredentials.parse(
+        baseUrl: 'http://homeassistant.local:8123',
+        accessToken: token,
+      );
+      var channelCreations = 0;
+      final socket = HomeAssistantSocket(
+        localCredentials,
+        hostResolver: (_) async => <InternetAddress>[
+          InternetAddress('203.0.113.10'),
+        ],
+        channelFactory: (_, _) {
+          channelCreations++;
+          fail('Kanał WebSocket nie może zostać utworzony dla publicznego IP.');
+        },
+      );
+      addTearDown(socket.dispose);
+
+      await expectLater(
+        socket.connect(),
+        throwsA(isA<HomeAssistantNetworkPolicyException>()),
+      );
+      expect(channelCreations, 0);
+      expect(socket.status, HomeAssistantSocketStatus.disconnected);
+    },
+  );
+
+  test('WebSocket nie podąża za przekierowaniem handshake', () async {
+    var redirectedRequests = 0;
+    final redirectedServer = await HttpServer.bind(
+      InternetAddress.loopbackIPv4,
+      0,
+    );
+    final redirectedSubscription = redirectedServer.listen((request) async {
+      redirectedRequests++;
+      request.response.statusCode = HttpStatus.badRequest;
+      await request.response.close();
+    });
+    final redirectServer = await HttpServer.bind(
+      InternetAddress.loopbackIPv4,
+      0,
+    );
+    final redirectSubscription = redirectServer.listen((request) async {
+      request.response
+        ..statusCode = HttpStatus.found
+        ..headers.set(
+          HttpHeaders.locationHeader,
+          'http://127.0.0.1:${redirectedServer.port}/api/websocket',
+        );
+      await request.response.close();
+    });
+    addTearDown(() async {
+      await redirectSubscription.cancel();
+      await redirectedSubscription.cancel();
+      await redirectServer.close(force: true);
+      await redirectedServer.close(force: true);
+    });
+    final localCredentials = HomeAssistantCredentials.parse(
+      baseUrl: 'http://127.0.0.1:${redirectServer.port}',
+      accessToken: token,
+    );
+    final socket = HomeAssistantSocket(
+      localCredentials,
+      connectionTimeout: const Duration(seconds: 1),
+    );
+
+    await socket.connect();
+    await socket.dispose();
+
+    expect(redirectedRequests, 0);
   });
 }
 

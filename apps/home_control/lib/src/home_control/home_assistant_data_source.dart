@@ -6,6 +6,7 @@ import 'package:secure_connectivity/secure_connectivity.dart';
 
 import '../data/credentials_store.dart';
 import '../data/home_assistant_api.dart';
+import '../data/home_assistant_network_policy.dart';
 import '../data/home_assistant_socket.dart';
 import '../domain/models.dart';
 import 'data_source.dart';
@@ -73,9 +74,17 @@ final class HomeAssistantDataSource
       final socket = _socketFactory(_credentials);
       _socket = socket;
       _stateSubscription = socket.states.listen(_handleState);
-      await cancellation.bind(socket.connect());
       try {
+        await cancellation.bind(socket.connect());
         _registry = await cancellation.bind(socket.fetchRegistryMetadata());
+      } on OperationCancelled {
+        rethrow;
+      } on HomeAssistantNetworkPolicyException {
+        await _stateSubscription?.cancel();
+        _stateSubscription = null;
+        _socket = null;
+        await socket.dispose();
+        _registry = const HaRegistryMetadata.empty();
       } on Object {
         _registry = const HaRegistryMetadata.empty();
       }
@@ -86,6 +95,9 @@ final class HomeAssistantDataSource
       api.close();
       _api = null;
       throw mapHomeAssistantFailure(failure);
+    } on OperationCancelled {
+      await _closeTransports();
+      rethrow;
     }
   }
 

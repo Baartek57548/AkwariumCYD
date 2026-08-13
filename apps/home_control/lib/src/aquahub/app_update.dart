@@ -11,6 +11,8 @@ import 'package:http/http.dart' as http;
 
 import '../home_control/strings.dart';
 
+const homeControlVersionLabel = '2.0.1+6';
+
 const _githubReleasesUri =
     'https://api.github.com/repos/Baartek57548/AkwariumCYD/releases?per_page=20';
 const _platformChannelName = 'pl.aquacyd.aquacyd_home/app_update';
@@ -656,31 +658,38 @@ final class AppUpdateDialog extends StatelessWidget {
           ),
           content: SizedBox(
             width: 440,
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: <Widget>[
-                Text(_dialogMessage(controller, strings)),
-                if (phase == AppUpdatePhase.downloading) ...<Widget>[
-                  const SizedBox(height: 18),
-                  LinearProgressIndicator(value: controller.progress),
-                  const SizedBox(height: 8),
-                  Text(
-                    '${(controller.progress * 100).round()}%',
-                    textAlign: TextAlign.center,
-                  ),
-                ],
-                if (phase == AppUpdatePhase.failed &&
-                    controller.errorMessage != null) ...<Widget>[
-                  const SizedBox(height: 12),
-                  Text(
-                    controller.errorMessage!,
-                    style: TextStyle(
-                      color: Theme.of(context).colorScheme.error,
-                    ),
-                  ),
-                ],
-              ],
+            child: ConstrainedBox(
+              constraints: BoxConstraints(
+                maxHeight: MediaQuery.sizeOf(context).height * 0.55,
+              ),
+              child: SingleChildScrollView(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: <Widget>[
+                    Text(_dialogMessage(controller, strings)),
+                    if (phase == AppUpdatePhase.downloading) ...<Widget>[
+                      const SizedBox(height: 18),
+                      LinearProgressIndicator(value: controller.progress),
+                      const SizedBox(height: 8),
+                      Text(
+                        '${(controller.progress * 100).round()}%',
+                        textAlign: TextAlign.center,
+                      ),
+                    ],
+                    if (phase == AppUpdatePhase.failed &&
+                        controller.errorMessage != null) ...<Widget>[
+                      const SizedBox(height: 12),
+                      Text(
+                        controller.errorMessage!,
+                        style: TextStyle(
+                          color: Theme.of(context).colorScheme.error,
+                        ),
+                      ),
+                    ],
+                  ],
+                ),
+              ),
             ),
           ),
           actions: _dialogActions(

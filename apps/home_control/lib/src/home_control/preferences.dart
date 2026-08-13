@@ -1,3 +1,5 @@
+import 'dart:ui' as ui;
+
 import 'package:flutter/material.dart';
 import 'package:home_entities/home_entities.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -35,8 +37,12 @@ final class DashboardPreferences {
 }
 
 final class HomeControlPreferences {
-  HomeControlPreferences({SharedPreferencesAsync? storage})
-    : _storage = storage ?? SharedPreferencesAsync();
+  HomeControlPreferences({
+    SharedPreferencesAsync? storage,
+    Locale? fallbackLocale,
+  }) : _storage = storage ?? SharedPreferencesAsync(),
+       _fallbackLocale =
+           fallbackLocale ?? ui.PlatformDispatcher.instance.locale;
 
   static const _schemaVersion = 2;
   static const _schemaKey = 'home_control_schema_version';
@@ -51,6 +57,7 @@ final class HomeControlPreferences {
       'home_control_biometric_critical_actions';
 
   final SharedPreferencesAsync _storage;
+  final Locale _fallbackLocale;
 
   Future<void> migrate() async {
     var current = await _storage.getInt(_schemaKey) ?? 0;
@@ -94,7 +101,8 @@ final class HomeControlPreferences {
 
   Future<Locale> loadLocale() async {
     final language = await _storage.getString(_localeKey);
-    return Locale(language == 'en' ? 'en' : 'pl');
+    if (language == 'pl' || language == 'en') return Locale(language!);
+    return Locale(_fallbackLocale.languageCode == 'en' ? 'en' : 'pl');
   }
 
   Future<void> saveLocale(Locale locale) =>
@@ -109,11 +117,13 @@ final class HomeControlPreferences {
   Future<DashboardPreferences> loadDashboard() async {
     const defaults = DashboardPreferences.defaults();
     final order = await _storage.getStringList(_dashboardOrderKey);
+    final seen = <String>{};
+    final storedOrder = order ?? defaults.order;
     final validOrder = <String>[
-      for (final id in order ?? defaults.order)
-        if (defaults.order.contains(id)) id,
+      for (final id in storedOrder)
+        if (defaults.order.contains(id) && seen.add(id)) id,
       for (final id in defaults.order)
-        if (!(order ?? const <String>[]).contains(id)) id,
+        if (seen.add(id)) id,
     ];
     return DashboardPreferences(
       order: validOrder,

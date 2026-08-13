@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
+import '../home_control/strings.dart';
 import 'app.dart';
 import 'controller.dart';
 import 'demo_page.dart';
@@ -10,11 +11,13 @@ final class HubSetupPage extends StatefulWidget {
   const HubSetupPage({
     required this.controller,
     required this.discoveryService,
+    this.onBack,
     super.key,
   });
 
   final HubController controller;
   final HubDiscoveryService discoveryService;
+  final VoidCallback? onBack;
 
   @override
   State<HubSetupPage> createState() => _HubSetupPageState();
@@ -29,6 +32,7 @@ final class _HubSetupPageState extends State<HubSetupPage> {
   bool _busy = false;
   bool _scanning = false;
   bool _scanCompleted = false;
+  String? _scanErrorKey;
   String? _scanError;
   bool _fingerprintConfirmed = false;
 
@@ -48,7 +52,20 @@ final class _HubSetupPageState extends State<HubSetupPage> {
   @override
   Widget build(BuildContext context) {
     final info = widget.controller.discoveredInfo;
+    final strings = HomeControlStrings.of(context);
+    final controllerError = widget.controller.errorKey == null
+        ? widget.controller.errorMessage
+        : strings.t(widget.controller.errorKey!);
     return Scaffold(
+      appBar: widget.onBack == null
+          ? null
+          : AppBar(
+              leading: IconButton(
+                tooltip: MaterialLocalizations.of(context).backButtonTooltip,
+                onPressed: widget.onBack,
+                icon: const Icon(Icons.arrow_back_rounded),
+              ),
+            ),
       body: SafeArea(
         child: Center(
           child: SingleChildScrollView(
@@ -64,16 +81,18 @@ final class _HubSetupPageState extends State<HubSetupPage> {
                   ),
                   const SizedBox(height: 24),
                   Text(
-                    info == null ? 'Witaj w AquaHub' : 'Potwierdź panel',
+                    strings.t(info == null ? 'hubWelcome' : 'hubConfirmPanel'),
                     style: Theme.of(context).textTheme.headlineMedium?.copyWith(
                       fontWeight: FontWeight.w800,
                     ),
                   ),
                   const SizedBox(height: 10),
                   Text(
-                    info == null
-                        ? 'Natywna aplikacja sama odnajduje panel ESP32‑P4 w sieci lokalnej. Po jednorazowym parowaniu otworzy pełny pulpit urządzeń, czujników, automatyzacji i aktualizacji.'
-                        : 'To ostatni krok. Porównaj odcisk certyfikatu z ekranem System na fizycznym panelu i wpisz wyświetlony kod.',
+                    strings.t(
+                      info == null
+                          ? 'hubWelcomeDescription'
+                          : 'hubConfirmDescription',
+                    ),
                     style: TextStyle(
                       color: Theme.of(context).colorScheme.onSurfaceVariant,
                       height: 1.45,
@@ -88,12 +107,12 @@ final class _HubSetupPageState extends State<HubSetupPage> {
                           : _pairingForm(),
                     ),
                   ),
-                  if (widget.controller.errorMessage != null) ...<Widget>[
+                  if (controllerError != null) ...<Widget>[
                     const SizedBox(height: 14),
                     Semantics(
                       liveRegion: true,
                       child: Text(
-                        widget.controller.errorMessage!,
+                        controllerError,
                         style: TextStyle(
                           color: Theme.of(context).colorScheme.error,
                           fontWeight: FontWeight.w600,
@@ -106,7 +125,7 @@ final class _HubSetupPageState extends State<HubSetupPage> {
                     OutlinedButton.icon(
                       onPressed: _busy ? null : _openDemo,
                       icon: const Icon(Icons.dashboard_customize_outlined),
-                      label: const Text('Zobacz pełną aplikację w trybie demo'),
+                      label: Text(strings.t('hubDemo')),
                     ),
                   ],
                   const SizedBox(height: 18),
@@ -118,11 +137,7 @@ final class _HubSetupPageState extends State<HubSetupPage> {
                         color: Theme.of(context).colorScheme.primary,
                       ),
                       const SizedBox(width: 10),
-                      const Expanded(
-                        child: Text(
-                          'Sterownik CYD pozostaje autonomiczny. Token trafia do szyfrowanego magazynu systemu, a dostęp zdalny działa przez VPN.',
-                        ),
-                      ),
+                      Expanded(child: Text(strings.t('hubAutonomyHint'))),
                     ],
                   ),
                 ],
@@ -135,6 +150,7 @@ final class _HubSetupPageState extends State<HubSetupPage> {
   }
 
   Widget _discoveryContent() {
+    final strings = HomeControlStrings.of(context);
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: <Widget>[
@@ -155,24 +171,27 @@ final class _HubSetupPageState extends State<HubSetupPage> {
                 children: <Widget>[
                   Text(
                     _scanning
-                        ? 'Szukam panelu w sieci…'
+                        ? strings.t('hubSearching')
                         : _hubs.isNotEmpty
-                        ? 'Wybierz znaleziony panel'
-                        : 'Automatyczne wykrywanie',
+                        ? strings.t('hubChooseFound')
+                        : strings.t('hubAutoDiscovery'),
                     style: Theme.of(context).textTheme.titleMedium?.copyWith(
                       fontWeight: FontWeight.w800,
                     ),
                   ),
                   Text(
                     _scanning
-                        ? 'Telefon i AquaHub muszą być w tej samej sieci Wi‑Fi.'
+                        ? strings.t('hubSameWifi')
                         : _hubs.isNotEmpty
-                        ? 'Połączenie zostanie zweryfikowane przez HTTPS.'
-                        : _scanError != null
-                        ? _scanError!
+                        ? strings.t('hubHttpsVerified')
+                        : _scanErrorKey != null
+                        ? strings.locale.languageCode == 'pl' &&
+                                  _scanError != null
+                              ? _scanError!
+                              : strings.t(_scanErrorKey!)
                         : _scanCompleted
-                        ? 'Nie znaleziono panelu. Sprawdź Wi‑Fi i zasilanie P4.'
-                        : 'Aplikacja używa natywnego Bonjour/mDNS.',
+                        ? strings.t('hubNotFound')
+                        : strings.t('hubMdns'),
                     style: TextStyle(
                       color: Theme.of(context).colorScheme.onSurfaceVariant,
                     ),
@@ -181,7 +200,7 @@ final class _HubSetupPageState extends State<HubSetupPage> {
               ),
             ),
             IconButton(
-              tooltip: 'Skanuj ponownie',
+              tooltip: strings.t('scanAgain'),
               onPressed: _scanning || _busy ? null : _scan,
               icon: const Icon(Icons.refresh_rounded),
             ),
@@ -215,8 +234,8 @@ final class _HubSetupPageState extends State<HubSetupPage> {
           tilePadding: EdgeInsets.zero,
           childrenPadding: EdgeInsets.zero,
           leading: const Icon(Icons.tune_rounded),
-          title: const Text('Połączenie zaawansowane'),
-          subtitle: const Text('Ręczny adres tylko gdy mDNS jest zablokowany'),
+          title: Text(strings.t('hubAdvancedConnection')),
+          subtitle: Text(strings.t('hubManualOnly')),
           children: <Widget>[
             const SizedBox(height: 8),
             TextField(
@@ -224,9 +243,9 @@ final class _HubSetupPageState extends State<HubSetupPage> {
               enabled: !_busy,
               keyboardType: TextInputType.url,
               autocorrect: false,
-              decoration: const InputDecoration(
-                labelText: 'Adres HTTPS panelu',
-                prefixIcon: Icon(Icons.link_rounded),
+              decoration: InputDecoration(
+                labelText: strings.t('hubHttpsAddress'),
+                prefixIcon: const Icon(Icons.link_rounded),
               ),
             ),
             const SizedBox(height: 14),
@@ -238,7 +257,7 @@ final class _HubSetupPageState extends State<HubSetupPage> {
                       child: CircularProgressIndicator(strokeWidth: 2),
                     )
                   : const Icon(Icons.lock_open_rounded),
-              label: const Text('Połącz ręcznie'),
+              label: Text(strings.t('connectManually')),
             ),
           ],
         ),
@@ -248,6 +267,7 @@ final class _HubSetupPageState extends State<HubSetupPage> {
 
   Widget _pairingForm() {
     final info = widget.controller.discoveredInfo!;
+    final strings = HomeControlStrings.of(context);
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: <Widget>[
@@ -258,16 +278,16 @@ final class _HubSetupPageState extends State<HubSetupPage> {
             info.hostname,
             style: const TextStyle(fontWeight: FontWeight.w800),
           ),
-          subtitle: const Text('AquaHub ESP32‑P4 · bezpieczne HTTPS'),
+          subtitle: Text(strings.t('hubSecureHttps')),
           trailing: IconButton(
-            tooltip: 'Wybierz inny panel',
+            tooltip: strings.t('chooseAnotherHub'),
             onPressed: _busy ? null : _chooseAnotherHub,
             icon: const Icon(Icons.swap_horiz_rounded),
           ),
         ),
         const Divider(height: 28),
         Text(
-          'Odcisk certyfikatu SHA‑256',
+          strings.t('certificateFingerprint'),
           style: Theme.of(context).textTheme.labelLarge,
         ),
         const SizedBox(height: 8),
@@ -284,7 +304,7 @@ final class _HubSetupPageState extends State<HubSetupPage> {
               ? null
               : (value) =>
                     setState(() => _fingerprintConfirmed = value == true),
-          title: const Text('Odcisk jest identyczny jak na panelu'),
+          title: Text(strings.t('fingerprintMatches')),
         ),
         const SizedBox(height: 10),
         TextField(
@@ -296,9 +316,9 @@ final class _HubSetupPageState extends State<HubSetupPage> {
             FilteringTextInputFormatter.digitsOnly,
             LengthLimitingTextInputFormatter(6),
           ],
-          decoration: const InputDecoration(
-            labelText: '6‑cyfrowy kod z panelu',
-            prefixIcon: Icon(Icons.pin_outlined),
+          decoration: InputDecoration(
+            labelText: strings.t('pairingCode'),
+            prefixIcon: const Icon(Icons.pin_outlined),
           ),
           onSubmitted: (_) {
             if (!_busy) _pair();
@@ -313,7 +333,7 @@ final class _HubSetupPageState extends State<HubSetupPage> {
                   child: CircularProgressIndicator(strokeWidth: 2),
                 )
               : const Icon(Icons.verified_user_outlined),
-          label: const Text('Sparuj i otwórz pulpit'),
+          label: Text(strings.t('pairAndOpen')),
         ),
       ],
     );
@@ -324,6 +344,7 @@ final class _HubSetupPageState extends State<HubSetupPage> {
     setState(() {
       _scanning = true;
       _scanCompleted = false;
+      _scanErrorKey = null;
       _scanError = null;
     });
     try {
@@ -341,6 +362,7 @@ final class _HubSetupPageState extends State<HubSetupPage> {
         _hubs = const <DiscoveredHub>[];
         _scanning = false;
         _scanCompleted = true;
+        _scanErrorKey = 'hubDiscoveryFailed';
         _scanError = error.message;
       });
     } on Object {
@@ -349,7 +371,8 @@ final class _HubSetupPageState extends State<HubSetupPage> {
         _hubs = const <DiscoveredHub>[];
         _scanning = false;
         _scanCompleted = true;
-        _scanError = 'Nie udało się uruchomić wykrywania AquaHub.';
+        _scanErrorKey = 'hubDiscoveryFailed';
+        _scanError = null;
       });
     }
   }

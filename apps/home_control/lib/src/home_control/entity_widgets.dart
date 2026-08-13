@@ -67,36 +67,40 @@ final class SourceStatusBanner extends StatelessWidget {
             : snapshot.isPartial
             ? 'partial'
             : 'stale');
-    return Material(
-      color: background,
-      child: SafeArea(
-        bottom: false,
-        child: Padding(
-          padding: const EdgeInsets.symmetric(
-            horizontal: ProductSpacing.md,
-            vertical: ProductSpacing.sm,
-          ),
-          child: Row(
-            children: <Widget>[
-              Icon(
-                critical ? Icons.cloud_off_rounded : Icons.schedule_rounded,
-                color: foreground,
-              ),
-              const SizedBox(width: ProductSpacing.sm),
-              Expanded(
-                child: Text(
-                  strings.t(keyName),
-                  style: TextStyle(color: foreground),
-                ),
-              ),
-              if (failureKey != null)
-                IconButton(
-                  tooltip: strings.t('dismiss'),
-                  onPressed: onDismiss,
+    return Semantics(
+      liveRegion: true,
+      container: true,
+      child: Material(
+        color: background,
+        child: SafeArea(
+          bottom: false,
+          child: Padding(
+            padding: const EdgeInsets.symmetric(
+              horizontal: ProductSpacing.md,
+              vertical: ProductSpacing.sm,
+            ),
+            child: Row(
+              children: <Widget>[
+                Icon(
+                  critical ? Icons.cloud_off_rounded : Icons.schedule_rounded,
                   color: foreground,
-                  icon: const Icon(Icons.close_rounded),
                 ),
-            ],
+                const SizedBox(width: ProductSpacing.sm),
+                Expanded(
+                  child: Text(
+                    strings.t(keyName),
+                    style: TextStyle(color: foreground),
+                  ),
+                ),
+                if (failureKey != null)
+                  IconButton(
+                    tooltip: strings.t('dismiss'),
+                    onPressed: onDismiss,
+                    color: foreground,
+                    icon: const Icon(Icons.close_rounded),
+                  ),
+              ],
+            ),
           ),
         ),
       ),
@@ -305,6 +309,8 @@ final class _EntityDetails extends StatefulWidget {
 }
 
 final class _EntityDetailsState extends State<_EntityDetails> {
+  String? _commandFailureKey;
+
   @override
   Widget build(BuildContext context) {
     return AnimatedBuilder(
@@ -321,6 +327,13 @@ final class _EntityDetailsState extends State<_EntityDetails> {
         final favorite = widget.controller.dashboard.favorites.contains(
           entity.id.value,
         );
+        final enabled =
+            entity.available &&
+            entity.writable &&
+            !widget.controller.snapshot!.isOffline &&
+            !widget.controller.isPending(entity.id);
+        final historyEnabled =
+            entity.available && !widget.controller.snapshot!.isOffline;
         return SafeArea(
           child: ConstrainedBox(
             constraints: BoxConstraints(
@@ -380,13 +393,56 @@ final class _EntityDetailsState extends State<_EntityDetails> {
                     const SizedBox(height: ProductSpacing.md),
                     _DetailedControl(
                       entity: entity,
-                      onValue: (value) => requestEntityCommand(
-                        context,
-                        entity,
-                        value,
-                        widget.controller,
-                      ),
+                      enabled: enabled,
+                      onValue: (value) async {
+                        final succeeded = await requestEntityCommand(
+                          context,
+                          entity,
+                          value,
+                          widget.controller,
+                        );
+                        if (!mounted) return;
+                        setState(() {
+                          _commandFailureKey = succeeded
+                              ? null
+                              : widget.controller.failure?.messageKey ??
+                                    'errorUnknown';
+                        });
+                      },
                     ),
+                    if (_commandFailureKey case final key?) ...<Widget>[
+                      const SizedBox(height: ProductSpacing.sm),
+                      Semantics(
+                        liveRegion: true,
+                        child: Material(
+                          color: Theme.of(context).colorScheme.errorContainer,
+                          borderRadius: BorderRadius.circular(
+                            ProductRadius.card,
+                          ),
+                          child: Padding(
+                            padding: const EdgeInsets.all(ProductSpacing.sm),
+                            child: Row(
+                              children: <Widget>[
+                                Icon(
+                                  Icons.error_outline_rounded,
+                                  color: Theme.of(
+                                    context,
+                                  ).colorScheme.onErrorContainer,
+                                ),
+                                const SizedBox(width: ProductSpacing.sm),
+                                Expanded(child: Text(strings.t(key))),
+                                IconButton(
+                                  tooltip: strings.t('dismiss'),
+                                  onPressed: () =>
+                                      setState(() => _commandFailureKey = null),
+                                  icon: const Icon(Icons.close_rounded),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ),
+                      ),
+                    ],
                   ],
                   if (entity.type.supportsHistory) ...<Widget>[
                     const SizedBox(height: ProductSpacing.xl),
@@ -399,43 +455,49 @@ final class _EntityDetailsState extends State<_EntityDetails> {
                                 ?.copyWith(fontWeight: FontWeight.w800),
                           ),
                         ),
-                        TextButton(
-                          onPressed: widget.controller.historyLoading
-                              ? null
-                              : () => widget.controller.loadHistory(
-                                  entity,
-                                  const Duration(days: 1),
-                                ),
-                          child: Text(strings.t('history24h')),
-                        ),
-                        TextButton(
-                          onPressed: widget.controller.historyLoading
-                              ? null
-                              : () => widget.controller.loadHistory(
-                                  entity,
-                                  const Duration(days: 7),
-                                ),
-                          child: Text(strings.t('history7d')),
-                        ),
                       ],
+                    ),
+                    Align(
+                      alignment: Alignment.centerRight,
+                      child: Wrap(
+                        spacing: ProductSpacing.xs,
+                        children: <Widget>[
+                          TextButton(
+                            onPressed:
+                                widget.controller.historyLoading ||
+                                    !historyEnabled
+                                ? null
+                                : () => widget.controller.loadHistory(
+                                    entity,
+                                    const Duration(days: 1),
+                                  ),
+                            child: Text(strings.t('history24h')),
+                          ),
+                          TextButton(
+                            onPressed:
+                                widget.controller.historyLoading ||
+                                    !historyEnabled
+                                ? null
+                                : () => widget.controller.loadHistory(
+                                    entity,
+                                    const Duration(days: 7),
+                                  ),
+                            child: Text(strings.t('history7d')),
+                          ),
+                        ],
+                      ),
                     ),
                     const SizedBox(height: ProductSpacing.sm),
                     if (widget.controller.historyLoading)
                       const LinearProgressIndicator()
                     else if (widget.controller.historyEntityId == entity.id &&
                         widget.controller.history.isNotEmpty)
-                      SizedBox(
-                        height: 180,
-                        child: CustomPaint(
-                          painter: _HistoryPainter(
-                            points: widget.controller.history,
-                            color: Theme.of(context).colorScheme.primary,
-                            gridColor: Theme.of(
-                              context,
-                            ).colorScheme.outlineVariant,
-                          ),
-                        ),
+                      _HistoryChart(
+                        points: widget.controller.history,
+                        unit: entity.unit,
                       )
+                    else if (widget.controller.historyEntityId != entity.id)
+                      _Hint(text: strings.t('historyPrompt'))
                     else
                       _Hint(text: strings.t('historyEmpty')),
                   ],
@@ -476,9 +538,14 @@ final class _EntityDetailsState extends State<_EntityDetails> {
 }
 
 final class _DetailedControl extends StatefulWidget {
-  const _DetailedControl({required this.entity, required this.onValue});
+  const _DetailedControl({
+    required this.entity,
+    required this.enabled,
+    required this.onValue,
+  });
 
   final HomeEntity entity;
+  final bool enabled;
   final ValueChanged<Object?> onValue;
 
   @override
@@ -508,7 +575,9 @@ final class _DetailedControlState extends State<_DetailedControl> {
           ),
         ],
         selected: <bool>{entity.booleanValue == true},
-        onSelectionChanged: (selection) => widget.onValue(selection.first),
+        onSelectionChanged: widget.enabled
+            ? (selection) => widget.onValue(selection.first)
+            : null,
       );
     }
     if (entity.type == HomeEntityType.lock) {
@@ -526,7 +595,9 @@ final class _DetailedControlState extends State<_DetailedControl> {
           ),
         ],
         selected: <bool>{entity.booleanValue == true},
-        onSelectionChanged: (selection) => widget.onValue(selection.first),
+        onSelectionChanged: widget.enabled
+            ? (selection) => widget.onValue(selection.first)
+            : null,
       );
     }
     if (entity.type == HomeEntityType.alarmControlPanel) {
@@ -540,18 +611,28 @@ final class _DetailedControlState extends State<_DetailedControl> {
           ? entity.state as String
           : null;
       return DropdownButtonFormField<String>(
+        key: ValueKey<String>(
+          '${entity.id.value}:${entity.state}:${widget.enabled}',
+        ),
         initialValue: current,
+        isExpanded: true,
         decoration: InputDecoration(labelText: strings.t('alarmMode')),
         items: <DropdownMenuItem<String>>[
           for (final mode in modes)
             DropdownMenuItem<String>(
               value: mode,
-              child: Text(strings.t('alarm_$mode')),
+              child: Text(
+                strings.t('alarm_$mode'),
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+              ),
             ),
         ],
-        onChanged: (value) {
-          if (value != null) widget.onValue(value);
-        },
+        onChanged: widget.enabled
+            ? (value) {
+                if (value != null) widget.onValue(value);
+              }
+            : null,
       );
     }
     if (entity.type == HomeEntityType.vacuum ||
@@ -580,7 +661,9 @@ final class _DetailedControlState extends State<_DetailedControl> {
           ),
         ],
         selected: <bool>{entity.booleanValue == true},
-        onSelectionChanged: (selection) => widget.onValue(selection.first),
+        onSelectionChanged: widget.enabled
+            ? (selection) => widget.onValue(selection.first)
+            : null,
       );
     }
     if (entity.type.supportsToggle) {
@@ -599,12 +682,14 @@ final class _DetailedControlState extends State<_DetailedControl> {
           ),
         ],
         selected: <bool>{value},
-        onSelectionChanged: (selection) => widget.onValue(selection.first),
+        onSelectionChanged: widget.enabled
+            ? (selection) => widget.onValue(selection.first)
+            : null,
       );
     }
     if (entity.type.supportsPress) {
       return FilledButton.icon(
-        onPressed: () => widget.onValue(true),
+        onPressed: widget.enabled ? () => widget.onValue(true) : null,
         icon: const Icon(Icons.play_arrow_rounded),
         label: Text(strings.t('run')),
       );
@@ -613,16 +698,27 @@ final class _DetailedControlState extends State<_DetailedControl> {
       HomeEntityType.select,
       HomeEntityType.inputSelect,
     }.contains(entity.type)) {
+      final options = entity.constraints.options;
+      final state = entity.state?.toString();
       return DropdownButtonFormField<String>(
-        initialValue: entity.state?.toString(),
+        key: ValueKey<String>(
+          '${entity.id.value}:${entity.state}:${widget.enabled}',
+        ),
+        initialValue: options.contains(state) ? state : null,
+        isExpanded: true,
         decoration: InputDecoration(labelText: strings.t('selectOption')),
         items: <DropdownMenuItem<String>>[
-          for (final option in entity.constraints.options)
-            DropdownMenuItem<String>(value: option, child: Text(option)),
+          for (final option in options)
+            DropdownMenuItem<String>(
+              value: option,
+              child: Text(option, maxLines: 1, overflow: TextOverflow.ellipsis),
+            ),
         ],
-        onChanged: (value) {
-          if (value != null) widget.onValue(value);
-        },
+        onChanged: widget.enabled
+            ? (value) {
+                if (value != null) widget.onValue(value);
+              }
+            : null,
       );
     }
     if (<HomeEntityType>{
@@ -649,11 +745,15 @@ final class _DetailedControlState extends State<_DetailedControl> {
             max: max <= min ? min + 1 : max,
             divisions: _divisions(entity, min, max),
             label: current.toStringAsFixed(1),
-            onChanged: (value) => setState(() => _draftNumber = value),
-            onChangeEnd: (value) {
-              widget.onValue(value);
-              if (mounted) setState(() => _draftNumber = null);
-            },
+            onChanged: widget.enabled
+                ? (value) => setState(() => _draftNumber = value)
+                : null,
+            onChangeEnd: widget.enabled
+                ? (value) {
+                    widget.onValue(value);
+                    if (mounted) setState(() => _draftNumber = null);
+                  }
+                : null,
           ),
           Text(strings.withValue('setValue', current.toStringAsFixed(1))),
         ],
@@ -664,6 +764,7 @@ final class _DetailedControlState extends State<_DetailedControl> {
       HomeEntityType.inputText,
     }.contains(entity.type)) {
       return TextFormField(
+        enabled: widget.enabled,
         initialValue: entity.state?.toString() ?? '',
         maxLength: 255,
         textInputAction: TextInputAction.done,
@@ -762,16 +863,24 @@ final class _HistoryPainter extends CustomPainter {
 
   @override
   void paint(Canvas canvas, Size size) {
-    final values = points
-        .map((point) {
-          final value = point.value;
-          if (value is num) return value.toDouble();
-          return double.tryParse(value?.toString() ?? '');
-        })
-        .whereType<double>()
-        .where((value) => value.isFinite)
+    final samples =
+        points
+            .map((point) {
+              final value = point.value;
+              final parsed = value is num
+                  ? value.toDouble()
+                  : double.tryParse(value?.toString() ?? '');
+              return parsed != null && parsed.isFinite
+                  ? (time: point.time, value: parsed)
+                  : null;
+            })
+            .whereType<({DateTime time, double value})>()
+            .toList(growable: false)
+          ..sort((a, b) => a.time.compareTo(b.time));
+    if (samples.length < 2) return;
+    final values = samples
+        .map((sample) => sample.value)
         .toList(growable: false);
-    if (values.length < 2) return;
     final minimum = values.reduce(math.min);
     final maximum = values.reduce(math.max);
     final range = maximum == minimum ? 1.0 : maximum - minimum;
@@ -783,9 +892,18 @@ final class _HistoryPainter extends CustomPainter {
       canvas.drawLine(Offset(0, y), Offset(size.width, y), grid);
     }
     final path = Path();
-    for (var index = 0; index < values.length; index++) {
-      final x = size.width * index / (values.length - 1);
-      final y = size.height - ((values[index] - minimum) / range * size.height);
+    final firstTime = samples.first.time.millisecondsSinceEpoch;
+    final timeRange = math.max(
+      1,
+      samples.last.time.millisecondsSinceEpoch - firstTime,
+    );
+    for (var index = 0; index < samples.length; index++) {
+      final sample = samples[index];
+      final x =
+          size.width *
+          (sample.time.millisecondsSinceEpoch - firstTime) /
+          timeRange;
+      final y = size.height - ((sample.value - minimum) / range * size.height);
       if (index == 0) {
         path.moveTo(x, y);
       } else {
@@ -808,4 +926,44 @@ final class _HistoryPainter extends CustomPainter {
       oldDelegate.points != points ||
       oldDelegate.color != color ||
       oldDelegate.gridColor != gridColor;
+}
+
+final class _HistoryChart extends StatelessWidget {
+  const _HistoryChart({required this.points, required this.unit});
+
+  final List<HistoryPoint> points;
+  final String unit;
+
+  @override
+  Widget build(BuildContext context) {
+    final values = points
+        .map((point) => point.value)
+        .whereType<num>()
+        .map((value) => value.toDouble())
+        .where((value) => value.isFinite)
+        .toList(growable: false);
+    final minimum = values.isEmpty ? 0 : values.reduce(math.min);
+    final maximum = values.isEmpty ? 0 : values.reduce(math.max);
+    final suffix = unit.isEmpty ? '' : ' $unit';
+    final label = HomeControlStrings.of(context)
+        .withValues('historySummary', <String, Object>{
+          'minimum': '${minimum.toStringAsFixed(1)}$suffix',
+          'maximum': '${maximum.toStringAsFixed(1)}$suffix',
+          'samples': values.length,
+        });
+    return Semantics(
+      image: true,
+      label: label,
+      child: SizedBox(
+        height: 180,
+        child: CustomPaint(
+          painter: _HistoryPainter(
+            points: points,
+            color: Theme.of(context).colorScheme.primary,
+            gridColor: Theme.of(context).colorScheme.outlineVariant,
+          ),
+        ),
+      ),
+    );
+  }
 }

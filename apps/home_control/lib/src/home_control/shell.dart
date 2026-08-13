@@ -74,7 +74,7 @@ final class _HomeControlShellState extends State<HomeControlShell> {
 
     return LayoutBuilder(
       builder: (context, constraints) {
-        final useRail = constraints.maxWidth >= 840;
+        final useRail = constraints.maxWidth >= 720;
         final extendedRail = constraints.maxWidth >= 1180;
         final content = Column(
           children: <Widget>[
@@ -105,11 +105,10 @@ final class _HomeControlShellState extends State<HomeControlShell> {
                     SafeArea(
                       top: false,
                       child: NavigationRail(
+                        scrollable: true,
                         extended: extendedRail,
                         selectedIndex: _selectedIndex,
-                        labelType: extendedRail
-                            ? NavigationRailLabelType.none
-                            : NavigationRailLabelType.all,
+                        labelType: NavigationRailLabelType.none,
                         onDestinationSelected: _selectDestination,
                         leading: Padding(
                           padding: const EdgeInsets.symmetric(vertical: 12),
@@ -118,8 +117,14 @@ final class _HomeControlShellState extends State<HomeControlShell> {
                         destinations: destinations
                             .map(
                               (destination) => NavigationRailDestination(
-                                icon: Icon(destination.icon),
-                                selectedIcon: Icon(destination.selectedIcon),
+                                icon: Tooltip(
+                                  message: destination.label,
+                                  child: Icon(destination.icon),
+                                ),
+                                selectedIcon: Tooltip(
+                                  message: destination.label,
+                                  child: Icon(destination.selectedIcon),
+                                ),
                                 label: Text(destination.label),
                               ),
                             )
@@ -134,17 +139,27 @@ final class _HomeControlShellState extends State<HomeControlShell> {
           bottomNavigationBar: useRail
               ? null
               : NavigationBar(
-                  selectedIndex: _selectedIndex,
-                  onDestinationSelected: _selectDestination,
-                  destinations: destinations
-                      .map(
-                        (destination) => NavigationDestination(
-                          icon: Icon(destination.icon),
-                          selectedIcon: Icon(destination.selectedIcon),
-                          label: destination.compactLabel,
-                        ),
-                      )
-                      .toList(growable: false),
+                  selectedIndex: _selectedIndex <= 2 ? _selectedIndex : 3,
+                  onDestinationSelected: (value) {
+                    if (value <= 2) {
+                      _selectDestination(value);
+                    } else {
+                      _showMoreDestinations(context, destinations);
+                    }
+                  },
+                  destinations: <NavigationDestination>[
+                    for (final destination in destinations.take(3))
+                      NavigationDestination(
+                        icon: Icon(destination.icon),
+                        selectedIcon: Icon(destination.selectedIcon),
+                        label: destination.compactLabel,
+                      ),
+                    NavigationDestination(
+                      icon: const Icon(Icons.more_horiz_rounded),
+                      selectedIcon: const Icon(Icons.more_rounded),
+                      label: strings.t('more'),
+                    ),
+                  ],
                 ),
         );
       },
@@ -154,6 +169,39 @@ final class _HomeControlShellState extends State<HomeControlShell> {
   void _selectDestination(int value) {
     if (_selectedIndex == value) return;
     setState(() => _selectedIndex = value);
+  }
+
+  Future<void> _showMoreDestinations(
+    BuildContext context,
+    List<_ShellDestination> destinations,
+  ) async {
+    final selected = await showModalBottomSheet<int>(
+      context: context,
+      showDragHandle: true,
+      builder: (context) => SafeArea(
+        child: ListView(
+          shrinkWrap: true,
+          padding: const EdgeInsets.fromLTRB(12, 0, 12, 16),
+          children: <Widget>[
+            for (var index = 3; index < destinations.length; index++)
+              ListTile(
+                selected: _selectedIndex == index,
+                leading: Icon(
+                  _selectedIndex == index
+                      ? destinations[index].selectedIcon
+                      : destinations[index].icon,
+                ),
+                title: Text(destinations[index].label),
+                trailing: _selectedIndex == index
+                    ? const Icon(Icons.check_rounded)
+                    : null,
+                onTap: () => Navigator.of(context).pop(index),
+              ),
+          ],
+        ),
+      ),
+    );
+    if (selected != null && mounted) _selectDestination(selected);
   }
 
   void _showPendingNotice() {

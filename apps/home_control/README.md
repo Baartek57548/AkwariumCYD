@@ -112,8 +112,10 @@ SBOM, uruchamia skan sekretów i zależności oraz waliduje pozostałe części 
 Sekretów, PIN-ów, prywatnych adresów domu i kluczy podpisujących nie wolno dodawać
 do repozytorium ani logów.
 
-Aktualny produkt ma wersję `2.0.0+5`. Wyniki walidacji są w
+Aktualny rozwój produktu ma wersję `2.0.1+6`. Wyniki walidacji są w
 [`docs/QA_REPORT.md`](../../docs/QA_REPORT.md), architektura w
 [`docs/HOME_CONTROL_ARCHITECTURE.md`](../../docs/HOME_CONTROL_ARCHITECTURE.md),
 model zagrożeń w [`docs/SECURITY.md`](../../docs/SECURITY.md), a procedura wydania
-w [`docs/RELEASE.md`](../../docs/RELEASE.md).
+w [`docs/RELEASE.md`](../../docs/RELEASE.md). Szczegółowy audyt stabilności i
+responsywnego UI/UX wersji 2.0.1 znajduje się w
+[`docs/HOME_CONTROL_UI_UX_AUDIT_2_0_1.md`](../../docs/HOME_CONTROL_UI_UX_AUDIT_2_0_1.md).

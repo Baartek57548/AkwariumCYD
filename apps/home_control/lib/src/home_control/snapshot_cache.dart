@@ -4,11 +4,11 @@ import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:home_entities/home_entities.dart';
 
 abstract interface class HomeSnapshotCache {
-  Future<HomeSnapshot?> load(HomeSourceKind kind);
+  Future<HomeSnapshot?> load(HomeSourceKind kind, String sourceId);
 
   Future<void> save(HomeSnapshot snapshot);
 
-  Future<void> clear(HomeSourceKind kind);
+  Future<void> clear(HomeSourceKind kind, {String? sourceId});
 }
 
 final class SecureHomeSnapshotCache implements HomeSnapshotCache {
@@ -18,57 +18,142 @@ final class SecureHomeSnapshotCache implements HomeSnapshotCache {
   static const int _schemaVersion = 1;
   static const int _maximumEntities = 512;
   static const int _maximumEncodedBytes = 512 * 1024;
-  static const String _keyPrefix = 'home_control_snapshot_v1_';
+  static const String _legacyKeyPrefix = 'home_control_snapshot_v1_';
+  static const String _scopedKeyPrefix = 'home_control_snapshot_v2_';
 
   final FlutterSecureStorage _storage;
 
   @override
-  Future<HomeSnapshot?> load(HomeSourceKind kind) async {
-    final encoded = await _storage.read(key: _key(kind));
+  Future<HomeSnapshot?> load(HomeSourceKind kind, String sourceId) async {
+    final scopedKey = _key(kind, sourceId);
+    final legacyKey = _legacyKey(kind);
+    var storageKey = scopedKey;
+    var encoded = await _storage.read(key: scopedKey);
+    if (encoded == null || encoded.isEmpty) {
+      storageKey = legacyKey;
+      encoded = await _storage.read(key: legacyKey);
+    }
     if (encoded == null || encoded.isEmpty) return null;
     try {
       final bytes = utf8.encode(encoded);
       if (bytes.length > _maximumEncodedBytes) {
-        await clear(kind);
+        await _storage.delete(key: storageKey);
         return null;
       }
       final decoded = jsonDecode(encoded);
       if (decoded is! Map<String, Object?> ||
           decoded['cache_schema'] != _schemaVersion) {
-        await clear(kind);
+        await _storage.delete(key: storageKey);
         return null;
       }
       final snapshot = _decodeSnapshot(decoded);
       if (snapshot.sourceKind != kind) throw const FormatException();
+      if (snapshot.sourceId != sourceId) return null;
+      if (storageKey == legacyKey) {
+        await _storage.write(key: scopedKey, value: encoded);
+        await _storage.delete(key: legacyKey);
+      }
       return snapshot;
     } on Object {
-      await clear(kind);
+      await _storage.delete(key: storageKey);
       return null;
     }
   }
 
   @override
   Future<void> save(HomeSnapshot snapshot) async {
-    final encoded = jsonEncode(_encodeSnapshot(snapshot));
+    final maximumEntityCount = snapshot.entities.length > _maximumEntities
+        ? _maximumEntities
+        : snapshot.entities.length;
+    var encoded = jsonEncode(
+      _encodeSnapshot(snapshot, entityLimit: maximumEntityCount),
+    );
+    if (utf8.encode(encoded).length > _maximumEncodedBytes) {
+      String? bounded;
+      var lower = 0;
+      var upper = maximumEntityCount;
+      while (lower <= upper) {
+        final candidateCount = lower + ((upper - lower) ~/ 2);
+        final candidate = jsonEncode(
+          _encodeSnapshot(
+            snapshot,
+            entityLimit: candidateCount,
+            includeAttributes: false,
+          ),
+        );
+        if (utf8.encode(candidate).length <= _maximumEncodedBytes) {
+          bounded = candidate;
+          lower = candidateCount + 1;
+        } else {
+          upper = candidateCount - 1;
+        }
+      }
+      if (bounded != null) encoded = bounded;
+    }
     if (utf8.encode(encoded).length > _maximumEncodedBytes) {
       throw const FormatException('Home Control snapshot cache is too large.');
     }
-    await _storage.write(key: _key(snapshot.sourceKind), value: encoded);
+    await _storage.write(
+      key: _key(snapshot.sourceKind, snapshot.sourceId),
+      value: encoded,
+    );
   }
 
   @override
-  Future<void> clear(HomeSourceKind kind) => _storage.delete(key: _key(kind));
+  Future<void> clear(HomeSourceKind kind, {String? sourceId}) async {
+    if (sourceId != null) {
+      await _storage.delete(key: _key(kind, sourceId));
+      final legacyKey = _legacyKey(kind);
+      final legacy = await _storage.read(key: legacyKey);
+      if (legacy != null && _encodedSourceId(legacy) == sourceId) {
+        await _storage.delete(key: legacyKey);
+      }
+      return;
+    }
+    final prefix = '$_scopedKeyPrefix${kind.name}_';
+    final values = await _storage.readAll();
+    await Future.wait<void>(<Future<void>>[
+      _storage.delete(key: _legacyKey(kind)),
+      for (final key in values.keys)
+        if (key.startsWith(prefix)) _storage.delete(key: key),
+    ]);
+  }
 
-  String _key(HomeSourceKind kind) => '$_keyPrefix${kind.name}';
+  String _key(HomeSourceKind kind, String sourceId) {
+    final encodedId = base64Url
+        .encode(utf8.encode(sourceId))
+        .replaceAll('=', '');
+    return '$_scopedKeyPrefix${kind.name}_$encodedId';
+  }
 
-  Map<String, Object?> _encodeSnapshot(HomeSnapshot value) => <String, Object?>{
+  String _legacyKey(HomeSourceKind kind) => '$_legacyKeyPrefix${kind.name}';
+
+  static String? _encodedSourceId(String encoded) {
+    try {
+      final decoded = jsonDecode(encoded);
+      return decoded is Map<String, Object?>
+          ? decoded['source_id'] as String?
+          : null;
+    } on Object {
+      return null;
+    }
+  }
+
+  Map<String, Object?> _encodeSnapshot(
+    HomeSnapshot value, {
+    required int entityLimit,
+    bool includeAttributes = true,
+  }) => <String, Object?>{
     'cache_schema': _schemaVersion,
     'snapshot_schema': value.schemaVersion,
     'source_id': value.sourceId,
     'source_name': value.sourceName,
     'source_kind': value.sourceKind.name,
     'synchronized_at': value.synchronizedAt.toUtc().toIso8601String(),
-    'partial': value.isPartial,
+    'partial':
+        value.isPartial ||
+        entityLimit < value.entities.length ||
+        !includeAttributes,
     'areas': <Object?>[
       for (final area in value.areas)
         <String, Object?>{
@@ -92,7 +177,7 @@ final class SecureHomeSnapshotCache implements HomeSnapshotCache {
         },
     ],
     'entities': <Object?>[
-      for (final entity in value.entities.take(_maximumEntities))
+      for (final entity in value.entities.take(entityLimit))
         <String, Object?>{
           'id': entity.id.value,
           'device_id': entity.deviceId?.value,
@@ -100,7 +185,9 @@ final class SecureHomeSnapshotCache implements HomeSnapshotCache {
           'name': entity.name,
           'type': entity.type.name,
           'state': _safeJson(entity.state),
-          'attributes': _safeJson(entity.attributes),
+          'attributes': includeAttributes
+              ? _safeJson(entity.attributes)
+              : const <String, Object?>{},
           'unit': entity.unit,
           'availability': entity.availability.name,
           'writable': entity.writable,

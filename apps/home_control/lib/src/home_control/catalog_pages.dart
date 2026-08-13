@@ -16,8 +16,15 @@ final class RoomsPage extends StatefulWidget {
 }
 
 final class _RoomsPageState extends State<RoomsPage> {
+  final TextEditingController _searchController = TextEditingController();
   SourceScopedId? _selectedArea;
   String _query = '';
+
+  @override
+  void dispose() {
+    _searchController.dispose();
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -56,15 +63,20 @@ final class _RoomsPageState extends State<RoomsPage> {
                 ),
                 const SizedBox(height: ProductSpacing.md),
                 TextField(
+                  controller: _searchController,
                   onChanged: (value) => setState(() => _query = value),
                   decoration: InputDecoration(
+                    labelText: strings.t('search'),
                     hintText: strings.t('searchHint'),
                     prefixIcon: const Icon(Icons.search_rounded),
                     suffixIcon: _query.isEmpty
                         ? null
                         : IconButton(
                             tooltip: strings.t('dismiss'),
-                            onPressed: () => setState(() => _query = ''),
+                            onPressed: () {
+                              _searchController.clear();
+                              setState(() => _query = '');
+                            },
                             icon: const Icon(Icons.close_rounded),
                           ),
                   ),
@@ -100,7 +112,13 @@ final class _RoomsPageState extends State<RoomsPage> {
             hasScrollBody: false,
             child: _CatalogEmpty(
               icon: Icons.search_off_rounded,
-              text: strings.t(normalized.isEmpty ? 'noAreas' : 'noResults'),
+              text: strings.t(
+                normalized.isNotEmpty
+                    ? 'noResults'
+                    : _selectedArea != null
+                    ? 'noEntitiesInArea'
+                    : 'noAreas',
+              ),
             ),
           )
         else
@@ -116,7 +134,7 @@ final class _RoomsPageState extends State<RoomsPage> {
                 return SliverGrid(
                   gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
                     crossAxisCount: columns,
-                    mainAxisExtent: 92,
+                    mainAxisExtent: 104,
                     crossAxisSpacing: ProductSpacing.sm,
                     mainAxisSpacing: ProductSpacing.sm,
                   ),
@@ -147,7 +165,14 @@ final class DevicesPage extends StatefulWidget {
 }
 
 final class _DevicesPageState extends State<DevicesPage> {
+  final TextEditingController _searchController = TextEditingController();
   String _query = '';
+
+  @override
+  void dispose() {
+    _searchController.dispose();
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -183,10 +208,22 @@ final class _DevicesPageState extends State<DevicesPage> {
                 ),
                 const SizedBox(height: ProductSpacing.md),
                 TextField(
+                  controller: _searchController,
                   onChanged: (value) => setState(() => _query = value),
                   decoration: InputDecoration(
+                    labelText: strings.t('search'),
                     hintText: strings.t('searchHint'),
                     prefixIcon: const Icon(Icons.search_rounded),
+                    suffixIcon: _query.isEmpty
+                        ? null
+                        : IconButton(
+                            tooltip: strings.t('dismiss'),
+                            onPressed: () {
+                              _searchController.clear();
+                              setState(() => _query = '');
+                            },
+                            icon: const Icon(Icons.close_rounded),
+                          ),
                   ),
                 ),
               ],

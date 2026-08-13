@@ -152,12 +152,23 @@ final class _SourceCard extends StatelessWidget {
                         ),
                         child: Icon(icon, color: scheme.onPrimaryContainer),
                       ),
-                      const Spacer(),
-                      if (badge != null)
-                        Chip(
-                          visualDensity: VisualDensity.compact,
-                          label: Text(badge!),
+                      if (badge != null) ...<Widget>[
+                        const SizedBox(width: ProductSpacing.sm),
+                        Expanded(
+                          child: Align(
+                            alignment: Alignment.centerRight,
+                            child: Chip(
+                              visualDensity: VisualDensity.compact,
+                              label: Text(
+                                badge!,
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                              ),
+                            ),
+                          ),
                         ),
+                      ] else
+                        const Spacer(),
                     ],
                   ),
                   const SizedBox(height: ProductSpacing.lg),
@@ -221,6 +232,7 @@ final class _HomeAssistantSetupState extends State<_HomeAssistantSetup> {
   Widget build(BuildContext context) {
     final strings = HomeControlStrings.of(context);
     final scheme = Theme.of(context).colorScheme;
+    final busy = widget.controller.setupBusy;
     return Scaffold(
       appBar: AppBar(
         leading: IconButton(
@@ -252,6 +264,7 @@ final class _HomeAssistantSetupState extends State<_HomeAssistantSetup> {
                     const SizedBox(height: ProductSpacing.lg),
                     TextFormField(
                       controller: _profileName,
+                      enabled: !busy,
                       textInputAction: TextInputAction.next,
                       maxLength: 80,
                       decoration: InputDecoration(
@@ -262,6 +275,7 @@ final class _HomeAssistantSetupState extends State<_HomeAssistantSetup> {
                     ),
                     TextFormField(
                       controller: _url,
+                      enabled: !busy,
                       keyboardType: TextInputType.url,
                       autofillHints: const <String>[AutofillHints.url],
                       autocorrect: false,
@@ -276,7 +290,7 @@ final class _HomeAssistantSetupState extends State<_HomeAssistantSetup> {
                         if (uri == null ||
                             !uri.hasAuthority ||
                             (uri.scheme != 'http' && uri.scheme != 'https')) {
-                          return strings.t('errorInvalidCredentials');
+                          return strings.t('errorInvalidHaUrl');
                         }
                         return null;
                       },
@@ -284,6 +298,7 @@ final class _HomeAssistantSetupState extends State<_HomeAssistantSetup> {
                     const SizedBox(height: ProductSpacing.md),
                     TextFormField(
                       controller: _token,
+                      enabled: !busy,
                       obscureText: _obscure,
                       autocorrect: false,
                       enableSuggestions: false,
@@ -306,7 +321,7 @@ final class _HomeAssistantSetupState extends State<_HomeAssistantSetup> {
                         ),
                       ),
                       validator: (value) => (value?.trim().length ?? 0) < 20
-                          ? strings.t('errorInvalidCredentials')
+                          ? strings.t('errorInvalidHaToken')
                           : null,
                     ),
                     const SizedBox(height: ProductSpacing.md),
@@ -322,36 +337,48 @@ final class _HomeAssistantSetupState extends State<_HomeAssistantSetup> {
                     if (widget.controller.failure
                         case final failure?) ...<Widget>[
                       const SizedBox(height: ProductSpacing.md),
-                      Material(
-                        color: scheme.errorContainer,
-                        borderRadius: BorderRadius.circular(ProductRadius.card),
-                        child: Padding(
-                          padding: const EdgeInsets.all(ProductSpacing.md),
-                          child: Row(
-                            children: <Widget>[
-                              Icon(
-                                Icons.error_outline_rounded,
-                                color: scheme.onErrorContainer,
-                              ),
-                              const SizedBox(width: ProductSpacing.sm),
-                              Expanded(
-                                child: Text(
-                                  strings.t(failure.messageKey),
-                                  style: TextStyle(
-                                    color: scheme.onErrorContainer,
+                      Semantics(
+                        liveRegion: true,
+                        child: Material(
+                          color: scheme.errorContainer,
+                          borderRadius: BorderRadius.circular(
+                            ProductRadius.card,
+                          ),
+                          child: Padding(
+                            padding: const EdgeInsets.all(ProductSpacing.md),
+                            child: Row(
+                              children: <Widget>[
+                                Icon(
+                                  Icons.error_outline_rounded,
+                                  color: scheme.onErrorContainer,
+                                ),
+                                const SizedBox(width: ProductSpacing.sm),
+                                Expanded(
+                                  child: Text(
+                                    strings.t(failure.messageKey),
+                                    style: TextStyle(
+                                      color: scheme.onErrorContainer,
+                                    ),
                                   ),
                                 ),
-                              ),
-                            ],
+                              ],
+                            ),
                           ),
                         ),
                       ),
                     ],
                     const SizedBox(height: ProductSpacing.lg),
                     FilledButton.icon(
-                      onPressed: _submit,
-                      icon: const Icon(Icons.verified_user_rounded),
-                      label: Text(strings.t('testAndSave')),
+                      onPressed: busy ? null : _submit,
+                      icon: busy
+                          ? const SizedBox.square(
+                              dimension: 20,
+                              child: CircularProgressIndicator(strokeWidth: 2),
+                            )
+                          : const Icon(Icons.verified_user_rounded),
+                      label: Text(
+                        strings.t(busy ? 'connecting' : 'testAndSave'),
+                      ),
                     ),
                   ],
                 ),

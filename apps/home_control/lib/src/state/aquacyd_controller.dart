@@ -4,6 +4,7 @@ import 'package:flutter/foundation.dart';
 
 import '../data/credentials_store.dart';
 import '../data/home_assistant_api.dart';
+import '../data/home_assistant_network_policy.dart';
 import '../data/home_assistant_socket.dart';
 import '../domain/entity_ids.dart';
 import '../domain/models.dart';
@@ -410,7 +411,12 @@ final class AquaCydController extends ChangeNotifier {
         _stateSubscription = socket.states.listen(_onEntityState);
         _statusSubscription = socket.statuses.listen(_onSocketStatus);
         _socketStatus = socket.status;
-        unawaited(socket.connect());
+        unawaited(
+          socket.connect().onError<HomeAssistantNetworkPolicyException>((_, _) {
+            _socketStatus = HomeAssistantSocketStatus.disconnected;
+            if (!_disposed) notifyListeners();
+          }),
+        );
       } else {
         _socketStatus = HomeAssistantSocketStatus.disconnected;
       }

@@ -21,6 +21,14 @@ final class HomeControlStrings {
   String withValue(String key, Object value) =>
       t(key).replaceAll('{value}', '$value');
 
+  String withValues(String key, Map<String, Object> values) {
+    var result = t(key);
+    for (final entry in values.entries) {
+      result = result.replaceAll('{${entry.key}}', '${entry.value}');
+    }
+    return result;
+  }
+
   String sourceName(HomeSourceKind kind) => switch (kind) {
     HomeSourceKind.aquaHub => t('aquaHub'),
     HomeSourceKind.homeAssistant => t('homeAssistant'),
@@ -64,7 +72,10 @@ final class HomeControlStrings {
       ).format(number);
       return entity.unit.isEmpty ? text : '$text ${entity.unit}';
     }
-    return entity.state.toString().replaceAll('_', ' ');
+    final rawState = entity.state.toString();
+    final stateKey = 'rawState_$rawState';
+    final translated = t(stateKey);
+    return translated == stateKey ? rawState.replaceAll('_', ' ') : translated;
   }
 
   String relativeTime(DateTime? value) {
@@ -96,6 +107,49 @@ final class HomeControlStrings {
       'aquaHub': 'AquaHub',
       'aquaHubDescription':
           'Lokalny panel ESP32-P4, urządzenia ESP-NOW i akwarium.',
+      'hubWelcome': 'Witaj w AquaHub',
+      'hubConfirmPanel': 'Potwierdź panel',
+      'hubWelcomeDescription':
+          'Aplikacja automatycznie odnajdzie panel ESP32-P4 w sieci lokalnej. Jednorazowe parowanie otwiera natywny pulpit urządzeń, czujników, automatyzacji i aktualizacji.',
+      'hubConfirmDescription':
+          'Porównaj odcisk certyfikatu z ekranem System fizycznego panelu i wpisz wyświetlony kod.',
+      'hubDemo': 'Zobacz pełną aplikację w trybie demo',
+      'hubAutonomyHint':
+          'Sterownik CYD pozostaje autonomiczny. Token trafia do szyfrowanego magazynu systemu, a dostęp zdalny działa przez VPN.',
+      'hubSearching': 'Szukam panelu w sieci…',
+      'hubChooseFound': 'Wybierz znaleziony panel',
+      'hubAutoDiscovery': 'Automatyczne wykrywanie',
+      'hubSameWifi': 'Telefon i AquaHub muszą być w tej samej sieci Wi-Fi.',
+      'hubHttpsVerified': 'Połączenie zostanie zweryfikowane przez HTTPS.',
+      'hubNotFound': 'Nie znaleziono panelu. Sprawdź Wi-Fi i zasilanie P4.',
+      'hubMdns': 'Aplikacja używa natywnego Bonjour/mDNS.',
+      'scanAgain': 'Skanuj ponownie',
+      'hubAdvancedConnection': 'Połączenie zaawansowane',
+      'hubManualOnly': 'Ręczny adres tylko wtedy, gdy mDNS jest zablokowany',
+      'hubHttpsAddress': 'Adres HTTPS panelu',
+      'connectManually': 'Połącz ręcznie',
+      'hubSecureHttps': 'AquaHub ESP32-P4 · bezpieczne HTTPS',
+      'chooseAnotherHub': 'Wybierz inny panel',
+      'certificateFingerprint': 'Odcisk certyfikatu SHA-256',
+      'fingerprintMatches': 'Odcisk jest identyczny jak na panelu',
+      'pairingCode': '6‑cyfrowy kod z panelu',
+      'pairAndOpen': 'Sparuj i otwórz pulpit',
+      'hubDiscoveryFailed': 'Nie udało się uruchomić wykrywania AquaHub.',
+      'hubErrorSession': 'Nie udało się odczytać bezpiecznej sesji AquaHub.',
+      'hubErrorHttpsAddress':
+          'Podaj pełny adres HTTPS, np. https://aquahub.local:8443.',
+      'hubErrorDiscovery': 'Nie udało się odnaleźć AquaHub w sieci lokalnej.',
+      'hubErrorDiscoverFirst': 'Najpierw sprawdź połączenie z AquaHub.',
+      'hubErrorFingerprintConfirm':
+          'Porównaj odcisk z panelem i potwierdź jego zgodność.',
+      'hubErrorPairingCode': 'Kod parowania musi mieć dokładnie sześć cyfr.',
+      'hubErrorSaveSession': 'Nie udało się bezpiecznie zapisać sesji AquaHub.',
+      'hubErrorAuthentication': 'AquaHub odrzucił dane uwierzytelniające.',
+      'hubErrorNetwork': 'AquaHub jest nieosiągalny w sieci lokalnej.',
+      'hubErrorInvalidResponse': 'AquaHub zwrócił nieprawidłową odpowiedź.',
+      'hubErrorServer': 'AquaHub zwrócił błąd serwera.',
+      'hubErrorSecurity':
+          'Nie można potwierdzić bezpiecznej tożsamości AquaHub.',
       'homeAssistant': 'Home Assistant',
       'homeAssistantDescription':
           'Istniejąca instancja lokalna lub bezpieczny adres zdalny.',
@@ -130,6 +184,7 @@ final class HomeControlStrings {
       'navAutomations': 'Akcje',
       'navUpdates': 'OTA',
       'navSettings': 'Opcje',
+      'more': 'Więcej',
       'home': 'Dom',
       'refresh': 'Odśwież',
       'source': 'Źródło',
@@ -164,6 +219,17 @@ final class HomeControlStrings {
       'noData': 'Brak danych',
       'stateOn': 'Włączone',
       'stateOff': 'Wyłączone',
+      'activeEntities': '{value} aktywne',
+      'rawState_heat': 'Grzanie',
+      'rawState_heating': 'Grzanie',
+      'rawState_cooling': 'Chłodzenie',
+      'rawState_playing': 'Odtwarzanie',
+      'rawState_paused': 'Wstrzymano',
+      'rawState_idle': 'Bezczynne',
+      'rawState_docked': 'W bazie',
+      'rawState_home': 'W domu',
+      'rawState_away': 'Poza domem',
+      'rawState_partlycloudy': 'Częściowe zachmurzenie',
       'turnOn': 'Włącz',
       'turnOff': 'Wyłącz',
       'openCover': 'Otwórz',
@@ -272,6 +338,7 @@ final class HomeControlStrings {
       'search': 'Szukaj',
       'searchHint': 'Urządzenie, encja lub pomieszczenie',
       'noResults': 'Brak wyników dla tego zapytania.',
+      'noEntitiesInArea': 'W tym pomieszczeniu nie ma encji.',
       'all': 'Wszystkie',
       'unknownEntityHint':
           'Przyszły lub niestandardowy typ jest pokazany bez zgadywania sposobu sterowania.',
@@ -295,6 +362,8 @@ final class HomeControlStrings {
       'errorInvalidValue':
           'Wartość jest poza dozwolonym zakresem albo ma zły format.',
       'errorInvalidCredentials': 'Sprawdź adres i wklej pełny token dostępu.',
+      'errorInvalidHaUrl': 'Podaj pełny adres HTTP lub HTTPS instancji.',
+      'errorInvalidHaToken': 'Token musi zawierać co najmniej 20 znaków.',
       'errorCommandUnavailable':
           'Sterowanie jest zablokowane, gdy encja lub źródło jest niedostępne.',
       'errorBiometricCancelled':
@@ -322,6 +391,9 @@ final class HomeControlStrings {
       'hoursAgo': '{value} godz. temu',
       'never': 'nigdy',
       'historyEmpty': 'Źródło nie zwróciło próbek dla wybranego okresu.',
+      'historyPrompt': 'Wybierz okres, aby pobrać historię.',
+      'historySummary':
+          'Wykres historii. Minimum {minimum}, maksimum {maximum}, liczba próbek {samples}.',
       'history24h': '24 godziny',
       'history7d': '7 dni',
       'entity_light': 'Światło',
@@ -364,6 +436,49 @@ final class HomeControlStrings {
       'aquaHub': 'AquaHub',
       'aquaHubDescription':
           'Local ESP32-P4 panel, ESP-NOW devices and aquarium.',
+      'hubWelcome': 'Welcome to AquaHub',
+      'hubConfirmPanel': 'Confirm the panel',
+      'hubWelcomeDescription':
+          'The app automatically finds the ESP32-P4 panel on your local network. One-time pairing unlocks the native devices, sensors, automations and updates dashboard.',
+      'hubConfirmDescription':
+          'Compare the certificate fingerprint with the System screen on the physical panel, then enter the displayed code.',
+      'hubDemo': 'Open the complete app in demo mode',
+      'hubAutonomyHint':
+          'The CYD controller remains autonomous. Its token is kept in encrypted system storage, while remote access works through a VPN.',
+      'hubSearching': 'Searching for a panel…',
+      'hubChooseFound': 'Choose a discovered panel',
+      'hubAutoDiscovery': 'Automatic discovery',
+      'hubSameWifi': 'The phone and AquaHub must use the same Wi-Fi network.',
+      'hubHttpsVerified': 'The connection will be verified over HTTPS.',
+      'hubNotFound': 'No panel found. Check Wi-Fi and P4 power.',
+      'hubMdns': 'The app uses native Bonjour/mDNS discovery.',
+      'scanAgain': 'Scan again',
+      'hubAdvancedConnection': 'Advanced connection',
+      'hubManualOnly': 'Use a manual address only when mDNS is blocked',
+      'hubHttpsAddress': 'Panel HTTPS address',
+      'connectManually': 'Connect manually',
+      'hubSecureHttps': 'AquaHub ESP32-P4 · secure HTTPS',
+      'chooseAnotherHub': 'Choose another panel',
+      'certificateFingerprint': 'SHA-256 certificate fingerprint',
+      'fingerprintMatches': 'The fingerprint matches the panel exactly',
+      'pairingCode': '6-digit code from the panel',
+      'pairAndOpen': 'Pair and open dashboard',
+      'hubDiscoveryFailed': 'AquaHub discovery could not be started.',
+      'hubErrorSession': 'The secure AquaHub session could not be read.',
+      'hubErrorHttpsAddress':
+          'Enter a full HTTPS address, such as https://aquahub.local:8443.',
+      'hubErrorDiscovery': 'AquaHub could not be found on the local network.',
+      'hubErrorDiscoverFirst': 'Check the AquaHub connection first.',
+      'hubErrorFingerprintConfirm':
+          'Compare the panel fingerprint and confirm that it matches.',
+      'hubErrorPairingCode':
+          'The pairing code must contain exactly six digits.',
+      'hubErrorSaveSession': 'The secure AquaHub session could not be saved.',
+      'hubErrorAuthentication': 'AquaHub rejected the authentication data.',
+      'hubErrorNetwork': 'AquaHub is unreachable on the local network.',
+      'hubErrorInvalidResponse': 'AquaHub returned an invalid response.',
+      'hubErrorServer': 'AquaHub returned a server error.',
+      'hubErrorSecurity': 'The secure AquaHub identity could not be verified.',
       'homeAssistant': 'Home Assistant',
       'homeAssistantDescription':
           'An existing local instance or a secure remote address.',
@@ -398,6 +513,7 @@ final class HomeControlStrings {
       'navAutomations': 'Actions',
       'navUpdates': 'Updates',
       'navSettings': 'Settings',
+      'more': 'More',
       'home': 'Home',
       'refresh': 'Refresh',
       'source': 'Source',
@@ -432,6 +548,17 @@ final class HomeControlStrings {
       'noData': 'No data',
       'stateOn': 'On',
       'stateOff': 'Off',
+      'activeEntities': '{value} active',
+      'rawState_heat': 'Heating',
+      'rawState_heating': 'Heating',
+      'rawState_cooling': 'Cooling',
+      'rawState_playing': 'Playing',
+      'rawState_paused': 'Paused',
+      'rawState_idle': 'Idle',
+      'rawState_docked': 'Docked',
+      'rawState_home': 'Home',
+      'rawState_away': 'Away',
+      'rawState_partlycloudy': 'Partly cloudy',
       'turnOn': 'Turn on',
       'turnOff': 'Turn off',
       'openCover': 'Open',
@@ -540,6 +667,7 @@ final class HomeControlStrings {
       'search': 'Search',
       'searchHint': 'Device, entity or room',
       'noResults': 'No results for this query.',
+      'noEntitiesInArea': 'This room has no entities.',
       'all': 'All',
       'unknownEntityHint':
           'A future or custom type is displayed without guessing how to control it.',
@@ -564,6 +692,8 @@ final class HomeControlStrings {
           'The value is outside its allowed range or has an invalid format.',
       'errorInvalidCredentials':
           'Check the address and paste the complete access token.',
+      'errorInvalidHaUrl': 'Enter the full HTTP or HTTPS instance address.',
+      'errorInvalidHaToken': 'The token must contain at least 20 characters.',
       'errorCommandUnavailable':
           'Control is locked while the source or entity is unavailable.',
       'errorBiometricCancelled':
@@ -592,6 +722,9 @@ final class HomeControlStrings {
       'hoursAgo': '{value} hr ago',
       'never': 'never',
       'historyEmpty': 'The source returned no samples for this period.',
+      'historyPrompt': 'Choose a period to load history.',
+      'historySummary':
+          'History chart. Minimum {minimum}, maximum {maximum}, {samples} samples.',
       'history24h': '24 hours',
       'history7d': '7 days',
       'entity_light': 'Light',

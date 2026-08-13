@@ -6,6 +6,7 @@ import 'package:http/http.dart' as http;
 
 import '../domain/entity_ids.dart';
 import '../domain/models.dart';
+import 'home_assistant_network_policy.dart';
 
 enum HomeAssistantFailureType {
   authentication,
@@ -29,14 +30,17 @@ final class HomeAssistantApi {
   HomeAssistantApi(
     this.credentials, {
     http.Client? client,
+    HomeAssistantHostResolver? hostResolver,
     this.timeout = const Duration(seconds: 12),
   }) : _client = client ?? http.Client(),
-       _ownsClient = client == null;
+       _ownsClient = client == null,
+       _hostResolver = hostResolver ?? InternetAddress.lookup;
 
   final HomeAssistantCredentials credentials;
   final Duration timeout;
   final http.Client _client;
   final bool _ownsClient;
+  final HomeAssistantHostResolver _hostResolver;
 
   Map<String, String> get _headers => <String, String>{
     HttpHeaders.authorizationHeader: 'Bearer ${credentials.accessToken}',
@@ -192,16 +196,32 @@ final class HomeAssistantApi {
   }
 
   Future<http.Response> _get(Uri uri) {
-    return _request(() => _client.get(uri, headers: _headers));
+    return _request('GET', uri);
   }
 
   Future<http.Response> _post(Uri uri, {required String body}) {
-    return _request(() => _client.post(uri, headers: _headers, body: body));
+    return _request('POST', uri, body: body);
   }
 
-  Future<http.Response> _request(Future<http.Response> Function() send) async {
+  Future<http.Response> _request(String method, Uri uri, {String? body}) async {
     try {
-      final response = await send().timeout(timeout);
+      final destination =
+          await HomeAssistantNetworkPolicy.pinCleartextDestination(
+            uri,
+            resolver: _hostResolver,
+            timeout: timeout,
+          );
+      final request = http.Request(method, destination.uri)
+        ..followRedirects = false
+        ..headers.addAll(_headers);
+      if (destination.hostHeader != null) {
+        request.headers[HttpHeaders.hostHeader] = destination.hostHeader!;
+      }
+      if (body != null) request.body = body;
+      final streamed = await _client.send(request).timeout(timeout);
+      final response = await http.Response.fromStream(
+        streamed,
+      ).timeout(timeout);
       if (response.statusCode == HttpStatus.unauthorized ||
           response.statusCode == HttpStatus.forbidden) {
         throw HomeAssistantFailure(
@@ -220,6 +240,11 @@ final class HomeAssistantApi {
       return response;
     } on HomeAssistantFailure {
       rethrow;
+    } on HomeAssistantNetworkPolicyException catch (error) {
+      throw HomeAssistantFailure(
+        HomeAssistantFailureType.network,
+        error.message,
+      );
     } on TimeoutException {
       throw const HomeAssistantFailure(
         HomeAssistantFailureType.network,

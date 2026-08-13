@@ -30,25 +30,16 @@ final class HomeDashboardPage extends StatelessWidget {
               child: _DashboardHeader(snapshot: snapshot),
             ),
           ),
-          for (final section in visible)
-            SliverPadding(
-              padding: const EdgeInsets.fromLTRB(20, 10, 20, 10),
-              sliver: SliverToBoxAdapter(
-                child: switch (section) {
-                  'aquarium' => AquariumDashboardCard(
-                    snapshot: snapshot,
-                    controller: controller,
-                  ),
-                  'favorites' => _FavoritesSection(
-                    snapshot: snapshot,
-                    controller: controller,
-                  ),
-                  'areas' => _AreasSection(snapshot: snapshot),
-                  'activity' => _ActivitySection(snapshot: snapshot),
-                  _ => const SizedBox.shrink(),
-                },
+          SliverPadding(
+            padding: const EdgeInsets.fromLTRB(20, 10, 20, 10),
+            sliver: SliverToBoxAdapter(
+              child: _DashboardSections(
+                sections: visible.toList(growable: false),
+                snapshot: snapshot,
+                controller: controller,
               ),
             ),
+          ),
           SliverPadding(
             padding: const EdgeInsets.fromLTRB(20, 16, 20, 110),
             sliver: SliverToBoxAdapter(
@@ -118,11 +109,13 @@ final class AquariumDashboardCard extends StatelessWidget {
   const AquariumDashboardCard({
     required this.snapshot,
     required this.controller,
+    this.interactive = true,
     super.key,
   });
 
   final HomeSnapshot snapshot;
   final HomeControlController controller;
+  final bool interactive;
 
   @override
   Widget build(BuildContext context) {
@@ -143,7 +136,9 @@ final class AquariumDashboardCard extends StatelessWidget {
     return Card(
       clipBehavior: Clip.antiAlias,
       child: InkWell(
-        onTap: () => showAquariumDetails(context, snapshot, controller),
+        onTap: interactive
+            ? () => showAquariumDetails(context, controller)
+            : null,
         child: Ink(
           decoration: BoxDecoration(
             gradient: LinearGradient(
@@ -199,7 +194,7 @@ final class AquariumDashboardCard extends StatelessWidget {
                         ],
                       ),
                     ),
-                    const Icon(Icons.chevron_right_rounded),
+                    if (interactive) const Icon(Icons.chevron_right_rounded),
                   ],
                 ),
                 const SizedBox(height: ProductSpacing.lg),
@@ -284,21 +279,12 @@ final class _FavoritesSection extends StatelessWidget {
           (entity) => controller.dashboard.favorites.contains(entity.id.value),
         )
         .toList(growable: false);
-    final effective = favorites.isNotEmpty
-        ? favorites
-        : snapshot.entities
-              .where(
-                (entity) =>
-                    entity.writable && entity.type != HomeEntityType.unknown,
-              )
-              .take(4)
-              .toList(growable: false);
     return _SectionCard(
       title: strings.t('favorites'),
       icon: Icons.star_rounded,
-      child: effective.isEmpty
+      child: favorites.isEmpty
           ? Text(strings.t('noFavorites'))
-          : _ResponsiveEntityGrid(entities: effective, controller: controller),
+          : _ResponsiveEntityGrid(entities: favorites, controller: controller),
     );
   }
 }
@@ -362,11 +348,63 @@ final class _AreaSummary extends StatelessWidget {
             ).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w800),
           ),
           Text(strings.withValue('entitiesCount', entities.length)),
-          if (active > 0) Text(strings.withValue('stateOn', active)),
+          if (active > 0) Text(strings.withValue('activeEntities', active)),
         ],
       ),
     );
   }
+}
+
+final class _DashboardSections extends StatelessWidget {
+  const _DashboardSections({
+    required this.sections,
+    required this.snapshot,
+    required this.controller,
+  });
+
+  final List<String> sections;
+  final HomeSnapshot snapshot;
+  final HomeControlController controller;
+
+  @override
+  Widget build(BuildContext context) => LayoutBuilder(
+    builder: (context, constraints) {
+      final twoColumns = constraints.maxWidth >= 640;
+      final compactWidth = twoColumns
+          ? (constraints.maxWidth - ProductSpacing.md) / 2
+          : constraints.maxWidth;
+      return Wrap(
+        spacing: ProductSpacing.md,
+        runSpacing: ProductSpacing.lg,
+        children: <Widget>[
+          for (final section in sections)
+            SizedBox(
+              key: ValueKey<String>(
+                'dashboard-section-$section-${controller.dashboard.largeCards.contains(section) ? 'large' : 'compact'}',
+              ),
+              width:
+                  !twoColumns ||
+                      controller.dashboard.largeCards.contains(section)
+                  ? constraints.maxWidth
+                  : compactWidth,
+              child: switch (section) {
+                'aquarium' => AquariumDashboardCard(
+                  snapshot: snapshot,
+                  controller: controller,
+                ),
+                'favorites' => _FavoritesSection(
+                  snapshot: snapshot,
+                  controller: controller,
+                ),
+                'areas' => _AreasSection(snapshot: snapshot),
+                'activity' => _ActivitySection(snapshot: snapshot),
+                _ => const SizedBox.shrink(),
+              },
+            ),
+        ],
+      );
+    },
+  );
 }
 
 final class _ActivitySection extends StatelessWidget {
@@ -418,11 +456,15 @@ final class _SectionCard extends StatelessWidget {
         children: <Widget>[
           Icon(icon, size: 22),
           const SizedBox(width: ProductSpacing.xs),
-          Text(
-            title,
-            style: Theme.of(
-              context,
-            ).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w800),
+          Expanded(
+            child: Text(
+              title,
+              maxLines: 2,
+              overflow: TextOverflow.ellipsis,
+              style: Theme.of(
+                context,
+              ).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w800),
+            ),
           ),
         ],
       ),
@@ -465,7 +507,6 @@ final class _ResponsiveEntityGrid extends StatelessWidget {
 
 Future<void> showAquariumDetails(
   BuildContext context,
-  HomeSnapshot snapshot,
   HomeControlController controller,
 ) async {
   await Navigator.of(context).push<void>(
@@ -515,7 +556,11 @@ final class AquariumDetailsPage extends StatelessWidget {
       body: ListView(
         padding: const EdgeInsets.fromLTRB(20, 12, 20, 80),
         children: <Widget>[
-          AquariumDashboardCard(snapshot: snapshot, controller: controller),
+          AquariumDashboardCard(
+            snapshot: snapshot,
+            controller: controller,
+            interactive: false,
+          ),
           const SizedBox(height: ProductSpacing.lg),
           for (final role in order)
             for (final entity in grouped[role] ?? const <HomeEntity>[])

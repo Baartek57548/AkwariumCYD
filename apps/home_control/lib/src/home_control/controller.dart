@@ -27,6 +27,12 @@ enum HomeControlPhase {
 
 enum HomeSetupStep { sourceSelection, homeAssistant }
 
+typedef HomeAssistantSourceFactory =
+    HomeDataSource Function(
+      HomeAssistantCredentials credentials,
+      String instanceId,
+    );
+
 final class HomeControlController extends ChangeNotifier {
   HomeControlController({
     required HomeControlPreferences preferences,
@@ -34,6 +40,7 @@ final class HomeControlController extends ChangeNotifier {
     required CredentialsStore homeAssistantCredentialsStore,
     required HomeSnapshotCache snapshotCache,
     BiometricAuthenticator? biometricAuthenticator,
+    HomeAssistantSourceFactory? homeAssistantSourceFactory,
     RetryPolicy? retryPolicy,
     this.enablePolling = true,
   }) : _preferences = preferences,
@@ -42,6 +49,13 @@ final class HomeControlController extends ChangeNotifier {
        _snapshotCache = snapshotCache,
        _biometricAuthenticator =
            biometricAuthenticator ?? DeviceBiometricAuthenticator(),
+       _homeAssistantSourceFactory =
+           homeAssistantSourceFactory ??
+           ((credentials, instanceId) => HomeAssistantDataSource(
+             credentials: credentials,
+             credentialsStore: homeAssistantCredentialsStore,
+             instanceId: instanceId,
+           )),
        _retryPolicy = retryPolicy ?? RetryPolicy();
 
   final HomeControlPreferences _preferences;
@@ -49,6 +63,7 @@ final class HomeControlController extends ChangeNotifier {
   final CredentialsStore _homeAssistantCredentialsStore;
   final HomeSnapshotCache _snapshotCache;
   final BiometricAuthenticator _biometricAuthenticator;
+  final HomeAssistantSourceFactory _homeAssistantSourceFactory;
   final RetryPolicy _retryPolicy;
   final bool enablePolling;
 
@@ -59,6 +74,7 @@ final class HomeControlController extends ChangeNotifier {
   StreamSubscription<HomeEntity>? _stateSubscription;
   HubController? _hubSetupController;
   Timer? _pollTimer;
+  Timer? _entityNotificationTimer;
   CancellationToken _cancellation = CancellationToken();
   AppFailure? _failure;
   String? _noticeKey;
@@ -74,14 +90,21 @@ final class HomeControlController extends ChangeNotifier {
   SourceScopedId? _historyEntityId;
   bool _historyLoading = false;
   bool _refreshing = false;
+  bool _setupBusy = false;
   bool _appActive = true;
   bool _disposed = false;
   bool _promotingHub = false;
   bool _setupFromActiveSource = false;
+  bool _recoveringFromCache = false;
   int _consecutiveFailures = 0;
+  int _sourceGeneration = 0;
+  int _sourceIntentGeneration = 0;
+  int _setupGeneration = 0;
+  Future<void> _transitionCommitTail = Future<void>.value();
   List<HomeAssistantProfile> _homeAssistantProfiles =
       const <HomeAssistantProfile>[];
   String? _selectedHomeAssistantProfileId;
+  String? _activeHomeAssistantProfileId;
 
   HomeControlPhase get phase => _phase;
   HomeSetupStep get setupStep => _setupStep;
@@ -96,6 +119,7 @@ final class HomeControlController extends ChangeNotifier {
   BiometricAvailability get biometricAvailability => _biometricAvailability;
   HubController? get hubSetupController => _hubSetupController;
   bool get refreshing => _refreshing;
+  bool get setupBusy => _setupBusy;
   bool get historyLoading => _historyLoading;
   List<HistoryPoint> get history => _history;
   SourceScopedId? get historyEntityId => _historyEntityId;
@@ -142,10 +166,12 @@ final class HomeControlController extends ChangeNotifier {
   }
 
   Future<void> selectDemo() async {
+    _sourceIntentGeneration++;
     await _activate(DemoDataSource(), persistSelection: true);
   }
 
   void beginHomeAssistantSetup() {
+    _sourceIntentGeneration++;
     _setupFromActiveSource = _source != null;
     _failure = null;
     _setupStep = HomeSetupStep.homeAssistant;
@@ -174,68 +200,166 @@ final class HomeControlController extends ChangeNotifier {
     }
     final profileStore = _profileStore;
     final profileId = profileStore == null ? 'ha-main' : _newProfileId();
-    final source = HomeAssistantDataSource(
-      credentials: credentials,
-      credentialsStore: _homeAssistantCredentialsStore,
-      instanceId: profileId,
-    );
-    final connected = await _activate(source, persistSelection: false);
-    if (!connected) return false;
+    final sourceIntentGeneration = ++_sourceIntentGeneration;
+    final setupGeneration = ++_setupGeneration;
+    _setupBusy = true;
+    _failure = null;
+    _notify();
+    HomeDataSource? source;
     try {
-      if (profileStore == null) {
-        await _homeAssistantCredentialsStore.save(credentials);
-      } else {
-        await profileStore.saveProfile(
-          credentials: credentials,
-          name: _normalizedProfileName(profileName, credentials.baseUri),
-          profileId: profileId,
-        );
-        await _reloadHomeAssistantProfiles();
+      final previousSelectedProfileId = profileStore == null
+          ? null
+          : await profileStore.selectedProfileId();
+      final previousLegacyCredentials = profileStore == null
+          ? await _homeAssistantCredentialsStore.load()
+          : null;
+      if (_setupGeneration != setupGeneration ||
+          _sourceIntentGeneration != sourceIntentGeneration ||
+          !_setupBusy) {
+        return false;
       }
-      await _preferences.saveActiveSource(HomeSourceKind.homeAssistant);
-      return true;
-    } on Object {
-      await source.close();
-      _source = null;
-      _snapshot = null;
-      _failure = const AppFailure(
-        code: AppFailureCode.storage,
-        messageKey: 'errorStorage',
+      final configuredSource = _homeAssistantSourceFactory(
+        credentials,
+        profileId,
       );
-      _phase = HomeControlPhase.failure;
-      _notify();
+      source = configuredSource;
+      final connected = await _activate(
+        configuredSource,
+        persistSelection: false,
+        showConnecting: false,
+        failurePhase: HomeControlPhase.onboarding,
+      );
+      if (!connected) return false;
+      final generation = _sourceGeneration;
+      final cancellation = _cancellation;
+      return await _serializeTransitionCommit(() async {
+        if (!_isCurrentSource(configuredSource, generation, cancellation)) {
+          return false;
+        }
+        if (profileStore == null) {
+          await _homeAssistantCredentialsStore.save(credentials);
+        } else {
+          await profileStore.saveProfile(
+            credentials: credentials,
+            name: _normalizedProfileName(profileName, credentials.baseUri),
+            profileId: profileId,
+          );
+        }
+        if (!_isCurrentSource(configuredSource, generation, cancellation)) {
+          await _rollbackConfiguredHomeAssistant(
+            profileStore: profileStore,
+            profileId: profileId,
+            previousSelectedProfileId: previousSelectedProfileId,
+            previousLegacyCredentials: previousLegacyCredentials,
+          );
+          return false;
+        }
+        await _preferences.saveActiveSource(HomeSourceKind.homeAssistant);
+        if (!_isCurrentSource(configuredSource, generation, cancellation)) {
+          await _rollbackConfiguredHomeAssistant(
+            profileStore: profileStore,
+            profileId: profileId,
+            previousSelectedProfileId: previousSelectedProfileId,
+            previousLegacyCredentials: previousLegacyCredentials,
+          );
+          await _repairActiveSourcePreference();
+          return false;
+        }
+        _activeHomeAssistantProfileId = profileId;
+        await _reloadHomeAssistantProfiles();
+        if (!_isCurrentSource(configuredSource, generation, cancellation)) {
+          return false;
+        }
+        _notify();
+        return true;
+      });
+    } on Object {
+      if (_setupGeneration != setupGeneration) {
+        await source?.close();
+        return false;
+      }
+      if (identical(_source, source)) {
+        _invalidateSource('Home Assistant configuration could not be saved.');
+        await _closeActiveSource();
+        _failure = const AppFailure(
+          code: AppFailureCode.storage,
+          messageKey: 'errorStorage',
+        );
+        _phase = HomeControlPhase.failure;
+        _notify();
+      } else {
+        await source?.close();
+      }
       return false;
+    } finally {
+      if (_setupGeneration == setupGeneration) {
+        _setupBusy = false;
+        _notify();
+      }
     }
   }
 
   Future<bool> selectHomeAssistantProfile(String profileId) async {
+    final sourceIntentGeneration = ++_sourceIntentGeneration;
     final store = _profileStore;
-    if (store == null || profileId == _selectedHomeAssistantProfileId) {
+    if (store == null || profileId == _activeHomeAssistantProfileId) {
       return false;
     }
     final credentials = await store.loadProfile(profileId);
-    if (credentials == null) return false;
-    final connected = await _activate(
-      HomeAssistantDataSource(
-        credentials: credentials,
-        credentialsStore: _homeAssistantCredentialsStore,
-        instanceId: profileId,
-      ),
-      persistSelection: false,
-    );
+    if (credentials == null ||
+        _sourceIntentGeneration != sourceIntentGeneration) {
+      return false;
+    }
+    final previousProfileId =
+        _activeHomeAssistantProfileId ?? _selectedHomeAssistantProfileId;
+    final source = _homeAssistantSourceFactory(credentials, profileId);
+    final connected = await _activate(source, persistSelection: false);
     if (!connected) return false;
-    await store.selectProfile(profileId);
-    await _preferences.saveActiveSource(HomeSourceKind.homeAssistant);
-    await _reloadHomeAssistantProfiles();
-    return true;
+    if (_sourceIntentGeneration != sourceIntentGeneration) {
+      if (identical(_source, source)) {
+        _invalidateSource('A newer source selection was requested.');
+        await _closeActiveSource();
+      }
+      return false;
+    }
+    final generation = _sourceGeneration;
+    final cancellation = _cancellation;
+    try {
+      return await _serializeTransitionCommit(() async {
+        if (!_isCurrentSource(source, generation, cancellation)) return false;
+        await store.selectProfile(profileId);
+        if (!_isCurrentSource(source, generation, cancellation)) {
+          await _restoreSelectedProfile(store, previousProfileId);
+          return false;
+        }
+        await _preferences.saveActiveSource(HomeSourceKind.homeAssistant);
+        if (!_isCurrentSource(source, generation, cancellation)) {
+          await _restoreSelectedProfile(store, previousProfileId);
+          await _repairActiveSourcePreference();
+          return false;
+        }
+        _activeHomeAssistantProfileId = profileId;
+        await _reloadHomeAssistantProfiles();
+        if (!_isCurrentSource(source, generation, cancellation)) return false;
+        return true;
+      });
+    } on Object {
+      if (_isCurrentSource(source, generation, cancellation)) {
+        _setStorageFailure();
+      }
+      return false;
+    }
   }
 
   Future<void> deleteHomeAssistantProfile(String profileId) async {
     final store = _profileStore;
     if (store == null) return;
-    final deletingActive = profileId == _selectedHomeAssistantProfileId;
+    final deletingActive = profileId == _activeHomeAssistantProfileId;
     await store.deleteProfile(profileId);
-    await _snapshotCache.clear(HomeSourceKind.homeAssistant);
+    await _snapshotCache.clear(
+      HomeSourceKind.homeAssistant,
+      sourceId: profileId,
+    );
     await _reloadHomeAssistantProfiles();
     if (!deletingActive) return;
     if (_homeAssistantProfiles.isEmpty) {
@@ -246,8 +370,13 @@ final class HomeControlController extends ChangeNotifier {
   }
 
   Future<void> beginAquaHubSetup() async {
+    _sourceIntentGeneration++;
+    final generation = _invalidateSource('AquaHub setup started.');
+    final cancellation = _cancellation;
     await _closeActiveSource();
+    if (!_isCurrentGeneration(generation, cancellation)) return;
     await _disposeHubSetup();
+    if (!_isCurrentGeneration(generation, cancellation)) return;
     _failure = null;
     _phase = HomeControlPhase.aquaHubSetup;
     final controller = HubController(
@@ -261,13 +390,28 @@ final class HomeControlController extends ChangeNotifier {
   }
 
   Future<void> cancelSetup() async {
+    _sourceIntentGeneration++;
+    _setupGeneration++;
     await _disposeHubSetup();
+    if (_setupBusy) {
+      _invalidateSource('Home Assistant setup cancelled.');
+      await _closeActiveSource();
+      _setupBusy = false;
+    }
     _failure = null;
     if (_setupFromActiveSource && _source != null && _snapshot != null) {
       _setupFromActiveSource = false;
       _phase = HomeControlPhase.ready;
       _notify();
       return;
+    }
+    if (_setupFromActiveSource) {
+      _setupFromActiveSource = false;
+      final active = await _preferences.loadActiveSource();
+      if (active != null) {
+        await _restoreSource(active);
+        return;
+      }
     }
     _setupFromActiveSource = false;
     _setupStep = HomeSetupStep.sourceSelection;
@@ -276,6 +420,7 @@ final class HomeControlController extends ChangeNotifier {
   }
 
   Future<void> retry() async {
+    _sourceIntentGeneration++;
     final active = await _preferences.loadActiveSource();
     if (active == null) {
       await cancelSetup();
@@ -285,11 +430,19 @@ final class HomeControlController extends ChangeNotifier {
   }
 
   Future<void> switchSource() async {
-    _cancellation.cancel('Source switched.');
-    _cancellation = CancellationToken();
+    _sourceIntentGeneration++;
+    final generation = _invalidateSource('Source switched.');
+    final cancellation = _cancellation;
     await _closeActiveSource();
+    if (!_isCurrentGeneration(generation, cancellation)) return;
     await _disposeHubSetup();
-    await _preferences.clearActiveSource();
+    if (!_isCurrentGeneration(generation, cancellation)) return;
+    final cleared = await _serializeTransitionCommit(() async {
+      if (!_isCurrentGeneration(generation, cancellation)) return false;
+      await _preferences.clearActiveSource();
+      return _isCurrentGeneration(generation, cancellation);
+    });
+    if (!cleared) return;
     _failure = null;
     _noticeKey = null;
     _setupFromActiveSource = false;
@@ -314,24 +467,40 @@ final class HomeControlController extends ChangeNotifier {
         await _homeAssistantCredentialsStore.clear();
       }
     }
-    if (kind != null) await _snapshotCache.clear(kind);
+    if (kind != null) {
+      final sourceId =
+          source?.sourceId ??
+          switch (kind) {
+            HomeSourceKind.homeAssistant => _selectedHomeAssistantProfileId,
+            HomeSourceKind.aquaHub => 'aquahub',
+            HomeSourceKind.demo => 'demo',
+          };
+      await _snapshotCache.clear(kind, sourceId: sourceId);
+    }
     await switchSource();
   }
 
   Future<bool> refresh({bool announce = false}) async {
     final source = _source;
     if (source == null || _refreshing) return false;
+    if (_recoveringFromCache) return _recoverConnection();
+    final generation = _sourceGeneration;
+    final cancellation = _cancellation;
     _refreshing = true;
     _failure = null;
     _notify();
     try {
-      _snapshot = await source.refresh(_cancellation);
-      await _saveCache(_snapshot!);
+      final snapshot = await source.refresh(cancellation);
+      if (!_isCurrentSource(source, generation, cancellation)) return false;
+      _snapshot = snapshot;
+      await _saveCache(snapshot);
+      if (!_isCurrentSource(source, generation, cancellation)) return false;
       _consecutiveFailures = 0;
       if (announce) _noticeKey = 'noticeRefreshed';
       _schedulePoll();
       return true;
     } on AppFailure catch (failure) {
+      if (!_isCurrentSource(source, generation, cancellation)) return false;
       _failure = failure;
       _consecutiveFailures++;
       _snapshot = _snapshot == null ? null : _markOffline(_snapshot!);
@@ -340,8 +509,10 @@ final class HomeControlController extends ChangeNotifier {
     } on OperationCancelled {
       return false;
     } finally {
-      _refreshing = false;
-      _notify();
+      if (_sourceGeneration == generation) {
+        _refreshing = false;
+        _notify();
+      }
     }
   }
 
@@ -351,6 +522,8 @@ final class HomeControlController extends ChangeNotifier {
     if (source == null || snapshot == null || isPending(entity.id)) {
       return false;
     }
+    final generation = _sourceGeneration;
+    final cancellation = _cancellation;
     if (!entity.available || !entity.writable || snapshot.isOffline) {
       _failure = const AppFailure(
         code: AppFailureCode.offline,
@@ -363,6 +536,10 @@ final class HomeControlController extends ChangeNotifier {
         !await authorizeCriticalOperation()) {
       return false;
     }
+    if (!_isCurrentSource(source, generation, cancellation) ||
+        entity.id.sourceId != source.sourceId) {
+      return false;
+    }
     _pending.add(entity.id.value);
     _failure = null;
     _snapshot = snapshot.replaceEntity(
@@ -370,14 +547,16 @@ final class HomeControlController extends ChangeNotifier {
     );
     _notify();
     try {
-      await source.sendCommand(entity, value, _cancellation);
+      await source.sendCommand(entity, value, cancellation);
+      if (!_isCurrentSource(source, generation, cancellation)) return false;
       final current = _snapshot;
       if (current != null) await _saveCache(current);
       _noticeKey = 'noticeCommandAccepted';
       await Future<void>.delayed(const Duration(milliseconds: 250));
-      await refresh();
+      if (_isCurrentSource(source, generation, cancellation)) await refresh();
       return true;
     } on AppFailure catch (failure) {
+      if (!_isCurrentSource(source, generation, cancellation)) return false;
       _failure = failure;
       _snapshot = _snapshot?.replaceEntity(entity);
       return false;
@@ -385,49 +564,80 @@ final class HomeControlController extends ChangeNotifier {
       _snapshot = _snapshot?.replaceEntity(entity);
       return false;
     } finally {
-      _pending.remove(entity.id.value);
-      _notify();
+      if (_sourceGeneration == generation) {
+        _pending.remove(entity.id.value);
+        _notify();
+      }
     }
   }
 
   Future<bool> loadHistory(HomeEntity entity, Duration period) async {
     final source = _source;
     if (source == null || _historyLoading) return false;
+    final generation = _sourceGeneration;
+    final cancellation = _cancellation;
     _historyLoading = true;
     _historyEntityId = entity.id;
     _history = const <HistoryPoint>[];
     _failure = null;
     _notify();
     try {
-      _history = await source.loadHistory(entity, period, _cancellation);
+      final history = await source.loadHistory(entity, period, cancellation);
+      if (!_isCurrentSource(source, generation, cancellation)) return false;
+      _history = history;
       return true;
     } on AppFailure catch (failure) {
+      if (!_isCurrentSource(source, generation, cancellation)) return false;
       _failure = failure;
       return false;
+    } on OperationCancelled {
+      return false;
     } finally {
-      _historyLoading = false;
-      _notify();
+      if (_sourceGeneration == generation) {
+        _historyLoading = false;
+        _notify();
+      }
     }
   }
 
   Future<bool> installUpdate(HomeUpdate update) async {
     final source = _source;
     if (source == null || _pending.contains(update.id.value)) return false;
+    if (_snapshot?.isOffline != false) {
+      _failure = const AppFailure(
+        code: AppFailureCode.offline,
+        messageKey: 'errorCommandUnavailable',
+      );
+      _notify();
+      return false;
+    }
+    final generation = _sourceGeneration;
+    final cancellation = _cancellation;
     if (!await authorizeCriticalOperation()) return false;
+    if (!_isCurrentSource(source, generation, cancellation) ||
+        update.id.sourceId != source.sourceId) {
+      return false;
+    }
     _pending.add(update.id.value);
     _failure = null;
     _notify();
     try {
-      await source.installUpdate(update, _cancellation);
+      await source.installUpdate(update, cancellation);
+      if (!_isCurrentSource(source, generation, cancellation)) return false;
       _noticeKey = 'noticeUpdateStarted';
       await refresh();
       return true;
     } on AppFailure catch (failure) {
+      if (!_isCurrentSource(source, generation, cancellation)) return false;
       _failure = failure;
       return false;
+    } on OperationCancelled {
+      return false;
     } finally {
-      _pending.remove(update.id.value);
-      _notify();
+      if (_sourceGeneration == generation) {
+        _pending.remove(update.id.value);
+        _notify();
+      }
     }
   }
 
@@ -455,16 +665,28 @@ final class HomeControlController extends ChangeNotifier {
   };
 
   Future<void> setThemeMode(ThemeMode value) async {
+    final previous = _themeMode;
     _themeMode = value;
     _notify();
-    await _preferences.saveThemeMode(value);
+    try {
+      await _preferences.saveThemeMode(value);
+    } on Object {
+      _themeMode = previous;
+      _setStorageFailure();
+    }
   }
 
   Future<void> setLocale(Locale value) async {
     if (value.languageCode != 'pl' && value.languageCode != 'en') return;
+    final previous = _locale;
     _locale = value;
     _notify();
-    await _preferences.saveLocale(value);
+    try {
+      await _preferences.saveLocale(value);
+    } on Object {
+      _locale = previous;
+      _setStorageFailure();
+    }
   }
 
   Future<bool> setBiometricProtection(bool enabled) async {
@@ -547,15 +769,27 @@ final class HomeControlController extends ChangeNotifier {
   }
 
   Future<void> saveDashboard(DashboardPreferences value) async {
+    final previous = _dashboard;
     _dashboard = value;
     _notify();
-    await _preferences.saveDashboard(value);
+    try {
+      await _preferences.saveDashboard(value);
+    } on Object {
+      _dashboard = previous;
+      _setStorageFailure();
+    }
   }
 
   Future<void> resetDashboard() async {
-    await _preferences.resetDashboard();
+    final previous = _dashboard;
     _dashboard = const DashboardPreferences.defaults();
     _notify();
+    try {
+      await _preferences.resetDashboard();
+    } on Object {
+      _dashboard = previous;
+      _setStorageFailure();
+    }
   }
 
   Future<void> toggleFavorite(HomeEntity entity) async {
@@ -576,13 +810,21 @@ final class HomeControlController extends ChangeNotifier {
     _notify();
   }
 
+  void _setStorageFailure() {
+    _failure = const AppFailure(
+      code: AppFailureCode.storage,
+      messageKey: 'errorStorage',
+    );
+    _notify();
+  }
+
   void setAppActive(bool active) {
     if (_disposed || _appActive == active) return;
     _appActive = active;
     _pollTimer?.cancel();
     _pollTimer = null;
     if (active && _phase == HomeControlPhase.ready) {
-      unawaited(refresh());
+      unawaited(_recoveringFromCache ? _recoverConnection() : refresh());
     }
   }
 
@@ -617,14 +859,16 @@ final class HomeControlController extends ChangeNotifier {
           beginHomeAssistantSetup();
           return;
         }
-        await _activate(
-          HomeAssistantDataSource(
-            credentials: credentials,
-            credentialsStore: _homeAssistantCredentialsStore,
-            instanceId: profileId ?? 'ha-main',
-          ),
+        final restoredProfileId = profileId ?? 'ha-main';
+        final connected = await _activate(
+          _homeAssistantSourceFactory(credentials, restoredProfileId),
           persistSelection: false,
         );
+        if (connected ||
+            (_source?.kind == HomeSourceKind.homeAssistant &&
+                _source?.sourceId == restoredProfileId)) {
+          _activeHomeAssistantProfileId = restoredProfileId;
+        }
         break;
     }
   }
@@ -632,44 +876,78 @@ final class HomeControlController extends ChangeNotifier {
   Future<bool> _activate(
     HomeDataSource source, {
     required bool persistSelection,
+    bool showConnecting = true,
+    HomeControlPhase failurePhase = HomeControlPhase.failure,
   }) async {
-    _cancellation.cancel('A new data source is being activated.');
-    _cancellation = CancellationToken();
+    final generation = _invalidateSource(
+      'A new data source is being activated.',
+    );
+    final cancellation = _cancellation;
     await _closeActiveSource();
+    if (!_isCurrentGeneration(generation, cancellation)) {
+      await source.close();
+      return false;
+    }
     _source = source;
-    _phase = HomeControlPhase.connecting;
+    if (showConnecting) _phase = HomeControlPhase.connecting;
     _failure = null;
     _noticeKey = null;
     _notify();
     try {
-      final snapshot = await source.connect(_cancellation);
-      if (_disposed) {
+      final snapshot = await source.connect(cancellation);
+      if (!_isCurrentSource(source, generation, cancellation)) {
         await source.close();
         return false;
       }
       _snapshot = snapshot;
       await _saveCache(snapshot);
-      _stateSubscription = source.stateChanges.listen(_handleEntityChange);
-      if (persistSelection) await _preferences.saveActiveSource(source.kind);
+      if (!_isCurrentSource(source, generation, cancellation)) {
+        await source.close();
+        return false;
+      }
+      _stateSubscription = source.stateChanges.listen(
+        (entity) => _handleEntityChange(entity, generation),
+      );
+      if (persistSelection) {
+        final persisted = await _serializeTransitionCommit(() async {
+          if (!_isCurrentSource(source, generation, cancellation)) {
+            return false;
+          }
+          await _preferences.saveActiveSource(source.kind);
+          if (!_isCurrentSource(source, generation, cancellation)) {
+            await _repairActiveSourcePreference();
+            return false;
+          }
+          return true;
+        });
+        if (!persisted) return false;
+      }
+      if (!_isCurrentSource(source, generation, cancellation)) return false;
       _phase = HomeControlPhase.ready;
+      _recoveringFromCache = false;
       _consecutiveFailures = 0;
       _schedulePoll();
       _notify();
       return true;
     } on AppFailure catch (failure) {
+      if (!_isCurrentSource(source, generation, cancellation)) return false;
       _failure = failure;
       if (!await _restoreCachedSnapshot(source.kind, source.sourceId)) {
-        _phase = HomeControlPhase.failure;
+        _phase = failurePhase;
+        await _discardFailedSource(source, generation);
       }
     } on OperationCancelled {
+      await _discardFailedSource(source, generation);
       return false;
     } on Object {
+      if (!_isCurrentSource(source, generation, cancellation)) return false;
       _failure = const AppFailure(
         code: AppFailureCode.unknown,
         messageKey: 'errorUnknown',
       );
       if (!await _restoreCachedSnapshot(source.kind, source.sourceId)) {
-        _phase = HomeControlPhase.failure;
+        _phase = failurePhase;
+        await _discardFailedSource(source, generation);
       }
     }
     _notify();
@@ -682,10 +960,11 @@ final class HomeControlController extends ChangeNotifier {
   ) async {
     if (kind == HomeSourceKind.demo) return false;
     try {
-      final cached = await _snapshotCache.load(kind);
+      final cached = await _snapshotCache.load(kind, expectedSourceId);
       if (cached == null || cached.sourceId != expectedSourceId) return false;
       _snapshot = cached;
       _phase = HomeControlPhase.ready;
+      _recoveringFromCache = true;
       _consecutiveFailures = 1;
       _schedulePoll();
       return true;
@@ -706,15 +985,19 @@ final class HomeControlController extends ChangeNotifier {
     }
   }
 
-  void _handleEntityChange(HomeEntity entity) {
+  void _handleEntityChange(HomeEntity entity, int generation) {
     final snapshot = _snapshot;
     if (_disposed ||
+        generation != _sourceGeneration ||
         snapshot == null ||
         entity.id.sourceId != snapshot.sourceId) {
       return;
     }
     _snapshot = snapshot.replaceEntity(entity);
-    _notify();
+    _entityNotificationTimer ??= Timer(const Duration(milliseconds: 16), () {
+      _entityNotificationTimer = null;
+      _notify();
+    });
   }
 
   void _handleHubSetupChange() {
@@ -759,7 +1042,59 @@ final class HomeControlController extends ChangeNotifier {
               _retryPolicy.maximumAttempts - 1,
             ),
           );
-    _pollTimer = Timer(delay, () => unawaited(refresh()));
+    _pollTimer = Timer(
+      delay,
+      () => unawaited(_recoveringFromCache ? _recoverConnection() : refresh()),
+    );
+  }
+
+  Future<bool> _recoverConnection() async {
+    final source = _source;
+    if (source == null || _refreshing || !_recoveringFromCache) return false;
+    final generation = _sourceGeneration;
+    final cancellation = _cancellation;
+    _refreshing = true;
+    _notify();
+    try {
+      final snapshot = await source.connect(cancellation);
+      if (!_isCurrentSource(source, generation, cancellation)) return false;
+      await _stateSubscription?.cancel();
+      _stateSubscription = source.stateChanges.listen(
+        (entity) => _handleEntityChange(entity, generation),
+      );
+      _snapshot = snapshot;
+      await _saveCache(snapshot);
+      if (!_isCurrentSource(source, generation, cancellation)) return false;
+      _failure = null;
+      _recoveringFromCache = false;
+      _consecutiveFailures = 0;
+      _schedulePoll();
+      return true;
+    } on AppFailure catch (failure) {
+      if (!_isCurrentSource(source, generation, cancellation)) return false;
+      _failure = failure;
+      _consecutiveFailures++;
+      final snapshot = _snapshot;
+      if (snapshot != null) _snapshot = _markOffline(snapshot);
+      _schedulePoll();
+      return false;
+    } on OperationCancelled {
+      return false;
+    } on Object {
+      if (!_isCurrentSource(source, generation, cancellation)) return false;
+      _failure = const AppFailure(
+        code: AppFailureCode.unknown,
+        messageKey: 'errorUnknown',
+      );
+      _consecutiveFailures++;
+      _schedulePoll();
+      return false;
+    } finally {
+      if (_sourceGeneration == generation) {
+        _refreshing = false;
+        _notify();
+      }
+    }
   }
 
   HomeSnapshot _markOffline(HomeSnapshot value) => HomeSnapshot(
@@ -780,15 +1115,72 @@ final class HomeControlController extends ChangeNotifier {
   Future<void> _closeActiveSource() async {
     _pollTimer?.cancel();
     _pollTimer = null;
-    await _stateSubscription?.cancel();
+    _entityNotificationTimer?.cancel();
+    _entityNotificationTimer = null;
+    final stateSubscription = _stateSubscription;
     _stateSubscription = null;
     final source = _source;
     _source = null;
-    await source?.close();
     _snapshot = null;
     _history = const <HistoryPoint>[];
     _historyEntityId = null;
     _pending.clear();
+    _refreshing = false;
+    _historyLoading = false;
+    _recoveringFromCache = false;
+    _activeHomeAssistantProfileId = null;
+    await stateSubscription?.cancel();
+    await source?.close();
+  }
+
+  Future<void> _discardFailedSource(
+    HomeDataSource source,
+    int generation,
+  ) async {
+    if (_sourceGeneration == generation && identical(_source, source)) {
+      _source = null;
+    }
+    await source.close();
+  }
+
+  int _invalidateSource(String reason) {
+    _sourceGeneration++;
+    _cancellation.cancel(reason);
+    _cancellation = CancellationToken();
+    return _sourceGeneration;
+  }
+
+  bool _isCurrentGeneration(int generation, CancellationToken cancellation) =>
+      !_disposed &&
+      generation == _sourceGeneration &&
+      identical(cancellation, _cancellation) &&
+      !cancellation.isCancelled;
+
+  bool _isCurrentSource(
+    HomeDataSource source,
+    int generation,
+    CancellationToken cancellation,
+  ) =>
+      _isCurrentGeneration(generation, cancellation) &&
+      identical(_source, source);
+
+  Future<T> _serializeTransitionCommit<T>(Future<T> Function() action) {
+    final previous = _transitionCommitTail;
+    final result = Completer<T>();
+    _transitionCommitTail = () async {
+      try {
+        await previous;
+      } on Object {
+        // Every queued operation reports its own error. A previous failure
+        // must not prevent newer source state from being committed.
+      }
+      try {
+        result.complete(await action());
+      } on Object catch (error, stackTrace) {
+        result.completeError(error, stackTrace);
+      }
+    }();
+    return result.future;
   }
 
   Future<void> _disposeHubSetup() async {
@@ -812,6 +1204,42 @@ final class HomeControlController extends ChangeNotifier {
     _selectedHomeAssistantProfileId = await store.selectedProfileId();
   }
 
+  Future<void> _rollbackConfiguredHomeAssistant({
+    required HomeAssistantProfileStore? profileStore,
+    required String profileId,
+    required String? previousSelectedProfileId,
+    required HomeAssistantCredentials? previousLegacyCredentials,
+  }) async {
+    if (profileStore != null) {
+      await profileStore.deleteProfile(profileId);
+      await _restoreSelectedProfile(profileStore, previousSelectedProfileId);
+      await _reloadHomeAssistantProfiles();
+      return;
+    }
+    if (previousLegacyCredentials == null) {
+      await _homeAssistantCredentialsStore.clear();
+    } else {
+      await _homeAssistantCredentialsStore.save(previousLegacyCredentials);
+    }
+  }
+
+  Future<void> _restoreSelectedProfile(
+    HomeAssistantProfileStore store,
+    String? profileId,
+  ) async {
+    if (profileId == null || await store.loadProfile(profileId) == null) return;
+    await store.selectProfile(profileId);
+  }
+
+  Future<void> _repairActiveSourcePreference() async {
+    final source = _source;
+    if (source == null) {
+      await _preferences.clearActiveSource();
+    } else {
+      await _preferences.saveActiveSource(source.kind);
+    }
+  }
+
   static String _normalizedProfileName(String? value, Uri baseUri) {
     final normalized = value?.trim() ?? '';
     if (normalized.isNotEmpty) return normalized;
@@ -831,8 +1259,10 @@ final class HomeControlController extends ChangeNotifier {
   void dispose() {
     if (_disposed) return;
     _disposed = true;
+    _sourceGeneration++;
     _cancellation.cancel('Home Control disposed.');
     _pollTimer?.cancel();
+    _entityNotificationTimer?.cancel();
     unawaited(_stateSubscription?.cancel());
     unawaited(_source?.close());
     final hub = _hubSetupController;

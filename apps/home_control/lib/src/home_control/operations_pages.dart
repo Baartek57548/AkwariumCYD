@@ -58,10 +58,22 @@ final class AutomationsPage extends StatelessWidget {
               itemBuilder: (context, index) {
                 final automation = snapshot.automations[index];
                 final entity = snapshot.entity(automation.id);
+                final pending =
+                    entity != null && controller.isPending(entity.id);
+                final enabled =
+                    entity?.available == true &&
+                    entity?.writable == true &&
+                    !snapshot.isOffline &&
+                    !pending;
                 return Card(
                   margin: const EdgeInsets.only(bottom: ProductSpacing.sm),
                   child: SwitchListTile(
-                    secondary: const Icon(Icons.account_tree_rounded),
+                    secondary: pending
+                        ? const SizedBox.square(
+                            dimension: 24,
+                            child: CircularProgressIndicator(strokeWidth: 2.5),
+                          )
+                        : const Icon(Icons.account_tree_rounded),
                     title: Text(automation.name),
                     subtitle: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
@@ -72,8 +84,8 @@ final class AutomationsPage extends StatelessWidget {
                           Text(strings.relativeTime(automation.lastTriggered)),
                       ],
                     ),
-                    value: automation.enabled,
-                    onChanged: entity?.writable == true
+                    value: entity?.booleanValue ?? automation.enabled,
+                    onChanged: enabled
                         ? (value) => requestEntityCommand(
                             context,
                             entity!,
@@ -148,7 +160,10 @@ final class UpdatesPage extends StatelessWidget {
         if (appUpdate != null)
           AnimatedBuilder(
             animation: appUpdate,
-            builder: (context, _) => _AppUpdateCard(controller: appUpdate),
+            builder: (context, _) => _AppUpdateCard(
+              controller: appUpdate,
+              authorizeInstall: controller.authorizeCriticalOperation,
+            ),
           ),
         const SizedBox(height: ProductSpacing.lg),
         Text(
@@ -172,9 +187,13 @@ final class UpdatesPage extends StatelessWidget {
 }
 
 final class _AppUpdateCard extends StatelessWidget {
-  const _AppUpdateCard({required this.controller});
+  const _AppUpdateCard({
+    required this.controller,
+    required this.authorizeInstall,
+  });
 
   final AppUpdateController controller;
+  final Future<bool> Function() authorizeInstall;
 
   @override
   Widget build(BuildContext context) {
@@ -208,6 +227,10 @@ final class _AppUpdateCard extends StatelessWidget {
             ),
             if (controller.phase == AppUpdatePhase.downloading) ...<Widget>[
               LinearProgressIndicator(value: controller.progress),
+              Text(
+                '${(controller.progress * 100).round()}%',
+                textAlign: TextAlign.center,
+              ),
               const SizedBox(height: ProductSpacing.sm),
             ],
             if (controller.errorMessage != null)
@@ -222,9 +245,20 @@ final class _AppUpdateCard extends StatelessWidget {
               FilledButton.icon(
                 onPressed: controller.busy
                     ? null
-                    : controller.downloadAndInstall,
+                    : () => _runAuthorizedUpdate(
+                        authorizeInstall,
+                        controller.phase == AppUpdatePhase.permissionRequired
+                            ? controller.retryInstaller
+                            : controller.downloadAndInstall,
+                      ),
                 icon: const Icon(Icons.download_rounded),
-                label: Text(strings.t('install')),
+                label: Text(
+                  strings.t(
+                    controller.phase == AppUpdatePhase.permissionRequired
+                        ? 'continueInstallation'
+                        : 'install',
+                  ),
+                ),
               ),
             ] else if (controller.phase == AppUpdatePhase.upToDate)
               Text(strings.t('upToDate'))
@@ -237,6 +271,14 @@ final class _AppUpdateCard extends StatelessWidget {
   }
 }
 
+Future<void> _runAuthorizedUpdate(
+  Future<bool> Function() authorize,
+  Future<void> Function() action,
+) async {
+  if (!await authorize()) return;
+  await action();
+}
+
 final class _DeviceUpdateCard extends StatelessWidget {
   const _DeviceUpdateCard({required this.update, required this.controller});
 
@@ -247,6 +289,7 @@ final class _DeviceUpdateCard extends StatelessWidget {
   Widget build(BuildContext context) {
     final strings = HomeControlStrings.of(context);
     final pending = controller.isPending(update.id);
+    final sourceOffline = controller.snapshot?.isOffline ?? true;
     return Card(
       margin: const EdgeInsets.only(bottom: ProductSpacing.sm),
       child: Padding(
@@ -280,7 +323,7 @@ final class _DeviceUpdateCard extends StatelessWidget {
             const SizedBox(height: ProductSpacing.sm),
             if (update.canInstall)
               FilledButton.icon(
-                onPressed: pending
+                onPressed: pending || sourceOffline
                     ? null
                     : () => _confirmInstall(context, update, controller),
                 icon: pending
@@ -342,6 +385,9 @@ final class SettingsPage extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final strings = HomeControlStrings.of(context);
+    final applicationVersion =
+        AppUpdateScope.maybeOf(context)?.installed?.label ??
+        homeControlVersionLabel;
     return ListView(
       key: const PageStorageKey<String>('settings-page'),
       padding: const EdgeInsets.fromLTRB(20, 20, 20, 100),
@@ -355,27 +401,50 @@ final class SettingsPage extends StatelessWidget {
         const SizedBox(height: ProductSpacing.lg),
         _SettingsSection(
           title: strings.t('theme'),
-          child: SegmentedButton<ThemeMode>(
-            segments: <ButtonSegment<ThemeMode>>[
-              ButtonSegment<ThemeMode>(
-                value: ThemeMode.system,
-                label: Text(strings.t('themeSystem')),
-                icon: const Icon(Icons.brightness_auto_rounded),
-              ),
-              ButtonSegment<ThemeMode>(
-                value: ThemeMode.light,
-                label: Text(strings.t('themeLight')),
-                icon: const Icon(Icons.light_mode_rounded),
-              ),
-              ButtonSegment<ThemeMode>(
-                value: ThemeMode.dark,
-                label: Text(strings.t('themeDark')),
-                icon: const Icon(Icons.dark_mode_rounded),
-              ),
-            ],
-            selected: <ThemeMode>{controller.themeMode},
-            onSelectionChanged: (values) =>
-                controller.setThemeMode(values.first),
+          child: LayoutBuilder(
+            builder: (context, constraints) => constraints.maxWidth < 420
+                ? DropdownButtonFormField<ThemeMode>(
+                    initialValue: controller.themeMode,
+                    decoration: InputDecoration(labelText: strings.t('theme')),
+                    items: <DropdownMenuItem<ThemeMode>>[
+                      for (final mode in ThemeMode.values)
+                        DropdownMenuItem<ThemeMode>(
+                          value: mode,
+                          child: Text(
+                            strings.t(switch (mode) {
+                              ThemeMode.system => 'themeSystem',
+                              ThemeMode.light => 'themeLight',
+                              ThemeMode.dark => 'themeDark',
+                            }),
+                          ),
+                        ),
+                    ],
+                    onChanged: (value) {
+                      if (value != null) controller.setThemeMode(value);
+                    },
+                  )
+                : SegmentedButton<ThemeMode>(
+                    segments: <ButtonSegment<ThemeMode>>[
+                      ButtonSegment<ThemeMode>(
+                        value: ThemeMode.system,
+                        label: Text(strings.t('themeSystem')),
+                        icon: const Icon(Icons.brightness_auto_rounded),
+                      ),
+                      ButtonSegment<ThemeMode>(
+                        value: ThemeMode.light,
+                        label: Text(strings.t('themeLight')),
+                        icon: const Icon(Icons.light_mode_rounded),
+                      ),
+                      ButtonSegment<ThemeMode>(
+                        value: ThemeMode.dark,
+                        label: Text(strings.t('themeDark')),
+                        icon: const Icon(Icons.dark_mode_rounded),
+                      ),
+                    ],
+                    selected: <ThemeMode>{controller.themeMode},
+                    onSelectionChanged: (values) =>
+                        controller.setThemeMode(values.first),
+                  ),
           ),
         ),
         _SettingsSection(
@@ -466,7 +535,9 @@ final class SettingsPage extends StatelessWidget {
                 contentPadding: EdgeInsets.zero,
                 leading: const Icon(Icons.hub_rounded),
                 title: Text(controller.snapshot!.sourceName),
-                subtitle: Text(controller.snapshot!.sourceKind.name),
+                subtitle: Text(
+                  strings.sourceName(controller.snapshot!.sourceKind),
+                ),
               ),
               OutlinedButton.icon(
                 onPressed: controller.switchSource,
@@ -577,13 +648,15 @@ final class SettingsPage extends StatelessWidget {
                 contentPadding: EdgeInsets.zero,
                 leading: const Icon(Icons.info_outline_rounded),
                 title: Text(strings.t('appName')),
-                subtitle: Text(strings.withValue('appVersion', '2.0.0+5')),
+                subtitle: Text(
+                  strings.withValue('appVersion', applicationVersion),
+                ),
               ),
               OutlinedButton.icon(
                 onPressed: () => showLicensePage(
                   context: context,
                   applicationName: strings.t('appName'),
-                  applicationVersion: '2.0.0+5',
+                  applicationVersion: applicationVersion,
                 ),
                 icon: const Icon(Icons.description_outlined),
                 label: Text(strings.t('openSourceLicenses')),
@@ -661,11 +734,16 @@ final class _DiagnosticRow extends StatelessWidget {
       children: <Widget>[
         Expanded(child: Text(label)),
         const SizedBox(width: ProductSpacing.sm),
-        Text(
-          value,
-          style: Theme.of(
-            context,
-          ).textTheme.bodyMedium?.copyWith(fontWeight: FontWeight.w700),
+        Flexible(
+          child: Text(
+            value,
+            maxLines: 3,
+            overflow: TextOverflow.ellipsis,
+            textAlign: TextAlign.end,
+            style: Theme.of(
+              context,
+            ).textTheme.bodyMedium?.copyWith(fontWeight: FontWeight.w700),
+          ),
         ),
       ],
     ),

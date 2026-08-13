@@ -48,6 +48,7 @@ final class HubController extends ChangeNotifier {
   List<HubEntity> _entities = const <HubEntity>[];
   String? _observedFingerprint;
   String? _errorMessage;
+  String? _errorKey;
   Timer? _pollTimer;
   bool _refreshing = false;
   bool _updating = false;
@@ -68,6 +69,7 @@ final class HubController extends ChangeNotifier {
   List<HubEntity> get entities => _entities;
   String? get observedFingerprint => _observedFingerprint;
   String? get errorMessage => _errorMessage;
+  String? get errorKey => _errorKey;
   bool get refreshing => _refreshing;
   bool get updating => _updating;
   bool get connectionHealthy => _consecutiveRefreshFailures == 0;
@@ -89,6 +91,7 @@ final class HubController extends ChangeNotifier {
     } on Object {
       if (_disposed) return;
       _errorMessage = 'Nie udało się odczytać bezpiecznej sesji AquaHub.';
+      _errorKey = 'hubErrorSession';
       _phase = HubAppPhase.failure;
       notifyListeners();
     }
@@ -97,6 +100,7 @@ final class HubController extends ChangeNotifier {
   Future<bool> discover(String baseUrl) async {
     _closeBootstrap();
     _errorMessage = null;
+    _errorKey = null;
     _discoveredInfo = null;
     _observedFingerprint = null;
     notifyListeners();
@@ -128,10 +132,13 @@ final class HubController extends ChangeNotifier {
     } on FormatException {
       _errorMessage =
           'Podaj pełny adres HTTPS, np. https://aquahub.local:8443.';
+      _errorKey = 'hubErrorHttpsAddress';
     } on HubFailure catch (error) {
       _errorMessage = error.message;
+      _errorKey = _hubFailureKey(error.type);
     } on Object {
       _errorMessage = 'Nie udało się odnaleźć AquaHub w sieci lokalnej.';
+      _errorKey = 'hubErrorDiscovery';
     }
     _closeBootstrap();
     notifyListeners();
@@ -143,6 +150,7 @@ final class HubController extends ChangeNotifier {
     _discoveredInfo = null;
     _observedFingerprint = null;
     _errorMessage = null;
+    _errorKey = null;
     notifyListeners();
   }
 
@@ -155,21 +163,25 @@ final class HubController extends ChangeNotifier {
     final api = _bootstrapApi;
     if (info == null || api == null) {
       _errorMessage = 'Najpierw sprawdź połączenie z AquaHub.';
+      _errorKey = 'hubErrorDiscoverFirst';
       notifyListeners();
       return false;
     }
     if (!fingerprintConfirmed) {
       _errorMessage = 'Porównaj odcisk z panelem i potwierdź jego zgodność.';
+      _errorKey = 'hubErrorFingerprintConfirm';
       notifyListeners();
       return false;
     }
     final parsedCode = int.tryParse(code);
     if (parsedCode == null || code.length != 6) {
       _errorMessage = 'Kod parowania musi mieć dokładnie sześć cyfr.';
+      _errorKey = 'hubErrorPairingCode';
       notifyListeners();
       return false;
     }
     _errorMessage = null;
+    _errorKey = null;
     notifyListeners();
     try {
       final result = await api.pair(parsedCode);
@@ -193,8 +205,10 @@ final class HubController extends ChangeNotifier {
       return _phase == HubAppPhase.ready;
     } on HubFailure catch (error) {
       _errorMessage = error.message;
+      _errorKey = _hubFailureKey(error.type);
     } on Object {
       _errorMessage = 'Nie udało się bezpiecznie zapisać sesji AquaHub.';
+      _errorKey = 'hubErrorSaveSession';
     }
     notifyListeners();
     return false;
@@ -203,6 +217,7 @@ final class HubController extends ChangeNotifier {
   Future<void> _connect(HubCredentials credentials) async {
     _phase = HubAppPhase.connecting;
     _errorMessage = null;
+    _errorKey = null;
     notifyListeners();
     _api?.close();
     _api = _apiFactory(credentials);
@@ -213,9 +228,11 @@ final class HubController extends ChangeNotifier {
       _startPolling();
     } on HubFailure catch (error) {
       _errorMessage = error.message;
+      _errorKey = _hubFailureKey(error.type);
       _phase = HubAppPhase.failure;
     } on Object {
       _errorMessage = 'AquaHub jest nieosiągalny.';
+      _errorKey = 'hubErrorNetwork';
       _phase = HubAppPhase.failure;
     }
     notifyListeners();
@@ -425,6 +442,14 @@ final class HubController extends ChangeNotifier {
     _bootstrapApi?.close();
     _bootstrapApi = null;
   }
+
+  static String _hubFailureKey(HubFailureType type) => switch (type) {
+    HubFailureType.authentication => 'hubErrorAuthentication',
+    HubFailureType.network => 'hubErrorNetwork',
+    HubFailureType.invalidResponse => 'hubErrorInvalidResponse',
+    HubFailureType.server => 'hubErrorServer',
+    HubFailureType.security => 'hubErrorSecurity',
+  };
 
   @override
   void dispose() {

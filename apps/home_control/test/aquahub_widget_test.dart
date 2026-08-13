@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'package:aquacyd_home/src/aquahub/api.dart';
 import 'package:aquacyd_home/src/aquahub/app.dart';
 import 'package:aquacyd_home/src/aquahub/app_update.dart';
+import 'package:aquacyd_home/src/aquahub/controller.dart';
 import 'package:aquacyd_home/src/aquahub/credentials_store.dart';
 import 'package:aquacyd_home/src/aquahub/demo.dart';
 import 'package:aquacyd_home/src/aquahub/domain.dart';
@@ -13,6 +14,41 @@ import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 
 void main() {
+  test(
+    'błąd pierwszego połączenia AquaHub zachowuje klucz lokalizacji',
+    () async {
+      final credentials = HubCredentials(
+        baseUri: Uri.parse('https://aquahub.local:8443'),
+        accessToken: 'test-session-token',
+        tlsFingerprint:
+            '0123456789ABCDEF0123456789ABCDEF0123456789ABCDEF0123456789ABCDEF',
+      );
+      final store = _MemoryHubCredentialsStore()..credentials = credentials;
+      final controller = HubController(
+        credentialsStore: store,
+        apiFactory: (value) => HubApi.authenticated(
+          value,
+          client: MockClient(
+            (_) async => http.Response(
+              jsonEncode(<String, Object?>{'error': 'unavailable'}),
+              503,
+              headers: const <String, String>{
+                'content-type': 'application/json; charset=utf-8',
+              },
+            ),
+          ),
+        ),
+        enablePolling: false,
+      );
+      addTearDown(controller.dispose);
+
+      await controller.initialize();
+
+      expect(controller.phase, HubAppPhase.failure);
+      expect(controller.errorKey, 'hubErrorServer');
+    },
+  );
+
   testWidgets('pierwsze uruchomienie prowadzi do parowania AquaHub', (
     tester,
   ) async {

@@ -1,6 +1,6 @@
 # Raport QA — Home Control 2.0 / monorepo
 
-Data raportu: 2026-08-12. Gałąź: `codex/home-control-monorepo`.
+Data raportu: 2026-08-13. Gałąź: `codex/home-control-monorepo`.
 
 ## Wynik końcowy
 
@@ -10,8 +10,8 @@ brakuje fizycznego stanowiska CYD/P4/C6 oraz kluczy właściciela.
 
 | Obszar | Wykonana brama | Wynik |
 | --- | --- | --- |
-| Home Control | `flutter analyze`, pełne `flutter test` | PASS, 0 problemów, 53 testy |
-| Home Control | web release, Android debug/release | PASS, APK release 55,5 MB; debug APK publikowany przez CI |
+| Home Control | `flutter analyze`, pełne `flutter test --coverage` | PASS, 0 problemów, 80 testów, 58,57% pokrycia |
+| Home Control | web release, Android debug/release | PASS, APK release 55,7 MB; debug APK publikowany przez CI |
 | AquaCYD Service | analyze, pełne testy | PASS, 0 problemów, 240 testów |
 | AquaCYD Service | Android debug/release z jednorazowym kluczem walidacyjnym | PASS, APK release 65,5 MB |
 | Pakiety Dart | analyze/test każdego pakietu | PASS, 5 testów |

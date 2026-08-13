@@ -1,11 +1,17 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:web_socket_channel/web_socket_channel.dart';
 
 import '../domain/entity_ids.dart';
 import '../domain/models.dart';
+import 'home_assistant_channel.dart';
+import 'home_assistant_network_policy.dart';
+
+typedef HomeAssistantChannelFactory =
+    WebSocketChannel Function(Uri uri, String? hostHeader);
 
 enum HomeAssistantSocketStatus {
   disconnected,
@@ -19,11 +25,19 @@ final class HomeAssistantSocket {
     this.credentials, {
     this.connectionTimeout = const Duration(seconds: 12),
     this.filterAquariumOnly = true,
-  });
+    HomeAssistantHostResolver? hostResolver,
+    HomeAssistantChannelFactory? channelFactory,
+  }) : _hostResolver = hostResolver ?? InternetAddress.lookup,
+       _channelFactory =
+           channelFactory ??
+           ((uri, hostHeader) =>
+               connectHomeAssistantChannel(uri, hostHeader: hostHeader));
 
   final HomeAssistantCredentials credentials;
   final Duration connectionTimeout;
   final bool filterAquariumOnly;
+  final HomeAssistantHostResolver _hostResolver;
+  final HomeAssistantChannelFactory _channelFactory;
 
   final StreamController<HaEntityState> _states =
       StreamController<HaEntityState>.broadcast();
@@ -59,9 +73,15 @@ final class HomeAssistantSocket {
     }
 
     _setStatus(HomeAssistantSocketStatus.connecting);
-    final channel = WebSocketChannel.connect(_webSocketUri());
-    _channel = channel;
     try {
+      final destination =
+          await HomeAssistantNetworkPolicy.pinCleartextDestination(
+            _webSocketUri(),
+            resolver: _hostResolver,
+            timeout: connectionTimeout,
+          );
+      final channel = _channelFactory(destination.uri, destination.hostHeader);
+      _channel = channel;
       await channel.ready.timeout(connectionTimeout);
       if (_disposed || generation != _generation) {
         await channel.sink.close();
@@ -75,6 +95,12 @@ final class HomeAssistantSocket {
         onDone: () => _handleDisconnect(generation),
         cancelOnError: true,
       );
+    } on HomeAssistantNetworkPolicyException {
+      if (!_disposed && generation == _generation) {
+        await _closeChannel();
+        _setStatus(HomeAssistantSocketStatus.disconnected);
+      }
+      rethrow;
     } on Object {
       if (!_disposed && generation == _generation) {
         await _closeChannel();
@@ -351,7 +377,13 @@ final class HomeAssistantSocket {
     await subscription?.cancel();
     final channel = _channel;
     _channel = null;
-    await channel?.sink.close();
+    if (channel != null) {
+      try {
+        await channel.sink.close().timeout(connectionTimeout);
+      } on Object {
+        // A failed handshake may not complete its sink close notification.
+      }
+    }
   }
 
   static Map<String, Object?>? _objectMap(Object? value) {
