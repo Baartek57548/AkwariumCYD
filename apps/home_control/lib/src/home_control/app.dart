@@ -189,29 +189,40 @@ final class _HomeLoading extends StatelessWidget {
   Widget build(BuildContext context) {
     final strings = HomeControlStrings.of(context);
     return Scaffold(
-      body: Center(
-        child: Semantics(
-          liveRegion: true,
+      body: SafeArea(
+        child: SingleChildScrollView(
           child: ConstrainedBox(
-            constraints: const BoxConstraints(maxWidth: 420),
-            child: Padding(
-              padding: const EdgeInsets.all(32),
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                children: <Widget>[
-                  const HomeControlMark(size: 88),
-                  const SizedBox(height: 24),
-                  Text(
-                    strings.t('appName'),
-                    style: Theme.of(context).textTheme.headlineMedium?.copyWith(
-                      fontWeight: FontWeight.w800,
+            constraints: BoxConstraints(
+              minHeight:
+                  MediaQuery.sizeOf(context).height -
+                  MediaQuery.paddingOf(context).vertical,
+            ),
+            child: Center(
+              child: Semantics(
+                liveRegion: true,
+                child: ConstrainedBox(
+                  constraints: const BoxConstraints(maxWidth: 420),
+                  child: Padding(
+                    padding: const EdgeInsets.all(32),
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: <Widget>[
+                        const HomeControlMark(size: 88),
+                        const SizedBox(height: 24),
+                        Text(
+                          strings.t('appName'),
+                          textAlign: TextAlign.center,
+                          style: Theme.of(context).textTheme.headlineMedium
+                              ?.copyWith(fontWeight: FontWeight.w800),
+                        ),
+                        const SizedBox(height: 10),
+                        Text(strings.t(keyName), textAlign: TextAlign.center),
+                        const SizedBox(height: 28),
+                        const CircularProgressIndicator(),
+                      ],
                     ),
                   ),
-                  const SizedBox(height: 10),
-                  Text(strings.t(keyName), textAlign: TextAlign.center),
-                  const SizedBox(height: 28),
-                  const CircularProgressIndicator(),
-                ],
+                ),
               ),
             ),
           ),

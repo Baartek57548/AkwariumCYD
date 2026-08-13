@@ -1,3 +1,5 @@
+import 'dart:ui' as ui;
+
 import 'package:aquacyd_design_system/aquacyd_design_system.dart';
 import 'package:aquacyd_protocol/aquacyd_protocol.dart';
 import 'package:flutter/material.dart';
@@ -8,16 +10,37 @@ import 'entity_widgets.dart';
 import 'strings.dart';
 
 final class HomeDashboardPage extends StatelessWidget {
-  const HomeDashboardPage({required this.controller, super.key});
+  const HomeDashboardPage({
+    required this.controller,
+    this.onOpenRooms,
+    this.onOpenDevices,
+    this.onOpenUpdates,
+    this.onCustomize,
+    super.key,
+  });
 
   final HomeControlController controller;
+  final VoidCallback? onOpenRooms;
+  final VoidCallback? onOpenDevices;
+  final VoidCallback? onOpenUpdates;
+  final VoidCallback? onCustomize;
 
   @override
   Widget build(BuildContext context) {
     final snapshot = controller.snapshot!;
     final strings = HomeControlStrings.of(context);
     final visible = controller.dashboard.order.where(
-      (id) => !controller.dashboard.hidden.contains(id),
+      (id) =>
+          !controller.dashboard.hidden.contains(id) &&
+          _sectionIsAvailable(id, snapshot),
+    );
+    final attention = _AttentionModel.fromSnapshot(
+      snapshot,
+      strings: strings,
+      controller: controller,
+      onOpenDevices: onOpenDevices,
+      onOpenUpdates: onOpenUpdates,
+      onOpenAquarium: () => showAquariumDetails(context, controller),
     );
     return RefreshIndicator(
       onRefresh: () async => controller.refresh(announce: true),
@@ -25,33 +48,74 @@ final class HomeDashboardPage extends StatelessWidget {
         key: const PageStorageKey<String>('home-dashboard'),
         slivers: <Widget>[
           SliverPadding(
-            padding: const EdgeInsets.fromLTRB(20, 22, 20, 8),
+            padding: const EdgeInsets.fromLTRB(20, 18, 20, 10),
             sliver: SliverToBoxAdapter(
-              child: _DashboardHeader(snapshot: snapshot),
+              child: Center(
+                child: ConstrainedBox(
+                  constraints: const BoxConstraints(maxWidth: 1280),
+                  child: _HomeStatusHeader(
+                    snapshot: snapshot,
+                    attentionCount: attention.items.length,
+                  ),
+                ),
+              ),
             ),
           ),
+          if (attention.items.isNotEmpty)
+            SliverPadding(
+              padding: const EdgeInsets.fromLTRB(20, 6, 20, 10),
+              sliver: SliverToBoxAdapter(
+                child: Center(
+                  child: ConstrainedBox(
+                    constraints: const BoxConstraints(maxWidth: 1280),
+                    child: _AttentionCenter(model: attention),
+                  ),
+                ),
+              ),
+            ),
           SliverPadding(
             padding: const EdgeInsets.fromLTRB(20, 10, 20, 10),
             sliver: SliverToBoxAdapter(
-              child: _DashboardSections(
-                sections: visible.toList(growable: false),
-                snapshot: snapshot,
-                controller: controller,
+              child: Center(
+                child: ConstrainedBox(
+                  constraints: const BoxConstraints(maxWidth: 1280),
+                  child: _DashboardSections(
+                    sections: visible.toList(growable: false),
+                    snapshot: snapshot,
+                    controller: controller,
+                    onOpenRooms: onOpenRooms,
+                    onOpenDevices: onOpenDevices,
+                    onCustomize: onCustomize,
+                  ),
+                ),
               ),
             ),
           ),
           SliverPadding(
-            padding: const EdgeInsets.fromLTRB(20, 16, 20, 110),
+            padding: const EdgeInsets.fromLTRB(20, 14, 20, 104),
             sliver: SliverToBoxAdapter(
-              child: Text(
-                strings.withValue(
-                  'lastSync',
-                  strings.relativeTime(snapshot.synchronizedAt),
-                ),
-                textAlign: TextAlign.center,
-                style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                  color: Theme.of(context).colorScheme.onSurfaceVariant,
-                ),
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: <Widget>[
+                  Icon(
+                    Icons.lock_outline_rounded,
+                    size: 15,
+                    color: Theme.of(context).colorScheme.onSurfaceVariant,
+                  ),
+                  const SizedBox(width: 6),
+                  Flexible(
+                    child: Text(
+                      strings.withValue(
+                        'lastSync',
+                        strings.relativeTime(snapshot.synchronizedAt),
+                      ),
+                      textAlign: TextAlign.center,
+                      style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                        color: Theme.of(context).colorScheme.onSurfaceVariant,
+                      ),
+                    ),
+                  ),
+                ],
               ),
             ),
           ),
@@ -59,540 +123,353 @@ final class HomeDashboardPage extends StatelessWidget {
       ),
     );
   }
+
+  static bool _sectionIsAvailable(String id, HomeSnapshot snapshot) =>
+      switch (id) {
+        'aquarium' => AquariumOverview.fromSnapshot(snapshot).present,
+        _ => true,
+      };
 }
 
-final class _DashboardHeader extends StatelessWidget {
-  const _DashboardHeader({required this.snapshot});
+final class _HomeStatusHeader extends StatelessWidget {
+  const _HomeStatusHeader({
+    required this.snapshot,
+    required this.attentionCount,
+  });
 
   final HomeSnapshot snapshot;
+  final int attentionCount;
 
   @override
   Widget build(BuildContext context) {
     final strings = HomeControlStrings.of(context);
+    final scheme = Theme.of(context).colorScheme;
+    final dark = Theme.of(context).brightness == Brightness.dark;
     final online = snapshot.devices.where((device) => device.available).length;
+    final enabledAutomations = snapshot.automations
+        .where((automation) => automation.enabled)
+        .length;
+    final updates = snapshot.updates
+        .where(
+          (update) =>
+              update.phase == HomeUpdatePhase.available || update.mandatory,
+        )
+        .length;
+    final critical = snapshot.isOffline;
+    final needsAttention = critical || attentionCount > 0;
+    final accent = critical
+        ? scheme.error
+        : needsAttention
+        ? scheme.tertiary
+        : scheme.primary;
+    final statusKey = critical
+        ? 'homeOfflineTitle'
+        : needsAttention
+        ? 'homeAttentionTitle'
+        : 'homeHealthyTitle';
+    final statusDescription = critical
+        ? strings.t('homeOfflineDescription')
+        : needsAttention
+        ? strings.withValue('homeAttentionDescription', attentionCount)
+        : strings.t('homeHealthyDescription');
+
+    return Semantics(
+      container: true,
+      label: '${strings.t(statusKey)}. $statusDescription',
+      child: Container(
+        decoration: BoxDecoration(
+          gradient: LinearGradient(
+            begin: Alignment.topLeft,
+            end: Alignment.bottomRight,
+            colors: <Color>[
+              scheme.surfaceContainerLow,
+              Color.alphaBlend(
+                accent.withValues(alpha: dark ? 0.11 : 0.07),
+                scheme.surfaceContainerLow,
+              ),
+            ],
+          ),
+          borderRadius: BorderRadius.circular(ProductRadius.hero),
+          border: Border.all(
+            color: accent.withValues(alpha: dark ? 0.24 : 0.16),
+          ),
+          boxShadow: <BoxShadow>[
+            BoxShadow(
+              color: scheme.shadow.withValues(alpha: dark ? 0.16 : 0.06),
+              blurRadius: 26,
+              offset: const Offset(0, 10),
+            ),
+          ],
+        ),
+        child: Padding(
+          padding: const EdgeInsets.all(ProductSpacing.lg),
+          child: LayoutBuilder(
+            builder: (context, constraints) {
+              final wide = constraints.maxWidth >= 580;
+              final introduction = _StatusIntroduction(
+                snapshot: snapshot,
+                statusKey: statusKey,
+                description: statusDescription,
+                accent: accent,
+              );
+              final metrics = _HeaderMetrics(
+                online: online,
+                devices: snapshot.devices.length,
+                automations: enabledAutomations,
+                updates: updates,
+              );
+              if (!wide) {
+                return Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: <Widget>[
+                    introduction,
+                    const SizedBox(height: ProductSpacing.lg),
+                    metrics,
+                  ],
+                );
+              }
+              return Row(
+                crossAxisAlignment: CrossAxisAlignment.center,
+                children: <Widget>[
+                  Expanded(flex: 7, child: introduction),
+                  const SizedBox(width: ProductSpacing.xl),
+                  Expanded(flex: 5, child: metrics),
+                ],
+              );
+            },
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+final class _StatusIntroduction extends StatelessWidget {
+  const _StatusIntroduction({
+    required this.snapshot,
+    required this.statusKey,
+    required this.description,
+    required this.accent,
+  });
+
+  final HomeSnapshot snapshot;
+  final String statusKey;
+  final String description;
+  final Color accent;
+
+  @override
+  Widget build(BuildContext context) {
+    final strings = HomeControlStrings.of(context);
+    final theme = Theme.of(context);
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: <Widget>[
-        Text(
-          strings.t('home'),
-          style: Theme.of(context).textTheme.displaySmall?.copyWith(
-            fontWeight: FontWeight.w900,
-            letterSpacing: -1.2,
-          ),
-        ),
-        const SizedBox(height: ProductSpacing.xs),
         Wrap(
           spacing: ProductSpacing.xs,
           runSpacing: ProductSpacing.xs,
+          crossAxisAlignment: WrapCrossAlignment.center,
           children: <Widget>[
-            Chip(
-              avatar: const Icon(Icons.hub_rounded, size: 18),
-              label: Text(snapshot.sourceName),
+            _StatusPill(
+              label: snapshot.isOffline
+                  ? strings.t('offline')
+                  : strings.t('liveStatus'),
+              color: accent,
+              icon: snapshot.isOffline ? Icons.cloud_off_rounded : Icons.circle,
             ),
-            Chip(
-              avatar: const Icon(Icons.devices_rounded, size: 18),
-              label: Text(strings.withValue('onlineDevices', online)),
-            ),
-            if (snapshot.isStale)
-              Chip(
-                avatar: const Icon(Icons.schedule_rounded, size: 18),
-                label: Text(strings.t('stale')),
+            Text(
+              snapshot.sourceName,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: theme.textTheme.labelMedium?.copyWith(
+                color: theme.colorScheme.onSurfaceVariant,
               ),
+            ),
           ],
+        ),
+        const SizedBox(height: ProductSpacing.sm),
+        Text(
+          strings.t(statusKey),
+          maxLines: 2,
+          overflow: TextOverflow.ellipsis,
+          style: theme.textTheme.headlineMedium?.copyWith(
+            fontWeight: FontWeight.w800,
+            letterSpacing: -0.8,
+          ),
+        ),
+        const SizedBox(height: ProductSpacing.xs),
+        Text(
+          description,
+          maxLines: 3,
+          overflow: TextOverflow.ellipsis,
+          style: theme.textTheme.bodyMedium?.copyWith(
+            color: theme.colorScheme.onSurfaceVariant,
+            height: 1.45,
+          ),
         ),
       ],
     );
   }
 }
 
-final class AquariumDashboardCard extends StatelessWidget {
-  const AquariumDashboardCard({
-    required this.snapshot,
-    required this.controller,
-    this.interactive = true,
-    super.key,
+final class _HeaderMetrics extends StatelessWidget {
+  const _HeaderMetrics({
+    required this.online,
+    required this.devices,
+    required this.automations,
+    required this.updates,
   });
 
-  final HomeSnapshot snapshot;
-  final HomeControlController controller;
-  final bool interactive;
+  final int online;
+  final int devices;
+  final int automations;
+  final int updates;
 
   @override
   Widget build(BuildContext context) {
-    final overview = AquariumOverview.fromSnapshot(snapshot);
     final strings = HomeControlStrings.of(context);
-    final scheme = Theme.of(context).colorScheme;
-    if (!overview.present) {
-      return _SectionCard(
-        title: strings.t('aquarium'),
-        icon: Icons.water_rounded,
-        child: Text(strings.t('noAquarium')),
-      );
-    }
-    final temperature = overview.byRole(AquariumSemanticRole.temperature);
-    final ph = overview.byRole(AquariumSemanticRole.ph);
-    final ec = overview.byRole(AquariumSemanticRole.ec);
-    final alarm = overview.hasAlarm;
-    return Card(
-      clipBehavior: Clip.antiAlias,
-      child: InkWell(
-        onTap: interactive
-            ? () => showAquariumDetails(context, controller)
-            : null,
-        child: Ink(
-          decoration: BoxDecoration(
-            gradient: LinearGradient(
-              begin: Alignment.topLeft,
-              end: Alignment.bottomRight,
-              colors: alarm
-                  ? <Color>[scheme.errorContainer, scheme.surfaceContainerLow]
-                  : <Color>[
-                      scheme.primaryContainer,
-                      scheme.surfaceContainerLow,
-                    ],
-            ),
-          ),
-          child: Padding(
-            padding: const EdgeInsets.all(ProductSpacing.lg),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: <Widget>[
-                Row(
-                  children: <Widget>[
-                    Container(
-                      width: 52,
-                      height: 52,
-                      decoration: BoxDecoration(
-                        color: alarm ? scheme.error : scheme.primary,
-                        borderRadius: BorderRadius.circular(17),
-                      ),
-                      child: const Icon(
-                        Icons.water_rounded,
-                        color: Colors.white,
-                      ),
-                    ),
-                    const SizedBox(width: ProductSpacing.md),
-                    Expanded(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: <Widget>[
-                          Text(
-                            strings.t('aquarium'),
-                            style: Theme.of(context).textTheme.titleLarge
-                                ?.copyWith(fontWeight: FontWeight.w900),
-                          ),
-                          Text(
-                            strings.t(
-                              alarm ? 'aquariumAlarm' : 'aquariumHealthy',
-                            ),
-                            style: TextStyle(
-                              color: alarm
-                                  ? scheme.error
-                                  : scheme.onSurfaceVariant,
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-                    if (interactive) const Icon(Icons.chevron_right_rounded),
-                  ],
-                ),
-                const SizedBox(height: ProductSpacing.lg),
-                Wrap(
-                  spacing: ProductSpacing.md,
-                  runSpacing: ProductSpacing.md,
-                  children: <Widget>[
-                    _AquariumMetric(
-                      label: strings.t('waterTemperature'),
-                      value: temperature == null
-                          ? strings.t('noData')
-                          : strings.entityState(temperature),
-                    ),
-                    if (ph != null)
-                      _AquariumMetric(
-                        label: 'pH',
-                        value: strings.entityState(ph),
-                      ),
-                    if (ec != null)
-                      _AquariumMetric(
-                        label: 'EC',
-                        value: strings.entityState(ec),
-                      ),
-                    _AquariumMetric(
-                      label: strings.t('connection'),
-                      value: snapshot.isOffline
-                          ? strings.t('offline')
-                          : strings.t('connected'),
-                    ),
-                  ],
-                ),
+    final metrics = <Widget>[
+      _HeaderMetric(
+        icon: Icons.devices_other_rounded,
+        value: '$online/$devices',
+        label: strings.t('devicesOnlineLabel'),
+      ),
+      _HeaderMetric(
+        icon: Icons.auto_awesome_motion_rounded,
+        value: '$automations',
+        label: strings.t('automationsActiveLabel'),
+      ),
+      _HeaderMetric(
+        icon: updates > 0
+            ? Icons.system_update_rounded
+            : Icons.verified_rounded,
+        value: '$updates',
+        label: strings.t('updatesAvailableLabel'),
+      ),
+    ];
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final textScale = MediaQuery.textScalerOf(context).scale(1);
+        final stack = textScale > 1.35;
+        if (stack) {
+          return Column(
+            children: <Widget>[
+              for (var index = 0; index < metrics.length; index++) ...<Widget>[
+                SizedBox(width: double.infinity, child: metrics[index]),
+                if (index != metrics.length - 1)
+                  const SizedBox(height: ProductSpacing.xs),
               ],
+            ],
+          );
+        }
+        return IntrinsicHeight(
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: <Widget>[
+              for (var index = 0; index < metrics.length; index++) ...<Widget>[
+                Expanded(child: metrics[index]),
+                if (index != metrics.length - 1)
+                  const SizedBox(width: ProductSpacing.xs),
+              ],
+            ],
+          ),
+        );
+      },
+    );
+  }
+}
+
+final class _HeaderMetric extends StatelessWidget {
+  const _HeaderMetric({
+    required this.icon,
+    required this.value,
+    required this.label,
+  });
+
+  final IconData icon;
+  final String value;
+  final String label;
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    return Container(
+      constraints: const BoxConstraints(minHeight: 86),
+      padding: const EdgeInsets.all(ProductSpacing.sm),
+      decoration: BoxDecoration(
+        color: scheme.surface.withValues(alpha: 0.66),
+        borderRadius: BorderRadius.circular(ProductRadius.control),
+        border: Border.all(
+          color: scheme.outlineVariant.withValues(alpha: 0.45),
+        ),
+      ),
+      child: Column(
+        mainAxisAlignment: MainAxisAlignment.center,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: <Widget>[
+          Wrap(
+            spacing: 6,
+            runSpacing: 2,
+            crossAxisAlignment: WrapCrossAlignment.center,
+            children: <Widget>[
+              Icon(icon, size: 17, color: scheme.primary),
+              Text(
+                value,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: Theme.of(context).textTheme.titleLarge?.copyWith(
+                  fontWeight: FontWeight.w800,
+                  fontFeatures: const <ui.FontFeature>[
+                    ui.FontFeature.tabularFigures(),
+                  ],
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 4),
+          Text(
+            label,
+            maxLines: 2,
+            overflow: TextOverflow.ellipsis,
+            style: Theme.of(context).textTheme.labelSmall?.copyWith(
+              color: scheme.onSurfaceVariant,
+              height: 1.15,
             ),
           ),
-        ),
+        ],
       ),
     );
   }
 }
 
-final class _AquariumMetric extends StatelessWidget {
-  const _AquariumMetric({required this.label, required this.value});
+final class _StatusPill extends StatelessWidget {
+  const _StatusPill({
+    required this.label,
+    required this.color,
+    required this.icon,
+  });
 
   final String label;
-  final String value;
+  final Color color;
+  final IconData icon;
 
   @override
-  Widget build(BuildContext context) => ConstrainedBox(
-    constraints: const BoxConstraints(minWidth: 130),
-    child: Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
+  Widget build(BuildContext context) => Container(
+    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+    decoration: BoxDecoration(
+      color: color.withValues(alpha: 0.13),
+      borderRadius: BorderRadius.circular(999),
+      border: Border.all(color: color.withValues(alpha: 0.25)),
+    ),
+    child: Row(
+      mainAxisSize: MainAxisSize.min,
       children: <Widget>[
+        Icon(icon, size: icon == Icons.circle ? 8 : 15, color: color),
+        const SizedBox(width: 7),
         Text(
           label,
           style: Theme.of(context).textTheme.labelMedium?.copyWith(
-            color: Theme.of(context).colorScheme.onSurfaceVariant,
+            color: color,
+            fontWeight: FontWeight.w700,
           ),
-        ),
-        const SizedBox(height: 2),
-        Text(
-          value,
-          style: Theme.of(
-            context,
-          ).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w800),
-        ),
-      ],
-    ),
-  );
-}
-
-final class _FavoritesSection extends StatelessWidget {
-  const _FavoritesSection({required this.snapshot, required this.controller});
-
-  final HomeSnapshot snapshot;
-  final HomeControlController controller;
-
-  @override
-  Widget build(BuildContext context) {
-    final strings = HomeControlStrings.of(context);
-    final favorites = snapshot.entities
-        .where(
-          (entity) => controller.dashboard.favorites.contains(entity.id.value),
-        )
-        .toList(growable: false);
-    return _SectionCard(
-      title: strings.t('favorites'),
-      icon: Icons.star_rounded,
-      child: favorites.isEmpty
-          ? Text(strings.t('noFavorites'))
-          : _ResponsiveEntityGrid(entities: favorites, controller: controller),
-    );
-  }
-}
-
-final class _AreasSection extends StatelessWidget {
-  const _AreasSection({required this.snapshot});
-
-  final HomeSnapshot snapshot;
-
-  @override
-  Widget build(BuildContext context) {
-    final strings = HomeControlStrings.of(context);
-    return _SectionCard(
-      title: strings.t('areasOverview'),
-      icon: Icons.meeting_room_rounded,
-      child: snapshot.areas.isEmpty
-          ? Text(strings.t('noAreas'))
-          : Wrap(
-              spacing: ProductSpacing.sm,
-              runSpacing: ProductSpacing.sm,
-              children: <Widget>[
-                for (final area in snapshot.areas)
-                  _AreaSummary(area: area, snapshot: snapshot),
-              ],
-            ),
-    );
-  }
-}
-
-final class _AreaSummary extends StatelessWidget {
-  const _AreaSummary({required this.area, required this.snapshot});
-
-  final HomeArea area;
-  final HomeSnapshot snapshot;
-
-  @override
-  Widget build(BuildContext context) {
-    final strings = HomeControlStrings.of(context);
-    final entities = snapshot.entitiesForArea(area.id);
-    final active = entities
-        .where((entity) => entity.booleanValue == true)
-        .length;
-    return Container(
-      width: 180,
-      padding: const EdgeInsets.all(ProductSpacing.md),
-      decoration: BoxDecoration(
-        color: Theme.of(context).colorScheme.surfaceContainerHigh,
-        borderRadius: BorderRadius.circular(ProductRadius.card),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: <Widget>[
-          const Icon(Icons.meeting_room_rounded),
-          const SizedBox(height: ProductSpacing.sm),
-          Text(
-            area.name,
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
-            style: Theme.of(
-              context,
-            ).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w800),
-          ),
-          Text(strings.withValue('entitiesCount', entities.length)),
-          if (active > 0) Text(strings.withValue('activeEntities', active)),
-        ],
-      ),
-    );
-  }
-}
-
-final class _DashboardSections extends StatelessWidget {
-  const _DashboardSections({
-    required this.sections,
-    required this.snapshot,
-    required this.controller,
-  });
-
-  final List<String> sections;
-  final HomeSnapshot snapshot;
-  final HomeControlController controller;
-
-  @override
-  Widget build(BuildContext context) => LayoutBuilder(
-    builder: (context, constraints) {
-      final twoColumns = constraints.maxWidth >= 640;
-      final compactWidth = twoColumns
-          ? (constraints.maxWidth - ProductSpacing.md) / 2
-          : constraints.maxWidth;
-      return Wrap(
-        spacing: ProductSpacing.md,
-        runSpacing: ProductSpacing.lg,
-        children: <Widget>[
-          for (final section in sections)
-            SizedBox(
-              key: ValueKey<String>(
-                'dashboard-section-$section-${controller.dashboard.largeCards.contains(section) ? 'large' : 'compact'}',
-              ),
-              width:
-                  !twoColumns ||
-                      controller.dashboard.largeCards.contains(section)
-                  ? constraints.maxWidth
-                  : compactWidth,
-              child: switch (section) {
-                'aquarium' => AquariumDashboardCard(
-                  snapshot: snapshot,
-                  controller: controller,
-                ),
-                'favorites' => _FavoritesSection(
-                  snapshot: snapshot,
-                  controller: controller,
-                ),
-                'areas' => _AreasSection(snapshot: snapshot),
-                'activity' => _ActivitySection(snapshot: snapshot),
-                _ => const SizedBox.shrink(),
-              },
-            ),
-        ],
-      );
-    },
-  );
-}
-
-final class _ActivitySection extends StatelessWidget {
-  const _ActivitySection({required this.snapshot});
-
-  final HomeSnapshot snapshot;
-
-  @override
-  Widget build(BuildContext context) {
-    final strings = HomeControlStrings.of(context);
-    final recent =
-        snapshot.entities.where((entity) => entity.updatedAt != null).toList()
-          ..sort((a, b) => b.updatedAt!.compareTo(a.updatedAt!));
-    return _SectionCard(
-      title: strings.t('recentActivity'),
-      icon: Icons.history_rounded,
-      child: Column(
-        children: <Widget>[
-          for (final entity in recent.take(5))
-            ListTile(
-              contentPadding: EdgeInsets.zero,
-              leading: Icon(iconForEntity(entity.type)),
-              title: Text(entity.name),
-              subtitle: Text(strings.entityState(entity)),
-              trailing: Text(strings.relativeTime(entity.updatedAt)),
-            ),
-        ],
-      ),
-    );
-  }
-}
-
-final class _SectionCard extends StatelessWidget {
-  const _SectionCard({
-    required this.title,
-    required this.icon,
-    required this.child,
-  });
-
-  final String title;
-  final IconData icon;
-  final Widget child;
-
-  @override
-  Widget build(BuildContext context) => Column(
-    crossAxisAlignment: CrossAxisAlignment.start,
-    children: <Widget>[
-      Row(
-        children: <Widget>[
-          Icon(icon, size: 22),
-          const SizedBox(width: ProductSpacing.xs),
-          Expanded(
-            child: Text(
-              title,
-              maxLines: 2,
-              overflow: TextOverflow.ellipsis,
-              style: Theme.of(
-                context,
-              ).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w800),
-            ),
-          ),
-        ],
-      ),
-      const SizedBox(height: ProductSpacing.sm),
-      child,
-    ],
-  );
-}
-
-final class _ResponsiveEntityGrid extends StatelessWidget {
-  const _ResponsiveEntityGrid({
-    required this.entities,
-    required this.controller,
-  });
-
-  final List<HomeEntity> entities;
-  final HomeControlController controller;
-
-  @override
-  Widget build(BuildContext context) => LayoutBuilder(
-    builder: (context, constraints) {
-      final columns = constraints.maxWidth >= 760 ? 2 : 1;
-      final width = columns == 1
-          ? constraints.maxWidth
-          : (constraints.maxWidth - ProductSpacing.sm) / 2;
-      return Wrap(
-        spacing: ProductSpacing.sm,
-        runSpacing: ProductSpacing.sm,
-        children: <Widget>[
-          for (final entity in entities)
-            SizedBox(
-              width: width,
-              child: EntityCard(entity: entity, controller: controller),
-            ),
-        ],
-      );
-    },
-  );
-}
-
-Future<void> showAquariumDetails(
-  BuildContext context,
-  HomeControlController controller,
-) async {
-  await Navigator.of(context).push<void>(
-    MaterialPageRoute<void>(
-      builder: (_) => AquariumDetailsPage(controller: controller),
-    ),
-  );
-}
-
-final class AquariumDetailsPage extends StatelessWidget {
-  const AquariumDetailsPage({required this.controller, super.key});
-
-  final HomeControlController controller;
-
-  @override
-  Widget build(BuildContext context) {
-    final strings = HomeControlStrings.of(context);
-    final snapshot = controller.snapshot!;
-    final overview = AquariumOverview.fromSnapshot(snapshot);
-    final grouped = <AquariumSemanticRole, List<HomeEntity>>{};
-    for (final entity in overview.entities) {
-      grouped
-          .putIfAbsent(AquariumSemantics.classify(entity), () => <HomeEntity>[])
-          .add(entity);
-    }
-    const order = <AquariumSemanticRole>[
-      AquariumSemanticRole.temperature,
-      AquariumSemanticRole.ph,
-      AquariumSemanticRole.ec,
-      AquariumSemanticRole.waterLevel,
-      AquariumSemanticRole.leak,
-      AquariumSemanticRole.alarm,
-      AquariumSemanticRole.frontLight,
-      AquariumSemanticRole.rearLight,
-      AquariumSemanticRole.filter,
-      AquariumSemanticRole.aeration,
-      AquariumSemanticRole.heater,
-      AquariumSemanticRole.targetTemperature,
-      AquariumSemanticRole.topUp,
-      AquariumSemanticRole.co2,
-      AquariumSemanticRole.dosing,
-      AquariumSemanticRole.feeder,
-      AquariumSemanticRole.firmwareUpdate,
-    ];
-    return Scaffold(
-      appBar: AppBar(title: Text(strings.t('aquarium'))),
-      body: ListView(
-        padding: const EdgeInsets.fromLTRB(20, 12, 20, 80),
-        children: <Widget>[
-          AquariumDashboardCard(
-            snapshot: snapshot,
-            controller: controller,
-            interactive: false,
-          ),
-          const SizedBox(height: ProductSpacing.lg),
-          for (final role in order)
-            for (final entity in grouped[role] ?? const <HomeEntity>[])
-              Padding(
-                padding: const EdgeInsets.only(bottom: ProductSpacing.sm),
-                child: EntityCard(entity: entity, controller: controller),
-              ),
-          const SizedBox(height: ProductSpacing.md),
-          _SectionCard(
-            title: strings.t('diagnostics'),
-            icon: Icons.monitor_heart_rounded,
-            child: Column(
-              children: <Widget>[
-                for (final device in overview.devices)
-                  ListTile(
-                    contentPadding: EdgeInsets.zero,
-                    leading: Icon(
-                      device.available
-                          ? Icons.check_circle_rounded
-                          : Icons.error_rounded,
-                    ),
-                    title: Text(device.name),
-                    subtitle: Text(
-                      '${device.model} Â· ${device.softwareVersion}',
-                    ),
-                    trailing: Text(strings.relativeTime(device.lastSeen)),
-                  ),
-              ],
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-}
+   ÷Î{¶‰ËkºwµçU°(€€€€€€€€€€€€€Ñ¥Ñ±”èÍÑÉ¥¹Ì¹Ğ ¹½I••¹Ñ¡…¹•ÍQ¥Ñ±”œ¤°(€€€€€€€€€€€€€‘•ÍÉ¥ÁÑ¥½¸èÍÑÉ¥¹Ì¹Ğ ¹½I••¹Ñ¡…¹•Ìœ¤°(€€€€€€€€€€€€¤(€€€€€€€€€€è½±Õµ¸ (€€€€€€€€€€€€€¡¥±‘É•¸è€ñ]¥‘•Ğùl(€€€€€€€€€€€€€€€™½È€¡Ù…È¥¹‘•à€ô€Àì¥¹‘•à€ğÉ••¹Ğ¹Ñ…­” Ô¤¹±•¹Ñ ì¥¹‘•à¬¬¤(€€€€€€€€€€€€€€€€€}Ñ¥Ù¥ÑåI½Ü (€€€€€€€€€€€€€€€€€€€•¹Ñ¥ÑäèÉ••¹Ñm¥¹‘•át°(€€€€€€€€€€€€€€€€€€€±…ÍĞè¥¹‘•à€ôôÉ••¹Ğ¹Ñ…­” Ô¤¹±•¹Ñ €´€Ä°(€€€€€€€€€€€€€€€€€€¤°(€€€€€€€€€€€€€t°(€€€€€€€€€€€€¤°(€€€€¤ì(€ô)ô()™¥¹…°±…ÍÌ}Ñ¥Ù¥ÑåI½Ü•áÑ•¹‘ÌMÑ…Ñ•±•ÍÍ]¥‘•Ğì(€½¹ÍĞ}Ñ¥Ù¥ÑåI½Ü¡íÉ•ÅÕ¥É•Ñ¡¥Ì¹•¹Ñ¥Ñä°É•ÅÕ¥É•Ñ¡¥Ì¹±…ÍÑô¤ì((€™¥¹…°!½µ•¹Ñ¥Ñä•¹Ñ¥Ñäì(€™¥¹…°‰½½°±…ÍĞì((€½Ù•ÉÉ¥‘”(€]¥‘•Ğ‰Õ¥±¡	Õ¥±‘½¹Ñ•áĞ½¹Ñ•áĞ¤ì(€€€™¥¹…°ÍÑÉ¥¹Ì€ô!½µ•½¹ÑÉ½±MÑÉ¥¹Ì¹½˜¡½¹Ñ•áĞ¤ì(€€€™¥¹…°Í¡•µ”€ôQ¡•µ”¹½˜¡½¹Ñ•áĞ¤¹½±½ÉM¡•µ”ì(€€€™¥¹…°¡…¹•‘Ğ€ô•¹Ñ¥Ñä¹¡…¹•‘Ğ€üü•¹Ñ¥Ñä¹ÕÁ‘…Ñ•‘Ğì(€€€™¥¹…°Ñ•áÑM…±”€ô5•‘¥…EÕ•Éä¹Ñ•áÑM…±•É=˜¡½¹Ñ•áĞ¤¹Í…±” Ä¤ì(€€€™¥¹…°ÑÉ…¥±¥¹Q¥µ”€ôQ•áĞ (€€€€€ÍÑÉ¥¹Ì¹É•±…Ñ¥Ù•Q¥µ”¡¡…¹•‘Ğ¤°(€€€€€µ…á1¥¹•Ìè€Ä°(€€€€€½Ù•É™±½ÜèQ•áÑ=Ù•É™±½Ü¹•±±¥ÁÍ¥Ì°(€€€€€ÍÑå±”èQ¡•µ”¹½˜ (€€€€€€€½¹Ñ•áĞ°(€€€€€€¤¹Ñ•áÑQ¡•µ”¹±…‰•±Mµ…±°ü¹½Áå]¥Ñ ¡½±½ÈèÍ¡•µ”¹½¹MÕÉ™…•Y…É¥…¹Ğ¤°(€€€€¤ì(€€€É•ÑÕÉ¸I½Ü (€€€€€É½ÍÍá¥Í±¥¹µ•¹ĞèÉ½ÍÍá¥Í±¥¹µ•¹Ğ¹ÍÑ…ÉĞ°(€€€€€¡¥±‘É•¸è€ñ]¥‘•Ğùl(€€€€€€€M¥é•‘	½à (€€€€€€€€€İ¥‘Ñ è€Èà°(€€€€€€€€€¡¥±è½±Õµ¸ (€€€€€€€€€€€¡¥±‘É•¸è€ñ]¥‘•Ğùl(€€€€€€€€€€€€€½¹Ñ…¥¹•È (€€€€€€€€€€€€€€€İ¥‘Ñ è€ÄÀ°(€€€€€€€€€€€€€€€¡•¥¡Ğè€ÄÀ°(€€€€€€€€€€€€€€€µ…É¥¸è½¹ÍĞ‘•%¹Í•ÑÌ¹½¹±ä¡Ñ½Àè€Äà¤°(€€€€€€€€€€€€€€€‘•½É…Ñ¥½¸è	½á•½É…Ñ¥½¸ (€€€€€€€€€€€€€€€€€½±½Èè•¹Ñ¥Ñä¹…Ù…¥±…‰±”€üÍ¡•µ”¹ÁÉ¥µ…Éä€èÍ¡•µ”¹•ÉÉ½È°(€€€€€€€€€€€€€€€€€Í¡…Á”è	½áM¡…Á”¹¥É±”°(€€€€€€€€€€€€€€€€€‰½É‘•Èè	½É‘•È¹…±°¡½±½ÈèÍ¡•µ”¹ÍÕÉ™…”°İ¥‘Ñ è€È¤°(€€€€€€€€€€€€€€€€¤°(€€€€€€€€€€€€€€¤°(€€€€€€€€€€€€€¥˜€ …±…ÍĞ¤(€€€€€€€€€€€€€€€½¹Ñ…¥¹•È¡İ¥‘Ñ è€Ä°¡•¥¡Ğè€ĞØ°½±½ÈèÍ¡•µ”¹½ÕÑ±¥¹•Y…É¥…¹Ğ¤°(€€€€€€€€€€€t°(€€€€€€€€€€¤°(€€€€€€€€¤°(€€€€€€€½¹ÍĞM¥é•‘	½à¡İ¥‘Ñ èAÉ½‘ÕÑMÁ…¥¹œ¹áÌ¤°(€€€€€€€áÁ…¹‘• (€€€€€€€€€¡¥±èA…‘‘¥¹œ (€€€€€€€€€€€Á…‘‘¥¹œè½¹ÍĞ‘•%¹Í•ÑÌ¹Íåµµ•ÑÉ¥Œ¡Ù•ÉÑ¥…°è€ÄÀ¤°(€€€€€€€€€€€¡¥±èI½Ü (€€€€€€€€€€€€€É½ÍÍá¥Í±¥¹µ•¹ĞèÉ½ÍÍá¥Í±¥¹µ•¹Ğ¹ÍÑ…ÉĞ°(€€€€€€€€€€€€€¡¥±‘É•¸è€ñ]¥‘•Ğùl(€€€€€€€€€€€€€€€½¹Ñ…¥¹•È (€€€€€€€€€€€€€€€€€İ¥‘Ñ è€ĞÀ°(€€€€€€€€€€€€€€€€€¡•¥¡Ğè€ĞÀ°(€€€€€€€€€€€€€€€€€‘•½É…Ñ¥½¸è	½á•½É…Ñ¥½¸ (€€€€€€€€€€€€€€€€€€€½±½ÈèÍ¡•µ”¹ÍÕÉ™…•½¹Ñ…¥¹•É!¥¡•ÍĞ°(€€€€€€€€€€€€€€€€€€€‰½É‘•ÉI…‘¥ÕÌè	½É‘•ÉI…‘¥ÕÌ¹¥ÉÕ±…È¡AÉ½‘ÕÑI…‘¥ÕÌ¹½¹ÑÉ½°¤°(€€€€€€€€€€€€€€€€€€¤°(€€€€€€€€€€€€€€€€€¡¥±è%½¸¡¥½¹½É¹Ñ¥Ñä¡•¹Ñ¥Ñä¹ÑåÁ”¤°Í¥é”è€ÈÄ¤°(€€€€€€€€€€€€€€€€¤°(€€€€€€€€€€€€€€€½¹ÍĞM¥é•‘	½à¡İ¥‘Ñ èAÉ½‘ÕÑMÁ…¥¹œ¹Í´¤°(€€€€€€€€€€€€€€€áÁ…¹‘• (€€€€€€€€€€€€€€€€€¡¥±è½±Õµ¸ (€€€€€€€€€€€€€€€€€€€É½ÍÍá¥Í±¥¹µ•¹ĞèÉ½ÍÍá¥Í±¥¹µ•¹Ğ¹ÍÑ…ÉĞ°(€€€€€€€€€€€€€€€€€€€¡¥±‘É•¸è€ñ]¥‘•Ğùl(€€€€€€€€€€€€€€€€€€€€€Q•áĞ (€€€€€€€€€€€€€€€€€€€€€€€•¹Ñ¥Ñä¹¹…µ”°(€€€€€€€€€€€€€€€€€€€€€€€µ…á1¥¹•ÌèÑ•áÑM…±”€ø€Ä¸Ô€ü€È€è€Ä°(€€€€€€€€€€€€€€€€€€€€€€€½Ù•É™±½ÜèQ•áÑ=Ù•É™±½Ü¹•±±¥ÁÍ¥Ì°(€€€€€€€€€€€€€€€€€€€€€€€ÍÑå±”èQ¡•µ”¹½˜¡½¹Ñ•áĞ¤¹Ñ•áÑQ¡•µ”¹Ñ¥Ñ±•Mµ…±°°(€€€€€€€€€€€€€€€€€€€€€€¤°(€€€€€€€€€€€€€€€€€€€€€Q•áĞ (€€€€€€€€€€€€€€€€€€€€€€€ÍÑÉ¥¹Ì¹•¹Ñ¥ÑåMÑ…Ñ”¡•¹Ñ¥Ñä¤°(€€€€€€€€€€€€€€€€€€€€€€€µ…á1¥¹•Ìè€Ä°(€€€€€€€€€€€€€€€€€€€€€€€½Ù•É™±½ÜèQ•áÑ=Ù•É™±½Ü¹•±±¥ÁÍ¥Ì°(€€€€€€€€€€€€€€€€€€€€€€€ÍÑå±”èQ¡•µ”¹½˜¡½¹Ñ•áĞ¤¹Ñ•áÑQ¡•µ”¹‰½‘åMµ…±°ü¹½Áå]¥Ñ  (€€€€€€€€€€€€€€€€€€€€€€€€€½±½ÈèÍ¡•µ”¹½¹MÕÉ™…•Y…É¥…¹Ğ°(€€€€€€€€€€€€€€€€€€€€€€€€¤°(€€€€€€€€€€€€€€€€€€€€€€¤°(€€€€€€€€€€€€€€€€€€€€€¥˜€¡Ñ•áÑM…±”€ø€Ä¸ÌÔ¤€¸¸¸ñ]¥‘•Ğùl(€€€€€€€€€€€€€€€€€€€€€€€½¹ÍĞM¥é•‘	½à¡¡•¥¡Ğè€È¤°(€€€€€€€€€€€€€€€€€€€€€€€ÑÉ…¥±¥¹Q¥µ”°(€€€€€€€€€€€€€€€€€€€€€t°(€€€€€€€€€€€€€€€€€€€t°(€€€€€€€€€€€€€€€€€€¤°(€€€€€€€€€€€€€€€€¤°(€€€€€€€€€€€€€€€¥˜€¡Ñ•áÑM…±”€ğô€Ä¸ÌÔ¤€¸¸¸ñ]¥‘•Ğùl(€€€€€€€€€€€€€€€€€½¹ÍĞM¥é•‘	½à¡İ¥‘Ñ èAÉ½‘ÕÑMÁ…¥¹œ¹áÌ¤°(€€€€€€€€€€€€€€€€€±•á¥‰±”¡¡¥±èÑÉ…¥±¥¹Q¥µ”¤°(€€€€€€€€€€€€€€€t°(€€€€€€€€€€€€€t°(€€€€€€€€€€€€¤°(€€€€€€€€€€¤°(€€€€€€€€¤°(€€€€€t°(€€€€¤ì(€ô)ô()™¥¹…°±…ÍÌ}M•Ñ¥½¹MÕÉ™…”•áÑ•¹‘ÌMÑ…Ñ•±•ÍÍ]¥‘•Ğì(€½¹ÍĞ}M•Ñ¥½¹MÕÉ™…”¡ì(€€€É•ÅÕ¥É•Ñ¡¥Ì¹Ñ¥Ñ±”°(€€€É•ÅÕ¥É•Ñ¡¥Ì¹¥½¸°(€€€É•ÅÕ¥É•Ñ¡¥Ì¹¡¥±°(€€€Ñ¡¥Ì¹ÍÕ‰Ñ¥Ñ±”°(€€€Ñ¡¥Ì¹…Ñ¥½¹1…‰•°°(€€€Ñ¡¥Ì¹½¹Ñ¥½¸°(€€€Ñ¡¥Ì¹…•¹Ğ°(€€€Ñ¡¥Ì¹‰…‘”°(€ô¤ì((€™¥¹…°MÑÉ¥¹œÑ¥Ñ±”ì(€™¥¹…°MÑÉ¥¹œüÍÕ‰Ñ¥Ñ±”ì(€™¥¹…°%½¹…Ñ„¥½¸ì(€™¥¹…°]¥‘•Ğ¡¥±ì(€™¥¹…°MÑÉ¥¹œü…Ñ¥½¹1…‰•°ì(€™¥¹…°Y½¥‘…±±‰…¬ü½¹Ñ¥½¸ì(€™¥¹…°½±½Èü…•¹Ğì(€™¥¹…°MÑÉ¥¹œü‰…‘”ì((€½Ù•ÉÉ¥‘”(€]¥‘•Ğ‰Õ¥±¡	Õ¥±‘½¹Ñ•áĞ½¹Ñ•áĞ¤ì(€€€™¥¹…°Í¡•µ”€ôQ¡•µ”¹½˜¡½¹Ñ•áĞ¤¹½±½ÉM¡•µ”ì(€€€™¥¹…°É•Í½±Ù•‘•¹Ğ€ô…•¹Ğ€üüÍ¡•µ”¹ÁÉ¥µ…Éäì(€€€É•ÑÕÉ¸½¹Ñ…¥¹•È (€€€€€Á…‘‘¥¹œè½¹ÍĞ‘•%¹Í•ÑÌ¹…±°¡AÉ½‘ÕÑMÁ…¥¹œ¹±œ¤°(€€€€€‘•½É…Ñ¥½¸è	½á•½É…Ñ¥½¸ (€€€€€€€½±½ÈèÍ¡•µ”¹ÍÕÉ™…•½¹Ñ…¥¹•É1½Ü°(€€€€€€€‰½É‘•ÉI…‘¥ÕÌè	½É‘•ÉI…‘¥ÕÌ¹¥ÉÕ±…È¡AÉ½‘ÕÑI…‘¥ÕÌ¹¡•É¼¤°(€€€€€€€‰½É‘•Èè	½É‘•È¹…±° (€€€€€€€€€½±½ÈèÍ¡•µ”¹½ÕÑ±¥¹•Y…É¥…¹Ğ¹İ¥Ñ¡Y…±Õ•Ì¡…±Á¡„è€À¸ÔÔ¤°(€€€€€€€€¤°(€€€€€€¤°(€€€€€¡¥±è½±Õµ¸ (€€€€€€€É½ÍÍá¥Í±¥¹µ•¹ĞèÉ½ÍÍá¥Í±¥¹µ•¹Ğ¹ÍÑ…ÉĞ°(€€€€€€€¡¥±‘É•¸è€ñ]¥‘•Ğùl(€€€€€€€€€1…å½ÕÑ	Õ¥±‘•È (€€€€€€€€€€€‰Õ¥±‘•Èè€¡½¹Ñ•áĞ°½¹ÍÑÉ…¥¹ÑÌ¤ì(€€€€€€€€€€€€€™¥¹…°Ñ•áÑM…±”€ô5•‘¥…EÕ•Éä¹Ñ•áÑM…±•É=˜¡½¹Ñ•áĞ¤¹Í…±” Ä¤ì(€€€€€€€€€€€€€™¥¹…°Í¡½İ1…‰•°€ô½¹ÍÑÉ…¥¹ÑÌ¹µ…á]¥‘Ñ €øô€ĞØÀ€˜˜Ñ•áÑM…±”€ğô€Ä¸Ìì(€€€€€€€€€€€€€É•ÑÕÉ¸I½Ü (€€€€€€€€€€€€€€€¡¥±‘É•¸è€ñ]¥‘•Ğùl(€€€€€€€€€€€€€€€€€½¹Ñ…¥¹•È (€€€€€€€€€€€€€€€€€€€İ¥‘Ñ è€ĞĞ°(€€€€€€€€€€€€€€€€€€€¡•¥¡Ğè€ĞĞ°(€€€€€€€€€€€€€€€€€€€‘•½É…Ñ¥½¸è	½á•½É…Ñ¥½¸ (€€€€€€€€€€€€€€€€€€€€€½±½ÈèÉ•Í½±Ù•‘•¹Ğ¹İ¥Ñ¡Y…±Õ•Ì¡…±Á¡„è€À¸ÄÈ¤°(€€€€€€€€€€€€€€€€€€€€€‰½É‘•ÉI…‘¥ÕÌè	½É‘•ÉI…‘¥ÕÌ¹¥ÉÕ±…È (€€€€€€€€€€€€€€€€€€€€€€€AÉ½‘ÕÑI…‘¥ÕÌ¹½¹ÑÉ½°°(€€€€€€€€€€€€€€€€€€€€€€¤°(€€€€€€€€€€€€€€€€€€€€¤°(€€€€€€€€€€€€€€€€€€€¡¥±è%½¸¡¥½¸°Í¥é”è€ÈÈ°½±½ÈèÉ•Í½±Ù•‘•¹Ğ¤°(€€€€€€€€€€€€€€€€€€¤°(€€€€€€€€€€€€€€€€€½¹ÍĞM¥é•‘	½à¡İ¥‘Ñ èAÉ½‘ÕÑMÁ…¥¹œ¹Í´¤°(€€€€€€€€€€€€€€€€€áÁ…¹‘• (€€€€€€€€€€€€€€€€€€€¡¥±è½±Õµ¸ (€€€€€€€€€€€€€€€€€€€€€É½ÍÍá¥Í±¥¹µ•¹ĞèÉ½ÍÍá¥Í±¥¹µ•¹Ğ¹ÍÑ…ÉĞ°(€€€€€€€€€€€€€€€€€€€€€¡¥±‘É•¸è€ñ]¥‘•Ğùl(€€€€€€€€€€€€€€€€€€€€€€€I½Ü (€€€€€€€€€€€€€€€€€€€€€€€€€¡¥±‘É•¸è€ñ]¥‘•Ğùl(€€€€€€€€€€€€€€€€€€€€€€€€€€€±•á¥‰±” (€€€€€€€€€€€€€€€€€€€€€€€€€€€€€¡¥±èQ•áĞ (€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€Ñ¥Ñ±”°(€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€µ…á1¥¹•ÌèÑ•áÑM…±”€ø€Ä¸Ì€ü€È€è€Ä°(€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€½Ù•É™±½ÜèQ•áÑ=Ù•É™±½Ü¹•±±¥ÁÍ¥Ì°(€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€ÍÑå±”èQ¡•µ”¹½˜¡½¹Ñ•áĞ¤¹Ñ•áÑQ¡•µ”¹Ñ¥Ñ±•1…É”(€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€ü¹½Áå]¥Ñ ¡™½¹Ñ]•¥¡Ğè½¹Ñ]•¥¡Ğ¹ÜÜÀÀ¤°(€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€¤°(€€€€€€€€€€€€€€€€€€€€€€€€€€€€¤°(€€€€€€€€€€€€€€€€€€€€€€€€€€€¥˜€¡‰…‘”€„ô¹Õ±°¤€¸¸¸ñ]¥‘•Ğùl(€€€€€€€€€€€€€€€€€€€€€€€€€€€€€½¹ÍĞM¥é•‘	½à¡İ¥‘Ñ èAÉ½‘ÕÑMÁ…¥¹œ¹áÌ¤°(€€€€€€€€€€€€€€€€€€€€€€€€€€€€€½¹Ñ…¥¹•È (€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€Á…‘‘¥¹œè½¹ÍĞ‘•%¹Í•ÑÌ¹Íåµµ•ÑÉ¥Œ (€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€¡½É¥é½¹Ñ…°è€à°(€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€Ù•ÉÑ¥…°è€Ì°(€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€¤°(€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€‘•½É…Ñ¥½¸è	½á•½É…Ñ¥½¸ (€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€½±½ÈèÉ•Í½±Ù•‘•¹Ğ¹İ¥Ñ¡Y…±Õ•Ì¡…±Á¡„è€À¸ÄÌ¤°(€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€‰½É‘•ÉI…‘¥ÕÌè	½É‘•ÉI…‘¥ÕÌ¹¥ÉÕ±…È äää¤°(€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€¤°(€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€¡¥±èQ•áĞ (€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€‰…‘”„°(€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€ÍÑå±”èQ¡•µ”¹½˜¡½¹Ñ•áĞ¤¹Ñ•áÑQ¡•µ”¹±…‰•±Mµ…±°(€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€ü¹½Áå]¥Ñ  (€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€½±½ÈèÉ•Í½±Ù•‘•¹Ğ°(€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€™½¹Ñ]•¥¡Ğè½¹Ñ]•¥¡Ğ¹ÜàÀÀ°(€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€¤°(€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€¤°(€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€¤°(€€€€€€€€€€€€€€€€€€€€€€€€€€€t°(€€€€€€€€€€€€€€€€€€€€€€€€€t°(€€€€€€€€€€€€€€€€€€€€€€€€¤°(€€€€€€€€€€€€€€€€€€€€€€€¥˜€¡ÍÕ‰Ñ¥Ñ±”€„ô¹Õ±°¤(€€€€€€€€€€€€€€€€€€€€€€€€€Q•áĞ (€€€€€€€€€€€€€€€€€€€€€€€€€€€ÍÕ‰Ñ¥Ñ±”„°(€€€€€€€€€€€€€€€€€€€€€€€€€€€µ…á1¥¹•Ìè€È°(€€€€€€€€€€€€€€€€€€€€€€€€€€€½Ù•É™±½ÜèQ•áÑ=Ù•É™±½Ü¹•±±¥ÁÍ¥Ì°(€€€€€€€€€€€€€€€€€€€€€€€€€€€ÍÑå±”èQ¡•µ”¹½˜¡½¹Ñ•áĞ¤¹Ñ•áÑQ¡•µ”¹‰½‘åMµ…±°(€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€ü¹½Áå]¥Ñ ¡½±½ÈèÍ¡•µ”¹½¹MÕÉ™…•Y…É¥…¹Ğ¤°(€€€€€€€€€€€€€€€€€€€€€€€€€€¤°(€€€€€€€€€€€€€€€€€€€€€t°(€€€€€€€€€€€€€€€€€€€€¤°(€€€€€€€€€€€€€€€€€€¤°(€€€€€€€€€€€€€€€€€¥˜€¡½¹Ñ¥½¸€„ô¹Õ±°¤(€€€€€€€€€€€€€€€€€€€Í¡½İ1…‰•°(€€€€€€€€€€€€€€€€€€€€€€€€üQ•áÑ	ÕÑÑ½¸¹¥½¸ (€€€€€€€€€€€€€€€€€€€€€€€€€€€½¹AÉ•ÍÍ•è½¹Ñ¥½¸°(€€€€€€€€€€€€€€€€€€€€€€€€€€€¥½¸è½¹ÍĞ%½¸¡%½¹Ì¹…ÉÉ½İ}™½Éİ…É‘}É½Õ¹‘•¤°(€€€€€€€€€€€€€€€€€€€€€€€€€€€±…‰•°èQ•áĞ¡…Ñ¥½¹1…‰•°„¤°(€€€€€€€€€€€€€€€€€€€€€€€€€€¤(€€€€€€€€€€€€€€€€€€€€€€€€è%½¹	ÕÑÑ½¸ (€€€€€€€€€€€€€€€€€€€€€€€€€€€Ñ½½±Ñ¥Àè…Ñ¥½¹1…‰•°°(€€€€€€€€€€€€€€€€€€€€€€€€€€€½¹AÉ•ÍÍ•è½¹Ñ¥½¸°(€€€€€€€€€€€€€€€€€€€€€€€€€€€¥½¸è½¹ÍĞ%½¸¡%½¹Ì¹…ÉÉ½İ}™½Éİ…É‘}É½Õ¹‘•¤°(€€€€€€€€€€€€€€€€€€€€€€€€€€¤°(€€€€€€€€€€€€€€€t°(€€€€€€€€€€€€€€¤ì(€€€€€€€€€€€ô°(€€€€€€€€€€¤°(€€€€€€€€€½¹ÍĞM¥é•‘	½à¡¡•¥¡ĞèAÉ½‘ÕÑMÁ…¥¹œ¹±œ¤°(€€€€€€€€€¡¥±°(€€€€€€€t°(€€€€€€¤°(€€€€¤ì(€ô)ô()™¥¹…°±…ÍÌ}AÉ•µ¥ÕµµÁÑåMÑ…Ñ”•áÑ•¹‘ÌMÑ…Ñ•±•ÍÍ]¥‘•Ğì(€½¹ÍĞ}AÉ•µ¥ÕµµÁÑåMÑ…Ñ”¡ì(€€€É•ÅÕ¥É•Ñ¡¥Ì¹¥½¸°(€€€É•ÅÕ¥É•Ñ¡¥Ì¹Ñ¥Ñ±”°(€€€É•ÅÕ¥É•Ñ¡¥Ì¹‘•ÍÉ¥ÁÑ¥½¸°(€€€Ñ¡¥Ì¹…Ñ¥½¹1…‰•°°(€€€Ñ¡¥Ì¹½¹Ñ¥½¸°(€ô¤ì((€™¥¹…°%½¹…Ñ„¥½¸ì(€™¥¹…°MÑÉ¥¹œÑ¥Ñ±”ì(€™¥¹…°MÑÉ¥¹œ‘•ÍÉ¥ÁÑ¥½¸ì(€™¥¹…°MÑÉ¥¹œü…Ñ¥½¹1…‰•°ì(€™¥¹…°Y½¥‘…±±‰…¬ü½¹Ñ¥½¸ì((€½Ù•ÉÉ¥‘”(€]¥‘•Ğ‰Õ¥±¡	Õ¥±‘½¹Ñ•áĞ½¹Ñ•áĞ¤ì(€€€™¥¹…°Í¡•µ”€ôQ¡•µ”¹½˜¡½¹Ñ•áĞ¤¹½±½ÉM¡•µ”ì(€€€É•ÑÕÉ¸½¹Ñ…¥¹•È (€€€€€İ¥‘Ñ è‘½Õ‰±”¹¥¹™¥¹¥Ñä°(€€€€€Á…‘‘¥¹œè½¹ÍĞ‘•%¹Í•ÑÌ¹…±°¡AÉ½‘ÕÑMÁ…¥¹œ¹±œ¤°(€€€€€‘•½É…Ñ¥½¸è	½á•½É…Ñ¥½¸ (€€€€€€€½±½ÈèÍ¡•µ”¹ÍÕÉ™…•½¹Ñ…¥¹•È°(€€€€€€€‰½É‘•ÉI…‘¥ÕÌè	½É‘•ÉI…‘¥ÕÌ¹¥ÉÕ±…È¡AÉ½‘ÕÑI…‘¥ÕÌ¹…É¤°(€€€€€€¤°(€€€€€¡¥±è½±Õµ¸ (€€€€€€€¡¥±‘É•¸è€ñ]¥‘•Ğùl(€€€€€€€€€½¹Ñ…¥¹•È (€€€€€€€€€€€İ¥‘Ñ è€ÔÈ°(€€€€€€€€€€€¡•¥¡Ğè€ÔÈ°(€€€€€€€€€€€‘•½É…Ñ¥½¸è	½á•½É…Ñ¥½¸ (€€€€€€€€€€€€€½±½ÈèÍ¡•µ”¹ÁÉ¥µ…Éå½¹Ñ…¥¹•È°(€€€€€€€€€€€€€Í¡…Á”è	½áM¡…Á”¹¥É±”°(€€€€€€€€€€€€¤°(€€€€€€€€€€€¡¥±è%½¸¡¥½¸°½±½ÈèÍ¡•µ”¹½¹AÉ¥µ…Éå½¹Ñ…¥¹•È¤°(€€€€€€€€€€¤°(€€€€€€€€€½¹ÍĞM¥é•‘	½à¡¡•¥¡ĞèAÉ½‘ÕÑMÁ…¥¹œ¹Í´¤°(€€€€€€€€€Q•áĞ (€€€€€€€€€€€Ñ¥Ñ±”°(€€€€€€€€€€€Ñ•áÑ±¥¸èQ•áÑ±¥¸¹•¹Ñ•È°(€€€€€€€€€€€ÍÑå±”èQ¡•µ”¹½˜¡½¹Ñ•áĞ¤¹Ñ•áÑQ¡•µ”¹Ñ¥Ñ±•5•‘¥Õ´°(€€€€€€€€€€¤°(€€€€€€€€€½¹ÍĞM¥é•‘	½à¡¡•¥¡Ğè€Ğ¤°(€€€€€€€€€Q•áĞ (€€€€€€€€€€€‘•ÍÉ¥ÁÑ¥½¸°(€€€€€€€€€€€Ñ•áÑ±¥¸èQ•áÑ±¥¸¹•¹Ñ•È°(€€€€€€€€€€€ÍÑå±”èQ¡•µ”¹½˜ (€€€€€€€€€€€€€½¹Ñ•áĞ°(€€€€€€€€€€€€¤¹Ñ•áÑQ¡•µ”¹‰½‘åMµ…±°ü¹½Áå]¥Ñ ¡½±½ÈèÍ¡•µ”¹½¹MÕÉ™…•Y…É¥…¹Ğ¤°(€€€€€€€€€€¤°(€€€€€€€€€¥˜€¡½¹Ñ¥½¸€„ô¹Õ±°¤€¸¸¸ñ]¥‘•Ğùl(€€€€€€€€€€€½¹ÍĞM¥é•‘	½à¡¡•¥¡ĞèAÉ½‘ÕÑMÁ…¥¹œ¹µ¤°(€€€€€€€€€€€¥±±•‘	ÕÑÑ½¸¹Ñ½¹…±%½¸ (€€€€€€€€€€€€€½¹AÉ•ÍÍ•è½¹Ñ¥½¸°(€€€€€€€€€€€€€¥½¸è½¹ÍĞ%½¸¡%½¹Ì¹…‘‘}É½Õ¹‘•¤°(€€€€€€€€€€€€€±…‰•°èQ•áĞ¡…Ñ¥½¹1…‰•°„¤°(€€€€€€€€€€€€¤°(€€€€€€€€€t°(€€€€€€€t°(€€€€€€¤°(€€€€¤ì(€ô)ô()™¥¹…°±…ÍÌ}M•Ñ¥½¹…É•áÑ•¹‘ÌMÑ…Ñ•±•ÍÍ]¥‘•Ğì(€½¹ÍĞ}M•Ñ¥½¹…É¡ì(€€€É•ÅÕ¥É•Ñ¡¥Ì¹Ñ¥Ñ±”°(€€€É•ÅÕ¥É•Ñ¡¥Ì¹¥½¸°(€€€É•ÅÕ¥É•Ñ¡¥Ì¹¡¥±°(€ô¤ì((€™¥¹…°MÑÉ¥¹œÑ¥Ñ±”ì(€™¥¹…°%½¹…Ñ„¥½¸ì(€™¥¹…°]¥‘•Ğ¡¥±ì((€½Ù•ÉÉ¥‘”(€]¥‘•Ğ‰Õ¥±¡	Õ¥±‘½¹Ñ•áĞ½¹Ñ•áĞ¤€ôø(€€€€€}M•Ñ¥½¹MÕÉ™…”¡Ñ¥Ñ±”èÑ¥Ñ±”°¥½¸è¥½¸°¡¥±è¡¥±¤ì)ô()™¥¹…°±…ÍÌ}I•ÍÁ½¹Í¥Ù•¹Ñ¥ÑåÉ¥•áÑ•¹‘ÌMÑ…Ñ•±•ÍÍ]¥‘•Ğì(€½¹ÍĞ}I•ÍÁ½¹Í¥Ù•¹Ñ¥ÑåÉ¥¡ì(€€€É•ÅÕ¥É•Ñ¡¥Ì¹•¹Ñ¥Ñ¥•Ì°(€€€É•ÅÕ¥É•Ñ¡¥Ì¹½¹ÑÉ½±±•È°(€ô¤ì((€™¥¹…°1¥ÍĞñ!½µ•¹Ñ¥Ñäø•¹Ñ¥Ñ¥•Ìì(€™¥¹…°!½µ•½¹ÑÉ½±½¹ÑÉ½±±•È½¹ÑÉ½±±•Èì((€½Ù•ÉÉ¥‘”(€]¥‘•Ğ‰Õ¥±¡	Õ¥±‘½¹Ñ•áĞ½¹Ñ•áĞ¤€ôø1…å½ÕÑ	Õ¥±‘•È (€€€‰Õ¥±‘•Èè€¡½¹Ñ•áĞ°½¹ÍÑÉ…¥¹ÑÌ¤ì(€€€€€™¥¹…°½±Õµ¹Ì€ô½¹ÍÑÉ…¥¹ÑÌ¹µ…á]¥‘Ñ €øô€ÜØÀ€ü€È€è€Äì(€€€€€™¥¹…°İ¥‘Ñ €ô½±Õµ¹Ì€ôô€Ä(€€€€€€€€€€ü½¹ÍÑÉ…¥¹ÑÌ¹µ…á]¥‘Ñ (€€€€€€€€€€è€¡½¹ÍÑÉ…¥¹ÑÌ¹µ…á]¥‘Ñ €´AÉ½‘ÕÑMÁ…¥¹œ¹Í´¤€¼€Èì(€€€€€É•ÑÕÉ¸]É…À (€€€€€€€ÍÁ…¥¹œèAÉ½‘ÕÑMÁ…¥¹œ¹Í´°(€€€€€€€ÉÕ¹MÁ…¥¹œèAÉ½‘ÕÑMÁ…¥¹œ¹Í´°(€€€€€€€¡¥±‘É•¸è€ñ]¥‘•Ğùl(€€€€€€€€€™½È€¡™¥¹…°•¹Ñ¥Ñä¥¸•¹Ñ¥Ñ¥•Ì¤(€€€€€€€€€€€M¥é•‘	½à (€€€€€€€€€€€€€İ¥‘Ñ èİ¥‘Ñ °(€€€€€€€€€€€€€¡¥±è¹Ñ¥Ñå…É¡•¹Ñ¥Ñäè•¹Ñ¥Ñä°½¹ÑÉ½±±•Èè½¹ÑÉ½±±•È¤°(€€€€€€€€€€€€¤°(€€€€€€€t°(€€€€€€¤ì(€€€ô°(€€¤ì)ô()ÕÑÕÉ”ñÙ½¥øÍ¡½İÅÕ…É¥Õµ•Ñ…¥±Ì (€	Õ¥±‘½¹Ñ•áĞ½¹Ñ•áĞ°(€!½µ•½¹ÑÉ½±½¹ÑÉ½±±•È½¹ÑÉ½±±•È°(¤…Íå¹Œì(€…İ…¥Ğ9…Ù¥…Ñ½È¹½˜¡½¹Ñ•áĞ¤¹ÁÕÍ ñÙ½¥ø (€€€5…Ñ•É¥…±A…•I½ÕÑ”ñÙ½¥ø (€€€€€‰Õ¥±‘•Èè€¡|¤€ôøÅÕ…É¥Õµ•Ñ…¥±ÍA…”¡½¹ÑÉ½±±•Èè½¹ÑÉ½±±•È¤°(€€€€¤°(€€¤ì)ô()™¥¹…°±…ÍÌÅÕ…É¥Õµ•Ñ…¥±ÍA…”•áÑ•¹‘ÌMÑ…Ñ•±•ÍÍ]¥‘•Ğì(€½¹ÍĞÅÕ…É¥Õµ•Ñ…¥±ÍA…”¡íÉ•ÅÕ¥É•Ñ¡¥Ì¹½¹ÑÉ½±±•È°ÍÕÁ•È¹­•åô¤ì((€™¥¹…°!½µ•½¹ÑÉ½±½¹ÑÉ½±±•È½¹ÑÉ½±±•Èì((€½Ù•ÉÉ¥‘”(€]¥‘•Ğ‰Õ¥±¡	Õ¥±‘½¹Ñ•áĞ½¹Ñ•áĞ¤ì(€€€™¥¹…°ÍÑÉ¥¹Ì€ô!½µ•½¹ÑÉ½±MÑÉ¥¹Ì¹½˜¡½¹Ñ•áĞ¤ì(€€€™¥¹…°Í¹…ÁÍ¡½Ğ€ô½¹ÑÉ½±±•È¹Í¹…ÁÍ¡½Ğ„ì(€€€™¥¹…°½Ù•ÉÙ¥•Ü€ôÅÕ…É¥Õµ=Ù•ÉÙ¥•Ü¹™É½µM¹…ÁÍ¡½Ğ¡Í¹…ÁÍ¡½Ğ¤ì(€€€™¥¹…°É½ÕÁ•€ô€ñÅÕ…É¥ÕµM•µ…¹Ñ¥I½±”°1¥ÍĞñ!½µ•¹Ñ¥Ñäøùíôì(€€€™½È€¡™¥¹…°•¹Ñ¥Ñä¥¸½Ù•ÉÙ¥•Ü¹•¹Ñ¥Ñ¥•Ì¤ì(€€€€€É½ÕÁ•(€€€€€€€€€€¹ÁÕÑ%™‰Í•¹Ğ¡ÅÕ…É¥ÕµM•µ…¹Ñ¥Ì¹±…ÍÍ¥™ä¡•¹Ñ¥Ñä¤°€ ¤€ôø€ñ!½µ•¹Ñ¥Ñäùmt¤(€€€€€€€€€€¹…‘¡•¹Ñ¥Ñä¤ì(€€€ô(€€€½¹ÍĞ½É‘•È€ô€ñÅÕ…É¥ÕµM•µ…¹Ñ¥I½±”ùl(€€€€€ÅÕ…É¥ÕµM•µ…¹Ñ¥I½±”¹Ñ•µÁ•É…ÑÕÉ”°(€€€€€ÅÕ…É¥ÕµM•µ…¹Ñ¥I½±”¹Á °(€€€€€ÅÕ…É¥ÕµM•µ…¹Ñ¥I½±”¹•Œ°(€€€€€ÅÕ…É¥ÕµM•µ…¹Ñ¥I½±”¹İ…Ñ•É1•Ù•°°(€€€€€ÅÕ…É¥ÕµM•µ…¹Ñ¥I½±”¹±•…¬°(€€€€€ÅÕ…É¥ÕµM•µ…¹Ñ¥I½±”¹…±…É´°(€€€€€ÅÕ…É¥ÕµM•µ…¹Ñ¥I½±”¹™É½¹Ñ1¥¡Ğ°(€€€€€ÅÕ…É¥ÕµM•µ…¹Ñ¥I½±”¹É•…É1¥¡Ğ°(€€€€€ÅÕ…É¥ÕµM•µ…¹Ñ¥I½±”¹™¥±Ñ•È°(€€€€€ÅÕ…É¥ÕµM•µ…¹Ñ¥I½±”¹…•É…Ñ¥½¸°(€€€€€ÅÕ…É¥ÕµM•µ…¹Ñ¥I½±”¹¡•…Ñ•È°(€€€€€ÅÕ…É¥ÕµM•µ…¹Ñ¥I½±”¹Ñ…É•ÑQ•µÁ•É…ÑÕÉ”°(€€€€€ÅÕ…É¥ÕµM•µ…¹Ñ¥I½±”¹Ñ½ÁUÀ°(€€€€€ÅÕ…É¥ÕµM•µ…¹Ñ¥I½±”¹¼È°(€€€€€ÅÕ…É¥ÕµM•µ…¹Ñ¥I½±”¹‘½Í¥¹œ°(€€€€€ÅÕ…É¥ÕµM•µ…¹Ñ¥I½±”¹™••‘•È°(€€€€€ÅÕ…É¥ÕµM•µ…¹Ñ¥I½±”¹™¥Éµİ…É•UÁ‘…Ñ”°(€€€tì(€€€É•ÑÕÉ¸M…™™½± (€€€€€…ÁÁ	…ÈèÁÁ	…È¡Ñ¥Ñ±”èQ•áĞ¡ÍÑÉ¥¹Ì¹Ğ …ÅÕ…É¥Õ´œ¤¤¤°(€€€€€‰½‘äè1¥ÍÑY¥•Ü (€€€€€€€Á…‘‘¥¹œè½¹ÍĞ‘•%¹Í•ÑÌ¹™É½µ1QI ÈÀ°€ÄÈ°€ÈÀ°€àÀ¤°(€€€€€€€¡¥±‘É•¸è€ñ]¥‘•Ğùl(€€€€€€€€€ÅÕ…É¥Õµ…Í¡‰½…É‘…É (€€€€€€€€€€€Í¹…ÁÍ¡½ĞèÍ¹…ÁÍ¡½Ğ°(€€€€€€€€€€€½¹ÑÉ½±±•Èè½¹ÑÉ½±±•È°(€€€€€€€€€€€¥¹Ñ•É…Ñ¥Ù”è™…±Í”°(€€€€€€€€€€¤°(€€€€€€€€€½¹ÍĞM¥é•‘	½à¡¡•¥¡ĞèAÉ½‘ÕÑMÁ…¥¹œ¹±œ¤°(€€€€€€€€€™½È€¡™¥¹…°É½±”¥¸½É‘•È¤(€€€€€€€€€€€™½È€¡™¥¹…°•¹Ñ¥Ñä¥¸É½ÕÁ•‘mÉ½±•t€üü½¹ÍĞ€ñ!½µ•¹Ñ¥Ñäùmt¤(€€€€€€€€€€€€€A…‘‘¥¹œ (€€€€€€€€€€€€€€€Á…‘‘¥¹œè½¹ÍĞ‘•%¹Í•ÑÌ¹½¹±ä¡‰½ÑÑ½´èAÉ½‘ÕÑMÁ…¥¹œ¹Í´¤°(€€€€€€€€€€€€€€€¡¥±è¹Ñ¥Ñå…É¡•¹Ñ¥Ñäè•¹Ñ¥Ñä°½¹ÑÉ½±±•Èè½¹ÑÉ½±±•È¤°(€€€€€€€€€€€€€€¤°(€€€€€€€€€½¹ÍĞM¥é•‘	½à¡¡•¥¡ĞèAÉ½‘ÕÑMÁ…¥¹œ¹µ¤°(€€€€€€€€€}M•Ñ¥½¹…É (€€€€€€€€€€€Ñ¥Ñ±”èÍÑÉ¥¹Ì¹Ğ ‘¥…¹½ÍÑ¥Ìœ¤°(€€€€€€€€€€€¥½¸è%½¹Ì¹µ½¹¥Ñ½É}¡•…ÉÑ}É½Õ¹‘•°(€€€€€€€€€€€¡¥±è½±Õµ¸ (€€€€€€€€€€€€€¡¥±‘É•¸è€ñ]¥‘•Ğùl(€€€€€€€€€€€€€€€™½È€¡™¥¹…°‘•Ù¥”¥¸½Ù•ÉÙ¥•Ü¹‘•Ù¥•Ì¤(€€€€€€€€€€€€€€€€€1¥ÍÑQ¥±” (€€€€€€€€€€€€€€€€€€€½¹Ñ•¹ÑA…‘‘¥¹œè‘•%¹Í•ÑÌ¹é•É¼°(€€€€€€€€€€€€€€€€€€€±•…‘¥¹œè%½¸ (€€€€€€€€€€€€€€€€€€€€€‘•Ù¥”¹…Ù…¥±…‰±”(€€€€€€€€€€€€€€€€€€€€€€€€€€ü%½¹Ì¹¡•­}¥É±•}É½Õ¹‘•(€€€€€€€€€€€€€€€€€€€€€€€€€€è%½¹Ì¹•ÉÉ½É}É½Õ¹‘•°(€€€€€€€€€€€€€€€€€€€€¤°(€€€€€€€€€€€€€€€€€€€Ñ¥Ñ±”èQ•áĞ¡‘•Ù¥”¹¹…µ”¤°(€€€€€€€€€€€€€€€€€€€ÍÕ‰Ñ¥Ñ±”èQ•áĞ (€€€€€€€€€€€€€€€€€€€€€€œ‘í‘•Ù¥”¹µ½‘•±ôƒ
+Ü€‘í‘•Ù¥”¹Í½™Ñİ…É•Y•ÉÍ¥½¹ôœ°(€€€€€€€€€€€€€€€€€€€€¤°(€€€€€€€€€€€€€€€€€€€ÑÉ…¥±¥¹œèQ•áĞ¡ÍÑÉ¥¹Ì¹É•±…Ñ¥Ù•Q¥µ”¡‘•Ù¥”¹±…ÍÑM••¸¤¤°(€€€€€€€€€€€€€€€€€€¤°(€€€€€€€€€€€€€t°(€€€€€€€€€€€€¤°(€€€€€€€€€€¤°(€€€€€€€t°(€€€€€€¤°(€€€€¤ì(€ô)ô

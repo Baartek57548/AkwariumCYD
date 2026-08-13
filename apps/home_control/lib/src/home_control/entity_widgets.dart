@@ -54,6 +54,13 @@ final class SourceStatusBanner extends StatelessWidget {
     final critical = snapshot.isOffline || failureKey != null;
     final warning = snapshot.isStale || snapshot.isPartial;
     if (!critical && !warning) return const SizedBox.shrink();
+    final status = failureKey != null
+        ? _SourceBannerStatus.failure
+        : snapshot.isOffline
+        ? _SourceBannerStatus.offline
+        : snapshot.isPartial
+        ? _SourceBannerStatus.partial
+        : _SourceBannerStatus.stale;
     final background = critical
         ? scheme.errorContainer
         : scheme.tertiaryContainer;
@@ -67,46 +74,87 @@ final class SourceStatusBanner extends StatelessWidget {
             : snapshot.isPartial
             ? 'partial'
             : 'stale');
-    return Semantics(
-      liveRegion: true,
-      container: true,
-      child: Material(
-        color: background,
-        child: SafeArea(
-          bottom: false,
-          child: Padding(
-            padding: const EdgeInsets.symmetric(
-              horizontal: ProductSpacing.md,
-              vertical: ProductSpacing.sm,
+    final message = strings.t(keyName);
+    return Material(
+      color: background,
+      child: SafeArea(
+        bottom: false,
+        child: DecoratedBox(
+          decoration: BoxDecoration(
+            border: Border(
+              left: Directionality.of(context) == TextDirection.ltr
+                  ? BorderSide(color: foreground, width: 4)
+                  : BorderSide.none,
+              right: Directionality.of(context) == TextDirection.rtl
+                  ? BorderSide(color: foreground, width: 4)
+                  : BorderSide.none,
             ),
-            child: Row(
-              children: <Widget>[
-                Icon(
-                  critical ? Icons.cloud_off_rounded : Icons.schedule_rounded,
-                  color: foreground,
-                ),
-                const SizedBox(width: ProductSpacing.sm),
-                Expanded(
-                  child: Text(
-                    strings.t(keyName),
-                    style: TextStyle(color: foreground),
+          ),
+          child: Row(
+            children: <Widget>[
+              Expanded(
+                child: Semantics(
+                  key: const ValueKey<String>('source-status-message'),
+                  container: true,
+                  liveRegion: true,
+                  label: message,
+                  child: ExcludeSemantics(
+                    child: Padding(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: ProductSpacing.md,
+                        vertical: ProductSpacing.sm,
+                      ),
+                      child: Row(
+                        crossAxisAlignment: CrossAxisAlignment.center,
+                        children: <Widget>[
+                          Icon(_iconForSourceStatus(status), color: foreground),
+                          const SizedBox(width: ProductSpacing.sm),
+                          Expanded(
+                            child: Text(
+                              message,
+                              maxLines: 3,
+                              overflow: TextOverflow.ellipsis,
+                              style: Theme.of(context).textTheme.bodyMedium
+                                  ?.copyWith(
+                                    color: foreground,
+                                    fontWeight: FontWeight.w600,
+                                  ),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
                   ),
                 ),
-                if (failureKey != null)
-                  IconButton(
+              ),
+              if (failureKey != null)
+                SizedBox.square(
+                  dimension: 48,
+                  child: IconButton(
+                    key: const ValueKey<String>('source-status-dismiss'),
                     tooltip: strings.t('dismiss'),
                     onPressed: onDismiss,
                     color: foreground,
                     icon: const Icon(Icons.close_rounded),
                   ),
-              ],
-            ),
+                ),
+              if (failureKey != null) const SizedBox(width: ProductSpacing.xs),
+            ],
           ),
         ),
       ),
     );
   }
 }
+
+enum _SourceBannerStatus { failure, offline, partial, stale }
+
+IconData _iconForSourceStatus(_SourceBannerStatus status) => switch (status) {
+  _SourceBannerStatus.failure => Icons.error_outline_rounded,
+  _SourceBannerStatus.offline => Icons.cloud_off_rounded,
+  _SourceBannerStatus.partial => Icons.sync_problem_rounded,
+  _SourceBannerStatus.stale => Icons.schedule_rounded,
+};
 
 final class EntityCard extends StatelessWidget {
   const EntityCard({
@@ -125,84 +173,211 @@ final class EntityCard extends StatelessWidget {
     final strings = HomeControlStrings.of(context);
     final scheme = Theme.of(context).colorScheme;
     final pending = controller.isPending(entity.id);
-    final enabled = entity.available && !controller.snapshot!.isOffline;
-    return Semantics(
-      container: true,
-      label: '${entity.name}, ${strings.entityState(entity)}',
-      child: Card(
-        clipBehavior: Clip.antiAlias,
-        child: InkWell(
-          onTap: () => showEntityDetails(context, entity, controller),
-          child: Padding(
-            padding: EdgeInsets.all(
-              compact ? ProductSpacing.sm : ProductSpacing.md,
-            ),
-            child: Row(
-              children: <Widget>[
-                Container(
-                  width: 46,
-                  height: 46,
-                  decoration: BoxDecoration(
-                    color: entity.booleanValue == true
-                        ? scheme.primaryContainer
-                        : scheme.surfaceContainerHighest,
-                    borderRadius: BorderRadius.circular(15),
-                  ),
-                  child: Icon(
-                    iconForEntity(entity.type),
-                    color: entity.booleanValue == true
-                        ? scheme.onPrimaryContainer
-                        : scheme.onSurfaceVariant,
-                  ),
-                ),
-                const SizedBox(width: ProductSpacing.sm),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: <Widget>[
-                      Text(
-                        entity.name,
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: Theme.of(context).textTheme.titleMedium
-                            ?.copyWith(fontWeight: FontWeight.w700),
+    final offline = controller.snapshot?.isOffline ?? true;
+    final enabled = entity.available && !offline && !pending;
+    final active = entity.booleanValue == true;
+    final hasQuickControl =
+        entity.writable &&
+        entity.type != HomeEntityType.unknown &&
+        (entity.type.supportsToggle || entity.type.supportsPress);
+    final stateText = pending
+        ? strings.t('commandPending')
+        : offline
+        ? strings.t('offline')
+        : strings.entityState(entity);
+    final stateColor = pending
+        ? scheme.primary
+        : entity.available && !offline
+        ? scheme.onSurfaceVariant
+        : scheme.error;
+    final surface = Color.alphaBlend(
+      (pending
+              ? scheme.secondary
+              : active && enabled
+              ? scheme.primary
+              : scheme.onSurface)
+          .withValues(
+            alpha: pending
+                ? 0.08
+                : active && enabled
+                ? 0.06
+                : 0.02,
+          ),
+      scheme.surfaceContainerLow,
+    );
+    void openDetails() {
+      showEntityDetails(context, entity, controller);
+    }
+
+    return Card(
+      color: surface,
+      clipBehavior: Clip.antiAlias,
+      child: Semantics(
+        container: true,
+        explicitChildNodes: true,
+        child: Row(
+          children: <Widget>[
+            Expanded(
+              child: Semantics(
+                key: ValueKey<String>('entity-details-${entity.id.value}'),
+                container: true,
+                excludeSemantics: true,
+                button: true,
+                enabled: true,
+                label: entity.name,
+                value: stateText,
+                hint: strings.t('details'),
+                onTap: openDetails,
+                child: InkWell(
+                  excludeFromSemantics: true,
+                  onTap: openDetails,
+                  child: ConstrainedBox(
+                    constraints: BoxConstraints(minHeight: compact ? 72 : 80),
+                    child: Padding(
+                      padding: EdgeInsets.fromLTRB(
+                        compact ? ProductSpacing.sm : ProductSpacing.md,
+                        compact ? ProductSpacing.sm : ProductSpacing.md,
+                        ProductSpacing.sm,
+                        compact ? ProductSpacing.sm : ProductSpacing.md,
                       ),
-                      const SizedBox(height: 2),
-                      Text(
-                        pending
-                            ? strings.t('commandPending')
-                            : strings.entityState(entity),
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                          color: enabled
-                              ? scheme.onSurfaceVariant
-                              : scheme.error,
-                        ),
+                      child: Row(
+                        children: <Widget>[
+                          _EntityIcon(
+                            entity: entity,
+                            active: active,
+                            enabled: entity.available && !offline,
+                            pending: pending,
+                          ),
+                          const SizedBox(width: ProductSpacing.sm),
+                          Expanded(
+                            child: Column(
+                              mainAxisSize: MainAxisSize.min,
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: <Widget>[
+                                Text(
+                                  entity.name,
+                                  maxLines: 2,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: Theme.of(context).textTheme.titleMedium
+                                      ?.copyWith(fontWeight: FontWeight.w700),
+                                ),
+                                const SizedBox(height: 2),
+                                Text(
+                                  stateText,
+                                  maxLines: 2,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: Theme.of(context).textTheme.bodySmall
+                                      ?.copyWith(
+                                        color: stateColor,
+                                        fontWeight: pending
+                                            ? FontWeight.w600
+                                            : FontWeight.w400,
+                                      ),
+                                ),
+                              ],
+                            ),
+                          ),
+                          if (!hasQuickControl) ...<Widget>[
+                            const SizedBox(width: ProductSpacing.xs),
+                            ExcludeSemantics(
+                              child: Icon(
+                                Icons.chevron_right_rounded,
+                                color: scheme.onSurfaceVariant,
+                              ),
+                            ),
+                          ],
+                        ],
                       ),
-                    ],
-                  ),
-                ),
-                const SizedBox(width: ProductSpacing.xs),
-                if (pending)
-                  const SizedBox(
-                    width: 24,
-                    height: 24,
-                    child: CircularProgressIndicator(strokeWidth: 2.5),
-                  )
-                else
-                  _QuickControl(
-                    entity: entity,
-                    enabled: enabled,
-                    onValue: (value) => requestEntityCommand(
-                      context,
-                      entity,
-                      value,
-                      controller,
                     ),
                   ),
-              ],
+                ),
+              ),
             ),
+            if (hasQuickControl) ...<Widget>[
+              const SizedBox(width: ProductSpacing.xs),
+              Padding(
+                padding: const EdgeInsets.only(right: ProductSpacing.sm),
+                child: pending
+                    ? _PendingControl(entity: entity)
+                    : _QuickControl(
+                        entity: entity,
+                        enabled: enabled,
+                        onValue: (value) => requestEntityCommand(
+                          context,
+                          entity,
+                          value,
+                          controller,
+                        ),
+                      ),
+              ),
+            ],
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+final class _EntityIcon extends StatelessWidget {
+  const _EntityIcon({
+    required this.entity,
+    required this.active,
+    required this.enabled,
+    required this.pending,
+  });
+
+  final HomeEntity entity;
+  final bool active;
+  final bool enabled;
+  final bool pending;
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    final background = pending
+        ? scheme.secondaryContainer
+        : active && enabled
+        ? scheme.primaryContainer
+        : scheme.surfaceContainerHighest;
+    final foreground = pending
+        ? scheme.onSecondaryContainer
+        : active && enabled
+        ? scheme.onPrimaryContainer
+        : scheme.onSurfaceVariant.withValues(alpha: enabled ? 1 : 0.55);
+    return ExcludeSemantics(
+      child: Container(
+        width: 48,
+        height: 48,
+        decoration: BoxDecoration(
+          color: background,
+          borderRadius: BorderRadius.circular(ProductRadius.control),
+        ),
+        child: Icon(iconForEntity(entity.type), color: foreground),
+      ),
+    );
+  }
+}
+
+final class _PendingControl extends StatelessWidget {
+  const _PendingControl({required this.entity});
+
+  final HomeEntity entity;
+
+  @override
+  Widget build(BuildContext context) {
+    final label = HomeControlStrings.of(context).t('commandPending');
+    return Semantics(
+      key: ValueKey<String>('entity-pending-${entity.id.value}'),
+      container: true,
+      liveRegion: true,
+      label: entity.name,
+      value: label,
+      child: const ExcludeSemantics(
+        child: SizedBox.square(
+          dimension: 48,
+          child: Padding(
+            padding: EdgeInsets.all(12),
+            child: CircularProgressIndicator(strokeWidth: 2.5),
           ),
         ),
       ),
@@ -223,747 +398,12 @@ final class _QuickControl extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    if (!entity.writable || entity.type == HomeEntityType.unknown) {
-      return const Icon(Icons.chevron_right_rounded);
-    }
-    if (entity.type.supportsToggle) {
-      return Switch(
-        value: entity.booleanValue == true,
-        onChanged: enabled ? onValue : null,
-      );
-    }
-    if (entity.type.supportsPress) {
-      return IconButton.filledTonal(
-        tooltip: HomeControlStrings.of(context).t('run'),
-        onPressed: enabled ? () => onValue(true) : null,
-        icon: const Icon(Icons.play_arrow_rounded),
-      );
-    }
-    return const Icon(Icons.chevron_right_rounded);
-  }
-}
-
-Future<bool> requestEntityCommand(
-  BuildContext context,
-  HomeEntity entity,
-  Object? value,
-  HomeControlController controller,
-) async {
-  if (entity.risk != HomeCommandRisk.routine) {
     final strings = HomeControlStrings.of(context);
-    final confirmed = await showDialog<bool>(
-      context: context,
-      builder: (context) => AlertDialog(
-        icon: Icon(
-          entity.risk == HomeCommandRisk.critical
-              ? Icons.warning_amber_rounded
-              : Icons.info_outline_rounded,
-        ),
-        title: Text(strings.t('confirmTitle')),
-        content: Text(
-          strings.t(
-            entity.risk == HomeCommandRisk.critical
-                ? 'confirmCritical'
-                : 'confirmConsequential',
-          ),
-        ),
-        actions: <Widget>[
-          TextButton(
-            onPressed: () => Navigator.pop(context, false),
-            child: Text(strings.t('cancel')),
-          ),
-          FilledButton(
-            onPressed: () => Navigator.pop(context, true),
-            child: Text(strings.t('confirm')),
-          ),
-        ],
-      ),
-    );
-    if (confirmed != true) return false;
-  }
-  return controller.sendCommand(entity, value);
-}
-
-Future<void> showEntityDetails(
-  BuildContext context,
-  HomeEntity entity,
-  HomeControlController controller,
-) async {
-  await showModalBottomSheet<void>(
-    context: context,
-    isScrollControlled: true,
-    showDragHandle: true,
-    builder: (context) =>
-        _EntityDetails(entityId: entity.id, controller: controller),
-  );
-}
-
-final class _EntityDetails extends StatefulWidget {
-  const _EntityDetails({required this.entityId, required this.controller});
-
-  final SourceScopedId entityId;
-  final HomeControlController controller;
-
-  @override
-  State<_EntityDetails> createState() => _EntityDetailsState();
-}
-
-final class _EntityDetailsState extends State<_EntityDetails> {
-  String? _commandFailureKey;
-
-  @override
-  Widget build(BuildContext context) {
-    return AnimatedBuilder(
-      animation: widget.controller,
-      builder: (context, _) {
-        final strings = HomeControlStrings.of(context);
-        final entity = widget.controller.snapshot?.entity(widget.entityId);
-        if (entity == null) {
-          return SizedBox(
-            height: 260,
-            child: Center(child: Text(strings.t('removed'))),
-          );
-        }
-        final favorite = widget.controller.dashboard.favorites.contains(
-          entity.id.value,
-        );
-        final enabled =
-            entity.available &&
-            entity.writable &&
-            !widget.controller.snapshot!.isOffline &&
-            !widget.controller.isPending(entity.id);
-        final historyEnabled =
-            entity.available && !widget.controller.snapshot!.isOffline;
-        return SafeArea(
-          child: ConstrainedBox(
-            constraints: BoxConstraints(
-              maxHeight: MediaQuery.sizeOf(context).height * 0.88,
-            ),
-            child: SingleChildScrollView(
-              padding: const EdgeInsets.fromLTRB(24, 4, 24, 32),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: <Widget>[
-                  Row(
-                    children: <Widget>[
-                      Icon(iconForEntity(entity.type), size: 34),
-                      const SizedBox(width: ProductSpacing.sm),
-                      Expanded(
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: <Widget>[
-                            Text(
-                              entity.name,
-                              style: Theme.of(context).textTheme.headlineSmall
-                                  ?.copyWith(fontWeight: FontWeight.w800),
-                            ),
-                            Text(strings.entityType(entity.type)),
-                          ],
-                        ),
-                      ),
-                      IconButton(
-                        tooltip: strings.t(
-                          favorite ? 'removeFavorite' : 'favorite',
-                        ),
-                        onPressed: () =>
-                            widget.controller.toggleFavorite(entity),
-                        icon: Icon(
-                          favorite
-                              ? Icons.star_rounded
-                              : Icons.star_border_rounded,
-                        ),
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: ProductSpacing.lg),
-                  Text(
-                    strings.entityState(entity),
-                    style: Theme.of(context).textTheme.displaySmall?.copyWith(
-                      fontWeight: FontWeight.w800,
-                    ),
-                  ),
-                  const SizedBox(height: ProductSpacing.md),
-                  if (entity.type == HomeEntityType.unknown)
-                    _Hint(text: strings.t('unknownEntityHint')),
-                  if (entity.attributes.isNotEmpty) ...<Widget>[
-                    const SizedBox(height: ProductSpacing.md),
-                    _EntityAttributes(entity: entity),
-                  ],
-                  if (entity.writable) ...<Widget>[
-                    const SizedBox(height: ProductSpacing.md),
-                    _DetailedControl(
-                      entity: entity,
-                      enabled: enabled,
-                      onValue: (value) async {
-                        final succeeded = await requestEntityCommand(
-                          context,
-                          entity,
-                          value,
-                          widget.controller,
-                        );
-                        if (!mounted) return;
-                        setState(() {
-                          _commandFailureKey = succeeded
-                              ? null
-                              : widget.controller.failure?.messageKey ??
-                                    'errorUnknown';
-                        });
-                      },
-                    ),
-                    if (_commandFailureKey case final key?) ...<Widget>[
-                      const SizedBox(height: ProductSpacing.sm),
-                      Semantics(
-                        liveRegion: true,
-                        child: Material(
-                          color: Theme.of(context).colorScheme.errorContainer,
-                          borderRadius: BorderRadius.circular(
-                            ProductRadius.card,
-                          ),
-                          child: Padding(
-                            padding: const EdgeInsets.all(ProductSpacing.sm),
-                            child: Row(
-                              children: <Widget>[
-                                Icon(
-                                  Icons.error_outline_rounded,
-                                  color: Theme.of(
-                                    context,
-                                  ).colorScheme.onErrorContainer,
-                                ),
-                                const SizedBox(width: ProductSpacing.sm),
-                                Expanded(child: Text(strings.t(key))),
-                                IconButton(
-                                  tooltip: strings.t('dismiss'),
-                                  onPressed: () =>
-                                      setState(() => _commandFailureKey = null),
-                                  icon: const Icon(Icons.close_rounded),
-                                ),
-                              ],
-                            ),
-                          ),
-                        ),
-                      ),
-                    ],
-                  ],
-                  if (entity.type.supportsHistory) ...<Widget>[
-                    const SizedBox(height: ProductSpacing.xl),
-                    Row(
-                      children: <Widget>[
-                        Expanded(
-                          child: Text(
-                            strings.t('history'),
-                            style: Theme.of(context).textTheme.titleLarge
-                                ?.copyWith(fontWeight: FontWeight.w800),
-                          ),
-                        ),
-                      ],
-                    ),
-                    Align(
-                      alignment: Alignment.centerRight,
-                      child: Wrap(
-                        spacing: ProductSpacing.xs,
-                        children: <Widget>[
-                          TextButton(
-                            onPressed:
-                                widget.controller.historyLoading ||
-                                    !historyEnabled
-                                ? null
-                                : () => widget.controller.loadHistory(
-                                    entity,
-                                    const Duration(days: 1),
-                                  ),
-                            child: Text(strings.t('history24h')),
-                          ),
-                          TextButton(
-                            onPressed:
-                                widget.controller.historyLoading ||
-                                    !historyEnabled
-                                ? null
-                                : () => widget.controller.loadHistory(
-                                    entity,
-                                    const Duration(days: 7),
-                                  ),
-                            child: Text(strings.t('history7d')),
-                          ),
-                        ],
-                      ),
-                    ),
-                    const SizedBox(height: ProductSpacing.sm),
-                    if (widget.controller.historyLoading)
-                      const LinearProgressIndicator()
-                    else if (widget.controller.historyEntityId == entity.id &&
-                        widget.controller.history.isNotEmpty)
-                      _HistoryChart(
-                        points: widget.controller.history,
-                        unit: entity.unit,
-                      )
-                    else if (widget.controller.historyEntityId != entity.id)
-                      _Hint(text: strings.t('historyPrompt'))
-                    else
-                      _Hint(text: strings.t('historyEmpty')),
-                  ],
-                  const SizedBox(height: ProductSpacing.lg),
-                  Text(
-                    strings.withValue(
-                      'entitySource',
-                      widget.controller.snapshot?.sourceName ??
-                          entity.id.sourceId,
-                    ),
-                    style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                      color: Theme.of(context).colorScheme.onSurfaceVariant,
-                    ),
-                  ),
-                  Text(
-                    strings.withValue(
-                      'entityUpdated',
-                      strings.relativeTime(entity.updatedAt),
-                    ),
-                    style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                      color: Theme.of(context).colorScheme.onSurfaceVariant,
-                    ),
-                  ),
-                  Text(
-                    entity.id.value,
-                    style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                      color: Theme.of(context).colorScheme.onSurfaceVariant,
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          ),
-        );
-      },
-    );
-  }
-}
-
-final class _DetailedControl extends StatefulWidget {
-  const _DetailedControl({
-    required this.entity,
-    required this.enabled,
-    required this.onValue,
-  });
-
-  final HomeEntity entity;
-  final bool enabled;
-  final ValueChanged<Object?> onValue;
-
-  @override
-  State<_DetailedControl> createState() => _DetailedControlState();
-}
-
-final class _DetailedControlState extends State<_DetailedControl> {
-  double? _draftNumber;
-
-  HomeEntity get entity => widget.entity;
-
-  @override
-  Widget build(BuildContext context) {
-    final strings = HomeControlStrings.of(context);
-    if (entity.type == HomeEntityType.cover) {
-      return SegmentedButton<bool>(
-        segments: <ButtonSegment<bool>>[
-          ButtonSegment<bool>(
-            value: false,
-            label: Text(strings.t('closeCover')),
-            icon: const Icon(Icons.vertical_align_bottom_rounded),
-          ),
-          ButtonSegment<bool>(
-            value: true,
-            label: Text(strings.t('openCover')),
-            icon: const Icon(Icons.vertical_align_top_rounded),
-          ),
-        ],
-        selected: <bool>{entity.booleanValue == true},
-        onSelectionChanged: widget.enabled
-            ? (selection) => widget.onValue(selection.first)
-            : null,
-      );
-    }
-    if (entity.type == HomeEntityType.lock) {
-      return SegmentedButton<bool>(
-        segments: <ButtonSegment<bool>>[
-          ButtonSegment<bool>(
-            value: false,
-            label: Text(strings.t('lockAction')),
-            icon: const Icon(Icons.lock_rounded),
-          ),
-          ButtonSegment<bool>(
-            value: true,
-            label: Text(strings.t('unlockAction')),
-            icon: const Icon(Icons.lock_open_rounded),
-          ),
-        ],
-        selected: <bool>{entity.booleanValue == true},
-        onSelectionChanged: widget.enabled
-            ? (selection) => widget.onValue(selection.first)
-            : null,
-      );
-    }
-    if (entity.type == HomeEntityType.alarmControlPanel) {
-      const modes = <String>[
-        'disarmed',
-        'armed_home',
-        'armed_away',
-        'armed_night',
-      ];
-      final current = modes.contains(entity.state)
-          ? entity.state as String
-          : null;
-      return DropdownButtonFormField<String>(
-        key: ValueKey<String>(
-          '${entity.id.value}:${entity.state}:${widget.enabled}',
-        ),
-        initialValue: current,
-        isExpanded: true,
-        decoration: InputDecoration(labelText: strings.t('alarmMode')),
-        items: <DropdownMenuItem<String>>[
-          for (final mode in modes)
-            DropdownMenuItem<String>(
-              value: mode,
-              child: Text(
-                strings.t('alarm_$mode'),
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-              ),
-            ),
-        ],
-        onChanged: widget.enabled
-            ? (value) {
-                if (value != null) widget.onValue(value);
-              }
-            : null,
-      );
-    }
-    if (entity.type == HomeEntityType.vacuum ||
-        entity.type == HomeEntityType.mediaPlayer) {
-      return SegmentedButton<bool>(
-        segments: <ButtonSegment<bool>>[
-          ButtonSegment<bool>(
-            value: false,
-            label: Text(
-              strings.t(
-                entity.type == HomeEntityType.vacuum
-                    ? 'returnToBase'
-                    : 'turnOff',
-              ),
-            ),
-            icon: const Icon(Icons.stop_rounded),
-          ),
-          ButtonSegment<bool>(
-            value: true,
-            label: Text(
-              strings.t(
-                entity.type == HomeEntityType.vacuum ? 'start' : 'turnOn',
-              ),
-            ),
-            icon: const Icon(Icons.play_arrow_rounded),
-          ),
-        ],
-        selected: <bool>{entity.booleanValue == true},
-        onSelectionChanged: widget.enabled
-            ? (selection) => widget.onValue(selection.first)
-            : null,
-      );
-    }
     if (entity.type.supportsToggle) {
       final value = entity.booleanValue == true;
-      return SegmentedButton<bool>(
-        segments: <ButtonSegment<bool>>[
-          ButtonSegment<bool>(
-            value: false,
-            label: Text(strings.t('turnOff')),
-            icon: const Icon(Icons.power_settings_new_rounded),
-          ),
-          ButtonSegment<bool>(
-            value: true,
-            label: Text(strings.t('turnOn')),
-            icon: const Icon(Icons.power_rounded),
-          ),
-        ],
-        selected: <bool>{value},
-        onSelectionChanged: widget.enabled
-            ? (selection) => widget.onValue(selection.first)
-            : null,
-      );
-    }
-    if (entity.type.supportsPress) {
-      return FilledButton.icon(
-        onPressed: widget.enabled ? () => widget.onValue(true) : null,
-        icon: const Icon(Icons.play_arrow_rounded),
-        label: Text(strings.t('run')),
-      );
-    }
-    if (<HomeEntityType>{
-      HomeEntityType.select,
-      HomeEntityType.inputSelect,
-    }.contains(entity.type)) {
-      final options = entity.constraints.options;
-      final state = entity.state?.toString();
-      return DropdownButtonFormField<String>(
-        key: ValueKey<String>(
-          '${entity.id.value}:${entity.state}:${widget.enabled}',
-        ),
-        initialValue: options.contains(state) ? state : null,
-        isExpanded: true,
-        decoration: InputDecoration(labelText: strings.t('selectOption')),
-        items: <DropdownMenuItem<String>>[
-          for (final option in options)
-            DropdownMenuItem<String>(
-              value: option,
-              child: Text(option, maxLines: 1, overflow: TextOverflow.ellipsis),
-            ),
-        ],
-        onChanged: widget.enabled
-            ? (value) {
-                if (value != null) widget.onValue(value);
-              }
-            : null,
-      );
-    }
-    if (<HomeEntityType>{
-      HomeEntityType.number,
-      HomeEntityType.inputNumber,
-      HomeEntityType.climate,
-    }.contains(entity.type)) {
-      final min = entity.constraints.minimum ?? 0;
-      final max = entity.constraints.maximum ?? 100;
-      final attributeTemperature = entity.attributes['temperature'];
-      final temperature = attributeTemperature is num
-          ? attributeTemperature.toDouble()
-          : double.tryParse(attributeTemperature?.toString() ?? '');
-      final current =
-          (_draftNumber ?? entity.numericValue ?? temperature ?? min).clamp(
-            min,
-            max,
-          );
-      return Column(
-        children: <Widget>[
-          Slider(
-            value: current,
-            min: min,
-            max: max <= min ? min + 1 : max,
-            divisions: _divisions(entity, min, max),
-            label: current.toStringAsFixed(1),
-            onChanged: widget.enabled
-                ? (value) => setState(() => _draftNumber = value)
-                : null,
-            onChangeEnd: widget.enabled
-                ? (value) {
-                    widget.onValue(value);
-                    if (mounted) setState(() => _draftNumber = null);
-                  }
-                : null,
-          ),
-          Text(strings.withValue('setValue', current.toStringAsFixed(1))),
-        ],
-      );
-    }
-    if (<HomeEntityType>{
-      HomeEntityType.text,
-      HomeEntityType.inputText,
-    }.contains(entity.type)) {
-      return TextFormField(
-        enabled: widget.enabled,
-        initialValue: entity.state?.toString() ?? '',
-        maxLength: 255,
-        textInputAction: TextInputAction.done,
-        decoration: InputDecoration(
-          labelText: strings.t('textValue'),
-          suffixIcon: const Icon(Icons.send_rounded),
-        ),
-        onFieldSubmitted: widget.onValue,
-      );
-    }
-    return _Hint(text: strings.t('errorUnsupported'));
-  }
-
-  int? _divisions(HomeEntity entity, double min, double max) {
-    final step = entity.constraints.step;
-    if (step == null || step <= 0 || max <= min) return null;
-    return math.max(1, ((max - min) / step).round()).clamp(1, 1000).toInt();
-  }
-}
-
-final class _EntityAttributes extends StatelessWidget {
-  const _EntityAttributes({required this.entity});
-
-  final HomeEntity entity;
-
-  @override
-  Widget build(BuildContext context) {
-    final strings = HomeControlStrings.of(context);
-    final entries = entity.attributes.entries
-        .where((entry) => !_hiddenAttributes.contains(entry.key))
-        .take(12)
-        .toList(growable: false);
-    if (entries.isEmpty) return const SizedBox.shrink();
-    return ExpansionTile(
-      tilePadding: EdgeInsets.zero,
-      title: Text(strings.t('attributes')),
-      children: <Widget>[
-        for (final entry in entries)
-          ListTile(
-            dense: true,
-            contentPadding: EdgeInsets.zero,
-            title: Text(entry.key.replaceAll('_', ' ')),
-            trailing: ConstrainedBox(
-              constraints: const BoxConstraints(maxWidth: 190),
-              child: Text(
-                _safeAttributeText(entry.value),
-                maxLines: 3,
-                overflow: TextOverflow.ellipsis,
-                textAlign: TextAlign.end,
-              ),
-            ),
-          ),
-      ],
-    );
-  }
-
-  static const Set<String> _hiddenAttributes = <String>{
-    'access_token',
-    'api_key',
-    'password',
-    'token',
-  };
-
-  static String _safeAttributeText(Object? value) {
-    final text = value?.toString() ?? 'â€”';
-    return text.length <= 240 ? text : '${text.substring(0, 237)}â€¦';
-  }
-}
-
-final class _Hint extends StatelessWidget {
-  const _Hint({required this.text});
-
-  final String text;
-
-  @override
-  Widget build(BuildContext context) => Container(
-    padding: const EdgeInsets.all(ProductSpacing.md),
-    decoration: BoxDecoration(
-      color: Theme.of(context).colorScheme.surfaceContainerHigh,
-      borderRadius: BorderRadius.circular(ProductRadius.card),
-    ),
-    child: Text(text),
-  );
-}
-
-final class _HistoryPainter extends CustomPainter {
-  const _HistoryPainter({
-    required this.points,
-    required this.color,
-    required this.gridColor,
-  });
-
-  final List<HistoryPoint> points;
-  final Color color;
-  final Color gridColor;
-
-  @override
-  void paint(Canvas canvas, Size size) {
-    final samples =
-        points
-            .map((point) {
-              final value = point.value;
-              final parsed = value is num
-                  ? value.toDouble()
-                  : double.tryParse(value?.toString() ?? '');
-              return parsed != null && parsed.isFinite
-                  ? (time: point.time, value: parsed)
-                  : null;
-            })
-            .whereType<({DateTime time, double value})>()
-            .toList(growable: false)
-          ..sort((a, b) => a.time.compareTo(b.time));
-    if (samples.length < 2) return;
-    final values = samples
-        .map((sample) => sample.value)
-        .toList(growable: false);
-    final minimum = values.reduce(math.min);
-    final maximum = values.reduce(math.max);
-    final range = maximum == minimum ? 1.0 : maximum - minimum;
-    final grid = Paint()
-      ..color = gridColor
-      ..strokeWidth = 1;
-    for (var row = 0; row <= 4; row++) {
-      final y = size.height * row / 4;
-      canvas.drawLine(Offset(0, y), Offset(size.width, y), grid);
-    }
-    final path = Path();
-    final firstTime = samples.first.time.millisecondsSinceEpoch;
-    final timeRange = math.max(
-      1,
-      samples.last.time.millisecondsSinceEpoch - firstTime,
-    );
-    for (var index = 0; index < samples.length; index++) {
-      final sample = samples[index];
-      final x =
-          size.width *
-          (sample.time.millisecondsSinceEpoch - firstTime) /
-          timeRange;
-      final y = size.height - ((sample.value - minimum) / range * size.height);
-      if (index == 0) {
-        path.moveTo(x, y);
-      } else {
-        path.lineTo(x, y);
-      }
-    }
-    canvas.drawPath(
-      path,
-      Paint()
-        ..color = color
-        ..style = PaintingStyle.stroke
-        ..strokeWidth = 3
-        ..strokeCap = StrokeCap.round
-        ..strokeJoin = StrokeJoin.round,
-    );
-  }
-
-  @override
-  bool shouldRepaint(covariant _HistoryPainter oldDelegate) =>
-      oldDelegate.points != points ||
-      oldDelegate.color != color ||
-      oldDelegate.gridColor != gridColor;
-}
-
-final class _HistoryChart extends StatelessWidget {
-  const _HistoryChart({required this.points, required this.unit});
-
-  final List<HistoryPoint> points;
-  final String unit;
-
-  @override
-  Widget build(BuildContext context) {
-    final values = points
-        .map((point) => point.value)
-        .whereType<num>()
-        .map((value) => value.toDouble())
-        .where((value) => value.isFinite)
-        .toList(growable: false);
-    final minimum = values.isEmpty ? 0 : values.reduce(math.min);
-    final maximum = values.isEmpty ? 0 : values.reduce(math.max);
-    final suffix = unit.isEmpty ? '' : ' $unit';
-    final label = HomeControlStrings.of(context)
-        .withValues('historySummary', <String, Object>{
-          'minimum': '${minimum.toStringAsFixed(1)}$suffix',
-          'maximum': '${maximum.toStringAsFixed(1)}$suffix',
-          'samples': values.length,
-        });
-    return Semantics(
-      image: true,
-      label: label,
-      child: SizedBox(
-        height: 180,
-        child: CustomPaint(
-          painter: _HistoryPainter(
-            points: points,
-            color: Theme.of(context).colorScheme.primary,
-            gridColor: Theme.of(context).colorScheme.outlineVariant,
-          ),
-        ),
-      ),
-    );
-  }
-}
+      final action = strings.t(value ? 'turnOff' : 'turnOn');
+      final activate = enabled ? () => onValue(!value) : null;
+      return Semantics(
+        key: ValueKey<String>('entity-toggle-${entity.id.value}'),
+        container: true,
+        label: '$action: ${eã_7¶‰Ëkºwµçd°4(€€€€€€€€€€€€€€€€€€€ÍÑå±”èQ¡•µ”¹½˜¡½¹Ñ•áĞ¤¹Ñ•áÑQ¡•µ”¹‰½‘åMµ…±°ü¹½Áå]¥Ñ  4(€€€€€€€€€€€€€€€€€€€€€½±½ÈèQ¡•µ”¹½˜¡½¹Ñ•áĞ¤¹½±½ÉM¡•µ”¹½¹MÕÉ™…•Y…É¥…¹Ğ°4(€€€€€€€€€€€€€€€€€€€€¤°4(€€€€€€€€€€€€€€€€€€¤°4(€€€€€€€€€€€€€€€€€Q•áĞ 4(€€€€€€€€€€€€€€€€€€€ÍÑÉ¥¹Ì¹İ¥Ñ¡Y…±Õ” 4(€€€€€€€€€€€€€€€€€€€€€€•¹Ñ¥ÑåUÁ‘…Ñ•œ°4(€€€€€€€€€€€€€€€€€€€€€ÍÑÉ¥¹Ì¹É•±…Ñ¥Ù•Q¥µ”¡•¹Ñ¥Ñä¹ÕÁ‘…Ñ•‘Ğ¤°4(€€€€€€€€€€€€€€€€€€€€¤°4(€€€€€€€€€€€€€€€€€€€ÍÑå±”èQ¡•µ”¹½˜¡½¹Ñ•áĞ¤¹Ñ•áÑQ¡•µ”¹‰½‘åMµ…±°ü¹½Áå]¥Ñ  4(€€€€€€€€€€€€€€€€€€€€€½±½ÈèQ¡•µ”¹½˜¡½¹Ñ•áĞ¤¹½±½ÉM¡•µ”¹½¹MÕÉ™…•Y…É¥…¹Ğ°4(€€€€€€€€€€€€€€€€€€€€¤°4(€€€€€€€€€€€€€€€€€€¤°4(€€€€€€€€€€€€€€€€€Q•áĞ 4(€€€€€€€€€€€€€€€€€€€•¹Ñ¥Ñä¹¥¹Ù…±Õ”°4(€€€€€€€€€€€€€€€€€€€ÍÑå±”èQ¡•µ”¹½˜¡½¹Ñ•áĞ¤¹Ñ•áÑQ¡•µ”¹‰½‘åMµ…±°ü¹½Áå]¥Ñ  4(€€€€€€€€€€€€€€€€€€€€€½±½ÈèQ¡•µ”¹½˜¡½¹Ñ•áĞ¤¹½±½ÉM¡•µ”¹½¹MÕÉ™…•Y…É¥…¹Ğ°4(€€€€€€€€€€€€€€€€€€€€¤°4(€€€€€€€€€€€€€€€€€€¤°4(€€€€€€€€€€€€€€€t°4(€€€€€€€€€€€€€€¤°4(€€€€€€€€€€€€¤°4(€€€€€€€€€€¤°4(€€€€€€€€¤ì4(€€€€€ô°4(€€€€¤ì4(€ô4)ô4(4)™¥¹…°±…ÍÌ}•Ñ…¥±•‘½¹ÑÉ½°•áÑ•¹‘ÌMÑ…Ñ•™Õ±]¥‘•Ğì4(€½¹ÍĞ}•Ñ…¥±•‘½¹ÑÉ½°¡ì4(€€€É•ÅÕ¥É•Ñ¡¥Ì¹•¹Ñ¥Ñä°4(€€€É•ÅÕ¥É•Ñ¡¥Ì¹•¹…‰±•°4(€€€É•ÅÕ¥É•Ñ¡¥Ì¹½¹Y…±Õ”°4(€ô¤ì4(4(€™¥¹…°!½µ•¹Ñ¥Ñä•¹Ñ¥Ñäì4(€™¥¹…°‰½½°•¹…‰±•ì4(€™¥¹…°Y…±Õ•¡…¹•ñ=‰©•Ğüø½¹Y…±Õ”ì4(4(€½Ù•ÉÉ¥‘”4(€MÑ…Ñ”ñ}•Ñ…¥±•‘½¹ÑÉ½°øÉ•…Ñ•MÑ…Ñ” ¤€ôø}•Ñ…¥±•‘½¹ÑÉ½±MÑ…Ñ” ¤ì4)ô4(4)™¥¹…°±…ÍÌ}•Ñ…¥±•‘½¹ÑÉ½±MÑ…Ñ”•áÑ•¹‘ÌMÑ…Ñ”ñ}•Ñ…¥±•‘½¹ÑÉ½°øì4(€‘½Õ‰±”ü}‘É…™Ñ9Õµ‰•Èì4(4(€!½µ•¹Ñ¥Ñä•Ğ•¹Ñ¥Ñä€ôøİ¥‘•Ğ¹•¹Ñ¥Ñäì4(4(€½Ù•ÉÉ¥‘”4(€]¥‘•Ğ‰Õ¥±¡	Õ¥±‘½¹Ñ•áĞ½¹Ñ•áĞ¤ì4(€€€™¥¹…°ÍÑÉ¥¹Ì€ô!½µ•½¹ÑÉ½±MÑÉ¥¹Ì¹½˜¡½¹Ñ•áĞ¤ì4(€€€¥˜€¡•¹Ñ¥Ñä¹ÑåÁ”€ôô!½µ•¹Ñ¥ÑåQåÁ”¹½Ù•È¤ì4(€€€€€É•ÑÕÉ¸M•µ•¹Ñ•‘	ÕÑÑ½¸ñ‰½½°ø 4(€€€€€€€Í•µ•¹ÑÌè€ñ	ÕÑÑ½¹M•µ•¹Ğñ‰½½°øùl4(€€€€€€€€€	ÕÑÑ½¹M•µ•¹Ğñ‰½½°ø 4(€€€€€€€€€€€Ù…±Õ”è™…±Í”°4(€€€€€€€€€€€±…‰•°èQ•áĞ¡ÍÑÉ¥¹Ì¹Ğ ±½Í•½Ù•Èœ¤¤°4(€€€€€€€€€€€¥½¸è½¹ÍĞ%½¸¡%½¹Ì¹Ù•ÉÑ¥…±}…±¥¹}‰½ÑÑ½µ}É½Õ¹‘•¤°4(€€€€€€€€€€¤°4(€€€€€€€€€	ÕÑÑ½¹M•µ•¹Ğñ‰½½°ø 4(€€€€€€€€€€€Ù…±Õ”èÑÉÕ”°4(€€€€€€€€€€€±…‰•°èQ•áĞ¡ÍÑÉ¥¹Ì¹Ğ ½Á•¹½Ù•Èœ¤¤°4(€€€€€€€€€€€¥½¸è½¹ÍĞ%½¸¡%½¹Ì¹Ù•ÉÑ¥…±}…±¥¹}Ñ½Á}É½Õ¹‘•¤°4(€€€€€€€€€€¤°4(€€€€€€€t°4(€€€€€€€Í•±•Ñ•è€ñ‰½½°ùí•¹Ñ¥Ñä¹‰½½±•…¹Y…±Õ”€ôôÑÉÕ•ô°4(€€€€€€€½¹M•±•Ñ¥½¹¡…¹•èİ¥‘•Ğ¹•¹…‰±•4(€€€€€€€€€€€€ü€¡Í•±•Ñ¥½¸¤€ôøİ¥‘•Ğ¹½¹Y…±Õ”¡Í•±•Ñ¥½¸¹™¥ÉÍĞ¤4(€€€€€€€€€€€€è¹Õ±°°4(€€€€€€¤ì4(€€€ô4(€€€¥˜€¡•¹Ñ¥Ñä¹ÑåÁ”€ôô!½µ•¹Ñ¥ÑåQåÁ”¹±½¬¤ì4(€€€€€É•ÑÕÉ¸M•µ•¹Ñ•‘	ÕÑÑ½¸ñ‰½½°ø 4(€€€€€€€Í•µ•¹ÑÌè€ñ	ÕÑÑ½¹M•µ•¹Ğñ‰½½°øùl4(€€€€€€€€€	ÕÑÑ½¹M•µ•¹Ğñ‰½½°ø 4(€€€€€€€€€€€Ù…±Õ”è™…±Í”°4(€€€€€€€€€€€±…‰•°èQ•áĞ¡ÍÑÉ¥¹Ì¹Ğ ±½­Ñ¥½¸œ¤¤°4(€€€€€€€€€€€¥½¸è½¹ÍĞ%½¸¡%½¹Ì¹±½­}É½Õ¹‘•¤°4(€€€€€€€€€€¤°4(€€€€€€€€€	ÕÑÑ½¹M•µ•¹Ğñ‰½½°ø 4(€€€€€€€€€€€Ù…±Õ”èÑÉÕ”°4(€€€€€€€€€€€±…‰•°èQ•áĞ¡ÍÑÉ¥¹Ì¹Ğ Õ¹±½­Ñ¥½¸œ¤¤°4(€€€€€€€€€€€¥½¸è½¹ÍĞ%½¸¡%½¹Ì¹±½­}½Á•¹}É½Õ¹‘•¤°4(€€€€€€€€€€¤°4(€€€€€€€t°4(€€€€€€€Í•±•Ñ•è€ñ‰½½°ùí•¹Ñ¥Ñä¹‰½½±•…¹Y…±Õ”€ôôÑÉÕ•ô°4(€€€€€€€½¹M•±•Ñ¥½¹¡…¹•èİ¥‘•Ğ¹•¹…‰±•4(€€€€€€€€€€€€ü€¡Í•±•Ñ¥½¸¤€ôøİ¥‘•Ğ¹½¹Y…±Õ”¡Í•±•Ñ¥½¸¹™¥ÉÍĞ¤4(€€€€€€€€€€€€è¹Õ±°°4(€€€€€€¤ì4(€€€ô4(€€€¥˜€¡•¹Ñ¥Ñä¹ÑåÁ”€ôô!½µ•¹Ñ¥ÑåQåÁ”¹…±…Éµ½¹ÑÉ½±A…¹•°¤ì4(€€€€€½¹ÍĞµ½‘•Ì€ô€ñMÑÉ¥¹œùl4(€€€€€€€€‘¥Í…Éµ•œ°4(€€€€€€€€…Éµ•‘}¡½µ”œ°4(€€€€€€€€…Éµ•‘}…İ…äœ°4(€€€€€€€€…Éµ•‘}¹¥¡Ğœ°4(€€€€€tì4(€€€€€™¥¹…°ÕÉÉ•¹Ğ€ôµ½‘•Ì¹½¹Ñ…¥¹Ì¡•¹Ñ¥Ñä¹ÍÑ…Ñ”¤4(€€€€€€€€€€ü•¹Ñ¥Ñä¹ÍÑ…Ñ”…ÌMÑÉ¥¹œ4(€€€€€€€€€€è¹Õ±°ì4(€€€€€É•ÑÕÉ¸É½Á‘½İ¹	ÕÑÑ½¹½Éµ¥•±ñMÑÉ¥¹œø 4(€€€€€€€­•äèY…±Õ•-•äñMÑÉ¥¹œø 4(€€€€€€€€€€œ‘í•¹Ñ¥Ñä¹¥¹Ù…±Õ•ôè‘í•¹Ñ¥Ñä¹ÍÑ…Ñ•ôè‘íİ¥‘•Ğ¹•¹…‰±•‘ôœ°4(€€€€€€€€¤°4(€€€€€€€¥¹¥Ñ¥…±Y…±Õ”èÕÉÉ•¹Ğ°4(€€€€€€€¥ÍáÁ…¹‘•èÑÉÕ”°4(€€€€€€€‘•½É…Ñ¥½¸è%¹ÁÕÑ•½É…Ñ¥½¸¡±…‰•±Q•áĞèÍÑÉ¥¹Ì¹Ğ …±…Éµ5½‘”œ¤¤°4(€€€€€€€¥Ñ•µÌè€ñÉ½Á‘½İ¹5•¹Õ%Ñ•´ñMÑÉ¥¹œøùl4(€€€€€€€€€™½È€¡™¥¹…°µ½‘”¥¸µ½‘•Ì¤4(€€€€€€€€€€€É½Á‘½İ¹5•¹Õ%Ñ•´ñMÑÉ¥¹œø 4(€€€€€€€€€€€€€Ù…±Õ”èµ½‘”°4(€€€€€€€€€€€€€¡¥±èQ•áĞ 4(€€€€€€€€€€€€€€€ÍÑÉ¥¹Ì¹Ğ …±…Éµ|‘µ½‘”œ¤°4(€€€€€€€€€€€€€€€µ…á1¥¹•Ìè€Ä°4(€€€€€€€€€€€€€€€½Ù•É™±½ÜèQ•áÑ=Ù•É™±½Ü¹•±±¥ÁÍ¥Ì°4(€€€€€€€€€€€€€€¤°4(€€€€€€€€€€€€¤°4(€€€€€€€t°4(€€€€€€€½¹¡…¹•èİ¥‘•Ğ¹•¹…‰±•4(€€€€€€€€€€€€ü€¡Ù…±Õ”¤ì4(€€€€€€€€€€€€€€€¥˜€¡Ù…±Õ”€„ô¹Õ±°¤İ¥‘•Ğ¹½¹Y…±Õ”¡Ù…±Õ”¤ì4(€€€€€€€€€€€€€ô4(€€€€€€€€€€€€è¹Õ±°°4(€€€€€€¤ì4(€€€ô4(€€€¥˜€¡•¹Ñ¥Ñä¹ÑåÁ”€ôô!½µ•¹Ñ¥ÑåQåÁ”¹Ù…ÕÕ´ñğ4(€€€€€€€•¹Ñ¥Ñä¹ÑåÁ”€ôô!½µ•¹Ñ¥ÑåQåÁ”¹µ•‘¥…A±…å•È¤ì4(€€€€€É•ÑÕÉ¸M•µ•¹Ñ•‘	ÕÑÑ½¸ñ‰½½°ø 4(€€€€€€€Í•µ•¹ÑÌè€ñ	ÕÑÑ½¹M•µ•¹Ğñ‰½½°øùl4(€€€€€€€€€	ÕÑÑ½¹M•µ•¹Ğñ‰½½°ø 4(€€€€€€€€€€€Ù…±Õ”è™…±Í”°4(€€€€€€€€€€€±…‰•°èQ•áĞ 4(€€€€€€€€€€€€€ÍÑÉ¥¹Ì¹Ğ 4(€€€€€€€€€€€€€€€•¹Ñ¥Ñä¹ÑåÁ”€ôô!½µ•¹Ñ¥ÑåQåÁ”¹Ù…ÕÕ´4(€€€€€€€€€€€€€€€€€€€€ü€É•ÑÕÉ¹Q½	…Í”œ4(€€€€€€€€€€€€€€€€€€€€è€ÑÕÉ¹=™˜œ°4(€€€€€€€€€€€€€€¤°4(€€€€€€€€€€€€¤°4(€€€€€€€€€€€¥½¸è½¹ÍĞ%½¸¡%½¹Ì¹ÍÑ½Á}É½Õ¹‘•¤°4(€€€€€€€€€€¤°4(€€€€€€€€€	ÕÑÑ½¹M•µ•¹Ğñ‰½½°ø 4(€€€€€€€€€€€Ù…±Õ”èÑÉÕ”°4(€€€€€€€€€€€±…‰•°èQ•áĞ 4(€€€€€€€€€€€€€ÍÑÉ¥¹Ì¹Ğ 4(€€€€€€€€€€€€€€€•¹Ñ¥Ñä¹ÑåÁ”€ôô!½µ•¹Ñ¥ÑåQåÁ”¹Ù…ÕÕ´€ü€ÍÑ…ÉĞœ€è€ÑÕÉ¹=¸œ°4(€€€€€€€€€€€€€€¤°4(€€€€€€€€€€€€¤°4(€€€€€€€€€€€¥½¸è½¹ÍĞ%½¸¡%½¹Ì¹Á±…å}…ÉÉ½İ}É½Õ¹‘•¤°4(€€€€€€€€€€¤°4(€€€€€€€t°4(€€€€€€€Í•±•Ñ•è€ñ‰½½°ùí•¹Ñ¥Ñä¹‰½½±•…¹Y…±Õ”€ôôÑÉÕ•ô°4(€€€€€€€½¹M•±•Ñ¥½¹¡…¹•èİ¥‘•Ğ¹•¹…‰±•4(€€€€€€€€€€€€ü€¡Í•±•Ñ¥½¸¤€ôøİ¥‘•Ğ¹½¹Y…±Õ”¡Í•±•Ñ¥½¸¹™¥ÉÍĞ¤4(€€€€€€€€€€€€è¹Õ±°°4(€€€€€€¤ì4(€€€ô4(€€€¥˜€¡•¹Ñ¥Ñä¹ÑåÁ”¹ÍÕÁÁ½ÉÑÍQ½±”¤ì4(€€€€€™¥¹…°Ù…±Õ”€ô•¹Ñ¥Ñä¹‰½½±•…¹Y…±Õ”€ôôÑÉÕ”ì4(€€€€€É•ÑÕÉ¸M•µ•¹Ñ•‘	ÕÑÑ½¸ñ‰½½°ø 4(€€€€€€€Í•µ•¹ÑÌè€ñ	ÕÑÑ½¹M•µ•¹Ğñ‰½½°øùl4(€€€€€€€€€	ÕÑÑ½¹M•µ•¹Ğñ‰½½°ø 4(€€€€€€€€€€€Ù…±Õ”è™…±Í”°4(€€€€€€€€€€€±…‰•°èQ•áĞ¡ÍÑÉ¥¹Ì¹Ğ ÑÕÉ¹=™˜œ¤¤°4(€€€€€€€€€€€¥½¸è½¹ÍĞ%½¸¡%½¹Ì¹Á½İ•É}Í•ÑÑ¥¹Í}¹•İ}É½Õ¹‘•¤°4(€€€€€€€€€€¤°4(€€€€€€€€€	ÕÑÑ½¹M•µ•¹Ğñ‰½½°ø 4(€€€€€€€€€€€Ù…±Õ”èÑÉÕ”°4(€€€€€€€€€€€±…‰•°èQ•áĞ¡ÍÑÉ¥¹Ì¹Ğ ÑÕÉ¹=¸œ¤¤°4(€€€€€€€€€€€¥½¸è½¹ÍĞ%½¸¡%½¹Ì¹Á½İ•É}É½Õ¹‘•¤°4(€€€€€€€€€€¤°4(€€€€€€€t°4(€€€€€€€Í•±•Ñ•è€ñ‰½½°ùíÙ…±Õ•ô°4(€€€€€€€½¹M•±•Ñ¥½¹¡…¹•èİ¥‘•Ğ¹•¹…‰±•4(€€€€€€€€€€€€ü€¡Í•±•Ñ¥½¸¤€ôøİ¥‘•Ğ¹½¹Y…±Õ”¡Í•±•Ñ¥½¸¹™¥ÉÍĞ¤4(€€€€€€€€€€€€è¹Õ±°°4(€€€€€€¤ì4(€€€ô4(€€€¥˜€¡•¹Ñ¥Ñä¹ÑåÁ”¹ÍÕÁÁ½ÉÑÍAÉ•ÍÌ¤ì4(€€€€€É•ÑÕÉ¸¥±±•‘	ÕÑÑ½¸¹¥½¸ 4(€€€€€€€½¹AÉ•ÍÍ•èİ¥‘•Ğ¹•¹…‰±•€ü€ ¤€ôøİ¥‘•Ğ¹½¹Y…±Õ”¡ÑÉÕ”¤€è¹Õ±°°4(€€€€€€€¥½¸è½¹ÍĞ%½¸¡%½¹Ì¹Á±…å}…ÉÉ½İ}É½Õ¹‘•¤°4(€€€€€€€±…‰•°èQ•áĞ¡ÍÑÉ¥¹Ì¹Ğ ÉÕ¸œ¤¤°4(€€€€€€¤ì4(€€€ô4(€€€¥˜€ ñ!½µ•¹Ñ¥ÑåQåÁ”ùì4(€€€€€!½µ•¹Ñ¥ÑåQåÁ”¹Í•±•Ğ°4(€€€€€!½µ•¹Ñ¥ÑåQåÁ”¹¥¹ÁÕÑM•±•Ğ°4(€€€ô¹½¹Ñ…¥¹Ì¡•¹Ñ¥Ñä¹ÑåÁ”¤¤ì4(€€€€€™¥¹…°½ÁÑ¥½¹Ì€ô•¹Ñ¥Ñä¹½¹ÍÑÉ…¥¹ÑÌ¹½ÁÑ¥½¹Ìì4(€€€€€™¥¹…°ÍÑ…Ñ”€ô•¹Ñ¥Ñä¹ÍÑ…Ñ”ü¹Ñ½MÑÉ¥¹œ ¤ì4(€€€€€É•ÑÕÉ¸É½Á‘½İ¹	ÕÑÑ½¹½Éµ¥•±ñMÑÉ¥¹œø 4(€€€€€€€­•äèY…±Õ•-•äñMÑÉ¥¹œø 4(€€€€€€€€€€œ‘í•¹Ñ¥Ñä¹¥¹Ù…±Õ•ôè‘í•¹Ñ¥Ñä¹ÍÑ…Ñ•ôè‘íİ¥‘•Ğ¹•¹…‰±•‘ôœ°4(€€€€€€€€¤°4(€€€€€€€¥¹¥Ñ¥…±Y…±Õ”è½ÁÑ¥½¹Ì¹½¹Ñ…¥¹Ì¡ÍÑ…Ñ”¤€üÍÑ…Ñ”€è¹Õ±°°4(€€€€€€€¥ÍáÁ…¹‘•èÑÉÕ”°4(€€€€€€€‘•½É…Ñ¥½¸è%¹ÁÕÑ•½É…Ñ¥½¸¡±…‰•±Q•áĞèÍÑÉ¥¹Ì¹Ğ Í•±•Ñ=ÁÑ¥½¸œ¤¤°4(€€€€€€€¥Ñ•µÌè€ñÉ½Á‘½İ¹5•¹Õ%Ñ•´ñMÑÉ¥¹œøùl4(€€€€€€€€€™½È€¡™¥¹…°½ÁÑ¥½¸¥¸½ÁÑ¥½¹Ì¤4(€€€€€€€€€€€É½Á‘½İ¹5•¹Õ%Ñ•´ñMÑÉ¥¹œø 4(€€€€€€€€€€€€€Ù…±Õ”è½ÁÑ¥½¸°4(€€€€€€€€€€€€€¡¥±èQ•áĞ¡½ÁÑ¥½¸°µ…á1¥¹•Ìè€Ä°½Ù•É™±½ÜèQ•áÑ=Ù•É™±½Ü¹•±±¥ÁÍ¥Ì¤°4(€€€€€€€€€€€€¤°4(€€€€€€€t°4(€€€€€€€½¹¡…¹•èİ¥‘•Ğ¹•¹…‰±•4(€€€€€€€€€€€€ü€¡Ù…±Õ”¤ì4(€€€€€€€€€€€€€€€¥˜€¡Ù…±Õ”€„ô¹Õ±°¤İ¥‘•Ğ¹½¹Y…±Õ”¡Ù…±Õ”¤ì4(€€€€€€€€€€€€€ô4(€€€€€€€€€€€€è¹Õ±°°4(€€€€€€¤ì4(€€€ô4(€€€¥˜€ ñ!½µ•¹Ñ¥ÑåQåÁ”ùì4(€€€€€!½µ•¹Ñ¥ÑåQåÁ”¹¹Õµ‰•È°4(€€€€€!½µ•¹Ñ¥ÑåQåÁ”¹¥¹ÁÕÑ9Õµ‰•È°4(€€€€€!½µ•¹Ñ¥ÑåQåÁ”¹±¥µ…Ñ”°4(€€€ô¹½¹Ñ…¥¹Ì¡•¹Ñ¥Ñä¹ÑåÁ”¤¤ì4(€€€€€™¥¹…°µ¥¸€ô•¹Ñ¥Ñä¹½¹ÍÑÉ…¥¹ÑÌ¹µ¥¹¥µÕ´€üü€Àì4(€€€€€™¥¹…°µ…à€ô•¹Ñ¥Ñä¹½¹ÍÑÉ…¥¹ÑÌ¹µ…á¥µÕ´€üü€ÄÀÀì4(€€€€€™¥¹…°…ÑÑÉ¥‰ÕÑ•Q•µÁ•É…ÑÕÉ”€ô•¹Ñ¥Ñä¹…ÑÑÉ¥‰ÕÑ•ÍlÑ•µÁ•É…ÑÕÉ”tì4(€€€€€™¥¹…°Ñ•µÁ•É…ÑÕÉ”€ô…ÑÑÉ¥‰ÕÑ•Q•µÁ•É…ÑÕÉ”¥Ì¹Õ´4(€€€€€€€€€€ü…ÑÑÉ¥‰ÕÑ•Q•µÁ•É…ÑÕÉ”¹Ñ½½Õ‰±” ¤4(€€€€€€€€€€è‘½Õ‰±”¹ÑÉåA…ÉÍ”¡…ÑÑÉ¥‰ÕÑ•Q•µÁ•É…ÑÕÉ”ü¹Ñ½MÑÉ¥¹œ ¤€üü€œœ¤ì4(€€€€€™¥¹…°ÕÉÉ•¹Ğ€ô4(€€€€€€€€€€¡}‘É…™Ñ9Õµ‰•È€üü•¹Ñ¥Ñä¹¹Õµ•É¥Y…±Õ”€üüÑ•µÁ•É…ÑÕÉ”€üüµ¥¸¤¹±…µÀ 4(€€€€€€€€€€€µ¥¸°4(€€€€€€€€€€€µ…à°4(€€€€€€€€€€¤ì4(€€€€€É•ÑÕÉ¸½±Õµ¸ 4(€€€€€€€¡¥±‘É•¸è€ñ]¥‘•Ğùl4(€€€€€€€€€M±¥‘•È 4(€€€€€€€€€€€Ù…±Õ”èÕÉÉ•¹Ğ°4(€€€€€€€€€€€µ¥¸èµ¥¸°4(€€€€€€€€€€€µ…àèµ…à€ğôµ¥¸€üµ¥¸€¬€Ä€èµ…à°4(€€€€€€€€€€€‘¥Ù¥Í¥½¹Ìè}‘¥Ù¥Í¥½¹Ì¡•¹Ñ¥Ñä°µ¥¸°µ…à¤°4(€€€€€€€€€€€±…‰•°èÕÉÉ•¹Ğ¹Ñ½MÑÉ¥¹Í¥á• Ä¤°4(€€€€€€€€€€€½¹¡…¹•èİ¥‘•Ğ¹•¹…‰±•4(€€€€€€€€€€€€€€€€ü€¡Ù…±Õ”¤€ôøÍ•ÑMÑ…Ñ”  ¤€ôø}‘É…™Ñ9Õµ‰•È€ôÙ…±Õ”¤4(€€€€€€€€€€€€€€€€è¹Õ±°°4(€€€€€€€€€€€½¹¡…¹•¹èİ¥‘•Ğ¹•¹…‰±•4(€€€€€€€€€€€€€€€€ü€¡Ù…±Õ”¤ì4(€€€€€€€€€€€€€€€€€€€İ¥‘•Ğ¹½¹Y…±Õ”¡Ù…±Õ”¤ì4(€€€€€€€€€€€€€€€€€€€¥˜€¡µ½Õ¹Ñ•¤Í•ÑMÑ…Ñ”  ¤€ôø}‘É…™Ñ9Õµ‰•È€ô¹Õ±°¤ì4(€€€€€€€€€€€€€€€€€ô4(€€€€€€€€€€€€€€€€è¹Õ±°°4(€€€€€€€€€€¤°4(€€€€€€€€€Q•áĞ¡ÍÑÉ¥¹Ì¹İ¥Ñ¡Y…±Õ” Í•ÑY…±Õ”œ°ÕÉÉ•¹Ğ¹Ñ½MÑÉ¥¹Í¥á• Ä¤¤¤°4(€€€€€€€t°4(€€€€€€¤ì4(€€€ô4(€€€¥˜€ ñ!½µ•¹Ñ¥ÑåQåÁ”ùì4(€€€€€!½µ•¹Ñ¥ÑåQåÁ”¹Ñ•áĞ°4(€€€€€!½µ•¹Ñ¥ÑåQåÁ”¹¥¹ÁÕÑQ•áĞ°4(€€€ô¹½¹Ñ…¥¹Ì¡•¹Ñ¥Ñä¹ÑåÁ”¤¤ì4(€€€€€É•ÑÕÉ¸Q•áÑ½Éµ¥•± 4(€€€€€€€•¹…‰±•èİ¥‘•Ğ¹•¹…‰±•°4(€€€€€€€¥¹¥Ñ¥…±Y…±Õ”è•¹Ñ¥Ñä¹ÍÑ…Ñ”ü¹Ñ½MÑÉ¥¹œ ¤€üü€œœ°4(€€€€€€€µ…á1•¹Ñ è€ÈÔÔ°4(€€€€€€€Ñ•áÑ%¹ÁÕÑÑ¥½¸èQ•áÑ%¹ÁÕÑÑ¥½¸¹‘½¹”°4(€€€€€€€‘•½É…Ñ¥½¸è%¹ÁÕÑ•½É…Ñ¥½¸ 4(€€€€€€€€€±…‰•±Q•áĞèÍÑÉ¥¹Ì¹Ğ Ñ•áÑY…±Õ”œ¤°4(€€€€€€€€€ÍÕ™™¥á%½¸è½¹ÍĞ%½¸¡%½¹Ì¹Í•¹‘}É½Õ¹‘•¤°4(€€€€€€€€¤°4(€€€€€€€½¹¥•±‘MÕ‰µ¥ÑÑ•èİ¥‘•Ğ¹½¹Y…±Õ”°4(€€€€€€¤ì4(€€€ô4(€€€É•ÑÕÉ¸}!¥¹Ğ¡Ñ•áĞèÍÑÉ¥¹Ì¹Ğ •ÉÉ½ÉU¹ÍÕÁÁ½ÉÑ•œ¤¤ì4(€ô4(4(€¥¹Ğü}‘¥Ù¥Í¥½¹Ì¡!½µ•¹Ñ¥Ñä•¹Ñ¥Ñä°‘½Õ‰±”µ¥¸°‘½Õ‰±”µ…à¤ì4(€€€™¥¹…°ÍÑ•À€ô•¹Ñ¥Ñä¹½¹ÍÑÉ…¥¹ÑÌ¹ÍÑ•Àì4(€€€¥˜€¡ÍÑ•À€ôô¹Õ±°ñğÍÑ•À€ğô€Àñğµ…à€ğôµ¥¸¤É•ÑÕÉ¸¹Õ±°ì4(€€€É•ÑÕÉ¸µ…Ñ ¹µ…à Ä°€ ¡µ…à€´µ¥¸¤€¼ÍÑ•À¤¹É½Õ¹ ¤¤¹±…µÀ Ä°€ÄÀÀÀ¤¹Ñ½%¹Ğ ¤ì4(€ô4)ô4(4)™¥¹…°±…ÍÌ}¹Ñ¥ÑåÑÑÉ¥‰ÕÑ•Ì•áÑ•¹‘ÌMÑ…Ñ•±•ÍÍ]¥‘•Ğì4(€½¹ÍĞ}¹Ñ¥ÑåÑÑÉ¥‰ÕÑ•Ì¡íÉ•ÅÕ¥É•Ñ¡¥Ì¹•¹Ñ¥Ñåô¤ì4(4(€™¥¹…°!½µ•¹Ñ¥Ñä•¹Ñ¥Ñäì4(4(€½Ù•ÉÉ¥‘”4(€]¥‘•Ğ‰Õ¥±¡	Õ¥±‘½¹Ñ•áĞ½¹Ñ•áĞ¤ì4(€€€™¥¹…°ÍÑÉ¥¹Ì€ô!½µ•½¹ÑÉ½±MÑÉ¥¹Ì¹½˜¡½¹Ñ•áĞ¤ì4(€€€™¥¹…°•¹ÑÉ¥•Ì€ô•¹Ñ¥Ñä¹…ÑÑÉ¥‰ÕÑ•Ì¹•¹ÑÉ¥•Ì4(€€€€€€€€¹İ¡•É” ¡•¹ÑÉä¤€ôø€…}¡¥‘‘•¹ÑÑÉ¥‰ÕÑ•Ì¹½¹Ñ…¥¹Ì¡•¹ÑÉä¹­•ä¤¤4(€€€€€€€€¹Ñ…­” ÄÈ¤4(€€€€€€€€¹Ñ½1¥ÍĞ¡É½İ…‰±”è™…±Í”¤ì4(€€€¥˜€¡•¹ÑÉ¥•Ì¹¥ÍµÁÑä¤É•ÑÕÉ¸½¹ÍĞM¥é•‘	½à¹Í¡É¥¹¬ ¤ì4(€€€É•ÑÕÉ¸áÁ…¹Í¥½¹Q¥±” 4(€€€€€Ñ¥±•A…‘‘¥¹œè‘•%¹Í•ÑÌ¹é•É¼°4(€€€€€Ñ¥Ñ±”èQ•áĞ¡ÍÑÉ¥¹Ì¹Ğ …ÑÑÉ¥‰ÕÑ•Ìœ¤¤°4(€€€€€¡¥±‘É•¸è€ñ]¥‘•Ğùl4(€€€€€€€™½È€¡™¥¹…°•¹ÑÉä¥¸•¹ÑÉ¥•Ì¤4(€€€€€€€€€1¥ÍÑQ¥±” 4(€€€€€€€€€€€‘•¹Í”èÑÉÕ”°4(€€€€€€€€€€€½¹Ñ•¹ÑA…‘‘¥¹œè‘•%¹Í•ÑÌ¹é•É¼°4(€€€€€€€€€€€Ñ¥Ñ±”èQ•áĞ¡•¹ÑÉä¹­•ä¹É•Á±…•±° |œ°€œ€œ¤¤°4(€€€€€€€€€€€ÑÉ…¥±¥¹œè½¹ÍÑÉ…¥¹•‘	½à 4(€€€€€€€€€€€€€½¹ÍÑÉ…¥¹ÑÌè½¹ÍĞ	½á½¹ÍÑÉ…¥¹ÑÌ¡µ…á]¥‘Ñ è€ÄäÀ¤°4(€€€€€€€€€€€€€¡¥±èQ•áĞ 4(€€€€€€€€€€€€€€€}Í…™•ÑÑÉ¥‰ÕÑ•Q•áĞ¡•¹ÑÉä¹Ù…±Õ”¤°4(€€€€€€€€€€€€€€€µ…á1¥¹•Ìè€Ì°4(€€€€€€€€€€€€€€€½Ù•É™±½ÜèQ•áÑ=Ù•É™±½Ü¹•±±¥ÁÍ¥Ì°4(€€€€€€€€€€€€€€€Ñ•áÑ±¥¸èQ•áÑ±¥¸¹•¹°4(€€€€€€€€€€€€€€¤°4(€€€€€€€€€€€€¤°4(€€€€€€€€€€¤°4(€€€€€t°4(€€€€¤ì4(€ô4(4(€ÍÑ…Ñ¥Œ½¹ÍĞM•ĞñMÑÉ¥¹œø}¡¥‘‘•¹ÑÑÉ¥‰ÕÑ•Ì€ô€ñMÑÉ¥¹œùì4(€€€€…•ÍÍ}Ñ½­•¸œ°4(€€€€…Á¥}­•äœ°4(€€€€Á…ÍÍİ½Éœ°4(€€€€Ñ½­•¸œ°4(€ôì4(4(€ÍÑ…Ñ¥ŒMÑÉ¥¹œ}Í…™•ÑÑÉ¥‰ÕÑ•Q•áĞ¡=‰©•ĞüÙ…±Õ”¤ì4(€€€™¥¹…°Ñ•áĞ€ôÙ…±Õ”ü¹Ñ½MÑÉ¥¹œ ¤€üü€ŸŠPœì4(€€€É•ÑÕÉ¸Ñ•áĞ¹±•¹Ñ €ğô€ÈĞÀ€üÑ•áĞ€è€œ‘íÑ•áĞ¹ÍÕ‰ÍÑÉ¥¹œ À°€ÈÌÜ¥÷Š˜œì4(€ô4)ô4(4)™¥¹…°±…ÍÌ}!¥¹Ğ•áÑ•¹‘ÌMÑ…Ñ•±•ÍÍ]¥‘•Ğì4(€½¹ÍĞ}!¥¹Ğ¡íÉ•ÅÕ¥É•Ñ¡¥Ì¹Ñ•áÑô¤ì4(4(€™¥¹…°MÑÉ¥¹œÑ•áĞì4(4(€½Ù•ÉÉ¥‘”4(€]¥‘•Ğ‰Õ¥±¡	Õ¥±‘½¹Ñ•áĞ½¹Ñ•áĞ¤€ôø½¹Ñ…¥¹•È 4(€€€Á…‘‘¥¹œè½¹ÍĞ‘•%¹Í•ÑÌ¹…±°¡AÉ½‘ÕÑMÁ…¥¹œ¹µ¤°4(€€€‘•½É…Ñ¥½¸è	½á•½É…Ñ¥½¸ 4(€€€€€½±½ÈèQ¡•µ”¹½˜¡½¹Ñ•áĞ¤¹½±½ÉM¡•µ”¹ÍÕÉ™…•½¹Ñ…¥¹•É!¥ °4(€€€€€‰½É‘•ÉI…‘¥ÕÌè	½É‘•ÉI…‘¥ÕÌ¹¥ÉÕ±…È¡AÉ½‘ÕÑI…‘¥ÕÌ¹…É¤°4(€€€€¤°4(€€€¡¥±èQ•áĞ¡Ñ•áĞ¤°4(€€¤ì4)ô4(4)™¥¹…°±…ÍÌ}!¥ÍÑ½ÉåA…¥¹Ñ•È•áÑ•¹‘ÌÕÍÑ½µA…¥¹Ñ•Èì4(€½¹ÍĞ}!¥ÍÑ½ÉåA…¥¹Ñ•È¡ì4(€€€É•ÅÕ¥É•Ñ¡¥Ì¹Á½¥¹ÑÌ°4(€€€É•ÅÕ¥É•Ñ¡¥Ì¹½±½È°4(€€€É•ÅÕ¥É•Ñ¡¥Ì¹É¥‘½±½È°4(€ô¤ì4(4(€™¥¹…°1¥ÍĞñ!¥ÍÑ½ÉåA½¥¹ĞøÁ½¥¹ÑÌì4(€™¥¹…°½±½È½±½Èì4(€™¥¹…°½±½ÈÉ¥‘½±½Èì4(4(€½Ù•ÉÉ¥‘”4(€Ù½¥Á…¥¹Ğ¡…¹Ù…Ì…¹Ù…Ì°M¥é”Í¥é”¤ì4(€€€™¥¹…°Í…µÁ±•Ì€ô4(€€€€€€€Á½¥¹ÑÌ4(€€€€€€€€€€€€¹µ…À ¡Á½¥¹Ğ¤ì4(€€€€€€€€€€€€€™¥¹…°Ù…±Õ”€ôÁ½¥¹Ğ¹Ù…±Õ”ì4(€€€€€€€€€€€€€™¥¹…°Á…ÉÍ•€ôÙ…±Õ”¥Ì¹Õ´4(€€€€€€€€€€€€€€€€€€üÙ…±Õ”¹Ñ½½Õ‰±” ¤4(€€€€€€€€€€€€€€€€€€è‘½Õ‰±”¹ÑÉåA…ÉÍ”¡Ù…±Õ”ü¹Ñ½MÑÉ¥¹œ ¤€üü€œœ¤ì4(€€€€€€€€€€€€€É•ÑÕÉ¸Á…ÉÍ•€„ô¹Õ±°€˜˜Á…ÉÍ•¹¥Í¥¹¥Ñ”4(€€€€€€€€€€€€€€€€€€ü€¡Ñ¥µ”èÁ½¥¹Ğ¹Ñ¥µ”°Ù…±Õ”èÁ…ÉÍ•¤4(€€€€€€€€€€€€€€€€€€è¹Õ±°ì4(€€€€€€€€€€€ô¤4(€€€€€€€€€€€€¹İ¡•É•QåÁ”ğ¡í…Ñ•Q¥µ”Ñ¥µ”°‘½Õ‰±”Ù…±Õ•ô¤ø ¤4(€€€€€€€€€€€€¹Ñ½1¥ÍĞ¡É½İ…‰±”è™…±Í”¤4(€€€€€€€€€€¸¹Í½ÉĞ ¡„°ˆ¤€ôø„¹Ñ¥µ”¹½µÁ…É•Q¼¡ˆ¹Ñ¥µ”¤¤ì4(€€€¥˜€¡Í…µÁ±•Ì¹±•¹Ñ €ğ€È¤É•ÑÕÉ¸ì4(€€€™¥¹…°Ù…±Õ•Ì€ôÍ…µÁ±•Ì4(€€€€€€€€¹µ…À ¡Í…µÁ±”¤€ôøÍ…µÁ±”¹Ù…±Õ”¤4(€€€€€€€€¹Ñ½1¥ÍĞ¡É½İ…‰±”è™…±Í”¤ì4(€€€™¥¹…°µ¥¹¥µÕ´€ôÙ…±Õ•Ì¹É•‘Õ”¡µ…Ñ ¹µ¥¸¤ì4(€€€™¥¹…°µ…á¥µÕ´€ôÙ…±Õ•Ì¹É•‘Õ”¡µ…Ñ ¹µ…à¤ì4(€€€™¥¹…°É…¹”€ôµ…á¥µÕ´€ôôµ¥¹¥µÕ´€ü€Ä¸À€èµ…á¥µÕ´€´µ¥¹¥µÕ´ì4(€€€™¥¹…°É¥€ôA…¥¹Ğ ¤4(€€€€€€¸¹½±½È€ôÉ¥‘½±½È4(€€€€€€¸¹ÍÑÉ½­•]¥‘Ñ €ô€Äì4(€€€™½È€¡Ù…ÈÉ½Ü€ô€ÀìÉ½Ü€ğô€ĞìÉ½Ü¬¬¤ì4(€€€€€™¥¹…°ä€ôÍ¥é”¹¡•¥¡Ğ€¨É½Ü€¼€Ğì4(€€€€€…¹Ù…Ì¹‘É…İ1¥¹”¡=™™Í•Ğ À°ä¤°=™™Í•Ğ¡Í¥é”¹İ¥‘Ñ °ä¤°É¥¤ì4(€€€ô4(€€€™¥¹…°Á…Ñ €ôA…Ñ  ¤ì4(€€€™¥¹…°™¥ÉÍÑQ¥µ”€ôÍ…µÁ±•Ì¹™¥ÉÍĞ¹Ñ¥µ”¹µ¥±±¥Í•½¹‘ÍM¥¹•Á½ ì4(€€€™¥¹…°Ñ¥µ•I…¹”€ôµ…Ñ ¹µ…à 4(€€€€€€Ä°4(€€€€€Í…µÁ±•Ì¹±…ÍĞ¹Ñ¥µ”¹µ¥±±¥Í•½¹‘ÍM¥¹•Á½ €´™¥ÉÍÑQ¥µ”°4(€€€€¤ì4(€€€™½È€¡Ù…È¥¹‘•à€ô€Àì¥¹‘•à€ğÍ…µÁ±•Ì¹±•¹Ñ ì¥¹‘•à¬¬¤ì4(€€€€€™¥¹…°Í…µÁ±”€ôÍ…µÁ±•Ím¥¹‘•átì4(€€€€€™¥¹…°à€ô4(€€€€€€€€€Í¥é”¹İ¥‘Ñ €¨4(€€€€€€€€€€¡Í…µÁ±”¹Ñ¥µ”¹µ¥±±¥Í•½¹‘ÍM¥¹•Á½ €´™¥ÉÍÑQ¥µ”¤€¼4(€€€€€€€€€Ñ¥µ•I…¹”ì4(€€€€€™¥¹…°ä€ôÍ¥é”¹¡•¥¡Ğ€´€ ¡Í…µÁ±”¹Ù…±Õ”€´µ¥¹¥µÕ´¤€¼É…¹”€¨Í¥é”¹¡•¥¡Ğ¤ì4(€€€€€¥˜€¡¥¹‘•à€ôô€À¤ì4(€€€€€€€Á…Ñ ¹µ½Ù•Q¼¡à°ä¤ì4(€€€€€ô•±Í”ì4(€€€€€€€Á…Ñ ¹±¥¹•Q¼¡à°ä¤ì4(€€€€€ô4(€€€ô4(€€€…¹Ù…Ì¹‘É…İA…Ñ  4(€€€€€Á…Ñ °4(€€€€€A…¥¹Ğ ¤4(€€€€€€€€¸¹½±½È€ô½±½È4(€€€€€€€€¸¹ÍÑå±”€ôA…¥¹Ñ¥¹MÑå±”¹ÍÑÉ½­”4(€€€€€€€€¸¹ÍÑÉ½­•]¥‘Ñ €ô€Ì4(€€€€€€€€¸¹ÍÑÉ½­•…À€ôMÑÉ½­•…À¹É½Õ¹4(€€€€€€€€¸¹ÍÑÉ½­•)½¥¸€ôMÑÉ½­•)½¥¸¹É½Õ¹°4(€€€€¤ì4(€ô4(4(€½Ù•ÉÉ¥‘”4(€‰½½°Í¡½Õ±‘I•Á…¥¹Ğ¡½Ù…É¥…¹Ğ}!¥ÍÑ½ÉåA…¥¹Ñ•È½±‘•±•…Ñ”¤€ôø4(€€€€€½±‘•±•…Ñ”¹Á½¥¹ÑÌ€„ôÁ½¥¹ÑÌñğ4(€€€€€½±‘•±•…Ñ”¹½±½È€„ô½±½Èñğ4(€€€€€½±‘•±•…Ñ”¹É¥‘½±½È€„ôÉ¥‘½±½Èì4)ô4(4)™¥¹…°±…ÍÌ}!¥ÍÑ½Éå¡…ÉĞ•áÑ•¹‘ÌMÑ…Ñ•±•ÍÍ]¥‘•Ğì4(€½¹ÍĞ}!¥ÍÑ½Éå¡…ÉĞ¡íÉ•ÅÕ¥É•Ñ¡¥Ì¹Á½¥¹ÑÌ°É•ÅÕ¥É•Ñ¡¥Ì¹Õ¹¥Ñô¤ì4(4(€™¥¹…°1¥ÍĞñ!¥ÍÑ½ÉåA½¥¹ĞøÁ½¥¹ÑÌì4(€™¥¹…°MÑÉ¥¹œÕ¹¥Ğì4(4(€½Ù•ÉÉ¥‘”4(€]¥‘•Ğ‰Õ¥±¡	Õ¥±‘½¹Ñ•áĞ½¹Ñ•áĞ¤ì4(€€€™¥¹…°Ù…±Õ•Ì€ôÁ½¥¹ÑÌ4(€€€€€€€€¹µ…À ¡Á½¥¹Ğ¤€ôøÁ½¥¹Ğ¹Ù…±Õ”¤4(€€€€€€€€¹İ¡•É•QåÁ”ñ¹Õ´ø ¤4(€€€€€€€€¹µ…À ¡Ù…±Õ”¤€ôøÙ…±Õ”¹Ñ½½Õ‰±” ¤¤4(€€€€€€€€¹İ¡•É” ¡Ù…±Õ”¤€ôøÙ…±Õ”¹¥Í¥¹¥Ñ”¤4(€€€€€€€€¹Ñ½1¥ÍĞ¡É½İ…‰±”è™…±Í”¤ì4(€€€™¥¹…°µ¥¹¥µÕ´€ôÙ…±Õ•Ì¹¥ÍµÁÑä€ü€À€èÙ…±Õ•Ì¹É•‘Õ”¡µ…Ñ ¹µ¥¸¤ì4(€€€™¥¹…°µ…á¥µÕ´€ôÙ…±Õ•Ì¹¥ÍµÁÑä€ü€À€èÙ…±Õ•Ì¹É•‘Õ”¡µ…Ñ ¹µ…à¤ì4(€€€™¥¹…°ÍÕ™™¥à€ôÕ¹¥Ğ¹¥ÍµÁÑä€ü€œœ€è€œ€‘Õ¹¥Ğœì4(€€€™¥¹…°±…‰•°€ô!½µ•½¹ÑÉ½±MÑÉ¥¹Ì¹½˜¡½¹Ñ•áĞ¤4(€€€€€€€€¹İ¥Ñ¡Y…±Õ•Ì ¡¥ÍÑ½ÉåMÕµµ…Éäœ°€ñMÑÉ¥¹œ°=‰©•Ğùì4(€€€€€€€€€€µ¥¹¥µÕ´œè€œ‘íµ¥¹¥µÕ´¹Ñ½MÑÉ¥¹Í¥á• Ä¥ô‘ÍÕ™™¥àœ°4(€€€€€€€€€€µ…á¥µÕ´œè€œ‘íµ…á¥µÕ´¹Ñ½MÑÉ¥¹Í¥á• Ä¥ô‘ÍÕ™™¥àœ°4(€€€€€€€€€€Í…µÁ±•ÌœèÙ…±Õ•Ì¹±•¹Ñ °4(€€€€€€€ô¤ì4(€€€É•ÑÕÉ¸M•µ…¹Ñ¥Ì 4(€€€€€¥µ…”èÑÉÕ”°4(€€€€€±…‰•°è±…‰•°°4(€€€€€¡¥±èM¥é•‘	½à 4(€€€€€€€¡•¥¡Ğè€ÄàÀ°4(€€€€€€€¡¥±èÕÍÑ½µA…¥¹Ğ 4(€€€€€€€€€Á…¥¹Ñ•Èè}!¥ÍÑ½ÉåA…¥¹Ñ•È 4(€€€€€€€€€€€Á½¥¹ÑÌèÁ½¥¹ÑÌ°4(€€€€€€€€€€€½±½ÈèQ¡•µ”¹½˜¡½¹Ñ•áĞ¤¹½±½ÉM¡•µ”¹ÁÉ¥µ…Éä°4(€€€€€€€€€€€É¥‘½±½ÈèQ¡•µ”¹½˜¡½¹Ñ•áĞ¤¹½±½ÉM¡•µ”¹½ÕÑ±¥¹•Y…É¥…¹Ğ°4(€€€€€€€€€€¤°4(€€€€€€€€¤°4(€€€€€€¤°4(€€€€¤ì4(€ô4)ô4(

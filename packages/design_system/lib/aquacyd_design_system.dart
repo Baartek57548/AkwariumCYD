@@ -13,9 +13,10 @@ abstract final class ProductSpacing {
 }
 
 abstract final class ProductRadius {
-  static const double control = 12;
-  static const double card = 18;
+  static const double control = 16;
+  static const double card = 22;
   static const double hero = 28;
+  static const double pill = 999;
 }
 
 abstract final class ProductColors {

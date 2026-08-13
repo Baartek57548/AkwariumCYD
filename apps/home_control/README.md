@@ -23,6 +23,9 @@ Nazwa produktu, ikony, splash i interfejs użytkownika to **Home Control**.
   autonomicznej automatyki, interlocków ani operacji kalibracyjnych sterownika;
 - edytowalny układ dashboardu, motyw jasny/ciemny/systemowy, język polski i
   angielski oraz responsywną nawigację telefonu, tabletu i desktopu;
+- warstwę wizualną „calm intelligence”: jednoznaczny stan domu, centrum spraw
+  wymagających reakcji, moduły domenowe bez fałszywych komunikatów, semantyczne
+  kolory o zweryfikowanym kontraście oraz duże cele dotykowe dla panelu 800×480;
 - wersjonowany cache, stale data, reconnect z backoffem, zatrzymanie pollingu w
   tle i natychmiastowe odświeżenie po wznowieniu;
 - opcjonalną biometrię dla zamków, alarmów, bram, ryzykownych wartości i
@@ -111,6 +114,13 @@ build web release oraz Android debug/release. CI dodatkowo publikuje sumy SHA-25
 SBOM, uruchamia skan sekretów i zależności oraz waliduje pozostałe części monorepo.
 Sekretów, PIN-ów, prywatnych adresów domu i kluczy podpisujących nie wolno dodawać
 do repozytorium ani logów.
+
+Regresje premium UI są sprawdzane dla telefonu 320×568 i panelu 800×480 przy
+dwukrotnie powiększonym tekście. Jasny i ciemny motyw mają osobne scenariusze
+wizualne dla telefonu 393×852 i panelu 800×480. Goldeny znajdują się w
+`test/goldens/`; osobne testy weryfikują kontrast motywu,
+live-region statusu, rozdzielenie semantyki szczegółów i szybkiej akcji oraz cele
+dotykowe minimum 48 dp.
 
 Aktualny rozwój produktu ma wersję `2.0.1+6`. Wyniki walidacji są w
 [`docs/QA_REPORT.md`](../../docs/QA_REPORT.md), architektura w

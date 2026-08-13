@@ -10,8 +10,8 @@ brakuje fizycznego stanowiska CYD/P4/C6 oraz kluczy właściciela.
 
 | Obszar | Wykonana brama | Wynik |
 | --- | --- | --- |
-| Home Control | `flutter analyze`, pełne `flutter test --coverage` | PASS, 0 problemów, 80 testów, 58,57% pokrycia |
-| Home Control | web release, Android debug/release | PASS, APK release 55,7 MB; debug APK publikowany przez CI |
+| Home Control | `flutter analyze`, pełne `flutter test --coverage` | PASS, 0 problemów, 105 testów, 62,22% pokrycia |
+| Home Control | web release, Android debug/release | PASS, APK release 55,9 MB; debug APK publikowany przez CI |
 | AquaCYD Service | analyze, pełne testy | PASS, 0 problemów, 240 testów |
 | AquaCYD Service | Android debug/release z jednorazowym kluczem walidacyjnym | PASS, APK release 65,5 MB |
 | Pakiety Dart | analyze/test każdego pakietu | PASS, 5 testów |
@@ -61,6 +61,8 @@ flash i testu aktualizacji istniejącego urządzenia.
 - kontrolki domenowe, potwierdzenia ryzyka, ACK/rollback i historia;
 - akwarium, alarm, sceny, skrypty, automatyzacje i aktualizacje;
 - edytowalny dashboard, PL/EN, motywy, telefon, tablet i duży tekst;
+- premium UI: status domu, centrum uwagi, adaptacyjna nawigacja 800×480,
+  semantyczne kolory, cele 48 dp i goldeny telefonu/panelu w obu motywach;
 - opcjonalna biometria dla krytycznych poleceń i instalacji OTA z bezpiecznym
   zachowaniem przy anulowaniu, lockoucie lub braku skonfigurowanej biometrii;
 - wersjonowany cache offline odporny na uszkodzony snapshot i mieszanie źródeł;

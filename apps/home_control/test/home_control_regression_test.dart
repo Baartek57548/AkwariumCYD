@@ -370,592 +370,5 @@ void main() {
         );
       final source = _FakeHomeDataSource(
         sourceId: _profileA,
-        onConnect: (_) => Future<HomeSnapshot>.error(
-          const AppFailure(
-            code: AppFailureCode.offline,
-            messageKey: 'errorNetwork',
-          ),
-        ),
-      );
-      final controller = _controller(
-        preferences: preferences,
-        credentialsStore: profiles,
-        snapshotCache: cache,
-        sourceFactory: (_, _) => source,
-      );
-      addTearDown(() async {
-        controller.dispose();
-        await source.disposeStream();
-      });
-      await controller.initialize();
-
-      await tester.pumpWidget(
-        _localizedApp(
-          Scaffold(
-            body: EntityCard(entity: entity, controller: controller),
-          ),
-        ),
-      );
-      await tester.tap(find.byType(EntityCard));
-      await tester.pumpAndSettle();
-
-      final dropdown = find.byType(DropdownButtonFormField<String>);
-      expect(dropdown, findsOneWidget);
-      expect(
-        tester.widget<DropdownButtonFormField<String>>(dropdown).onChanged,
-        isNull,
-      );
-      expect(tester.takeException(), isNull);
-    },
-  );
-
-  testWidgets('failed select command rolls back and reports inside details', (
-    tester,
-  ) async {
-    tester.view.physicalSize = const Size(320, 568);
-    tester.view.devicePixelRatio = 1;
-    addTearDown(tester.view.resetPhysicalSize);
-    addTearDown(tester.view.resetDevicePixelRatio);
-    final preferences = _preferences();
-    await preferences.saveActiveSource(HomeSourceKind.homeAssistant);
-    final profiles = _MemoryHomeAssistantStore()
-      ..addProfile(id: _profileA, name: 'Dom', host: 'home.example.net')
-      ..selectedId = _profileA;
-    final dayOption = 'DAY ${List<String>.filled(90, 'x').join()}';
-    final entity = _selectEntity(
-      _profileA,
-      state: dayOption,
-      options: <String>[dayOption, 'NIGHT'],
-    );
-    final source = _FakeHomeDataSource(
-      sourceId: _profileA,
-      onConnect: (_) async => _snapshot(_profileA, entity: entity),
-      onSendCommand: (_, _, _) async => throw const AppFailure(
-        code: AppFailureCode.server,
-        messageKey: 'errorServer',
-      ),
-    );
-    final controller = _controller(
-      preferences: preferences,
-      credentialsStore: profiles,
-      sourceFactory: (_, _) => source,
-    );
-    addTearDown(() async {
-      controller.dispose();
-      await source.disposeStream();
-    });
-    await controller.initialize();
-
-    await tester.pumpWidget(
-      _localizedApp(
-        Scaffold(
-          body: EntityCard(entity: entity, controller: controller),
-        ),
-      ),
-    );
-    await tester.tap(find.byType(EntityCard));
-    await tester.pumpAndSettle();
-    final dropdownFinder = find.byType(DropdownButtonFormField<String>);
-    await tester.ensureVisible(dropdownFinder);
-    await tester.pumpAndSettle();
-    await tester.tap(dropdownFinder);
-    await tester.pumpAndSettle();
-    await tester.tap(find.text('NIGHT').last);
-    await tester.pumpAndSettle();
-
-    final dropdown = tester.widget<DropdownButtonFormField<String>>(
-      find.byType(DropdownButtonFormField<String>),
-    );
-    expect(controller.snapshot?.entity(entity.id)?.state, dayOption);
-    expect(dropdown.initialValue, dayOption);
-    expect(
-      find.text('Serwer zwrÃ³ciÅ‚ bÅ‚Ä…d. SprÃ³buj ponownie za chwilÄ™.'),
-      findsOneWidget,
-    );
-    expect(tester.takeException(), isNull);
-  });
-
-  testWidgets('large cards span both columns on an 800x480 wall panel', (
-    tester,
-  ) async {
-    tester.view.physicalSize = const Size(800, 480);
-    tester.view.devicePixelRatio = 1;
-    addTearDown(tester.view.resetPhysicalSize);
-    addTearDown(tester.view.resetDevicePixelRatio);
-    final preferences = _preferences();
-    await preferences.saveActiveSource(HomeSourceKind.homeAssistant);
-    final profiles = _MemoryHomeAssistantStore()
-      ..addProfile(id: _profileA, name: 'Dom', host: 'home.example.net')
-      ..selectedId = _profileA;
-    final source = _FakeHomeDataSource.immediate(_snapshot(_profileA));
-    final controller = _controller(
-      preferences: preferences,
-      credentialsStore: profiles,
-      sourceFactory: (_, _) => source,
-    );
-    addTearDown(() async {
-      controller.dispose();
-      await source.disposeStream();
-    });
-    await controller.initialize();
-
-    await tester.pumpWidget(
-      _localizedApp(
-        AnimatedBuilder(
-          animation: controller,
-          builder: (context, child) => HomeControlShell(controller: controller),
-        ),
-      ),
-    );
-    await tester.pumpAndSettle();
-
-    const aquariumLargeKey = ValueKey<String>(
-      'dashboard-section-aquarium-large',
-    );
-    const favoritesCompactKey = ValueKey<String>(
-      'dashboard-section-favorites-compact',
-    );
-    final aquariumWidth = tester.getSize(find.byKey(aquariumLargeKey)).width;
-    final compactWidth = tester.getSize(find.byKey(favoritesCompactKey)).width;
-    expect(aquariumWidth, greaterThan(compactWidth * 1.8));
-
-    await controller.saveDashboard(
-      controller.dashboard.copyWith(
-        largeCards: const <String>{'aquarium', 'favorites'},
-      ),
-    );
-    await tester.pumpAndSettle();
-
-    const favoritesLargeKey = ValueKey<String>(
-      'dashboard-section-favorites-large',
-    );
-    expect(find.byKey(favoritesCompactKey), findsNothing);
-    expect(
-      tester.getSize(find.byKey(favoritesLargeKey)).width,
-      moreOrLessEquals(aquariumWidth, epsilon: 0.1),
-    );
-    expect(tester.takeException(), isNull);
-    await tester.pumpWidget(const SizedBox.shrink());
-    await tester.pump();
-  });
-
-  testWidgets('a failed HA connection preserves every form field', (
-    tester,
-  ) async {
-    final source = _FakeHomeDataSource(
-      sourceId: 'ha-failed-source',
-      onConnect: (_) => Future<HomeSnapshot>.error(
-        const AppFailure(
-          code: AppFailureCode.offline,
-          messageKey: 'errorNetwork',
-        ),
-      ),
-    );
-    addTearDown(source.disposeStream);
-
-    await tester.pumpWidget(
-      HomeControlApp(
-        preferences: _preferences(),
-        hubCredentialsStore: _MemoryHubCredentialsStore(),
-        homeAssistantCredentialsStore: _MemoryHomeAssistantStore(),
-        snapshotCache: _MemorySnapshotCache(),
-        appUpdateService: const UnsupportedAppUpdateService(),
-        biometricAuthenticator: const _UnavailableBiometricAuthenticator(),
-        homeAssistantSourceFactory: (_, _) => source,
-        enablePolling: false,
-      ),
-    );
-    await tester.pumpAndSettle();
-    await tester.ensureVisible(find.text('Home Assistant'));
-    await tester.pumpAndSettle();
-    await tester.tap(find.text('Home Assistant'));
-    await tester.pumpAndSettle();
-
-    final fields = find.byType(TextFormField);
-    expect(fields, findsNWidgets(3));
-    await tester.enterText(fields.at(0), 'Mieszkanie');
-    await tester.enterText(fields.at(1), 'https://ha.example.net');
-    await tester.enterText(fields.at(2), 'abcdefghijklmnopqrstuvwxyz123456');
-    await tester.ensureVisible(find.byType(FilledButton));
-    await tester.pumpAndSettle();
-    await tester.tap(find.byType(FilledButton));
-    await tester.pumpAndSettle();
-
-    expect(find.byType(TextFormField), findsNWidgets(3));
-    expect(_fieldText(tester, 0), 'Mieszkanie');
-    expect(_fieldText(tester, 1), 'https://ha.example.net');
-    expect(_fieldText(tester, 2), 'abcdefghijklmnopqrstuvwxyz123456');
-    expect(find.byType(FilledButton), findsOneWidget);
-    expect(find.byIcon(Icons.error_outline_rounded), findsOneWidget);
-    expect(tester.takeException(), isNull);
-  });
-}
-
-const String _profileA = 'ha-aaaaaaaa';
-const String _profileB = 'ha-bbbbbbbb';
-const String _profileC = 'ha-cccccccc';
-
-HomeControlPreferences _preferences() => HomeControlPreferences(
-  storage: SharedPreferencesAsync(),
-  fallbackLocale: const Locale('pl'),
-);
-
-HomeControlController _controller({
-  required HomeControlPreferences preferences,
-  required CredentialsStore credentialsStore,
-  HomeSnapshotCache? snapshotCache,
-  HomeAssistantSourceFactory? sourceFactory,
-  BiometricAuthenticator? biometricAuthenticator,
-}) => HomeControlController(
-  preferences: preferences,
-  hubCredentialsStore: _MemoryHubCredentialsStore(),
-  homeAssistantCredentialsStore: credentialsStore,
-  snapshotCache: snapshotCache ?? _MemorySnapshotCache(),
-  biometricAuthenticator:
-      biometricAuthenticator ?? const _UnavailableBiometricAuthenticator(),
-  homeAssistantSourceFactory: sourceFactory,
-  enablePolling: false,
-);
-
-Widget _localizedApp(Widget home) => MaterialApp(
-  locale: const Locale('pl'),
-  supportedLocales: const <Locale>[Locale('pl'), Locale('en')],
-  localizationsDelegates: const <LocalizationsDelegate<Object>>[
-    HomeControlStrings.delegate,
-    GlobalMaterialLocalizations.delegate,
-    GlobalWidgetsLocalizations.delegate,
-    GlobalCupertinoLocalizations.delegate,
-  ],
-  home: home,
-);
-
-String _fieldText(WidgetTester tester, int index) => tester
-    .widget<TextFormField>(find.byType(TextFormField).at(index))
-    .controller!
-    .text;
-
-HomeEntity _selectEntity(
-  String sourceId, {
-  required String state,
-  List<String> options = const <String>['DAY', 'NIGHT'],
-}) => HomeEntity(
-  id: SourceScopedId(sourceId: sourceId, localId: 'select.mode'),
-  deviceId: SourceScopedId(sourceId: sourceId, localId: 'device.controller'),
-  areaId: SourceScopedId(sourceId: sourceId, localId: 'area.utility'),
-  name: 'Tryb pracy',
-  type: HomeEntityType.select,
-  state: state,
-  attributes: const <String, Object?>{},
-  unit: '',
-  availability: EntityAvailability.available,
-  writable: true,
-  risk: HomeCommandRisk.routine,
-  changedAt: DateTime.utc(2026, 8, 13, 10),
-  updatedAt: DateTime.utc(2026, 8, 13, 10),
-  constraints: EntityConstraints(options: options),
-);
-
-HomeEntity _criticalEntity(String sourceId) => HomeEntity(
-  id: SourceScopedId(sourceId: sourceId, localId: 'number.target_temperature'),
-  deviceId: SourceScopedId(sourceId: sourceId, localId: 'device.controller'),
-  areaId: SourceScopedId(sourceId: sourceId, localId: 'area.utility'),
-  name: 'Temperatura zadana',
-  type: HomeEntityType.number,
-  state: 24.0,
-  attributes: const <String, Object?>{},
-  unit: 'Â°C',
-  availability: EntityAvailability.available,
-  writable: true,
-  risk: HomeCommandRisk.critical,
-  changedAt: DateTime.utc(2026, 8, 13, 10),
-  updatedAt: DateTime.utc(2026, 8, 13, 10),
-  constraints: const EntityConstraints(minimum: 18, maximum: 30, step: 0.5),
-);
-
-HomeSnapshot _snapshot(
-  String sourceId, {
-  HomeEntity? entity,
-  bool offline = false,
-}) => HomeSnapshot(
-  schemaVersion: HomeSnapshot.currentSchemaVersion,
-  sourceId: sourceId,
-  sourceName: 'Home Assistant $sourceId',
-  sourceKind: HomeSourceKind.homeAssistant,
-  areas: const <HomeArea>[],
-  devices: const <HomeDevice>[],
-  entities: entity == null ? const <HomeEntity>[] : <HomeEntity>[entity],
-  automations: const <HomeAutomation>[],
-  updates: const <HomeUpdate>[],
-  synchronizedAt: DateTime.utc(2026, 8, 13, 10),
-  isPartial: false,
-  isOffline: offline,
-);
-
-final class _FakeHomeDataSource implements HomeDataSource {
-  _FakeHomeDataSource({
-    required this.sourceId,
-    required this.onConnect,
-    this.onClose,
-    this.onSendCommand,
-  });
-
-  factory _FakeHomeDataSource.immediate(HomeSnapshot snapshot) =>
-      _FakeHomeDataSource(
-        sourceId: snapshot.sourceId,
-        onConnect: (_) async => snapshot,
-      );
-
-  @override
-  final String sourceId;
-  final Future<HomeSnapshot> Function(CancellationToken cancellation) onConnect;
-  final Future<void> Function()? onClose;
-  final Future<void> Function(
-    HomeEntity entity,
-    Object? value,
-    CancellationToken cancellation,
-  )?
-  onSendCommand;
-  final StreamController<HomeEntity> _events =
-      StreamController<HomeEntity>.broadcast(sync: true);
-  int connectCount = 0;
-  int closeCount = 0;
-  int sendCommandCount = 0;
-  HomeSnapshot? _lastSnapshot;
-
-  @override
-  String get displayName => 'Home Assistant $sourceId';
-
-  @override
-  HomeSourceKind get kind => HomeSourceKind.homeAssistant;
-
-  @override
-  Stream<HomeEntity> get stateChanges => _events.stream;
-
-  bool get hasRealtimeListener => _events.hasListener;
-
-  @override
-  Future<HomeSnapshot> connect(CancellationToken cancellation) async {
-    connectCount++;
-    final snapshot = await onConnect(cancellation);
-    _lastSnapshot = snapshot;
-    return snapshot;
-  }
-
-  @override
-  Future<HomeSnapshot> refresh(CancellationToken cancellation) async {
-    cancellation.throwIfCancelled();
-    final snapshot = _lastSnapshot;
-    if (snapshot == null) {
-      throw const AppFailure(
-        code: AppFailureCode.offline,
-        messageKey: 'errorNetwork',
-      );
-    }
-    return snapshot;
-  }
-
-  void emit(HomeEntity entity) => _events.add(entity);
-
-  @override
-  Future<void> sendCommand(
-    HomeEntity entity,
-    Object? value,
-    CancellationToken cancellation,
-  ) async {
-    cancellation.throwIfCancelled();
-    sendCommandCount++;
-    await onSendCommand?.call(entity, value, cancellation);
-  }
-
-  @override
-  Future<List<HistoryPoint>> loadHistory(
-    HomeEntity entity,
-    Duration period,
-    CancellationToken cancellation,
-  ) async {
-    cancellation.throwIfCancelled();
-    return const <HistoryPoint>[];
-  }
-
-  @override
-  Future<void> installUpdate(
-    HomeUpdate update,
-    CancellationToken cancellation,
-  ) async {
-    cancellation.throwIfCancelled();
-  }
-
-  @override
-  Future<void> close() async {
-    closeCount++;
-    await onClose?.call();
-  }
-
-  Future<void> disposeStream() async {
-    if (!_events.isClosed) await _events.close();
-  }
-}
-
-final class _MemoryHomeAssistantStore
-    implements CredentialsStore, HomeAssistantProfileStore {
-  final Map<String, ({String name, HomeAssistantCredentials credentials})>
-  _profiles = <String, ({String name, HomeAssistantCredentials credentials})>{};
-  HomeAssistantCredentials? _legacy;
-  String? selectedId;
-  int _nextId = 0;
-  Future<void> Function(String id)? beforeSelect;
-  Future<void> Function(String id)? beforeSave;
-
-  void addProfile({
-    required String id,
-    required String name,
-    required String host,
-  }) {
-    _profiles[id] = (
-      name: name,
-      credentials: HomeAssistantCredentials.parse(
-        baseUrl: 'https://$host',
-        accessToken: '${id}abcdefghijklmnopqrstuvwxyz',
-      ),
-    );
-  }
-
-  bool contains(String id) => _profiles.containsKey(id);
-
-  @override
-  Future<void> clear() async {
-    _legacy = null;
-    _profiles.clear();
-    selectedId = null;
-  }
-
-  @override
-  Future<HomeAssistantCredentials?> load() async {
-    final id = selectedId;
-    return id == null ? _legacy : _profiles[id]?.credentials;
-  }
-
-  @override
-  Future<void> save(HomeAssistantCredentials credentials) async {
-    _legacy = credentials;
-  }
-
-  @override
-  Future<List<HomeAssistantProfile>> listProfiles() async =>
-      <HomeAssistantProfile>[
-        for (final entry in _profiles.entries)
-          HomeAssistantProfile(
-            id: entry.key,
-            name: entry.value.name,
-            baseUri: entry.value.credentials.baseUri,
-          ),
-      ];
-
-  @override
-  Future<HomeAssistantCredentials?> loadProfile(String id) async =>
-      _profiles[id]?.credentials;
-
-  @override
-  Future<String?> selectedProfileId() async => selectedId;
-
-  @override
-  Future<String> saveProfile({
-    required HomeAssistantCredentials credentials,
-    required String name,
-    String? profileId,
-  }) async {
-    final id =
-        profileId ?? 'ha-memory${(_nextId++).toString().padLeft(6, '0')}';
-    await beforeSave?.call(id);
-    _profiles[id] = (name: name, credentials: credentials);
-    selectedId = id;
-    return id;
-  }
-
-  @override
-  Future<void> selectProfile(String id) async {
-    if (!_profiles.containsKey(id)) {
-      throw ArgumentError.value(id, 'id', 'Profile does not exist.');
-    }
-    await beforeSelect?.call(id);
-    selectedId = id;
-  }
-
-  @override
-  Future<void> deleteProfile(String id) async {
-    _profiles.remove(id);
-    if (selectedId == id) selectedId = _profiles.keys.firstOrNull;
-  }
-}
-
-final class _MemorySnapshotCache implements HomeSnapshotCache {
-  final Map<HomeSourceKind, HomeSnapshot> values =
-      <HomeSourceKind, HomeSnapshot>{};
-
-  @override
-  Future<void> clear(HomeSourceKind kind, {String? sourceId}) async {
-    final current = values[kind];
-    if (sourceId == null || current?.sourceId == sourceId) values.remove(kind);
-  }
-
-  @override
-  Future<HomeSnapshot?> load(HomeSourceKind kind, String sourceId) async {
-    final value = values[kind];
-    return value?.sourceId == sourceId ? value : null;
-  }
-
-  @override
-  Future<void> save(HomeSnapshot snapshot) async {
-    values[snapshot.sourceKind] = snapshot;
-  }
-}
-
-final class _MemoryHubCredentialsStore implements HubCredentialsStore {
-  HubCredentials? _credentials;
-
-  @override
-  Future<void> clear() async => _credentials = null;
-
-  @override
-  Future<HubCredentials?> load() async => _credentials;
-
-  @override
-  Future<void> save(HubCredentials credentials) async =>
-      _credentials = credentials;
-}
-
-final class _UnavailableBiometricAuthenticator
-    implements BiometricAuthenticator {
-  const _UnavailableBiometricAuthenticator();
-
-  @override
-  Future<BiometricAvailability> availability() async =>
-      BiometricAvailability.unavailable;
-
-  @override
-  Future<BiometricAuthorization> authenticate({
-    required String localizedReason,
-  }) async => BiometricAuthorization.unavailable;
-}
-
-final class _DelayedBiometricAuthenticator implements BiometricAuthenticator {
-  final Completer<void> started = Completer<void>();
-  final Completer<BiometricAuthorization> _result =
-      Completer<BiometricAuthorization>();
-
-  @override
-  Future<BiometricAvailability> availability() async =>
-      BiometricAvailability.available;
-
-  @override
-  Future<BiometricAuthorization> authenticate({
-    required String localizedReason,
-  }) {
-    if (!started.isCompleted) started.complete();
-    return _result.future;
-  }
-
-  void complete(BiometricAuthorization value) {
-    if (!_result.isCompleted) _result.complete(value);
-  }
-}
+        on×]õ¶‰žËkºwµç}±Õµ¹Ì½¸…¸€àÀÁàÐàÀÝ…±°Á…¹•°œ°€ (€€€Ñ•ÍÑ•È°(€€¤…Íå¹Œì(€€€Ñ•ÍÑ•È¹Ù¥•Ü¹Á¡åÍ¥…±M¥é”€ô½¹ÍÐM¥é” àÀÀ°€ÐàÀ¤ì(€€€Ñ•ÍÑ•È¹Ù¥•Ü¹‘•Ù¥•A¥á•±I…Ñ¥¼€ô€Äì(€€€…‘‘Q•…É½Ý¸¡Ñ•ÍÑ•È¹Ù¥•Ü¹É•Í•ÑA¡åÍ¥…±M¥é”¤ì(€€€…‘‘Q•…É½Ý¸¡Ñ•ÍÑ•È¹Ù¥•Ü¹É•Í•Ñ•Ù¥•A¥á•±I…Ñ¥¼¤ì(€€€™¥¹…°ÁÉ•™•É•¹•Ì€ô}ÁÉ•™•É•¹•Ì ¤ì(€€€…Ý…¥ÐÁÉ•™•É•¹•Ì¹Í…Ù•Ñ¥Ù•M½ÕÉ”¡!½µ•M½ÕÉ•-¥¹¹¡½µ•ÍÍ¥ÍÑ…¹Ð¤ì(€€€™¥¹…°ÁÉ½™¥±•Ì€ô}5•µ½Éå!½µ•ÍÍ¥ÍÑ…¹ÑMÑ½É” ¤(€€€€€€¸¹…‘‘AÉ½™¥±”¡¥è}ÁÉ½™¥±•°¹…µ”è€½´œ°¡½ÍÐè€¡½µ”¹•á…µÁ±”¹¹•Ðœ¤(€€€€€€¸¹Í•±•Ñ•‘%€ô}ÁÉ½™¥±•ì(€€€™¥¹…°Í½ÕÉ”€ô}…­•!½µ•…Ñ…M½ÕÉ”¹¥µµ•‘¥…Ñ”¡}Í¹…ÁÍ¡½Ð¡}ÁÉ½™¥±•¤¤ì(€€€™¥¹…°½¹ÑÉ½±±•È€ô}½¹ÑÉ½±±•È (€€€€€ÁÉ•™•É•¹•ÌèÁÉ•™•É•¹•Ì°(€€€€€É•‘•¹Ñ¥…±ÍMÑ½É”èÁÉ½™¥±•Ì°(€€€€€Í½ÕÉ•…Ñ½Éäè€¡|°|¤€ôøÍ½ÕÉ”°(€€€€¤ì(€€€…‘‘Q•…É½Ý¸  ¤…Íå¹Œì(€€€€€½¹ÑÉ½±±•È¹‘¥ÍÁ½Í” ¤ì(€€€€€…Ý…¥ÐÍ½ÕÉ”¹‘¥ÍÁ½Í•MÑÉ•…´ ¤ì(€€€ô¤ì(€€€…Ý…¥Ð½¹ÑÉ½±±•È¹¥¹¥Ñ¥…±¥é” ¤ì(€€€…Ý…¥Ð½¹ÑÉ½±±•È¹Í…Ù•…Í¡‰½…É (€€€€€½¹ÑÉ½±±•È¹‘…Í¡‰½…É¹½Áå]¥Ñ ¡±…É•…É‘Ìè½¹ÍÐ€ñMÑÉ¥¹œùì™…Ù½É¥Ñ•Ìô¤°(€€€€¤ì((€€€…Ý…¥ÐÑ•ÍÑ•È¹ÁÕµÁ]¥‘•Ð (€€€€€}±½…±¥é•‘ÁÀ (€€€€€€€¹¥µ…Ñ•‘	Õ¥±‘•È (€€€€€€€€€…¹¥µ…Ñ¥½¸è½¹ÑÉ½±±•È°(€€€€€€€€€‰Õ¥±‘•Èè€¡½¹Ñ•áÐ°¡¥±¤€ôø!½µ•½¹ÑÉ½±M¡•±°¡½¹ÑÉ½±±•Èè½¹ÑÉ½±±•È¤°(€€€€€€€€¤°(€€€€€€¤°(€€€€¤ì(€€€…Ý…¥ÐÑ•ÍÑ•È¹ÁÕµÁ¹‘M•ÑÑ±” ¤ì(€€€…Ý…¥ÐÑ•ÍÑ•È¹‘É…œ (€€€€€™¥¹¹‰åQåÁ”¡ÕÍÑ½µMÉ½±±Y¥•Ü¤¹™¥ÉÍÐ°(€€€€€½¹ÍÐ=™™Í•Ð À°€´ÐÈÀ¤°(€€€€¤ì(€€€…Ý…¥ÐÑ•ÍÑ•È¹ÁÕµÁ¹‘M•ÑÑ±” ¤ì((€€€½¹ÍÐ™…Ù½É¥Ñ•Í1…É•-•ä€ôY…±Õ•-•äñMÑÉ¥¹œø (€€€€€€‘…Í¡‰½…ÉµÍ•Ñ¥½¸µ™…Ù½É¥Ñ•Ìµ±…É”œ°(€€€€¤ì(€€€½¹ÍÐ…É•…Í½µÁ…Ñ-•ä€ôY…±Õ•-•äñMÑÉ¥¹œø ‘…Í¡‰½…ÉµÍ•Ñ¥½¸µ…É•…Ìµ½µÁ…Ðœ¤ì(€€€•áÁ•Ð¡½¹ÑÉ½±±•È¹‘…Í¡‰½…É¹±…É•…É‘Ì°½¹Ñ…¥¹Ì ™…Ù½É¥Ñ•Ìœ¤¤ì(€€€•áÁ•Ð¡™¥¹¹‰å-•ä¡™…Ù½É¥Ñ•Í1…É•-•ä¤°™¥¹‘Í=¹•]¥‘•Ð¤ì(€€€•áÁ•Ð¡™¥¹¹‰å-•ä¡…É•…Í½µÁ…Ñ-•ä¤°™¥¹‘Í=¹•]¥‘•Ð¤ì(€€€™¥¹…°±…É•]¥‘Ñ €ôÑ•ÍÑ•È¹•ÑM¥é”¡™¥¹¹‰å-•ä¡™…Ù½É¥Ñ•Í1…É•-•ä¤¤¹Ý¥‘Ñ ì(€€€™¥¹…°½µÁ…Ñ]¥‘Ñ €ôÑ•ÍÑ•È¹•ÑM¥é”¡™¥¹¹‰å-•ä¡…É•…Í½µÁ…Ñ-•ä¤¤¹Ý¥‘Ñ ì(€€€•áÁ•Ð¡±…É•]¥‘Ñ °É•…Ñ•ÉQ¡…¸¡½µÁ…Ñ]¥‘Ñ €¨€Ä¸à¤¤ì((€€€…Ý…¥Ð½¹ÑÉ½±±•È¹Í…Ù•…Í¡‰½…É (€€€€€½¹ÑÉ½±±•È¹‘…Í¡‰½…É¹½Áå]¥Ñ  (€€€€€€€±…É•…É‘Ìè½¹ÍÐ€ñMÑÉ¥¹œùì™…Ù½É¥Ñ•Ìœ°€…É•…Ìô°(€€€€€€¤°(€€€€¤ì(€€€…Ý…¥ÐÑ•ÍÑ•È¹ÁÕµÁ¹‘M•ÑÑ±” ¤ì((€€€½¹ÍÐ…É•…Í1…É•-•ä€ôY…±Õ•-•äñMÑÉ¥¹œø ‘…Í¡‰½…ÉµÍ•Ñ¥½¸µ…É•…Ìµ±…É”œ¤ì(€€€•áÁ•Ð¡™¥¹¹‰å-•ä¡…É•…Í½µÁ…Ñ-•ä¤°™¥¹‘Í9½Ñ¡¥¹œ¤ì(€€€•áÁ•Ð (€€€€€Ñ•ÍÑ•È¹•ÑM¥é”¡™¥¹¹‰å-•ä¡…É•…Í1…É•-•ä¤¤¹Ý¥‘Ñ °(€€€€€µ½É•=É1•ÍÍÅÕ…±Ì¡±…É•]¥‘Ñ °•ÁÍ¥±½¸è€À¸Ä¤°(€€€€¤ì(€€€•áÁ•Ð¡Ñ•ÍÑ•È¹Ñ…­•á•ÁÑ¥½¸ ¤°¥Í9Õ±°¤ì(€€€…Ý…¥ÐÑ•ÍÑ•È¹ÁÕµÁ]¥‘•Ð¡½¹ÍÐM¥é•‘	½à¹Í¡É¥¹¬ ¤¤ì(€€€…Ý…¥ÐÑ•ÍÑ•È¹ÁÕµÀ ¤ì(€ô¤ì((€Ñ•ÍÑ]¥‘•ÑÌ „™…¥±•!½¹¹•Ñ¥½¸ÁÉ•Í•ÉÙ•Ì•Ù•Éä™½É´™¥•±œ°€ (€€€Ñ•ÍÑ•È°(€€¤…Íå¹Œì(€€€™¥¹…°Í½ÕÉ”€ô}…­•!½µ•…Ñ…M½ÕÉ” (€€€€€Í½ÕÉ•%è€¡„µ™…¥±•µÍ½ÕÉ”œ°(€€€€€½¹½¹¹•Ðè€¡|¤€ôøÕÑÕÉ”ñ!½µ•M¹…ÁÍ¡½Ðø¹•ÉÉ½È (€€€€€€€½¹ÍÐÁÁ…¥±ÕÉ” (€€€€€€€€€½‘”èÁÁ…¥±ÕÉ•½‘”¹½™™±¥¹”°(€€€€€€€€€µ•ÍÍ…•-•äè€•ÉÉ½É9•ÑÝ½É¬œ°(€€€€€€€€¤°(€€€€€€¤°(€€€€¤ì(€€€…‘‘Q•…É½Ý¸¡Í½ÕÉ”¹‘¥ÍÁ½Í•MÑÉ•…´¤ì((€€€…Ý…¥ÐÑ•ÍÑ•È¹ÁÕµÁ]¥‘•Ð (€€€€€!½µ•½¹ÑÉ½±ÁÀ (€€€€€€€ÁÉ•™•É•¹•Ìè}ÁÉ•™•É•¹•Ì ¤°(€€€€€€€¡Õ‰É•‘•¹Ñ¥…±ÍMÑ½É”è}5•µ½Éå!Õ‰É•‘•¹Ñ¥…±ÍMÑ½É” ¤°(€€€€€€€¡½µ•ÍÍ¥ÍÑ…¹ÑÉ•‘•¹Ñ¥…±ÍMÑ½É”è}5•µ½Éå!½µ•ÍÍ¥ÍÑ…¹ÑMÑ½É” ¤°(€€€€€€€Í¹…ÁÍ¡½Ñ…¡”è}5•µ½ÉåM¹…ÁÍ¡½Ñ…¡” ¤°(€€€€€€€…ÁÁUÁ‘…Ñ•M•ÉÙ¥”è½¹ÍÐU¹ÍÕÁÁ½ÉÑ•‘ÁÁUÁ‘…Ñ•M•ÉÙ¥” ¤°(€€€€€€€‰¥½µ•ÑÉ¥ÕÑ¡•¹Ñ¥…Ñ½Èè½¹ÍÐ}U¹…Ù…¥±…‰±•	¥½µ•ÑÉ¥ÕÑ¡•¹Ñ¥…Ñ½È ¤°(€€€€€€€¡½µ•ÍÍ¥ÍÑ…¹ÑM½ÕÉ•…Ñ½Éäè€¡|°|¤€ôøÍ½ÕÉ”°(€€€€€€€•¹…‰±•A½±±¥¹œè™…±Í”°(€€€€€€¤°(€€€€¤ì(€€€…Ý…¥ÐÑ•ÍÑ•È¹ÁÕµÁ¹‘M•ÑÑ±” ¤ì(€€€…Ý…¥ÐÑ•ÍÑ•È¹•¹ÍÕÉ•Y¥Í¥‰±”¡™¥¹¹Ñ•áÐ !½µ”ÍÍ¥ÍÑ…¹Ðœ¤¤ì(€€€…Ý…¥ÐÑ•ÍÑ•È¹ÁÕµÁ¹‘M•ÑÑ±” ¤ì(€€€…Ý…¥ÐÑ•ÍÑ•È¹Ñ…À¡™¥¹¹Ñ•áÐ !½µ”ÍÍ¥ÍÑ…¹Ðœ¤¤ì(€€€…Ý…¥ÐÑ•ÍÑ•È¹ÁÕµÁ¹‘M•ÑÑ±” ¤ì((€€€™¥¹…°™¥•±‘Ì€ô™¥¹¹‰åQåÁ”¡Q•áÑ½Éµ¥•±¤ì(€€€•áÁ•Ð¡™¥•±‘Ì°™¥¹‘Í9]¥‘•ÑÌ Ì¤¤ì(€€€…Ý…¥ÐÑ•ÍÑ•È¹•¹Ñ•ÉQ•áÐ¡™¥•±‘Ì¹…Ð À¤°€5¥•Íé­…¹¥”œ¤ì(€€€…Ý…¥ÐÑ•ÍÑ•È¹•¹Ñ•ÉQ•áÐ¡™¥•±‘Ì¹…Ð Ä¤°€¡ÑÑÁÌè¼½¡„¹•á…µÁ±”¹¹•Ðœ¤ì(€€€…Ý…¥ÐÑ•ÍÑ•È¹•¹Ñ•ÉQ•áÐ¡™¥•±‘Ì¹…Ð È¤°€…‰‘•™¡¥©­±µ¹½ÁÅÉÍÑÕÙÝáåèÄÈÌÐÔØœ¤ì(€€€…Ý…¥ÐÑ•ÍÑ•È¹•¹ÍÕÉ•Y¥Í¥‰±”¡™¥¹¹‰åQåÁ”¡¥±±•‘	ÕÑÑ½¸¤¤ì(€€€…Ý…¥ÐÑ•ÍÑ•È¹ÁÕµÁ¹‘M•ÑÑ±” ¤ì(€€€…Ý…¥ÐÑ•ÍÑ•È¹Ñ…À¡™¥¹¹‰åQåÁ”¡¥±±•‘	ÕÑÑ½¸¤¤ì(€€€…Ý…¥ÐÑ•ÍÑ•È¹ÁÕµÁ¹‘M•ÑÑ±” ¤ì((€€€•áÁ•Ð¡™¥¹¹‰åQåÁ”¡Q•áÑ½Éµ¥•±¤°™¥¹‘Í9]¥‘•ÑÌ Ì¤¤ì(€€€•áÁ•Ð¡}™¥•±‘Q•áÐ¡Ñ•ÍÑ•È°€À¤°€5¥•Íé­…¹¥”œ¤ì(€€€•áÁ•Ð¡}™¥•±‘Q•áÐ¡Ñ•ÍÑ•È°€Ä¤°€¡ÑÑÁÌè¼½¡„¹•á…µÁ±”¹¹•Ðœ¤ì(€€€•áÁ•Ð¡}™¥•±‘Q•áÐ¡Ñ•ÍÑ•È°€È¤°€…‰‘•™¡¥©­±µ¹½ÁÅÉÍÑÕÙÝáåèÄÈÌÐÔØœ¤ì(€€€•áÁ•Ð¡™¥¹¹‰åQåÁ”¡¥±±•‘	ÕÑÑ½¸¤°™¥¹‘Í=¹•]¥‘•Ð¤ì(€€€•áÁ•Ð¡™¥¹¹‰å%½¸¡%½¹Ì¹•ÉÉ½É}½ÕÑ±¥¹•}É½Õ¹‘•¤°™¥¹‘Í=¹•]¥‘•Ð¤ì(€€€•áÁ•Ð¡Ñ•ÍÑ•È¹Ñ…­•á•ÁÑ¥½¸ ¤°¥Í9Õ±°¤ì(€ô¤ì)ô()½¹ÍÐMÑÉ¥¹œ}ÁÉ½™¥±•€ô€¡„µ…………………„œì)½¹ÍÐMÑÉ¥¹œ}ÁÉ½™¥±•€ô€¡„µ‰‰‰‰‰‰‰ˆœì)½¹ÍÐMÑÉ¥¹œ}ÁÉ½™¥±•€ô€¡„µŒœì()!½µ•½¹ÑÉ½±AÉ•™•É•¹•Ì}ÁÉ•™•É•¹•Ì ¤€ôø!½µ•½¹ÑÉ½±AÉ•™•É•¹•Ì (€ÍÑ½É…”èM¡…É•‘AÉ•™•É•¹•ÍÍå¹Œ ¤°(€™…±±‰…­1½…±”è½¹ÍÐ1½…±” Á°œ¤°(¤ì()!½µ•½¹ÑÉ½±½¹ÑÉ½±±•È}½¹ÑÉ½±±•È¡ì(€É•ÅÕ¥É•!½µ•½¹ÑÉ½±AÉ•™•É•¹•ÌÁÉ•™•É•¹•Ì°(€É•ÅÕ¥É•É•‘•¹Ñ¥…±ÍMÑ½É”É•‘•¹Ñ¥…±ÍMÑ½É”°(€!½µ•M¹…ÁÍ¡½Ñ…¡”üÍ¹…ÁÍ¡½Ñ…¡”°(€!½µ•ÍÍ¥ÍÑ…¹ÑM½ÕÉ•…Ñ½ÉäüÍ½ÕÉ•…Ñ½Éä°(€	¥½µ•ÑÉ¥ÕÑ¡•¹Ñ¥…Ñ½Èü‰¥½µ•ÑÉ¥ÕÑ¡•¹Ñ¥…Ñ½È°)ô¤€ôø!½µ•½¹ÑÉ½±½¹ÑÉ½±±•È (€ÁÉ•™•É•¹•ÌèÁÉ•™•É•¹•Ì°(€¡Õ‰É•‘•¹Ñ¥…±ÍMÑ½É”è}5•µ½Éå!Õ‰É•‘•¹Ñ¥…±ÍMÑ½É” ¤°(€¡½µ•ÍÍ¥ÍÑ…¹ÑÉ•‘•¹Ñ¥…±ÍMÑ½É”èÉ•‘•¹Ñ¥…±ÍMÑ½É”°(€Í¹…ÁÍ¡½Ñ…¡”èÍ¹…ÁÍ¡½Ñ…¡”€üü}5•µ½ÉåM¹…ÁÍ¡½Ñ…¡” ¤°(€‰¥½µ•ÑÉ¥ÕÑ¡•¹Ñ¥…Ñ½Èè(€€€€€‰¥½µ•ÑÉ¥ÕÑ¡•¹Ñ¥…Ñ½È€üü½¹ÍÐ}U¹…Ù…¥±…‰±•	¥½µ•ÑÉ¥ÕÑ¡•¹Ñ¥…Ñ½È ¤°(€¡½µ•ÍÍ¥ÍÑ…¹ÑM½ÕÉ•…Ñ½ÉäèÍ½ÕÉ•…Ñ½Éä°(€•¹…‰±•A½±±¥¹œè™…±Í”°(¤ì()]¥‘•Ð}±½…±¥é•‘ÁÀ¡]¥‘•Ð¡½µ”¤€ôø5…Ñ•É¥…±ÁÀ (€±½…±”è½¹ÍÐ1½…±” Á°œ¤°(€ÍÕÁÁ½ÉÑ•‘1½…±•Ìè½¹ÍÐ€ñ1½…±”ùm1½…±” Á°œ¤°1½…±” •¸œ¥t°(€±½…±¥é…Ñ¥½¹Í•±•…Ñ•Ìè½¹ÍÐ€ñ1½…±¥é…Ñ¥½¹Í•±•…Ñ”ñ=‰©•Ðøùl(€€€!½µ•½¹ÑÉ½±MÑÉ¥¹Ì¹‘•±•…Ñ”°(€€€±½‰…±5…Ñ•É¥…±1½…±¥é…Ñ¥½¹Ì¹‘•±•…Ñ”°(€€€±½‰…±]¥‘•ÑÍ1½…±¥é…Ñ¥½¹Ì¹‘•±•…Ñ”°(€€€±½‰…±ÕÁ•ÉÑ¥¹½1½…±¥é…Ñ¥½¹Ì¹‘•±•…Ñ”°(€t°(€¡½µ”è¡½µ”°(¤ì()MÑÉ¥¹œ}™¥•±‘Q•áÐ¡]¥‘•ÑQ•ÍÑ•ÈÑ•ÍÑ•È°¥¹Ð¥¹‘•à¤€ôøÑ•ÍÑ•È(€€€€¹Ý¥‘•ÐñQ•áÑ½Éµ¥•±ø¡™¥¹¹‰åQåÁ”¡Q•áÑ½Éµ¥•±¤¹…Ð¡¥¹‘•à¤¤(€€€€¹½¹ÑÉ½±±•È„(€€€€¹Ñ•áÐì()!½µ•¹Ñ¥Ñä}Í•±•Ñ¹Ñ¥Ñä (€MÑÉ¥¹œÍ½ÕÉ•%°ì(€É•ÅÕ¥É•MÑÉ¥¹œÍÑ…Ñ”°(€1¥ÍÐñMÑÉ¥¹œø½ÁÑ¥½¹Ì€ô½¹ÍÐ€ñMÑÉ¥¹œùldœ°€9%!Pt°)ô¤€ôø!½µ•¹Ñ¥Ñä (€¥èM½ÕÉ•M½Á•‘%¡Í½ÕÉ•%èÍ½ÕÉ•%°±½…±%è€Í•±•Ð¹µ½‘”œ¤°(€‘•Ù¥•%èM½ÕÉ•M½Á•‘%¡Í½ÕÉ•%èÍ½ÕÉ•%°±½…±%è€‘•Ù¥”¹½¹ÑÉ½±±•Èœ¤°(€…É•…%èM½ÕÉ•M½Á•‘%¡Í½ÕÉ•%èÍ½ÕÉ•%°±½…±%è€…É•„¹ÕÑ¥±¥Ñäœ¤°(€¹…µ”è€QÉåˆÁÉ…äœ°(€ÑåÁ”è!½µ•¹Ñ¥ÑåQåÁ”¹Í•±•Ð°(€ÍÑ…Ñ”èÍÑ…Ñ”°(€…ÑÑÉ¥‰ÕÑ•Ìè½¹ÍÐ€ñMÑÉ¥¹œ°=‰©•Ðüùíô°(€Õ¹¥Ðè€œœ°(€…Ù…¥±…‰¥±¥Ñäè¹Ñ¥ÑåÙ…¥±…‰¥±¥Ñä¹…Ù…¥±…‰±”°(€ÝÉ¥Ñ…‰±”èÑÉÕ”°(€É¥Í¬è!½µ•½µµ…¹‘I¥Í¬¹É½ÕÑ¥¹”°(€¡…¹•‘Ðè…Ñ•Q¥µ”¹ÕÑŒ ÈÀÈØ°€à°€ÄÌ°€ÄÀ¤°(€ÕÁ‘…Ñ•‘Ðè…Ñ•Q¥µ”¹ÕÑŒ ÈÀÈØ°€à°€ÄÌ°€ÄÀ¤°(€½¹ÍÑÉ…¥¹ÑÌè¹Ñ¥Ñå½¹ÍÑÉ…¥¹ÑÌ¡½ÁÑ¥½¹Ìè½ÁÑ¥½¹Ì¤°(¤ì()!½µ•¹Ñ¥Ñä}É¥Ñ¥…±¹Ñ¥Ñä¡MÑÉ¥¹œÍ½ÕÉ•%¤€ôø!½µ•¹Ñ¥Ñä (€¥èM½ÕÉ•M½Á•‘%¡Í½ÕÉ•%èÍ½ÕÉ•%°±½…±%è€¹Õµ‰•È¹Ñ…É•Ñ}Ñ•µÁ•É…ÑÕÉ”œ¤°(€‘•Ù¥•%èM½ÕÉ•M½Á•‘%¡Í½ÕÉ•%èÍ½ÕÉ•%°±½…±%è€‘•Ù¥”¹½¹ÑÉ½±±•Èœ¤°(€…É•…%èM½ÕÉ•M½Á•‘%¡Í½ÕÉ•%èÍ½ÕÉ•%°±½…±%è€…É•„¹ÕÑ¥±¥Ñäœ¤°(€¹…µ”è€Q•µÁ•É…ÑÕÉ„é…‘…¹„œ°(€ÑåÁ”è!½µ•¹Ñ¥ÑåQåÁ”¹¹Õµ‰•È°(€ÍÑ…Ñ”è€ÈÐ¸À°(€…ÑÑÉ¥‰ÕÑ•Ìè½¹ÍÐ€ñMÑÉ¥¹œ°=‰©•Ðüùíô°(€Õ¹¥Ðè€Ÿ
+Áœ°(€…Ù…¥±…‰¥±¥Ñäè¹Ñ¥ÑåÙ…¥±…‰¥±¥Ñä¹…Ù…¥±…‰±”°(€ÝÉ¥Ñ…‰±”èÑÉÕ”°(€É¥Í¬è!½µ•½µµ…¹‘I¥Í¬¹É¥Ñ¥…°°(€¡…¹•‘Ðè…Ñ•Q¥µ”¹ÕÑŒ ÈÀÈØ°€à°€ÄÌ°€ÄÀ¤°(€ÕÁ‘…Ñ•‘Ðè…Ñ•Q¥µ”¹ÕÑŒ ÈÀÈØ°€à°€ÄÌ°€ÄÀ¤°(€½¹ÍÑÉ…¥¹ÑÌè½¹ÍÐ¹Ñ¥Ñå½¹ÍÑÉ…¥¹ÑÌ¡µ¥¹¥µÕ´è€Äà°µ…á¥µÕ´è€ÌÀ°ÍÑ•Àè€À¸Ô¤°(¤ì()!½µ•M¹…ÁÍ¡½Ð}Í¹…ÁÍ¡½Ð (€MÑÉ¥¹œÍ½ÕÉ•%°ì(€!½µ•¹Ñ¥Ñäü•¹Ñ¥Ñä°(€‰½½°½™™±¥¹”€ô™…±Í”°)ô¤€ôø!½µ•M¹…ÁÍ¡½Ð (€Í¡•µ…Y•ÉÍ¥½¸è!½µ•M¹…ÁÍ¡½Ð¹ÕÉÉ•¹ÑM¡•µ…Y•ÉÍ¥½¸°(€Í½ÕÉ•%èÍ½ÕÉ•%°(€Í½ÕÉ•9…µ”è€!½µ”ÍÍ¥ÍÑ…¹Ð€‘Í½ÕÉ•%œ°(€Í½ÕÉ•-¥¹è!½µ•M½ÕÉ•-¥¹¹¡½µ•ÍÍ¥ÍÑ…¹Ð°(€…É•…Ìè½¹ÍÐ€ñ!½µ•É•„ùmt°(€‘•Ù¥•Ìè½¹ÍÐ€ñ!½µ••Ù¥”ùmt°(€•¹Ñ¥Ñ¥•Ìè•¹Ñ¥Ñä€ôô¹Õ±°€ü½¹ÍÐ€ñ!½µ•¹Ñ¥Ñäùmt€è€ñ!½µ•¹Ñ¥Ñäùm•¹Ñ¥Ñåt°(€…ÕÑ½µ…Ñ¥½¹Ìè½¹ÍÐ€ñ!½µ•ÕÑ½µ…Ñ¥½¸ùmt°(€ÕÁ‘…Ñ•Ìè½¹ÍÐ€ñ!½µ•UÁ‘…Ñ”ùmt°(€Íå¹¡É½¹¥é•‘Ðè…Ñ•Q¥µ”¹ÕÑŒ ÈÀÈØ°€à°€ÄÌ°€ÄÀ¤°(€¥ÍA…ÉÑ¥…°è™…±Í”°(€¥Í=™™±¥¹”è½™™±¥¹”°(¤ì()™¥¹…°±…ÍÌ}…­•!½µ•…Ñ…M½ÕÉ”¥µÁ±•µ•¹ÑÌ!½µ•…Ñ…M½ÕÉ”ì(€}…­•!½µ•…Ñ…M½ÕÉ”¡ì(€€€É•ÅÕ¥É•Ñ¡¥Ì¹Í½ÕÉ•%°(€€€É•ÅÕ¥É•Ñ¡¥Ì¹½¹½¹¹•Ð°(€€€Ñ¡¥Ì¹½¹±½Í”°(€€€Ñ¡¥Ì¹½¹M•¹‘½µµ…¹°(€ô¤ì((€™…Ñ½Éä}…­•!½µ•…Ñ…M½ÕÉ”¹¥µµ•‘¥…Ñ”¡!½µ•M¹…ÁÍ¡½ÐÍ¹…ÁÍ¡½Ð¤€ôø(€€€€€}…­•!½µ•…Ñ…M½ÕÉ” (€€€€€€€Í½ÕÉ•%èÍ¹…ÁÍ¡½Ð¹Í½ÕÉ•%°(€€€€€€€½¹½¹¹•Ðè€¡|¤…Íå¹Œ€ôøÍ¹…ÁÍ¡½Ð°(€€€€€€¤ì((€½Ù•ÉÉ¥‘”(€™¥¹…°MÑÉ¥¹œÍ½ÕÉ•%ì(€™¥¹…°ÕÑÕÉ”ñ!½µ•M¹…ÁÍ¡½ÐøÕ¹Ñ¥½¸¡…¹•±±…Ñ¥½¹Q½­•¸…¹•±±…Ñ¥½¸¤½¹½¹¹•Ðì(€™¥¹…°ÕÑÕÉ”ñÙ½¥øÕ¹Ñ¥½¸ ¤ü½¹±½Í”ì(€™¥¹…°ÕÑÕÉ”ñÙ½¥øÕ¹Ñ¥½¸ (€€€!½µ•¹Ñ¥Ñä•¹Ñ¥Ñä°(€€€=‰©•ÐüÙ…±Õ”°(€€€…¹•±±…Ñ¥½¹Q½­•¸…¹•±±…Ñ¥½¸°(€€¤ü(€½¹M•¹‘½µµ…¹ì(€™¥¹…°MÑÉ•…µ½¹ÑÉ½±±•Èñ!½µ•¹Ñ¥Ñäø}•Ù•¹ÑÌ€ô(€€€€€MÑÉ•…µ½¹ÑÉ½±±•Èñ!½µ•¹Ñ¥Ñäø¹‰É½…‘…ÍÐ¡Íå¹ŒèÑÉÕ”¤ì(€¥¹Ð½¹¹•Ñ½Õ¹Ð€ô€Àì(€¥¹Ð±½Í•½Õ¹Ð€ô€Àì(€¥¹ÐÍ•¹‘½µµ…¹‘½Õ¹Ð€ô€Àì(€!½µ•M¹…ÁÍ¡½Ðü}±…ÍÑM¹…ÁÍ¡½Ðì((€½Ù•ÉÉ¥‘”(€MÑÉ¥¹œ•Ð‘¥ÍÁ±…å9…µ”€ôø€!½µ”ÍÍ¥ÍÑ…¹Ð€‘Í½ÕÉ•%œì((€½Ù•ÉÉ¥‘”(€!½µ•M½ÕÉ•-¥¹•Ð­¥¹€ôø!½µ•M½ÕÉ•-¥¹¹¡½µ•ÍÍ¥ÍÑ…¹Ðì((€½Ù•ÉÉ¥‘”(€MÑÉ•…´ñ!½µ•¹Ñ¥Ñäø•ÐÍÑ…Ñ•¡…¹•Ì€ôø}•Ù•¹ÑÌ¹ÍÑÉ•…´ì((€‰½½°•Ð¡…ÍI•…±Ñ¥µ•1¥ÍÑ•¹•È€ôø}•Ù•¹ÑÌ¹¡…Í1¥ÍÑ•¹•Èì((€½Ù•ÉÉ¥‘”(€ÕÑÕÉ”ñ!½µ•M¹…ÁÍ¡½Ðø½¹¹•Ð¡…¹•±±…Ñ¥½¹Q½­•¸…¹•±±…Ñ¥½¸¤…Íå¹Œì(€€€½¹¹•Ñ½Õ¹Ð¬¬ì(€€€™¥¹…°Í¹…ÁÍ¡½Ð€ô…Ý…¥Ð½¹½¹¹•Ð¡…¹•±±…Ñ¥½¸¤ì(€€€}±…ÍÑM¹…ÁÍ¡½Ð€ôÍ¹…ÁÍ¡½Ðì(€€€É•ÑÕÉ¸Í¹…ÁÍ¡½Ðì(€ô((€½Ù•ÉÉ¥‘”(€ÕÑÕÉ”ñ!½µ•M¹…ÁÍ¡½ÐøÉ•™É•Í ¡…¹•±±…Ñ¥½¹Q½­•¸…¹•±±…Ñ¥½¸¤…Íå¹Œì(€€€…¹•±±…Ñ¥½¸¹Ñ¡É½Ý%™…¹•±±• ¤ì(€€€™¥¹…°Í¹…ÁÍ¡½Ð€ô}±…ÍÑM¹…ÁÍ¡½Ðì(€€€¥˜€¡Í¹…ÁÍ¡½Ð€ôô¹Õ±°¤ì(€€€€€Ñ¡É½Ü½¹ÍÐÁÁ…¥±ÕÉ” (€€€€€€€½‘”èÁÁ…¥±ÕÉ•½‘”¹½™™±¥¹”°(€€€€€€€µ•ÍÍ…•-•äè€•ÉÉ½É9•ÑÝ½É¬œ°(€€€€€€¤ì(€€€ô(€€€É•ÑÕÉ¸Í¹…ÁÍ¡½Ðì(€ô((€Ù½¥•µ¥Ð¡!½µ•¹Ñ¥Ñä•¹Ñ¥Ñä¤€ôø}•Ù•¹ÑÌ¹…‘¡•¹Ñ¥Ñä¤ì((€½Ù•ÉÉ¥‘”(€ÕÑÕÉ”ñÙ½¥øÍ•¹‘½µµ…¹ (€€€!½µ•¹Ñ¥Ñä•¹Ñ¥Ñä°(€€€=‰©•ÐüÙ…±Õ”°(€€€…¹•±±…Ñ¥½¹Q½­•¸…¹•±±…Ñ¥½¸°(€€¤…Íå¹Œì(€€€…¹•±±…Ñ¥½¸¹Ñ¡É½Ý%™…¹•±±• ¤ì(€€€Í•¹‘½µµ…¹‘½Õ¹Ð¬¬ì(€€€…Ý…¥Ð½¹M•¹‘½µµ…¹ü¹…±°¡•¹Ñ¥Ñä°Ù…±Õ”°…¹•±±…Ñ¥½¸¤ì(€ô((€½Ù•ÉÉ¥‘”(€ÕÑÕÉ”ñ1¥ÍÐñ!¥ÍÑ½ÉåA½¥¹Ðøø±½…‘!¥ÍÑ½Éä (€€€!½µ•¹Ñ¥Ñä•¹Ñ¥Ñä°(€€€ÕÉ…Ñ¥½¸Á•É¥½°(€€€…¹•±±…Ñ¥½¹Q½­•¸…¹•±±…Ñ¥½¸°(€€¤…Íå¹Œì(€€€…¹•±±…Ñ¥½¸¹Ñ¡É½Ý%™…¹•±±• ¤ì(€€€É•ÑÕÉ¸½¹ÍÐ€ñ!¥ÍÑ½ÉåA½¥¹Ðùmtì(€ô((€½Ù•ÉÉ¥‘”(€ÕÑÕÉ”ñÙ½¥ø¥¹ÍÑ…±±UÁ‘…Ñ” (€€€!½µ•UÁ‘…Ñ”ÕÁ‘…Ñ”°(€€€…¹•±±…Ñ¥½¹Q½­•¸…¹•±±…Ñ¥½¸°(€€¤…Íå¹Œì(€€€…¹•±±…Ñ¥½¸¹Ñ¡É½Ý%™…¹•±±• ¤ì(€ô((€½Ù•ÉÉ¥‘”(€ÕÑÕÉ”ñÙ½¥ø±½Í” ¤…Íå¹Œì(€€€±½Í•½Õ¹Ð¬¬ì(€€€…Ý…¥Ð½¹±½Í”ü¹…±° ¤ì(€ô((€ÕÑÕÉ”ñÙ½¥ø‘¥ÍÁ½Í•MÑÉ•…´ ¤…Íå¹Œì(€€€¥˜€ …}•Ù•¹ÑÌ¹¥Í±½Í•¤…Ý…¥Ð}•Ù•¹ÑÌ¹±½Í” ¤ì(€ô)ô()™¥¹…°±…ÍÌ}5•µ½Éå!½µ•ÍÍ¥ÍÑ…¹ÑMÑ½É”(€€€¥µÁ±•µ•¹ÑÌÉ•‘•¹Ñ¥…±ÍMÑ½É”°!½µ•ÍÍ¥ÍÑ…¹ÑAÉ½™¥±•MÑ½É”ì(€™¥¹…°5…ÀñMÑÉ¥¹œ°€¡íMÑÉ¥¹œ¹…µ”°!½µ•ÍÍ¥ÍÑ…¹ÑÉ•‘•¹Ñ¥…±ÌÉ•‘•¹Ñ¥…±Íô¤ø(€}ÁÉ½™¥±•Ì€ô€ñMÑÉ¥¹œ°€¡íMÑÉ¥¹œ¹…µ”°!½µ•ÍÍ¥ÍÑ…¹ÑÉ•‘•¹Ñ¥…±ÌÉ•‘•¹Ñ¥…±Íô¤ùíôì(€!½µ•ÍÍ¥ÍÑ…¹ÑÉ•‘•¹Ñ¥…±Ìü}±•…äì(€MÑÉ¥¹œüÍ•±•Ñ•‘%ì(€¥¹Ð}¹•áÑ%€ô€Àì(€ÕÑÕÉ”ñÙ½¥øÕ¹Ñ¥½¸¡MÑÉ¥¹œ¥¤ü‰•™½É•M•±•Ðì(€ÕÑÕÉ”ñÙ½¥øÕ¹Ñ¥½¸¡MÑÉ¥¹œ¥¤ü‰•™½É•M…Ù”ì((€Ù½¥…‘‘AÉ½™¥±”¡ì(€€€É•ÅÕ¥É•MÑÉ¥¹œ¥°(€€€É•ÅÕ¥É•MÑÉ¥¹œ¹…µ”°(€€€É•ÅÕ¥É•MÑÉ¥¹œ¡½ÍÐ°(€ô¤ì(€€€}ÁÉ½™¥±•Ím¥‘t€ô€ (€€€€€¹…µ”è¹…µ”°(€€€€€É•‘•¹Ñ¥…±Ìè!½µ•ÍÍ¥ÍÑ…¹ÑÉ•‘•¹Ñ¥…±Ì¹Á…ÉÍ” (€€€€€€€‰…Í•UÉ°è€¡ÑÑÁÌè¼¼‘¡½ÍÐœ°(€€€€€€€…•ÍÍQ½­•¸è€œ‘í¥‘õ…‰‘•™¡¥©­±µ¹½ÁÅÉÍÑÕÙÝáåèœ°(€€€€€€¤°(€€€€¤ì(€ô((€‰½½°½¹Ñ…¥¹Ì¡MÑÉ¥¹œ¥¤€ôø}ÁÉ½™¥±•Ì¹½¹Ñ…¥¹Í-•ä¡¥¤ì((€½Ù•ÉÉ¥‘”(€ÕÑÕÉ”ñÙ½¥ø±•…È ¤…Íå¹Œì(€€€}±•…ä€ô¹Õ±°ì(€€€}ÁÉ½™¥±•Ì¹±•…È ¤ì(€€€Í•±•Ñ•‘%€ô¹Õ±°ì(€ô((€½Ù•ÉÉ¥‘”(€ÕÑÕÉ”ñ!½µ•ÍÍ¥ÍÑ…¹ÑÉ•‘•¹Ñ¥…±Ìüø±½… ¤…Íå¹Œì(€€€™¥¹…°¥€ôÍ•±•Ñ•‘%ì(€€€É•ÑÕÉ¸¥€ôô¹Õ±°€ü}±•…ä€è}ÁÉ½™¥±•Ím¥‘tü¹É•‘•¹Ñ¥…±Ìì(€ô((€½Ù•ÉÉ¥‘”(€ÕÑÕÉ”ñÙ½¥øÍ…Ù”¡!½µ•ÍÍ¥ÍÑ…¹ÑÉ•‘•¹Ñ¥…±ÌÉ•‘•¹Ñ¥…±Ì¤…Íå¹Œì(€€€}±•…ä€ôÉ•‘•¹Ñ¥…±Ìì(€ô((€½Ù•ÉÉ¥‘”(€ÕÑÕÉ”ñ1¥ÍÐñ!½µ•ÍÍ¥ÍÑ…¹ÑAÉ½™¥±”øø±¥ÍÑAÉ½™¥±•Ì ¤…Íå¹Œ€ôø(€€€€€€ñ!½µ•ÍÍ¥ÍÑ…¹ÑAÉ½™¥±”ùl(€€€€€€€™½È€¡™¥¹…°•¹ÑÉä¥¸}ÁÉ½™¥±•Ì¹•¹ÑÉ¥•Ì¤(€€€€€€€€€!½µ•ÍÍ¥ÍÑ…¹ÑAÉ½™¥±” (€€€€€€€€€€€¥è•¹ÑÉä¹­•ä°(€€€€€€€€€€€¹…µ”è•¹ÑÉä¹Ù…±Õ”¹¹…µ”°(€€€€€€€€€€€‰…Í•UÉ¤è•¹ÑÉä¹Ù…±Õ”¹É•‘•¹Ñ¥…±Ì¹‰…Í•UÉ¤°(€€€€€€€€€€¤°(€€€€€tì((€½Ù•ÉÉ¥‘”(€ÕÑÕÉ”ñ!½µ•ÍÍ¥ÍÑ…¹ÑÉ•‘•¹Ñ¥…±Ìüø±½…‘AÉ½™¥±”¡MÑÉ¥¹œ¥¤…Íå¹Œ€ôø(€€€€€}ÁÉ½™¥±•Ím¥‘tü¹É•‘•¹Ñ¥…±Ìì((€½Ù•ÉÉ¥‘”(€ÕÑÕÉ”ñMÑÉ¥¹œüøÍ•±•Ñ•‘AÉ½™¥±•% ¤…Íå¹Œ€ôøÍ•±•Ñ•‘%ì((€½Ù•ÉÉ¥‘”(€ÕÑÕÉ”ñMÑÉ¥¹œøÍ…Ù•AÉ½™¥±”¡ì(€€€É•ÅÕ¥É•!½µ•ÍÍ¥ÍÑ…¹ÑÉ•‘•¹Ñ¥…±ÌÉ•‘•¹Ñ¥…±Ì°(€€€É•ÅÕ¥É•MÑÉ¥¹œ¹…µ”°(€€€MÑÉ¥¹œüÁÉ½™¥±•%°(€ô¤…Íå¹Œì(€€€™¥¹…°¥€ô(€€€€€€€ÁÉ½™¥±•%€üü€¡„µµ•µ½Éä‘ì¡}¹•áÑ%¬¬¤¹Ñ½MÑÉ¥¹œ ¤¹Á…‘1•™Ð Ø°€œÀœ¥ôœì(€€€…Ý…¥Ð‰•™½É•M…Ù”ü¹…±°¡¥¤ì(€€€}ÁÉ½™¥±•Ím¥‘t€ô€¡¹…µ”è¹…µ”°É•‘•¹Ñ¥…±ÌèÉ•‘•¹Ñ¥…±Ì¤ì(€€€Í•±•Ñ•‘%€ô¥ì(€€€É•ÑÕÉ¸¥ì(€ô((€½Ù•ÉÉ¥‘”(€ÕÑÕÉ”ñÙ½¥øÍ•±•ÑAÉ½™¥±”¡MÑÉ¥¹œ¥¤…Íå¹Œì(€€€¥˜€ …}ÁÉ½™¥±•Ì¹½¹Ñ…¥¹Í-•ä¡¥¤¤ì(€€€€€Ñ¡É½ÜÉÕµ•¹ÑÉÉ½È¹Ù…±Õ”¡¥°€¥œ°€AÉ½™¥±”‘½•Ì¹½Ð•á¥ÍÐ¸œ¤ì(€€€ô(€€€…Ý…¥Ð‰•™½É•M•±•Ðü¹…±°¡¥¤ì(€€€Í•±•Ñ•‘%€ô¥ì(€ô((€½Ù•ÉÉ¥‘”(€ÕÑÕÉ”ñÙ½¥ø‘•±•Ñ•AÉ½™¥±”¡MÑÉ¥¹œ¥¤…Íå¹Œì(€€€}ÁÉ½™¥±•Ì¹É•µ½Ù”¡¥¤ì(€€€¥˜€¡Í•±•Ñ•‘%€ôô¥¤Í•±•Ñ•‘%€ô}ÁÉ½™¥±•Ì¹­•åÌ¹™¥ÉÍÑ=É9Õ±°ì(€ô)ô()™¥¹…°±…ÍÌ}5•µ½ÉåM¹…ÁÍ¡½Ñ…¡”¥µÁ±•µ•¹ÑÌ!½µ•M¹…ÁÍ¡½Ñ…¡”ì(€™¥¹…°5…Àñ!½µ•M½ÕÉ•-¥¹°!½µ•M¹…ÁÍ¡½ÐøÙ…±Õ•Ì€ô(€€€€€€ñ!½µ•M½ÕÉ•-¥¹°!½µ•M¹…ÁÍ¡½Ðùíôì((€½Ù•ÉÉ¥‘”(€ÕÑÕÉ”ñÙ½¥ø±•…È¡!½µ•M½ÕÉ•-¥¹­¥¹°íMÑÉ¥¹œüÍ½ÕÉ•%‘ô¤…Íå¹Œì(€€€™¥¹…°ÕÉÉ•¹Ð€ôÙ…±Õ•Ím­¥¹‘tì(€€€¥˜€¡Í½ÕÉ•%€ôô¹Õ±°ñðÕÉÉ•¹Ðü¹Í½ÕÉ•%€ôôÍ½ÕÉ•%¤Ù…±Õ•Ì¹É•µ½Ù”¡­¥¹¤ì(€ô((€½Ù•ÉÉ¥‘”(€ÕÑÕÉ”ñ!½µ•M¹…ÁÍ¡½Ðüø±½…¡!½µ•M½ÕÉ•-¥¹­¥¹°MÑÉ¥¹œÍ½ÕÉ•%¤…Íå¹Œì(€€€™¥¹…°Ù…±Õ”€ôÙ…±Õ•Ím­¥¹‘tì(€€€É•ÑÕÉ¸Ù…±Õ”ü¹Í½ÕÉ•%€ôôÍ½ÕÉ•%€üÙ…±Õ”€è¹Õ±°ì(€ô((€½Ù•ÉÉ¥‘”(€ÕÑÕÉ”ñÙ½¥øÍ…Ù”¡!½µ•M¹…ÁÍ¡½ÐÍ¹…ÁÍ¡½Ð¤…Íå¹Œì(€€€Ù…±Õ•ÍmÍ¹…ÁÍ¡½Ð¹Í½ÕÉ•-¥¹‘t€ôÍ¹…ÁÍ¡½Ðì(€ô)ô()™¥¹…°±…ÍÌ}5•µ½Éå!Õ‰É•‘•¹Ñ¥…±ÍMÑ½É”¥µÁ±•µ•¹ÑÌ!Õ‰É•‘•¹Ñ¥…±ÍMÑ½É”ì(€!Õ‰É•‘•¹Ñ¥…±Ìü}É•‘•¹Ñ¥…±Ìì((€½Ù•ÉÉ¥‘”(€ÕÑÕÉ”ñÙ½¥ø±•…È ¤…Íå¹Œ€ôø}É•‘•¹Ñ¥…±Ì€ô¹Õ±°ì((€½Ù•ÉÉ¥‘”(€ÕÑÕÉ”ñ!Õ‰É•‘•¹Ñ¥…±Ìüø±½… ¤…Íå¹Œ€ôø}É•‘•¹Ñ¥…±Ìì((€½Ù•ÉÉ¥‘”(€ÕÑÕÉ”ñÙ½¥øÍ…Ù”¡!Õ‰É•‘•¹Ñ¥…±ÌÉ•‘•¹Ñ¥…±Ì¤…Íå¹Œ€ôø(€€€€€}É•‘•¹Ñ¥…±Ì€ôÉ•‘•¹Ñ¥…±Ìì)ô()™¥¹…°±…ÍÌ}U¹…Ù…¥±…‰±•	¥½µ•ÑÉ¥ÕÑ¡•¹Ñ¥…Ñ½È(€€€¥µÁ±•µ•¹ÑÌ	¥½µ•ÑÉ¥ÕÑ¡•¹Ñ¥…Ñ½Èì(€½¹ÍÐ}U¹…Ù…¥±…‰±•	¥½µ•ÑÉ¥ÕÑ¡•¹Ñ¥…Ñ½È ¤ì((€½Ù•ÉÉ¥‘”(€ÕÑÕÉ”ñ	¥½µ•ÑÉ¥Ù…¥±…‰¥±¥Ñäø…Ù…¥±…‰¥±¥Ñä ¤…Íå¹Œ€ôø(€€€€€	¥½µ•ÑÉ¥Ù…¥±…‰¥±¥Ñä¹Õ¹…Ù…¥±…‰±”ì((€½Ù•ÉÉ¥‘”(€ÕÑÕÉ”ñ	¥½µ•ÑÉ¥ÕÑ¡½É¥é…Ñ¥½¸ø…ÕÑ¡•¹Ñ¥…Ñ”¡ì(€€€É•ÅÕ¥É•MÑÉ¥¹œ±½…±¥é•‘I•…Í½¸°(€ô¤…Íå¹Œ€ôø	¥½µ•ÑÉ¥ÕÑ¡½É¥é…Ñ¥½¸¹Õ¹…Ù…¥±…‰±”ì)ô()™¥¹…°±…ÍÌ}•±…å•‘	¥½µ•ÑÉ¥ÕÑ¡•¹Ñ¥…Ñ½È¥µÁ±•µ•¹ÑÌ	¥½µ•ÑÉ¥ÕÑ¡•¹Ñ¥…Ñ½Èì(€™¥¹…°½µÁ±•Ñ•ÈñÙ½¥øÍÑ…ÉÑ•€ô½µÁ±•Ñ•ÈñÙ½¥ø ¤ì(€™¥¹…°½µÁ±•Ñ•Èñ	¥½µ•ÑÉ¥ÕÑ¡½É¥é…Ñ¥½¸ø}É•ÍÕ±Ð€ô(€€€€€½µÁ±•Ñ•Èñ	¥½µ•ÑÉ¥ÕÑ¡½É¥é…Ñ¥½¸ø ¤ì((€½Ù•ÉÉ¥‘”(€ÕÑÕÉ”ñ	¥½µ•ÑÉ¥Ù…¥±…‰¥±¥Ñäø…Ù…¥±…‰¥±¥Ñä ¤…Íå¹Œ€ôø(€€€€€	¥½µ•ÑÉ¥Ù…¥±…‰¥±¥Ñä¹…Ù…¥±…‰±”ì((€½Ù•ÉÉ¥‘”(€ÕÑÕÉ”ñ	¥½µ•ÑÉ¥ÕÑ¡½É¥é…Ñ¥½¸ø…ÕÑ¡•¹Ñ¥…Ñ”¡ì(€€€É•ÅÕ¥É•MÑÉ¥¹œ±½…±¥é•‘I•…Í½¸°(€ô¤ì(€€€¥˜€ …ÍÑ…ÉÑ•¹¥Í½µÁ±•Ñ•¤ÍÑ…ÉÑ•¹½µÁ±•Ñ” ¤ì(€€€É•ÑÕÉ¸}É•ÍÕ±Ð¹™ÕÑÕÉ”ì(€ô((€Ù½¥½µÁ±•Ñ”¡	¥½µ•ÑÉ¥ÕÑ¡½É¥é…Ñ¥½¸Ù…±Õ”¤ì(€€€¥˜€ …}É•ÍÕ±Ð¹¥Í½µÁ±•Ñ•¤}É•ÍÕ±Ð¹½µÁ±•Ñ”¡Ù…±Õ”¤ì(€ô)ô

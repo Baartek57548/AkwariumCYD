@@ -186,6 +186,18 @@ final class HomeControlStrings {
       'navSettings': 'Opcje',
       'more': 'WiÄ™cej',
       'home': 'Dom',
+      'homeHealthyTitle': 'Dom dziaÅ‚a spokojnie',
+      'homeHealthyDescription':
+          'Wszystkie najwaÅ¼niejsze systemy odpowiadajÄ… prawidÅ‚owo.',
+      'homeAttentionTitle': 'Kilka rzeczy wymaga uwagi',
+      'homeAttentionDescription': '{value} spraw do krÃ³tkiego sprawdzenia.',
+      'homeOfflineTitle': 'Sterowanie jest chwilowo offline',
+      'homeOfflineDescription':
+          'Ostatni zapisany stan pozostaje dostÄ™pny tylko do odczytu.',
+      'liveStatus': 'Na Å¼ywo',
+      'devicesOnlineLabel': 'UrzÄ…dzenia online',
+      'automationsActiveLabel': 'Aktywne reguÅ‚y',
+      'updatesAvailableLabel': 'Do instalacji',
       'refresh': 'OdÅ›wieÅ¼',
       'source': 'Å¹rÃ³dÅ‚o',
       'connected': 'PoÅ‚Ä…czono',
@@ -194,23 +206,58 @@ final class HomeControlStrings {
       'partial': 'CzÄ™Å›ciowa synchronizacja',
       'lastSync': 'Ostatnia synchronizacja: {value}',
       'favorites': 'Ulubione',
+      'quickControls': 'Szybkie sterowanie',
+      'quickControlsDescription': 'NajwaÅ¼niejsze funkcje zawsze pod rÄ™kÄ…',
+      'customize': 'Dostosuj',
+      'chooseDevices': 'Wybierz urzÄ…dzenia',
+      'noQuickControlsTitle': 'Zbuduj wÅ‚asny panel skrÃ³tÃ³w',
       'areasOverview': 'Pomieszczenia',
+      'areasOverviewDescription':
+          'NajwaÅ¼niejsze informacje w jednym spojrzeniu',
+      'roomsSummary': '{rooms} pomieszczeÅ„ Â· {items} elementÃ³w',
+      'devicesSummary': '{online} z {all} urzÄ…dzeÅ„ online',
+      'seeAll': 'Zobacz wszystkie',
+      'noRoomsTitle': 'Brak aktywnych pomieszczeÅ„',
       'recentActivity': 'Ostatnia aktywnoÅ›Ä‡',
+      'recentChanges': 'Ostatnie zmiany',
+      'recentChangesDescription': 'Rzeczywiste zmiany stanu urzÄ…dzeÅ„',
+      'noRecentChangesTitle': 'W domu jest spokojnie',
+      'noRecentChanges': 'Nowe zdarzenia pojawiÄ… siÄ™ tutaj automatycznie.',
+      'attentionCenter': 'Do sprawdzenia',
+      'attentionOfflineTitle': 'Brak poÅ‚Ä…czenia ze ÅºrÃ³dÅ‚em',
+      'attentionOfflineDescription':
+          'Dotknij, aby sprÃ³bowaÄ‡ poÅ‚Ä…czyÄ‡ ponownie.',
+      'attentionSyncTitle': 'Dane wymagajÄ… odÅ›wieÅ¼enia',
+      'attentionSyncDescription': 'Ostatnia synchronizacja nie jest kompletna.',
+      'attentionAquariumTitle': 'Alarm moduÅ‚u akwarium',
+      'attentionAquariumDescription': 'OtwÃ³rz kartÄ™ i sprawdÅº aktywne alarmy.',
+      'attentionDevicesTitle': '{value} urzÄ…dzeÅ„ jest offline',
+      'attentionDevicesDescription': 'SprawdÅº zasilanie i Å‚Ä…cznoÅ›Ä‡ urzÄ…dzeÅ„.',
+      'attentionUpdatesTitle': '{value} aktualizacji czeka',
+      'attentionUpdatesDescription':
+          'Pakiety sÄ… gotowe do bezpiecznej instalacji.',
       'aquarium': 'Akwarium',
       'aquariumHealthy': 'Parametry stabilne',
       'aquariumAlarm': 'Wymaga uwagi',
+      'aquariumNoAlarms': 'Brak aktywnych alarmÃ³w',
+      'aquariumOffline': 'Ostatni zapisany odczyt',
+      'aquariumIncomplete': 'NiepeÅ‚ny zestaw odczytÃ³w',
+      'aquariumStale': 'Odczyty wymagajÄ… odÅ›wieÅ¼enia',
       'waterTemperature': 'Temperatura wody',
       'waterChemistry': 'Chemia wody',
       'connection': 'PoÅ‚Ä…czenie',
       'details': 'SzczegÃ³Å‚y',
       'noAquarium': 'To ÅºrÃ³dÅ‚o nie udostÄ™pnia jeszcze moduÅ‚u akwarium.',
-      'noFavorites': 'Dodaj ulubione z menu encji.',
+      'noAquariumTitle': 'ModuÅ‚ akwarium nie jest dostÄ™pny',
+      'noFavorites':
+          'Wybierz urzÄ…dzenia i funkcje, ktÃ³rych uÅ¼ywasz najczÄ™Å›ciej.',
       'noAreas': 'Å¹rÃ³dÅ‚o nie zwrÃ³ciÅ‚o pomieszczeÅ„.',
       'noDevices': 'Nie znaleziono urzÄ…dzeÅ„.',
       'noAutomations': 'Brak automatyzacji w tym ÅºrÃ³dle.',
       'scenesAndScripts': 'Sceny i skrypty',
       'noUpdates': 'Brak dostÄ™pnych aktualizacji.',
       'entitiesCount': '{value} encji',
+      'itemsCount': '{value} elementÃ³w',
       'onlineDevices': '{value} urzÄ…dzeÅ„ online',
       'available': 'DostÄ™pne',
       'unavailable': 'NiedostÄ™pne',
@@ -220,6 +267,7 @@ final class HomeControlStrings {
       'stateOn': 'WÅ‚Ä…czone',
       'stateOff': 'WyÅ‚Ä…czone',
       'activeEntities': '{value} aktywne',
+      'activeNow': '{value} aktywne teraz',
       'rawState_heat': 'Grzanie',
       'rawState_heating': 'Grzanie',
       'rawState_cooling': 'ChÅ‚odzenie',
@@ -277,501 +325,5 @@ final class HomeControlStrings {
       'security': 'BezpieczeÅ„stwo',
       'biometricProtection': 'Biometria dla operacji krytycznych',
       'biometricProtectionDescription':
-          'Wymagaj odcisku palca lub rozpoznania twarzy przed zamkiem, alarmem, bramÄ… i aktualizacjÄ….',
-      'biometricUnavailable':
-          'Na tym urzÄ…dzeniu nie ma skonfigurowanej biometrii.',
-      'biometricCheckFailed':
-          'Nie udaÅ‚o siÄ™ sprawdziÄ‡ biometrii. Krytyczna operacja pozostanie zablokowana.',
-      'sourceManagement': 'ZarzÄ…dzanie ÅºrÃ³dÅ‚em',
-      'haInstances': 'Instancje Home Assistant',
-      'addHaInstance': 'Dodaj instancjÄ™ Home Assistant',
-      'removeHaInstance': 'UsuÅ„ instancjÄ™',
-      'removeHaInstanceConfirm':
-          'Profil â€{value}â€, jego token i lokalny cache zostanÄ… usuniÄ™te z urzÄ…dzenia.',
-      'switchSource': 'PrzeÅ‚Ä…cz ÅºrÃ³dÅ‚o',
-      'removeSource': 'UsuÅ„ ÅºrÃ³dÅ‚o i dane lokalne',
-      'removeSourceConfirm':
-          'Token, odcisk certyfikatu, sesja i cache tego ÅºrÃ³dÅ‚a zostanÄ… usuniÄ™te z urzÄ…dzenia.',
-      'demoScenarios': 'Scenariusze Demo',
-      'simulateOffline': 'Symuluj brak sieci',
-      'simulateAlarm': 'Symuluj alarm akwarium',
-      'appUpdate': 'Aktualizacja Home Control',
-      'deviceUpdates': 'Aktualizacje urzÄ…dzeÅ„',
-      'currentVersion': 'Obecna: {value}',
-      'latestVersion': 'Najnowsza: {value}',
-      'install': 'Zainstaluj',
-      'upToDate': 'Aktualne',
-      'unsupported': 'Jeszcze nieobsÅ‚ugiwane',
-      'mandatory': 'Wymagana',
-      'availableVersion': 'DostÄ™pna wersja {value}',
-      'later': 'PÃ³Åºniej',
-      'downloadAndInstall': 'Pobierz i zainstaluj',
-      'continueInstallation': 'Kontynuuj instalacjÄ™',
-      'otaAvailableMessage':
-          'Aktualizacja zawiera poprawki i usprawnienia. Pakiet zostanie zweryfikowany przed instalacjÄ….',
-      'otaDownloadingMessage':
-          'Pobieram podpisany pakiet i sprawdzam jego sumÄ™ SHA-256.',
-      'otaVerifyingMessage':
-          'Sprawdzam pakiet, wersjÄ™ i certyfikat podpisujÄ…cy.',
-      'otaPermissionMessage':
-          'Android otworzyÅ‚ ustawienia instalowania z tego ÅºrÃ³dÅ‚a. WÅ‚Ä…cz zgodÄ™ dla Home Control, wrÃ³Ä‡ do aplikacji i kontynuuj.',
-      'otaFailedMessage': 'Aktualizacja nie zostaÅ‚a zainstalowana.',
-      'otaPreparingMessage': 'PrzygotowujÄ™ bezpiecznÄ… aktualizacjÄ™ aplikacji.',
-      'diagnostics': 'Diagnostyka',
-      'entities': 'Encje',
-      'lastSyncLabel': 'Ostatnia synchronizacja',
-      'localCache': 'Cache lokalny',
-      'encrypted': 'Szyfrowany',
-      'privacyAndAbout': 'PrywatnoÅ›Ä‡ i informacje',
-      'privacy': 'PrywatnoÅ›Ä‡',
-      'privacyDescription':
-          'Home Control nie sprzedaje danych. PoÅ›wiadczenia i ostatni snapshot pozostajÄ… w bezpiecznym magazynie urzÄ…dzenia.',
-      'appVersion': 'Wersja {value}',
-      'openSourceLicenses': 'Licencje open source',
-      'attributes': 'Atrybuty ÅºrÃ³dÅ‚owe',
-      'entitySource': 'Å¹rÃ³dÅ‚o: {value}',
-      'entityUpdated': 'Aktualizacja: {value}',
-      'firmware': 'Firmware',
-      'manufacturer': 'Producent',
-      'model': 'Model',
-      'lastSeen': 'Ostatnio: {value}',
-      'search': 'Szukaj',
-      'searchHint': 'UrzÄ…dzenie, encja lub pomieszczenie',
-      'noResults': 'Brak wynikÃ³w dla tego zapytania.',
-      'noEntitiesInArea': 'W tym pomieszczeniu nie ma encji.',
-      'all': 'Wszystkie',
-      'unknownEntityHint':
-          'PrzyszÅ‚y lub niestandardowy typ jest pokazany bez zgadywania sposobu sterowania.',
-      'errorTitle': 'Nie udaÅ‚o siÄ™ ukoÅ„czyÄ‡ operacji',
-      'errorNetwork':
-          'Å¹rÃ³dÅ‚o jest nieosiÄ…galne. SprawdÅº sieÄ‡ lokalnÄ…, VPN lub Internet.',
-      'errorOffline':
-          'Brak poÅ‚Ä…czenia. Ostatnie dane pozostajÄ… widoczne tylko do odczytu.',
-      'errorToken':
-          'Token wygasÅ‚, zostaÅ‚ odrzucony albo nie ma wymaganych uprawnieÅ„.',
-      'errorServer': 'Serwer zwrÃ³ciÅ‚ bÅ‚Ä…d. SprÃ³buj ponownie za chwilÄ™.',
-      'errorInvalidResponse':
-          'Å¹rÃ³dÅ‚o zwrÃ³ciÅ‚o dane w nieobsÅ‚ugiwanym lub uszkodzonym formacie.',
-      'errorCertificate':
-          'Certyfikat lub jego odcisk zmieniÅ‚ siÄ™. PotwierdÅº toÅ¼samoÅ›Ä‡ na zaufanym ekranie.',
-      'errorStorage':
-          'Nie udaÅ‚o siÄ™ otworzyÄ‡ lub zaktualizowaÄ‡ bezpiecznego magazynu.',
-      'errorPermission': 'Ta operacja nie jest dozwolona dla wskazanej encji.',
-      'errorUnsupported':
-          'Ta funkcja nie jest jeszcze bezpiecznie obsÅ‚ugiwana przez ÅºrÃ³dÅ‚o.',
-      'errorInvalidValue':
-          'WartoÅ›Ä‡ jest poza dozwolonym zakresem albo ma zÅ‚y format.',
-      'errorInvalidCredentials': 'SprawdÅº adres i wklej peÅ‚ny token dostÄ™pu.',
-      'errorInvalidHaUrl': 'Podaj peÅ‚ny adres HTTP lub HTTPS instancji.',
-      'errorInvalidHaToken': 'Token musi zawieraÄ‡ co najmniej 20 znakÃ³w.',
-      'errorCommandUnavailable':
-          'Sterowanie jest zablokowane, gdy encja lub ÅºrÃ³dÅ‚o jest niedostÄ™pne.',
-      'errorBiometricCancelled':
-          'Autoryzacja biometryczna zostaÅ‚a anulowana. Operacja nie zostaÅ‚a wysÅ‚ana.',
-      'errorBiometricUnavailable':
-          'Biometria jest niedostÄ™pna. Skonfiguruj jÄ… w systemie, aby wykonaÄ‡ tÄ™ operacjÄ™.',
-      'errorBiometricLocked':
-          'Biometria zostaÅ‚a czasowo zablokowana. Odblokuj jÄ… w systemie i sprÃ³buj ponownie.',
-      'errorBiometricFailed':
-          'Nie udaÅ‚o siÄ™ potwierdziÄ‡ toÅ¼samoÅ›ci. Operacja krytyczna pozostaÅ‚a zablokowana.',
-      'errorUnknown':
-          'WystÄ…piÅ‚ nieoczekiwany bÅ‚Ä…d. Dane wraÅ¼liwe nie zostaÅ‚y zapisane w logu.',
-      'retry': 'SprÃ³buj ponownie',
-      'reconfigure': 'Wybierz inne ÅºrÃ³dÅ‚o',
-      'dismiss': 'Zamknij',
-      'noticeRefreshed': 'Dane zostaÅ‚y odÅ›wieÅ¼one.',
-      'noticeCommandAccepted': 'Å¹rÃ³dÅ‚o potwierdziÅ‚o polecenie.',
-      'noticeUpdateStarted': 'Proces aktualizacji zostaÅ‚ rozpoczÄ™ty.',
-      'noticeBiometricEnabled': 'WÅ‚Ä…czono biometriÄ™ dla operacji krytycznych.',
-      'noticeBiometricDisabled':
-          'WyÅ‚Ä…czono biometriÄ™ dla operacji krytycznych.',
-      'justNow': 'przed chwilÄ…',
-      'secondsAgo': '{value} s temu',
-      'minutesAgo': '{value} min temu',
-      'hoursAgo': '{value} godz. temu',
-      'never': 'nigdy',
-      'historyEmpty': 'Å¹rÃ³dÅ‚o nie zwrÃ³ciÅ‚o prÃ³bek dla wybranego okresu.',
-      'historyPrompt': 'Wybierz okres, aby pobraÄ‡ historiÄ™.',
-      'historySummary':
-          'Wykres historii. Minimum {minimum}, maksimum {maximum}, liczba prÃ³bek {samples}.',
-      'history24h': '24 godziny',
-      'history7d': '7 dni',
-      'entity_light': 'ÅšwiatÅ‚o',
-      'entity_switchEntity': 'PrzeÅ‚Ä…cznik',
-      'entity_sensor': 'Czujnik',
-      'entity_binarySensor': 'Czujnik binarny',
-      'entity_climate': 'Klimat',
-      'entity_cover': 'OsÅ‚ona',
-      'entity_lock': 'Zamek',
-      'entity_alarmControlPanel': 'Alarm',
-      'entity_camera': 'Kamera',
-      'entity_mediaPlayer': 'Odtwarzacz',
-      'entity_fan': 'Wentylator',
-      'entity_vacuum': 'Odkurzacz',
-      'entity_weather': 'Pogoda',
-      'entity_person': 'Osoba',
-      'entity_deviceTracker': 'Lokalizator',
-      'entity_scene': 'Scena',
-      'entity_script': 'Skrypt',
-      'entity_automation': 'Automatyzacja',
-      'entity_button': 'Przycisk',
-      'entity_inputButton': 'Przycisk wejÅ›ciowy',
-      'entity_number': 'Liczba',
-      'entity_inputNumber': 'Liczba wejÅ›ciowa',
-      'entity_select': 'Lista',
-      'entity_inputSelect': 'Lista wejÅ›ciowa',
-      'entity_text': 'Tekst',
-      'entity_inputText': 'Tekst wejÅ›ciowy',
-      'entity_update': 'Aktualizacja',
-      'entity_unknown': 'Typ niestandardowy',
-    },
-    'en': <String, String>{
-      'appName': 'Home Control',
-      'appSubtitle': 'Your home. One secure control center.',
-      'booting': 'Preparing the secure environmentâ€¦',
-      'connecting': 'Connecting to the data sourceâ€¦',
-      'sourceTitle': 'Choose a source',
-      'sourceDescription':
-          'Home Control is a native app. A source provides data but does not define the interface.',
-      'aquaHub': 'AquaHub',
-      'aquaHubDescription':
-          'Local ESP32-P4 panel, ESP-NOW devices and aquarium.',
-      'hubWelcome': 'Welcome to AquaHub',
-      'hubConfirmPanel': 'Confirm the panel',
-      'hubWelcomeDescription':
-          'The app automatically finds the ESP32-P4 panel on your local network. One-time pairing unlocks the native devices, sensors, automations and updates dashboard.',
-      'hubConfirmDescription':
-          'Compare the certificate fingerprint with the System screen on the physical panel, then enter the displayed code.',
-      'hubDemo': 'Open the complete app in demo mode',
-      'hubAutonomyHint':
-          'The CYD controller remains autonomous. Its token is kept in encrypted system storage, while remote access works through a VPN.',
-      'hubSearching': 'Searching for a panelâ€¦',
-      'hubChooseFound': 'Choose a discovered panel',
-      'hubAutoDiscovery': 'Automatic discovery',
-      'hubSameWifi': 'The phone and AquaHub must use the same Wi-Fi network.',
-      'hubHttpsVerified': 'The connection will be verified over HTTPS.',
-      'hubNotFound': 'No panel found. Check Wi-Fi and P4 power.',
-      'hubMdns': 'The app uses native Bonjour/mDNS discovery.',
-      'scanAgain': 'Scan again',
-      'hubAdvancedConnection': 'Advanced connection',
-      'hubManualOnly': 'Use a manual address only when mDNS is blocked',
-      'hubHttpsAddress': 'Panel HTTPS address',
-      'connectManually': 'Connect manually',
-      'hubSecureHttps': 'AquaHub ESP32-P4 Â· secure HTTPS',
-      'chooseAnotherHub': 'Choose another panel',
-      'certificateFingerprint': 'SHA-256 certificate fingerprint',
-      'fingerprintMatches': 'The fingerprint matches the panel exactly',
-      'pairingCode': '6-digit code from the panel',
-      'pairAndOpen': 'Pair and open dashboard',
-      'hubDiscoveryFailed': 'AquaHub discovery could not be started.',
-      'hubErrorSession': 'The secure AquaHub session could not be read.',
-      'hubErrorHttpsAddress':
-          'Enter a full HTTPS address, such as https://aquahub.local:8443.',
-      'hubErrorDiscovery': 'AquaHub could not be found on the local network.',
-      'hubErrorDiscoverFirst': 'Check the AquaHub connection first.',
-      'hubErrorFingerprintConfirm':
-          'Compare the panel fingerprint and confirm that it matches.',
-      'hubErrorPairingCode':
-          'The pairing code must contain exactly six digits.',
-      'hubErrorSaveSession': 'The secure AquaHub session could not be saved.',
-      'hubErrorAuthentication': 'AquaHub rejected the authentication data.',
-      'hubErrorNetwork': 'AquaHub is unreachable on the local network.',
-      'hubErrorInvalidResponse': 'AquaHub returned an invalid response.',
-      'hubErrorServer': 'AquaHub returned a server error.',
-      'hubErrorSecurity': 'The secure AquaHub identity could not be verified.',
-      'homeAssistant': 'Home Assistant',
-      'homeAssistantDescription':
-          'An existing local instance or a secure remote address.',
-      'demo': 'Offline demo',
-      'demoDescription':
-          'A complete home, aquarium, alarms, history and updates without an account.',
-      'recommended': 'Recommended',
-      'advanced': 'Advanced',
-      'back': 'Back',
-      'connectHa': 'Add Home Assistant',
-      'haUrl': 'Instance address',
-      'haUrlHint': 'https://homeassistant.local:8123',
-      'haProfileName': 'Profile name',
-      'haProfileNameHint': 'Home, office or cabin',
-      'haToken': 'Long-lived access token',
-      'showToken': 'Show token',
-      'hideToken': 'Hide token',
-      'testAndSave': 'Test and save',
-      'oauthHint':
-          'This is the advanced long-lived-token sign-in. OAuth requires the app owner public Client ID and a secure redirect URI; the release documentation defines that activation gate.',
-      'secureStorageHint':
-          'Credentials are kept in the operating system secure storage. HTTP is accepted only on a local network.',
-      'dashboard': 'Dashboard',
-      'rooms': 'Rooms',
-      'devices': 'Devices',
-      'automations': 'Automations',
-      'updates': 'Updates',
-      'settings': 'Settings',
-      'navDashboard': 'Home',
-      'navRooms': 'Rooms',
-      'navDevices': 'Devices',
-      'navAutomations': 'Actions',
-      'navUpdates': 'Updates',
-      'navSettings': 'Settings',
-      'more': 'More',
-      'home': 'Home',
-      'refresh': 'Refresh',
-      'source': 'Source',
-      'connected': 'Connected',
-      'offline': 'Offline',
-      'stale': 'Stale data',
-      'partial': 'Partial synchronization',
-      'lastSync': 'Last sync: {value}',
-      'favorites': 'Favorites',
-      'areasOverview': 'Rooms',
-      'recentActivity': 'Recent activity',
-      'aquarium': 'Aquarium',
-      'aquariumHealthy': 'Parameters stable',
-      'aquariumAlarm': 'Needs attention',
-      'waterTemperature': 'Water temperature',
-      'waterChemistry': 'Water chemistry',
-      'connection': 'Connection',
-      'details': 'Details',
-      'noAquarium': 'This source does not expose an aquarium module yet.',
-      'noFavorites': 'Add favorites from an entity menu.',
-      'noAreas': 'The source returned no rooms.',
-      'noDevices': 'No devices found.',
-      'noAutomations': 'This source has no automations.',
-      'scenesAndScripts': 'Scenes and scripts',
-      'noUpdates': 'No updates are available.',
-      'entitiesCount': '{value} entities',
-      'onlineDevices': '{value} devices online',
-      'available': 'Available',
-      'unavailable': 'Unavailable',
-      'unknown': 'Unknown',
-      'removed': 'Removed',
-      'noData': 'No data',
-      'stateOn': 'On',
-      'stateOff': 'Off',
-      'activeEntities': '{value} active',
-      'rawState_heat': 'Heating',
-      'rawState_heating': 'Heating',
-      'rawState_cooling': 'Cooling',
-      'rawState_playing': 'Playing',
-      'rawState_paused': 'Paused',
-      'rawState_idle': 'Idle',
-      'rawState_docked': 'Docked',
-      'rawState_home': 'Home',
-      'rawState_away': 'Away',
-      'rawState_partlycloudy': 'Partly cloudy',
-      'turnOn': 'Turn on',
-      'turnOff': 'Turn off',
-      'openCover': 'Open',
-      'closeCover': 'Close',
-      'opened': 'Open',
-      'closed': 'Closed',
-      'lockAction': 'Lock',
-      'unlockAction': 'Unlock',
-      'locked': 'Locked',
-      'unlocked': 'Unlocked',
-      'alarmMode': 'Alarm mode',
-      'alarm_disarmed': 'Disarmed',
-      'alarm_armed_home': 'Armed home',
-      'alarm_armed_away': 'Armed away',
-      'alarm_armed_night': 'Armed night',
-      'start': 'Start',
-      'returnToBase': 'Return to base',
-      'textValue': 'Text value',
-      'run': 'Run',
-      'setValue': 'Set value: {value}',
-      'selectOption': 'Select option',
-      'history': 'History',
-      'favorite': 'Favorite',
-      'removeFavorite': 'Remove favorite',
-      'confirmTitle': 'Confirm operation',
-      'confirmRoutine': 'The command will be sent to the device.',
-      'confirmConsequential':
-          'This operation may change the device behavior for an extended time.',
-      'confirmCritical':
-          'This is a critical operation. The controller will still validate interlocks and may reject it.',
-      'cancel': 'Cancel',
-      'confirm': 'Confirm',
-      'commandPending': 'Waiting for acknowledgementâ€¦',
-      'editDashboard': 'Edit dashboard',
-      'resetDashboard': 'Reset dashboard',
-      'visible': 'Visible',
-      'largeCard': 'Large card',
-      'theme': 'Theme',
-      'themeSystem': 'System',
-      'themeLight': 'Light',
-      'themeDark': 'Dark',
-      'language': 'Language',
-      'polish': 'Polski',
-      'english': 'English',
-      'security': 'Security',
-      'biometricProtection': 'Biometrics for critical operations',
-      'biometricProtectionDescription':
-          'Require fingerprint or face recognition before lock, alarm, gate and update operations.',
-      'biometricUnavailable':
-          'No biometric authentication is configured on this device.',
-      'biometricCheckFailed':
-          'Biometric availability could not be checked. Critical operations remain blocked.',
-      'sourceManagement': 'Source management',
-      'haInstances': 'Home Assistant instances',
-      'addHaInstance': 'Add Home Assistant instance',
-      'removeHaInstance': 'Remove instance',
-      'removeHaInstanceConfirm':
-          'Profile â€œ{value}â€, its token and local cache will be removed from this device.',
-      'switchSource': 'Switch source',
-      'removeSource': 'Remove source and local data',
-      'removeSourceConfirm':
-          'The token, certificate fingerprint, session and source cache will be removed from this device.',
-      'demoScenarios': 'Demo scenarios',
-      'simulateOffline': 'Simulate offline',
-      'simulateAlarm': 'Simulate aquarium alarm',
-      'appUpdate': 'Home Control update',
-      'deviceUpdates': 'Device updates',
-      'currentVersion': 'Current: {value}',
-      'latestVersion': 'Latest: {value}',
-      'install': 'Install',
-      'upToDate': 'Up to date',
-      'unsupported': 'Not safely supported yet',
-      'mandatory': 'Required',
-      'availableVersion': 'Version {value} is available',
-      'later': 'Later',
-      'downloadAndInstall': 'Download and install',
-      'continueInstallation': 'Continue installation',
-      'otaAvailableMessage':
-          'This update contains fixes and improvements. The package will be verified before installation.',
-      'otaDownloadingMessage':
-          'Downloading the signed package and verifying its SHA-256 digest.',
-      'otaVerifyingMessage':
-          'Verifying package identity, version and signing certificate.',
-      'otaPermissionMessage':
-          'Android opened the install-source settings. Allow Home Control, return to the app and continue.',
-      'otaFailedMessage': 'The update was not installed.',
-      'otaPreparingMessage': 'Preparing the secure application update.',
-      'diagnostics': 'Diagnostics',
-      'entities': 'Entities',
-      'lastSyncLabel': 'Last synchronization',
-      'localCache': 'Local cache',
-      'encrypted': 'Encrypted',
-      'privacyAndAbout': 'Privacy and about',
-      'privacy': 'Privacy',
-      'privacyDescription':
-          'Home Control does not sell data. Credentials and the latest snapshot remain in the device secure storage.',
-      'appVersion': 'Version {value}',
-      'openSourceLicenses': 'Open-source licenses',
-      'attributes': 'Source attributes',
-      'entitySource': 'Source: {value}',
-      'entityUpdated': 'Updated: {value}',
-      'firmware': 'Firmware',
-      'manufacturer': 'Manufacturer',
-      'model': 'Model',
-      'lastSeen': 'Last seen: {value}',
-      'search': 'Search',
-      'searchHint': 'Device, entity or room',
-      'noResults': 'No results for this query.',
-      'noEntitiesInArea': 'This room has no entities.',
-      'all': 'All',
-      'unknownEntityHint':
-          'A future or custom type is displayed without guessing how to control it.',
-      'errorTitle': 'The operation could not be completed',
-      'errorNetwork':
-          'The source is unreachable. Check your LAN, VPN or Internet connection.',
-      'errorOffline':
-          'There is no connection. Last known data remains read-only.',
-      'errorToken':
-          'The token expired, was rejected or lacks the required permissions.',
-      'errorServer': 'The server returned an error. Try again shortly.',
-      'errorInvalidResponse':
-          'The source returned damaged or unsupported data.',
-      'errorCertificate':
-          'The certificate or fingerprint changed. Confirm identity on a trusted display.',
-      'errorStorage': 'The secure storage could not be opened or updated.',
-      'errorPermission':
-          'This operation is not permitted for the selected entity.',
-      'errorUnsupported':
-          'The source does not safely support this feature yet.',
-      'errorInvalidValue':
-          'The value is outside its allowed range or has an invalid format.',
-      'errorInvalidCredentials':
-          'Check the address and paste the complete access token.',
-      'errorInvalidHaUrl': 'Enter the full HTTP or HTTPS instance address.',
-      'errorInvalidHaToken': 'The token must contain at least 20 characters.',
-      'errorCommandUnavailable':
-          'Control is locked while the source or entity is unavailable.',
-      'errorBiometricCancelled':
-          'Biometric authorization was cancelled. The operation was not sent.',
-      'errorBiometricUnavailable':
-          'Biometrics are unavailable. Configure them in the operating system to continue.',
-      'errorBiometricLocked':
-          'Biometrics are temporarily locked. Unlock them in the operating system and retry.',
-      'errorBiometricFailed':
-          'Identity could not be confirmed. The critical operation remains blocked.',
-      'errorUnknown':
-          'An unexpected error occurred. Sensitive data was not recorded in logs.',
-      'retry': 'Try again',
-      'reconfigure': 'Choose another source',
-      'dismiss': 'Dismiss',
-      'noticeRefreshed': 'Data refreshed.',
-      'noticeCommandAccepted': 'The source acknowledged the command.',
-      'noticeUpdateStarted': 'The update process has started.',
-      'noticeBiometricEnabled':
-          'Biometric protection is enabled for critical operations.',
-      'noticeBiometricDisabled':
-          'Biometric protection is disabled for critical operations.',
-      'justNow': 'just now',
-      'secondsAgo': '{value} sec ago',
-      'minutesAgo': '{value} min ago',
-      'hoursAgo': '{value} hr ago',
-      'never': 'never',
-      'historyEmpty': 'The source returned no samples for this period.',
-      'historyPrompt': 'Choose a period to load history.',
-      'historySummary':
-          'History chart. Minimum {minimum}, maximum {maximum}, {samples} samples.',
-      'history24h': '24 hours',
-      'history7d': '7 days',
-      'entity_light': 'Light',
-      'entity_switchEntity': 'Switch',
-      'entity_sensor': 'Sensor',
-      'entity_binarySensor': 'Binary sensor',
-      'entity_climate': 'Climate',
-      'entity_cover': 'Cover',
-      'entity_lock': 'Lock',
-      'entity_alarmControlPanel': 'Alarm',
-      'entity_camera': 'Camera',
-      'entity_mediaPlayer': 'Media player',
-      'entity_fan': 'Fan',
-      'entity_vacuum': 'Vacuum',
-      'entity_weather': 'Weather',
-      'entity_person': 'Person',
-      'entity_deviceTracker': 'Tracker',
-      'entity_scene': 'Scene',
-      'entity_script': 'Script',
-      'entity_automation': 'Automation',
-      'entity_button': 'Button',
-      'entity_inputButton': 'Input button',
-      'entity_number': 'Number',
-      'entity_inputNumber': 'Input number',
-      'entity_select': 'Select',
-      'entity_inputSelect': 'Input select',
-      'entity_text': 'Text',
-      'entity_inputText': 'Input text',
-      'entity_update': 'Update',
-      'entity_unknown': 'Custom type',
-    },
-  };
-}
-
-final class _HomeControlStringsDelegate
-    extends LocalizationsDelegate<HomeControlStrings> {
-  const _HomeControlStringsDelegate();
-
-  @override
-  bool isSupported(Locale locale) =>
-      <String>{'pl', 'en'}.contains(locale.languageCode);
-
-  @override
-  Future<HomeControlStrings> load(Locale locale) =>
-      SynchronousFuture<HomeControlStrings>(HomeControlStrings(locale));
-
-  @override
-  bool shouldReload(covariant LocalizationsDelegate<HomeControlStrings> old) =>
-      false;
-}
+   ß¾;¶‰Ëkºwµç@€€€€€É•½µµ•¹‘•œè€I•½µµ•¹‘•œ°4(€€€€€€…‘Ù…¹•œè€‘Ù…¹•œ°4(€€€€€€‰…¬œè€	…¬œ°4(€€€€€€½¹¹•Ñ!„œè€‘!½µ”ÍÍ¥ÍÑ…¹Ğœ°4(€€€€€€¡…UÉ°œè€%¹ÍÑ…¹”…‘‘É•ÍÌœ°4(€€€€€€¡…UÉ±!¥¹Ğœè€¡ÑÑÁÌè¼½¡½µ•…ÍÍ¥ÍÑ…¹Ğ¹±½…°èàÄÈÌœ°4(€€€€€€¡…AÉ½™¥±•9…µ”œè€AÉ½™¥±”¹…µ”œ°4(€€€€€€¡…AÉ½™¥±•9…µ•!¥¹Ğœè€!½µ”°½™™¥”½È…‰¥¸œ°4(€€€€€€¡…Q½­•¸œè€1½¹œµ±¥Ù•…•ÍÌÑ½­•¸œ°4(€€€€€€Í¡½İQ½­•¸œè€M¡½ÜÑ½­•¸œ°4(€€€€€€¡¥‘•Q½­•¸œè€!¥‘”Ñ½­•¸œ°4(€€€€€€Ñ•ÍÑ¹‘M…Ù”œè€Q•ÍĞ…¹Í…Ù”œ°4(€€€€€€½…ÕÑ¡!¥¹Ğœè4(€€€€€€€€€€Q¡¥Ì¥ÌÑ¡”…‘Ù…¹•±½¹œµ±¥Ù•µÑ½­•¸Í¥¸µ¥¸¸=ÕÑ É•ÅÕ¥É•ÌÑ¡”…ÁÀ½İ¹•ÈÁÕ‰±¥Œ±¥•¹Ğ%…¹„Í•ÕÉ”É•‘¥É•ĞUI$ìÑ¡”É•±•…Í”‘½Õµ•¹Ñ…Ñ¥½¸‘•™¥¹•ÌÑ¡…Ğ…Ñ¥Ù…Ñ¥½¸…Ñ”¸œ°4(€€€€€€Í•ÕÉ•MÑ½É…•!¥¹Ğœè4(€€€€€€€€€€É•‘•¹Ñ¥…±Ì…É”­•ÁĞ¥¸Ñ¡”½Á•É…Ñ¥¹œÍåÍÑ•´Í•ÕÉ”ÍÑ½É…”¸!QQ@¥Ì…•ÁÑ•½¹±ä½¸„±½…°¹•Ñİ½É¬¸œ°4(€€€€€€‘…Í¡‰½…Éœè€…Í¡‰½…Éœ°4(€€€€€€É½½µÌœè€I½½µÌœ°4(€€€€€€‘•Ù¥•Ìœè€•Ù¥•Ìœ°4(€€€€€€…ÕÑ½µ…Ñ¥½¹Ìœè€ÕÑ½µ…Ñ¥½¹Ìœ°4(€€€€€€ÕÁ‘…Ñ•Ìœè€UÁ‘…Ñ•Ìœ°4(€€€€€€Í•ÑÑ¥¹Ìœè€M•ÑÑ¥¹Ìœ°4(€€€€€€¹…Ù…Í¡‰½…Éœè€!½µ”œ°4(€€€€€€¹…ÙI½½µÌœè€I½½µÌœ°4(€€€€€€¹…Ù•Ù¥•Ìœè€•Ù¥•Ìœ°4(€€€€€€¹…ÙÕÑ½µ…Ñ¥½¹Ìœè€Ñ¥½¹Ìœ°4(€€€€€€¹…ÙUÁ‘…Ñ•Ìœè€UÁ‘…Ñ•Ìœ°4(€€€€€€¹…ÙM•ÑÑ¥¹Ìœè€M•ÑÑ¥¹Ìœ°4(€€€€€€µ½É”œè€5½É”œ°4(€€€€€€¡½µ”œè€!½µ”œ°4(€€€€€€¡½µ•!•…±Ñ¡åQ¥Ñ±”œè€e½ÕÈ¡½µ”¥ÌÉÕ¹¹¥¹œÍµ½½Ñ¡±äœ°4(€€€€€€¡½µ•!•…±Ñ¡å•ÍÉ¥ÁÑ¥½¸œè4(€€€€€€€€€€±°•ÍÍ•¹Ñ¥…°ÍåÍÑ•µÌ…É”É•ÍÁ½¹‘¥¹œ…Ì•áÁ•Ñ•¸œ°4(€€€€€€¡½µ•ÑÑ•¹Ñ¥½¹Q¥Ñ±”œè€™•ÜÑ¡¥¹Ì¹••…ÑÑ•¹Ñ¥½¸œ°4(€€€€€€¡½µ•ÑÑ•¹Ñ¥½¹•ÍÉ¥ÁÑ¥½¸œè€íÙ…±Õ•ô¥Ñ•µÌ…É”İ½ÉÑ „ÅÕ¥¬¡•¬¸œ°4(€€€€€€¡½µ•=™™±¥¹•Q¥Ñ±”œè€½¹ÑÉ½°¥ÌÑ•µÁ½É…É¥±ä½™™±¥¹”œ°4(€€€€€€¡½µ•=™™±¥¹••ÍÉ¥ÁÑ¥½¸œè4(€€€€€€€€€€Q¡”±…Ñ•ÍĞÍ…Ù•ÍÑ…Ñ”É•µ…¥¹Ì…Ù…¥±…‰±”¥¸É•…µ½¹±äµ½‘”¸œ°4(€€€€€€±¥Ù•MÑ…ÑÕÌœè€1¥Ù”œ°4(€€€€€€‘•Ù¥•Í=¹±¥¹•1…‰•°œè€•Ù¥•Ì½¹±¥¹”œ°4(€€€€€€…ÕÑ½µ…Ñ¥½¹ÍÑ¥Ù•1…‰•°œè€Ñ¥Ù”ÉÕ±•Ìœ°4(€€€€€€ÕÁ‘…Ñ•ÍÙ…¥±…‰±•1…‰•°œè€]…¥Ñ¥¹œœ°4(€€€€€€É•™É•Í œè€I•™É•Í œ°4(€€€€€€Í½ÕÉ”œè€M½ÕÉ”œ°4(€€€€€€½¹¹•Ñ•œè€½¹¹•Ñ•œ°4(€€€€€€½™™±¥¹”œè€=™™±¥¹”œ°4(€€€€€€ÍÑ…±”œè€MÑ…±”‘…Ñ„œ°4(€€€€€€Á…ÉÑ¥…°œè€A…ÉÑ¥…°Íå¹¡É½¹¥é…Ñ¥½¸œ°4(€€€€€€±…ÍÑMå¹Œœè€1…ÍĞÍå¹ŒèíÙ…±Õ•ôœ°4(€€€€€€™…Ù½É¥Ñ•Ìœè€…Ù½É¥Ñ•Ìœ°4(€€€€€€ÅÕ¥­½¹ÑÉ½±Ìœè€EÕ¥¬½¹ÑÉ½±Ìœ°4(€€€€€€ÅÕ¥­½¹ÑÉ½±Í•ÍÉ¥ÁÑ¥½¸œè€e½ÕÈ•ÍÍ•¹Ñ¥…°…Ñ¥½¹Ì°…±İ…åÌİ¥Ñ¡¥¸É•… œ°4(€€€€€€ÕÍÑ½µ¥é”œè€ÕÍÑ½µ¥é”œ°4(€€€€€€¡½½Í••Ù¥•Ìœè€¡½½Í”‘•Ù¥•Ìœ°4(€€€€€€¹½EÕ¥­½¹ÑÉ½±ÍQ¥Ñ±”œè€	Õ¥±å½ÕÈÍ¡½ÉÑÕÑÌÁ…¹•°œ°4(€€€€€€…É•…Í=Ù•ÉÙ¥•Üœè€I½½µÌœ°4(€€€€€€…É•…Í=Ù•ÉÙ¥•İ•ÍÉ¥ÁÑ¥½¸œè€Q¡”•ÍÍ•¹Ñ¥…±Ì…Ğ„±…¹”œ°4(€€€€€€É½½µÍMÕµµ…Éäœè€íÉ½½µÍôÉ½½µÌƒ
+Üí¥Ñ•µÍô¥Ñ•µÌœ°4(€€€€€€‘•Ù¥•ÍMÕµµ…Éäœè€í½¹±¥¹•ô½˜í…±±ô‘•Ù¥•Ì½¹±¥¹”œ°4(€€€€€€Í••±°œè€M•”…±°œ°4(€€€€€€¹½I½½µÍQ¥Ñ±”œè€9¼…Ñ¥Ù”É½½µÌœ°4(€€€€€€É••¹ÑÑ¥Ù¥Ñäœè€I••¹Ğ…Ñ¥Ù¥Ñäœ°4(€€€€€€É••¹Ñ¡…¹•Ìœè€I••¹Ğ¡…¹•Ìœ°4(€€€€€€É••¹Ñ¡…¹•Í•ÍÉ¥ÁÑ¥½¸œè€ÑÕ…°‘•Ù¥”ÍÑ…Ñ”¡…¹•Ìœ°4(€€€€€€¹½I••¹Ñ¡…¹•ÍQ¥Ñ±”œè€Ù•ÉåÑ¡¥¹œ¥Ì…±´œ°4(€€€€€€¹½I••¹Ñ¡…¹•Ìœè€9•Ü•Ù•¹ÑÌİ¥±°…ÁÁ•…È¡•É”…ÕÑ½µ…Ñ¥…±±ä¸œ°4(€€€€€€…ÑÑ•¹Ñ¥½¹•¹Ñ•Èœè€9••‘Ì¡•­¥¹œœ°4(€€€€€€…ÑÑ•¹Ñ¥½¹=™™±¥¹•Q¥Ñ±”œè€Q¡”Í½ÕÉ”¥Ì½™™±¥¹”œ°4(€€€€€€…ÑÑ•¹Ñ¥½¹=™™±¥¹••ÍÉ¥ÁÑ¥½¸œè€Q…ÀÑ¼ÑÉä½¹¹•Ñ¥¹œ……¥¸¸œ°4(€€€€€€…ÑÑ•¹Ñ¥½¹Må¹Q¥Ñ±”œè€…Ñ„¹••‘ÌÉ•™É•Í¡¥¹œœ°4(€€€€€€…ÑÑ•¹Ñ¥½¹Må¹•ÍÉ¥ÁÑ¥½¸œè€Q¡”±…Ñ•ÍĞÍå¹¡É½¹¥é…Ñ¥½¸¥Ì¥¹½µÁ±•Ñ”¸œ°4(€€€€€€…ÑÑ•¹Ñ¥½¹ÅÕ…É¥ÕµQ¥Ñ±”œè€ÅÕ…É¥Õ´µ½‘Õ±”…±…É´œ°4(€€€€€€…ÑÑ•¹Ñ¥½¹ÅÕ…É¥Õµ•ÍÉ¥ÁÑ¥½¸œè€=Á•¸Ñ¡”…É…¹É•Ù¥•Ü…Ñ¥Ù”…±…ÉµÌ¸œ°4(€€€€€€…ÑÑ•¹Ñ¥½¹•Ù¥•ÍQ¥Ñ±”œè€íÙ…±Õ•ô‘•Ù¥•Ì…É”½™™±¥¹”œ°4(€€€€€€…ÑÑ•¹Ñ¥½¹•Ù¥•Í•ÍÉ¥ÁÑ¥½¸œè€¡•¬‘•Ù¥”Á½İ•È…¹½¹¹•Ñ¥Ù¥Ñä¸œ°4(€€€€€€…ÑÑ•¹Ñ¥½¹UÁ‘…Ñ•ÍQ¥Ñ±”œè€íÙ…±Õ•ôÕÁ‘…Ñ•Ì…É”İ…¥Ñ¥¹œœ°4(€€€€€€…ÑÑ•¹Ñ¥½¹UÁ‘…Ñ•Í•ÍÉ¥ÁÑ¥½¸œè4(€€€€€€€€€€A…­…•Ì…É”É•…‘ä™½ÈÍ•ÕÉ”¥¹ÍÑ…±±…Ñ¥½¸¸œ°4(€€€€€€…ÅÕ…É¥Õ´œè€ÅÕ…É¥Õ´œ°4(€€€€€€…ÅÕ…É¥Õµ!•…±Ñ¡äœè€A…É…µ•Ñ•ÉÌÍÑ…‰±”œ°4(€€€€€€…ÅÕ…É¥Õµ±…É´œè€9••‘Ì…ÑÑ•¹Ñ¥½¸œ°4(€€€€€€…ÅÕ…É¥Õµ9½±…ÉµÌœè€9¼…Ñ¥Ù”…±…ÉµÌœ°4(€€€€€€…ÅÕ…É¥Õµ=™™±¥¹”œè€1…Ñ•ÍĞÍ…Ù•É•…‘¥¹œœ°4(€€€€€€…ÅÕ…É¥Õµ%¹½µÁ±•Ñ”œè€%¹½µÁ±•Ñ”Í•Ğ½˜É•…‘¥¹Ìœ°4(€€€€€€…ÅÕ…É¥ÕµMÑ…±”œè€I•…‘¥¹Ì¹••É•™É•Í¡¥¹œœ°4(€€€€€€İ…Ñ•ÉQ•µÁ•É…ÑÕÉ”œè€]…Ñ•ÈÑ•µÁ•É…ÑÕÉ”œ°4(€€€€€€İ…Ñ•É¡•µ¥ÍÑÉäœè€]…Ñ•È¡•µ¥ÍÑÉäœ°4(€€€€€€½¹¹•Ñ¥½¸œè€½¹¹•Ñ¥½¸œ°4(€€€€€€‘•Ñ…¥±Ìœè€•Ñ…¥±Ìœ°4(€€€€€€¹½ÅÕ…É¥Õ´œè€Q¡¥ÌÍ½ÕÉ”‘½•Ì¹½Ğ•áÁ½Í”…¸…ÅÕ…É¥Õ´µ½‘Õ±”å•Ğ¸œ°4(€€€€€€¹½ÅÕ…É¥ÕµQ¥Ñ±”œè€ÅÕ…É¥Õ´µ½‘Õ±”¥ÌÕ¹…Ù…¥±…‰±”œ°4(€€€€€€¹½…Ù½É¥Ñ•Ìœè€¡½½Í”Ñ¡”‘•Ù¥•Ì…¹…Ñ¥½¹Ìå½ÔÕÍ”µ½ÍĞ½™Ñ•¸¸œ°4(€€€€€€¹½É•…Ìœè€Q¡”Í½ÕÉ”É•ÑÕÉ¹•¹¼É½½µÌ¸œ°4(€€€€€€¹½•Ù¥•Ìœè€9¼‘•Ù¥•Ì™½Õ¹¸œ°4(€€€€€€¹½ÕÑ½µ…Ñ¥½¹Ìœè€Q¡¥ÌÍ½ÕÉ”¡…Ì¹¼…ÕÑ½µ…Ñ¥½¹Ì¸œ°4(€€€€€€Í•¹•Í¹‘MÉ¥ÁÑÌœè€M•¹•Ì…¹ÍÉ¥ÁÑÌœ°4(€€€€€€¹½UÁ‘…Ñ•Ìœè€9¼ÕÁ‘…Ñ•Ì…É”…Ù…¥±…‰±”¸œ°4(€€€€€€•¹Ñ¥Ñ¥•Í½Õ¹Ğœè€íÙ…±Õ•ô•¹Ñ¥Ñ¥•Ìœ°4(€€€€€€¥Ñ•µÍ½Õ¹Ğœè€íÙ…±Õ•ô¥Ñ•µÌœ°4(€€€€€€½¹±¥¹••Ù¥•Ìœè€íÙ…±Õ•ô‘•Ù¥•Ì½¹±¥¹”œ°4(€€€€€€…Ù…¥±…‰±”œè€Ù…¥±…‰±”œ°4(€€€€€€Õ¹…Ù…¥±…‰±”œè€U¹…Ù…¥±…‰±”œ°4(€€€€€€Õ¹­¹½İ¸œè€U¹­¹½İ¸œ°4(€€€€€€É•µ½Ù•œè€I•µ½Ù•œ°4(€€€€€€¹½…Ñ„œè€9¼‘…Ñ„œ°4(€€€€€€ÍÑ…Ñ•=¸œè€=¸œ°4(€€€€€€ÍÑ…Ñ•=™˜œè€=™˜œ°4(€€€€€€…Ñ¥Ù•¹Ñ¥Ñ¥•Ìœè€íÙ…±Õ•ô…Ñ¥Ù”œ°4(€€€€€€…Ñ¥Ù•9½Üœè€íÙ…±Õ•ô…Ñ¥Ù”¹½Üœ°4(€€€€€€É…İMÑ…Ñ•}¡•…Ğœè€!•…Ñ¥¹œœ°4(€€€€€€É…İMÑ…Ñ•}¡•…Ñ¥¹œœè€!•…Ñ¥¹œœ°4(€€€€€€É…İMÑ…Ñ•}½½±¥¹œœè€½½±¥¹œœ°4(€€€€€€É…İMÑ…Ñ•}Á±…å¥¹œœè€A±…å¥¹œœ°4(€€€€€€É…İMÑ…Ñ•}Á…ÕÍ•œè€A…ÕÍ•œ°4(€€€€€€É…İMÑ…Ñ•}¥‘±”œè€%‘±”œ°4(€€€€€€É…İMÑ…Ñ•}‘½­•œè€½­•œ°4(€€€€€€É…İMÑ…Ñ•}¡½µ”œè€!½µ”œ°4(€€€€€€É…İMÑ…Ñ•}…İ…äœè€İ…äœ°4(€€€€€€É…İMÑ…Ñ•}Á…ÉÑ±å±½Õ‘äœè€A…ÉÑ±ä±½Õ‘äœ°4(€€€€€€ÑÕÉ¹=¸œè€QÕÉ¸½¸œ°4(€€€€€€ÑÕÉ¹=™˜œè€QÕÉ¸½™˜œ°4(€€€€€€½Á•¹½Ù•Èœè€=Á•¸œ°4(€€€€€€±½Í•½Ù•Èœè€±½Í”œ°4(€€€€€€½Á•¹•œè€=Á•¸œ°4(€€€€€€±½Í•œè€±½Í•œ°4(€€€€€€±½­Ñ¥½¸œè€1½¬œ°4(€€€€€€Õ¹±½­Ñ¥½¸œè€U¹±½¬œ°4(€€€€€€±½­•œè€1½­•œ°4(€€€€€€Õ¹±½­•œè€U¹±½­•œ°4(€€€€€€…±…Éµ5½‘”œè€±…É´µ½‘”œ°4(€€€€€€…±…Éµ}‘¥Í…Éµ•œè€¥Í…Éµ•œ°4(€€€€€€…±…Éµ}…Éµ•‘}¡½µ”œè€Éµ•¡½µ”œ°4(€€€€€€…±…Éµ}…Éµ•‘}…İ…äœè€Éµ•…İ…äœ°4(€€€€€€…±…Éµ}…Éµ•‘}¹¥¡Ğœè€Éµ•¹¥¡Ğœ°4(€€€€€€ÍÑ…ÉĞœè€MÑ…ÉĞœ°4(€€€€€€É•ÑÕÉ¹Q½	…Í”œè€I•ÑÕÉ¸Ñ¼‰…Í”œ°4(€€€€€€Ñ•áÑY…±Õ”œè€Q•áĞÙ…±Õ”œ°4(€€€€€€ÉÕ¸œè€IÕ¸œ°4(€€€€€€Í•ÑY…±Õ”œè€M•ĞÙ…±Õ”èíÙ…±Õ•ôœ°4(€€€€€€Í•±•Ñ=ÁÑ¥½¸œè€M•±•Ğ½ÁÑ¥½¸œ°4(€€€€€€¡¥ÍÑ½Éäœè€!¥ÍÑ½Éäœ°4(€€€€€€™…Ù½É¥Ñ”œè€…Ù½É¥Ñ”œ°4(€€€€€€É•µ½Ù•…Ù½É¥Ñ”œè€I•µ½Ù”™…Ù½É¥Ñ”œ°4(€€€€€€½¹™¥ÉµQ¥Ñ±”œè€½¹™¥É´½Á•É…Ñ¥½¸œ°4(€€€€€€½¹™¥ÉµI½ÕÑ¥¹”œè€Q¡”½µµ…¹İ¥±°‰”Í•¹ĞÑ¼Ñ¡”‘•Ù¥”¸œ°4(€€€€€€½¹™¥Éµ½¹Í•ÅÕ•¹Ñ¥…°œè4(€€€€€€€€€€Q¡¥Ì½Á•É…Ñ¥½¸µ…ä¡…¹”Ñ¡”‘•Ù¥”‰•¡…Ù¥½È™½È…¸•áÑ•¹‘•Ñ¥µ”¸œ°4(€€€€€€½¹™¥ÉµÉ¥Ñ¥…°œè4(€€€€€€€€€€Q¡¥Ì¥Ì„É¥Ñ¥…°½Á•É…Ñ¥½¸¸Q¡”½¹ÑÉ½±±•Èİ¥±°ÍÑ¥±°Ù…±¥‘…Ñ”¥¹Ñ•É±½­Ì…¹µ…äÉ•©•Ğ¥Ğ¸œ°4(€€€€€€…¹•°œè€…¹•°œ°4(€€€€€€½¹™¥É´œè€½¹™¥É´œ°4(€€€€€€½µµ…¹‘A•¹‘¥¹œœè€]…¥Ñ¥¹œ™½È…­¹½İ±•‘•µ•¹ÓŠ˜œ°4(€€€€€€•‘¥Ñ…Í¡‰½…Éœè€‘¥Ğ‘…Í¡‰½…Éœ°4(€€€€€€É•Í•Ñ…Í¡‰½…Éœè€I•Í•Ğ‘…Í¡‰½…Éœ°4(€€€€€€Ù¥Í¥‰±”œè€Y¥Í¥‰±”œ°4(€€€€€€±…É•…Éœè€1…É”…Éœ°4(€€€€€€Ñ¡•µ”œè€Q¡•µ”œ°4(€€€€€€Ñ¡•µ•MåÍÑ•´œè€MåÍÑ•´œ°4(€€€€€€Ñ¡•µ•1¥¡Ğœè€1¥¡Ğœ°4(€€€€€€Ñ¡•µ•…É¬œè€…É¬œ°4(€€€€€€±…¹Õ…”œè€1…¹Õ…”œ°4(€€€€€€Á½±¥Í œè€A½±Í­¤œ°4(€€€€€€•¹±¥Í œè€¹±¥Í œ°4(€€€€€€Í•ÕÉ¥Ñäœè€M•ÕÉ¥Ñäœ°4(€€€€€€‰¥½µ•ÑÉ¥AÉ½Ñ•Ñ¥½¸œè€	¥½µ•ÑÉ¥Ì™½ÈÉ¥Ñ¥…°½Á•É…Ñ¥½¹Ìœ°4(€€€€€€‰¥½µ•ÑÉ¥AÉ½Ñ•Ñ¥½¹•ÍÉ¥ÁÑ¥½¸œè4(€€€€€€€€€€I•ÅÕ¥É”™¥¹•ÉÁÉ¥¹Ğ½È™…”É•½¹¥Ñ¥½¸‰•™½É”±½¬°…±…É´°…Ñ”…¹ÕÁ‘…Ñ”½Á•É…Ñ¥½¹Ì¸œ°4(€€€€€€‰¥½µ•ÑÉ¥U¹…Ù…¥±…‰±”œè4(€€€€€€€€€€9¼‰¥½µ•ÑÉ¥Œ…ÕÑ¡•¹Ñ¥…Ñ¥½¸¥Ì½¹™¥ÕÉ•½¸Ñ¡¥Ì‘•Ù¥”¸œ°4(€€€€€€‰¥½µ•ÑÉ¥¡•­…¥±•œè4(€€€€€€€€€€	¥½µ•ÑÉ¥Œ…Ù…¥±…‰¥±¥Ñä½Õ±¹½Ğ‰”¡•­•¸É¥Ñ¥…°½Á•É…Ñ¥½¹ÌÉ•µ…¥¸‰±½­•¸œ°4(€€€€€€Í½ÕÉ•5…¹…•µ•¹Ğœè€M½ÕÉ”µ…¹…•µ•¹Ğœ°4(€€€€€€¡…%¹ÍÑ…¹•Ìœè€!½µ”ÍÍ¥ÍÑ…¹Ğ¥¹ÍÑ…¹•Ìœ°4(€€€€€€…‘‘!…%¹ÍÑ…¹”œè€‘!½µ”ÍÍ¥ÍÑ…¹Ğ¥¹ÍÑ…¹”œ°4(€€€€€€É•µ½Ù•!…%¹ÍÑ…¹”œè€I•µ½Ù”¥¹ÍÑ…¹”œ°4(€€€€€€É•µ½Ù•!…%¹ÍÑ…¹•½¹™¥É´œè4(€€€€€€€€€€AÉ½™¥±”ƒŠqíÙ…±Õ•÷Št°¥ÑÌÑ½­•¸…¹±½…°…¡”İ¥±°‰”É•µ½Ù•™É½´Ñ¡¥Ì‘•Ù¥”¸œ°4(€€€€€€Íİ¥Ñ¡M½ÕÉ”œè€Mİ¥Ñ Í½ÕÉ”œ°4(€€€€€€É•µ½Ù•M½ÕÉ”œè€I•µ½Ù”Í½ÕÉ”…¹±½…°‘…Ñ„œ°4(€€€€€€É•µ½Ù•M½ÕÉ•½¹™¥É´œè4(€€€€€€€€€€Q¡”Ñ½­•¸°•ÉÑ¥™¥…Ñ”™¥¹•ÉÁÉ¥¹Ğ°Í•ÍÍ¥½¸…¹Í½ÕÉ”…¡”İ¥±°‰”É•µ½Ù•™É½´Ñ¡¥Ì‘•Ù¥”¸œ°4(€€€€€€‘•µ½M•¹…É¥½Ìœè€•µ¼Í•¹…É¥½Ìœ°4(€€€€€€Í¥µÕ±…Ñ•=™™±¥¹”œè€M¥µÕ±…Ñ”½™™±¥¹”œ°4(€€€€€€Í¥µÕ±…Ñ•±…É´œè€M¥µÕ±…Ñ”…ÅÕ…É¥Õ´…±…É´œ°4(€€€€€€…ÁÁUÁ‘…Ñ”œè€!½µ”½¹ÑÉ½°ÕÁ‘…Ñ”œ°4(€€€€€€‘•Ù¥•UÁ‘…Ñ•Ìœè€•Ù¥”ÕÁ‘…Ñ•Ìœ°4(€€€€€€ÕÉÉ•¹ÑY•ÉÍ¥½¸œè€ÕÉÉ•¹ĞèíÙ…±Õ•ôœ°4(€€€€€€±…Ñ•ÍÑY•ÉÍ¥½¸œè€1…Ñ•ÍĞèíÙ…±Õ•ôœ°4(€€€€€€¥¹ÍÑ…±°œè€%¹ÍÑ…±°œ°4(€€€€€€ÕÁQ½…Ñ”œè€UÀÑ¼‘…Ñ”œ°4(€€€€€€Õ¹ÍÕÁÁ½ÉÑ•œè€9½ĞÍ…™•±äÍÕÁÁ½ÉÑ•å•Ğœ°4(€€€€€€µ…¹‘…Ñ½Éäœè€I•ÅÕ¥É•œ°4(€€€€€€…Ù…¥±…‰±•Y•ÉÍ¥½¸œè€Y•ÉÍ¥½¸íÙ…±Õ•ô¥Ì…Ù…¥±…‰±”œ°4(€€€€€€±…Ñ•Èœè€1…Ñ•Èœ°4(€€€€€€‘½İ¹±½…‘¹‘%¹ÍÑ…±°œè€½İ¹±½……¹¥¹ÍÑ…±°œ°4(€€€€€€½¹Ñ¥¹Õ•%¹ÍÑ…±±…Ñ¥½¸œè€½¹Ñ¥¹Õ”¥¹ÍÑ…±±…Ñ¥½¸œ°4(€€€€€€½Ñ…Ù…¥±…‰±•5•ÍÍ…”œè4(€€€€€€€€€€Q¡¥ÌÕÁ‘…Ñ”½¹Ñ…¥¹Ì™¥á•Ì…¹¥µÁÉ½Ù•µ•¹ÑÌ¸Q¡”Á…­…”İ¥±°‰”Ù•É¥™¥•‰•™½É”¥¹ÍÑ…±±…Ñ¥½¸¸œ°4(€€€€€€½Ñ…½İ¹±½…‘¥¹5•ÍÍ…”œè4(€€€€€€€€€€½İ¹±½…‘¥¹œÑ¡”Í¥¹•Á…­…”…¹Ù•É¥™å¥¹œ¥ÑÌM!´ÈÔØ‘¥•ÍĞ¸œ°4(€€€€€€½Ñ…Y•É¥™å¥¹5•ÍÍ…”œè4(€€€€€€€€€€Y•É¥™å¥¹œÁ…­…”¥‘•¹Ñ¥Ñä°Ù•ÉÍ¥½¸…¹Í¥¹¥¹œ•ÉÑ¥™¥…Ñ”¸œ°4(€€€€€€½Ñ…A•Éµ¥ÍÍ¥½¹5•ÍÍ…”œè4(€€€€€€€€€€¹‘É½¥½Á•¹•Ñ¡”¥¹ÍÑ…±°µÍ½ÕÉ”Í•ÑÑ¥¹Ì¸±±½Ü!½µ”½¹ÑÉ½°°É•ÑÕÉ¸Ñ¼Ñ¡”…ÁÀ…¹½¹Ñ¥¹Õ”¸œ°4(€€€€€€½Ñ……¥±•‘5•ÍÍ…”œè€Q¡”ÕÁ‘…Ñ”İ…Ì¹½Ğ¥¹ÍÑ…±±•¸œ°4(€€€€€€½Ñ…AÉ•Á…É¥¹5•ÍÍ…”œè€AÉ•Á…É¥¹œÑ¡”Í•ÕÉ”…ÁÁ±¥…Ñ¥½¸ÕÁ‘…Ñ”¸œ°4(€€€€€€‘¥…¹½ÍÑ¥Ìœè€¥…¹½ÍÑ¥Ìœ°4(€€€€€€•¹Ñ¥Ñ¥•Ìœè€¹Ñ¥Ñ¥•Ìœ°4(€€€€€€±…ÍÑMå¹1…‰•°œè€1…ÍĞÍå¹¡É½¹¥é…Ñ¥½¸œ°4(€€€€€€±½…±…¡”œè€1½…°…¡”œ°4(€€€€€€•¹ÉåÁÑ•œè€¹ÉåÁÑ•œ°4(€€€€€€ÁÉ¥Ù…å¹‘‰½ÕĞœè€AÉ¥Ù…ä…¹…‰½ÕĞœ°4(€€€€€€ÁÉ¥Ù…äœè€AÉ¥Ù…äœ°4(€€€€€€ÁÉ¥Ù…å•ÍÉ¥ÁÑ¥½¸œè4(€€€€€€€€€€!½µ”½¹ÑÉ½°‘½•Ì¹½ĞÍ•±°‘…Ñ„¸É•‘•¹Ñ¥…±Ì…¹Ñ¡”±…Ñ•ÍĞÍ¹…ÁÍ¡½ĞÉ•µ…¥¸¥¸Ñ¡”‘•Ù¥”Í•ÕÉ”ÍÑ½É…”¸œ°4(€€€€€€…ÁÁY•ÉÍ¥½¸œè€Y•ÉÍ¥½¸íÙ…±Õ•ôœ°4(€€€€€€½Á•¹M½ÕÉ•1¥•¹Í•Ìœè€=Á•¸µÍ½ÕÉ”±¥•¹Í•Ìœ°4(€€€€€€…ÑÑÉ¥‰ÕÑ•Ìœè€M½ÕÉ”…ÑÑÉ¥‰ÕÑ•Ìœ°4(€€€€€€•¹Ñ¥ÑåM½ÕÉ”œè€M½ÕÉ”èíÙ…±Õ•ôœ°4(€€€€€€•¹Ñ¥ÑåUÁ‘…Ñ•œè€UÁ‘…Ñ•èíÙ…±Õ•ôœ°4(€€€€€€™¥Éµİ…É”œè€¥Éµİ…É”œ°4(€€€€€€µ…¹Õ™…ÑÕÉ•Èœè€5…¹Õ™…ÑÕÉ•Èœ°4(€€€€€€µ½‘•°œè€5½‘•°œ°4(€€€€€€±…ÍÑM••¸œè€1…ÍĞÍ••¸èíÙ…±Õ•ôœ°4(€€€€€€Í•…É œè€M•…É œ°4(€€€€€€Í•…É¡!¥¹Ğœè€•Ù¥”°•¹Ñ¥Ñä½ÈÉ½½´œ°4(€€€€€€¹½I•ÍÕ±ÑÌœè€9¼É•ÍÕ±ÑÌ™½ÈÑ¡¥ÌÅÕ•Éä¸œ°4(€€€€€€¹½¹Ñ¥Ñ¥•Í%¹É•„œè€Q¡¥ÌÉ½½´¡…Ì¹¼•¹Ñ¥Ñ¥•Ì¸œ°4(€€€€€€…±°œè€±°œ°4(€€€€€€Õ¹­¹½İ¹¹Ñ¥Ñå!¥¹Ğœè4(€€€€€€€€€€™ÕÑÕÉ”½ÈÕÍÑ½´ÑåÁ”¥Ì‘¥ÍÁ±…å•İ¥Ñ¡½ÕĞÕ•ÍÍ¥¹œ¡½ÜÑ¼½¹ÑÉ½°¥Ğ¸œ°4(€€€€€€•ÉÉ½ÉQ¥Ñ±”œè€Q¡”½Á•É…Ñ¥½¸½Õ±¹½Ğ‰”½µÁ±•Ñ•œ°4(€€€€€€•ÉÉ½É9•Ñİ½É¬œè4(€€€€€€€€€€Q¡”Í½ÕÉ”¥ÌÕ¹É•…¡…‰±”¸¡•¬å½ÕÈ18°YA8½È%¹Ñ•É¹•Ğ½¹¹•Ñ¥½¸¸œ°4(€€€€€€•ÉÉ½É=™™±¥¹”œè4(€€€€€€€€€€Q¡•É”¥Ì¹¼½¹¹•Ñ¥½¸¸1…ÍĞ­¹½İ¸‘…Ñ„É•µ…¥¹ÌÉ•…µ½¹±ä¸œ°4(€€€€€€•ÉÉ½ÉQ½­•¸œè4(€€€€€€€€€€Q¡”Ñ½­•¸•áÁ¥É•°İ…ÌÉ•©•Ñ•½È±…­ÌÑ¡”É•ÅÕ¥É•Á•Éµ¥ÍÍ¥½¹Ì¸œ°4(€€€€€€•ÉÉ½ÉM•ÉÙ•Èœè€Q¡”Í•ÉÙ•ÈÉ•ÑÕÉ¹•…¸•ÉÉ½È¸QÉä……¥¸Í¡½ÉÑ±ä¸œ°4(€€€€€€•ÉÉ½É%¹Ù…±¥‘I•ÍÁ½¹Í”œè4(€€€€€€€€€€Q¡”Í½ÕÉ”É•ÑÕÉ¹•‘…µ…•½ÈÕ¹ÍÕÁÁ½ÉÑ•‘…Ñ„¸œ°4(€€€€€€•ÉÉ½É•ÉÑ¥™¥…Ñ”œè4(€€€€€€€€€€Q¡”•ÉÑ¥™¥…Ñ”½È™¥¹•ÉÁÉ¥¹Ğ¡…¹•¸½¹™¥É´¥‘•¹Ñ¥Ñä½¸„ÑÉÕÍÑ•‘¥ÍÁ±…ä¸œ°4(€€€€€€•ÉÉ½ÉMÑ½É…”œè€Q¡”Í•ÕÉ”ÍÑ½É…”½Õ±¹½Ğ‰”½Á•¹•½ÈÕÁ‘…Ñ•¸œ°4(€€€€€€•ÉÉ½ÉA•Éµ¥ÍÍ¥½¸œè4(€€€€€€€€€€Q¡¥Ì½Á•É…Ñ¥½¸¥Ì¹½ĞÁ•Éµ¥ÑÑ•™½ÈÑ¡”Í•±•Ñ••¹Ñ¥Ñä¸œ°4(€€€€€€•ÉÉ½ÉU¹ÍÕÁÁ½ÉÑ•œè4(€€€€€€€€€€Q¡”Í½ÕÉ”‘½•Ì¹½ĞÍ…™•±äÍÕÁÁ½ÉĞÑ¡¥Ì™•…ÑÕÉ”å•Ğ¸œ°4(€€€€€€•ÉÉ½É%¹Ù…±¥‘Y…±Õ”œè4(€€€€€€€€€€Q¡”Ù…±Õ”¥Ì½ÕÑÍ¥‘”¥ÑÌ…±±½İ•É…¹”½È¡…Ì…¸¥¹Ù…±¥™½Éµ…Ğ¸œ°4(€€€€€€•ÉÉ½É%¹Ù…±¥‘É•‘•¹Ñ¥…±Ìœè4(€€€€€€€€€€¡•¬Ñ¡”…‘‘É•ÍÌ…¹Á…ÍÑ”Ñ¡”½µÁ±•Ñ”…•ÍÌÑ½­•¸¸œ°4(€€€€€€•ÉÉ½É%¹Ù…±¥‘!…UÉ°œè€¹Ñ•ÈÑ¡”™Õ±°!QQ@½È!QQAL¥¹ÍÑ…¹”…‘‘É•ÍÌ¸œ°4(€€€€€€•ÉÉ½É%¹Ù…±¥‘!…Q½­•¸œè€Q¡”Ñ½­•¸µÕÍĞ½¹Ñ…¥¸…Ğ±•…ÍĞ€ÈÀ¡…É…Ñ•ÉÌ¸œ°4(€€€€€€•ÉÉ½É½µµ…¹‘U¹…Ù…¥±…‰±”œè4(€€€€€€€€€€½¹ÑÉ½°¥Ì±½­•İ¡¥±”Ñ¡”Í½ÕÉ”½È•¹Ñ¥Ñä¥ÌÕ¹…Ù…¥±…‰±”¸œ°4(€€€€€€•ÉÉ½É	¥½µ•ÑÉ¥…¹•±±•œè4(€€€€€€€€€€	¥½µ•ÑÉ¥Œ…ÕÑ¡½É¥é…Ñ¥½¸İ…Ì…¹•±±•¸Q¡”½Á•É…Ñ¥½¸İ…Ì¹½ĞÍ•¹Ğ¸œ°4(€€€€€€•ÉÉ½É	¥½µ•ÑÉ¥U¹…Ù…¥±…‰±”œè4(€€€€€€€€€€	¥½µ•ÑÉ¥Ì…É”Õ¹…Ù…¥±…‰±”¸½¹™¥ÕÉ”Ñ¡•´¥¸Ñ¡”½Á•É…Ñ¥¹œÍåÍÑ•´Ñ¼½¹Ñ¥¹Õ”¸œ°4(€€€€€€•ÉÉ½É	¥½µ•ÑÉ¥1½­•œè4(€€€€€€€€€€	¥½µ•ÑÉ¥Ì…É”Ñ•µÁ½É…É¥±ä±½­•¸U¹±½¬Ñ¡•´¥¸Ñ¡”½Á•É…Ñ¥¹œÍåÍÑ•´…¹É•ÑÉä¸œ°4(€€€€€€•ÉÉ½É	¥½µ•ÑÉ¥…¥±•œè4(€€€€€€€€€€%‘•¹Ñ¥Ñä½Õ±¹½Ğ‰”½¹™¥Éµ•¸Q¡”É¥Ñ¥…°½Á•É…Ñ¥½¸É•µ…¥¹Ì‰±½­•¸œ°4(€€€€€€•ÉÉ½ÉU¹­¹½İ¸œè4(€€€€€€€€€€¸Õ¹•áÁ•Ñ••ÉÉ½È½ÕÉÉ•¸M•¹Í¥Ñ¥Ù”‘…Ñ„İ…Ì¹½ĞÉ•½É‘•¥¸±½Ì¸œ°4(€€€€€€É•ÑÉäœè€QÉä……¥¸œ°4(€€€€€€É•½¹™¥ÕÉ”œè€¡½½Í”…¹½Ñ¡•ÈÍ½ÕÉ”œ°4(€€€€€€‘¥Íµ¥ÍÌœè€¥Íµ¥ÍÌœ°4(€€€€€€¹½Ñ¥•I•™É•Í¡•œè€…Ñ„É•™É•Í¡•¸œ°4(€€€€€€¹½Ñ¥•½µµ…¹‘•ÁÑ•œè€Q¡”Í½ÕÉ”…­¹½İ±•‘•Ñ¡”½µµ…¹¸œ°4(€€€€€€¹½Ñ¥•UÁ‘…Ñ•MÑ…ÉÑ•œè€Q¡”ÕÁ‘…Ñ”ÁÉ½•ÍÌ¡…ÌÍÑ…ÉÑ•¸œ°4(€€€€€€¹½Ñ¥•	¥½µ•ÑÉ¥¹…‰±•œè4(€€€€€€€€€€	¥½µ•ÑÉ¥ŒÁÉ½Ñ•Ñ¥½¸¥Ì•¹…‰±•™½ÈÉ¥Ñ¥…°½Á•É…Ñ¥½¹Ì¸œ°4(€€€€€€¹½Ñ¥•	¥½µ•ÑÉ¥¥Í…‰±•œè4(€€€€€€€€€€	¥½µ•ÑÉ¥ŒÁÉ½Ñ•Ñ¥½¸¥Ì‘¥Í…‰±•™½ÈÉ¥Ñ¥…°½Á•É…Ñ¥½¹Ì¸œ°4(€€€€€€©ÕÍÑ9½Üœè€©ÕÍĞ¹½Üœ°4(€€€€€€Í•½¹‘Í¼œè€íÙ…±Õ•ôÍ•Œ…¼œ°4(€€€€€€µ¥¹ÕÑ•Í¼œè€íÙ…±Õ•ôµ¥¸…¼œ°4(€€€€€€¡½ÕÉÍ¼œè€íÙ…±Õ•ô¡È…¼œ°4(€€€€€€¹•Ù•Èœè€¹•Ù•Èœ°4(€€€€€€¡¥ÍÑ½ÉåµÁÑäœè€Q¡”Í½ÕÉ”É•ÑÕÉ¹•¹¼Í…µÁ±•Ì™½ÈÑ¡¥ÌÁ•É¥½¸œ°4(€€€€€€¡¥ÍÑ½ÉåAÉ½µÁĞœè€¡½½Í”„Á•É¥½Ñ¼±½…¡¥ÍÑ½Éä¸œ°4(€€€€€€¡¥ÍÑ½ÉåMÕµµ…Éäœè4(€€€€€€€€€€!¥ÍÑ½Éä¡…ÉĞ¸5¥¹¥µÕ´íµ¥¹¥µÕµô°µ…á¥µÕ´íµ…á¥µÕµô°íÍ…µÁ±•ÍôÍ…µÁ±•Ì¸œ°4(€€€€€€¡¥ÍÑ½ÉäÈÑ œè€œÈĞ¡½ÕÉÌœ°4(€€€€€€¡¥ÍÑ½Éäİœè€œÜ‘…åÌœ°4(€€€€€€•¹Ñ¥Ñå}±¥¡Ğœè€1¥¡Ğœ°4(€€€€€€•¹Ñ¥Ñå}Íİ¥Ñ¡¹Ñ¥Ñäœè€Mİ¥Ñ œ°4(€€€€€€•¹Ñ¥Ñå}Í•¹Í½Èœè€M•¹Í½Èœ°4(€€€€€€•¹Ñ¥Ñå}‰¥¹…ÉåM•¹Í½Èœè€	¥¹…ÉäÍ•¹Í½Èœ°4(€€€€€€•¹Ñ¥Ñå}±¥µ…Ñ”œè€±¥µ…Ñ”œ°4(€€€€€€•¹Ñ¥Ñå}½Ù•Èœè€½Ù•Èœ°4(€€€€€€•¹Ñ¥Ñå}±½¬œè€1½¬œ°4(€€€€€€•¹Ñ¥Ñå}…±…Éµ½¹ÑÉ½±A…¹•°œè€±…É´œ°4(€€€€€€•¹Ñ¥Ñå}…µ•É„œè€…µ•É„œ°4(€€€€€€•¹Ñ¥Ñå}µ•‘¥…A±…å•Èœè€5•‘¥„Á±…å•Èœ°4(€€€€€€•¹Ñ¥Ñå}™…¸œè€…¸œ°4(€€€€€€•¹Ñ¥Ñå}Ù…ÕÕ´œè€Y…ÕÕ´œ°4(€€€€€€•¹Ñ¥Ñå}İ•…Ñ¡•Èœè€]•…Ñ¡•Èœ°4(€€€€€€•¹Ñ¥Ñå}Á•ÉÍ½¸œè€A•ÉÍ½¸œ°4(€€€€€€•¹Ñ¥Ñå}‘•Ù¥•QÉ…­•Èœè€QÉ…­•Èœ°4(€€€€€€•¹Ñ¥Ñå}Í•¹”œè€M•¹”œ°4(€€€€€€•¹Ñ¥Ñå}ÍÉ¥ÁĞœè€MÉ¥ÁĞœ°4(€€€€€€•¹Ñ¥Ñå}…ÕÑ½µ…Ñ¥½¸œè€ÕÑ½µ…Ñ¥½¸œ°4(€€€€€€•¹Ñ¥Ñå}‰ÕÑÑ½¸œè€	ÕÑÑ½¸œ°4(€€€€€€•¹Ñ¥Ñå}¥¹ÁÕÑ	ÕÑÑ½¸œè€%¹ÁÕĞ‰ÕÑÑ½¸œ°4(€€€€€€•¹Ñ¥Ñå}¹Õµ‰•Èœè€9Õµ‰•Èœ°4(€€€€€€•¹Ñ¥Ñå}¥¹ÁÕÑ9Õµ‰•Èœè€%¹ÁÕĞ¹Õµ‰•Èœ°4(€€€€€€•¹Ñ¥Ñå}Í•±•Ğœè€M•±•Ğœ°4(€€€€€€•¹Ñ¥Ñå}¥¹ÁÕÑM•±•Ğœè€%¹ÁÕĞÍ•±•Ğœ°4(€€€€€€•¹Ñ¥Ñå}Ñ•áĞœè€Q•áĞœ°4(€€€€€€•¹Ñ¥Ñå}¥¹ÁÕÑQ•áĞœè€%¹ÁÕĞÑ•áĞœ°4(€€€€€€•¹Ñ¥Ñå}ÕÁ‘…Ñ”œè€UÁ‘…Ñ”œ°4(€€€€€€•¹Ñ¥Ñå}Õ¹­¹½İ¸œè€ÕÍÑ½´ÑåÁ”œ°4(€€€ô°4(€ôì4)ô4(4)™¥¹…°±…ÍÌ}!½µ•½¹ÑÉ½±MÑÉ¥¹Í•±•…Ñ”4(€€€•áÑ•¹‘Ì1½…±¥é…Ñ¥½¹Í•±•…Ñ”ñ!½µ•½¹ÑÉ½±MÑÉ¥¹Ìøì4(€½¹ÍĞ}!½µ•½¹ÑÉ½±MÑÉ¥¹Í•±•…Ñ” ¤ì4(4(€½Ù•ÉÉ¥‘”4(€‰½½°¥ÍMÕÁÁ½ÉÑ•¡1½…±”±½…±”¤€ôø4(€€€€€€ñMÑÉ¥¹œùìÁ°œ°€•¸ô¹½¹Ñ…¥¹Ì¡±½…±”¹±…¹Õ…•½‘”¤ì4(4(€½Ù•ÉÉ¥‘”4(€ÕÑÕÉ”ñ!½µ•½¹ÑÉ½±MÑÉ¥¹Ìø±½…¡1½…±”±½…±”¤€ôø4(€€€€€Må¹¡É½¹½ÕÍÕÑÕÉ”ñ!½µ•½¹ÑÉ½±MÑÉ¥¹Ìø¡!½µ•½¹ÑÉ½±MÑÉ¥¹Ì¡±½…±”¤¤ì4(4(€½Ù•ÉÉ¥‘”4(€‰½½°Í¡½Õ±‘I•±½…¡½Ù…É¥…¹Ğ1½…±¥é…Ñ¥½¹Í•±•…Ñ”ñ!½µ•½¹ÑÉ½±MÑÉ¥¹Ìø½±¤€ôø4(€€€€€™…±Í”ì4)ô4

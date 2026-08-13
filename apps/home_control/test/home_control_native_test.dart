@@ -87,7 +87,12 @@ void main() {
     await tester.pumpAndSettle();
     final toggle = find.byType(Switch);
     expect(tester.widget<Switch>(toggle).value, isTrue);
-    await tester.tap(toggle);
+    final toggleControl = find.ancestor(
+      of: toggle,
+      matching: find.byType(InkResponse),
+    );
+    expect(toggleControl, findsOneWidget);
+    await tester.tap(toggleControl);
     await tester.pumpAndSettle();
     expect(tester.widget<Switch>(toggle).value, isFalse);
   });

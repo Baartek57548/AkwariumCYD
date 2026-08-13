@@ -78,14 +78,31 @@ semantyki ryzyka co źródła produkcyjne.
 
 Główna nawigacja ma Pulpit, Pomieszczenia, Urządzenia, Automatyzacje,
 Aktualizacje i Ustawienia. Telefon używa dolnej belki, a szeroki ekran
-`NavigationRail`. Dashboard pozwala zmieniać kolejność, widoczność, rozmiar kart
-i ulubione. Operacje konsekwencyjne lub krytyczne wymagają potwierdzenia, stan
+`NavigationRail`. Panel ścienny 800×480 pokazuje cztery nieprzewijane cele:
+Pulpit, Pomieszczenia, Urządzenia i Więcej; pełny rail pojawia się na większych
+ekranach. Dashboard pozwala zmieniać kolejność, widoczność, rozmiar kart i
+ulubione. Operacje konsekwencyjne lub krytyczne wymagają potwierdzenia, stan
 oczekujący jest widoczny, a brak ACK odtwarza stan serwera.
+
+Pierwszy ekran stosuje hierarchię „calm intelligence”: zagregowany stan domu,
+centrum spraw wymagających reakcji, szybkie sterowanie, dostępne moduły domenowe,
+pomieszczenia i rzeczywiste zmiany encji. Moduł akwarium jest ukrywany, gdy źródło
+go nie udostępnia. Komunikat prawidłowego stanu oznacza brak aktywnych alarmów;
+offline, stare lub niepełne dane mają osobne stany i nie są przedstawiane jako
+bezpieczne. Liczniki OTA i urządzeń offline prowadzą bezpośrednio do właściwego
+ekranu.
 
 Interfejs obsługuje PL/EN, motyw systemowy/jasny/ciemny, powiększony tekst,
 semantykę kontrolek, stany loading/empty/offline/stale/partial/error i inputy bez
 polegania wyłącznie na kolorze. Aparaty i nieznane integracje są prezentowane
 bez wykonywania niezweryfikowanych akcji.
+
+Wspólny motyw definiuje jawną drabinę powierzchni, typografię, promienie i
+semantyczne pary kolorów success/warning/info. Testy kontrastu pilnują minimum
+WCAG dla tekstu, a karta encji rozdziela akcję otwarcia szczegółów od przełącznika
+lub przycisku. Wszystkie główne cele dotykowe mają minimum 48 dp. Macierz regresji
+obejmuje 320×568 i 800×480 przy skali tekstu 200%, oba motywy oraz goldeny obu
+formatów.
 
 ## Cykl życia i aktualizacje
 
