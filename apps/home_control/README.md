@@ -75,10 +75,11 @@ flutter build windows --release
 Ostatnie polecenie buduje `HomeControl.exe` wraz z pełnym bundle Flutter oraz
 dwujęzyczny kreator
 `artifacts/home-control-windows/Home-Control-X.Y.Z-Windows-x64-Setup.exe`.
-Wymaga Windows 10 1903 lub nowszego, Flutter 3.41.5, Visual Studio 2022 z C++ ATL
-oraz Inno Setup 6. Instalator działa per-user, obsługuje upgrade, blokuje
-downgrade, dodaje deinstalator i opcjonalny skrót pulpitu oraz dołącza VC++
-Runtime tylko wtedy, gdy system go nie posiada.
+Wymaga Windows 10 1903 lub nowszego, Flutter 3.41.5, Visual Studio z workloadem
+Desktop development with C++ i ATL (produkcyjny runner: `windows-2025` z Visual
+Studio 2026) oraz Inno Setup 6. Instalator działa per-user, obsługuje upgrade,
+blokuje downgrade, dodaje deinstalator i opcjonalny skrót pulpitu oraz dołącza
+VC++ Runtime tylko wtedy, gdy system go nie posiada.
 
 Build iOS wymaga macOS z Xcode oraz tożsamości podpisującej właściciela.
 

@@ -1,23 +1,27 @@
-# Raport QA — Home Control 2.1 / monorepo
+# Raport QA — Home Control 2.2 / monorepo
 
 Data raportu: 2026-08-18. Gałąź: `codex/home-control-monorepo`.
 
 ## Wynik końcowy
 
-Kod Home Control, testy hostowe i wszystkie lokalne kompilacje bez sprzętu są
-zielone. Właścicielskie sekrety podpisu Androida są skonfigurowane wyłącznie w
-chronionym środowisku GitHub `production-mobile`; lokalny build release celowo
-nie korzysta z klucza produkcyjnego. Fizyczny HIL CYD/P4/C6 nie został wykonany
-i nie jest przedstawiany jako zastąpiony przez testy hostowe. Zmiana 2.1.0 nie
+Kod Home Control, testy hostowe oraz lokalne kompilacje web i Android są zielone.
+Natywny build Windows x64 jest kanonicznie wykonywany na GitHub `windows-2025`,
+ponieważ lokalna instalacja Visual Studio nie zawiera ATL wymaganego przez jedną
+z wtyczek Fluttera. Właścicielskie sekrety podpisu Androida są skonfigurowane
+wyłącznie w chronionym środowisku GitHub `production-mobile`; lokalny build nie
+korzysta z klucza produkcyjnego. Fizyczny HIL CYD/P4/C6 nie został wykonany i nie
+jest przedstawiany jako zastąpiony przez testy hostowe. Zmiana 2.2.0 nie
 modyfikuje firmware, ale ten brak pozostaje jawnym ograniczeniem odbioru całego
 systemu.
 
 | Obszar | Wykonana brama | Wynik |
 | --- | --- | --- |
-| Home Control | pełny formatter Dart, `flutter analyze`, `flutter test --coverage` | PASS, 0 problemów, 103 testy, 63,58% pokrycia linii |
-| Home Control | web release, Android debug/release | PASS; web 38 250 332 B, debug APK 158 637 644 B, lokalny release AOT 58 838 196 B |
-| Home Control APK debug | `aapt`, `apksigner`, SHA-256 | PASS; `pl.aquacyd.aquacyd_home`, `2.1.0`/`7`, jeden prawidłowy sygnatariusz debug |
-| Home Control UI runtime | telefon 393×852, panel 800×480, light/dark, logi przeglądarki | PASS; dashboard, Więcej, pokoje/szczegóły, urządzenia, sceny i ustawienia bez nowych wyjątków ani overflowów |
+| Home Control | pełny formatter Dart, `flutter analyze --no-pub`, `flutter test --no-pub` | PASS, 72 pliki, 0 problemów, 110 testów |
+| Home Control | web release i Android debug | PASS; web 38 250 510 B, debug APK 158 651 696 B |
+| Home Control APK debug | `aapt`, `apksigner`, SHA-256 | PASS; `pl.aquacyd.aquacyd_home`, `2.2.0`/`8`, jeden prawidłowy sygnatariusz debug, SHA-256 `7b76a8954f27428ddd0905a592faf52c00b438e22c8cdd18c3b15afc961dbbe5` |
+| Home Control UI | testy widget, goldeny i regresja responsywności w zestawie 110 testów | PASS; telefon, panel 800×480, light/dark, skalowanie tekstu i adaptacyjna nawigacja |
+| Home Control Windows x64 | hosted `flutter build windows --release`, Inno Setup, cicha instalacja, start aplikacji przez 5 s i cicha deinstalacja | PASS w CI `32155965239`; `HomeControl.exe` i Setup mają `FileVersion`/`ProductVersion` `2.2.0.8` |
+| Home Control Windows Setup | pobrany artefakt CI, ponowny lokalny smoke test, SHA-256 i Authenticode | PASS; 30 155 614 B, SHA-256 `ba4bb782513b78d302b5ce4578582655882e8c44ff9aab2ffcb928b3903250e8`, oczekiwany status `NotSigned` |
 | AquaCYD Service | analyze, pełne testy | PASS, 0 problemów, 240 testów |
 | AquaCYD Service | Android debug/release z jednorazowym kluczem walidacyjnym | PASS, APK release 65,5 MB |
 | Pakiety Dart | analyze/test każdego pakietu | PASS, 5 testów |
@@ -36,7 +40,7 @@ systemu.
 | HIL mock | pełny self-test | PASS, 12 scenariuszy + 1 jawny SKIP portu |
 | HIL dry-run | uruchomienie bez stanowiska | 0 FAIL, 13 SKIP z podaną przyczyną |
 | HIL fizyczny | `--require-hardware --forbid-skips` | BLOCKED bez stanowiska |
-| Produkcyjny podpis Home Control | chronione sekrety `production-mobile`, `aapt` i `apksigner` w release workflow | CONFIGURED; wynik końcowy wymaga zielonego uruchomienia taga `home-v2.1.0` |
+| Produkcyjny podpis Home Control | chronione sekrety `production-mobile`, `aapt` i `apksigner` w release workflow | CONFIGURED; wynik końcowy wymaga zielonego uruchomienia taga `home-v2.2.0` |
 
 Pierwsza równoległa kompilacja P4 została przerwana przez proces kompilatora bez
 diagnostyki przy małym zapasie pamięci hosta. Powtórzenie jednym zadaniem przeszło
@@ -76,7 +80,14 @@ flash i testu aktualizacji istniejącego urządzenia.
   karty, statusy, kontrolki, panele i stany loading/empty/error;
 - opcjonalna biometria dla krytycznych poleceń i instalacji OTA z bezpiecznym
   zachowaniem przy anulowaniu, lockoucie lub braku skonfigurowanej biometrii;
+- natywne okno Windows x64 z obsługą DPI, ograniczeniem rozmiaru do obszaru
+  roboczego monitora i responsywną nawigacją dla małych okien;
+- Windows Hello korzysta z poświadczenia systemowego i może zaakceptować PIN;
+  platforma Windows nie obsługuje wymuszenia trybu wyłącznie biometrycznego;
 - wersjonowany cache offline odporny na uszkodzony snapshot i mieszanie źródeł;
+  na Windows snapshot topologii i stanów trafia do nieromingowego LocalAppData
+  cache, jest jawnie oddzielony od tokenów i danych parowania, ale nie jest
+  szyfrowany;
 - obsługa błędów tokenu, sieci, certyfikatu i serwera;
 - automatyczne sprawdzenie OTA przy starcie oraz wznowieniu aplikacji.
 
@@ -87,18 +98,24 @@ flash i testu aktualizacji istniejącego urządzenia.
    jawną opcją zaawansowaną, a nie atrapą OAuth.
 2. Produkcyjne APK powstają wyłącznie w chronionym workflow; lokalny host nie ma
    i nie powinien mieć prywatnego keystore właściciela.
-3. Secure Boot i eFuse wymagają kontrolowanego fizycznego provisioningu.
-4. C6 ma dwie partycje OTA, ale kanał pozostaje `unsupported`, dopóki podpisana
+3. Instalator Windows nie ma certyfikatu Authenticode właściciela, dlatego Windows
+   SmartScreen może wymagać dodatkowego potwierdzenia. Dołączany instalator VC++
+   Runtime zachowuje prawidłowy podpis Microsoftu; nie jest to substytut podpisu
+   aplikacji ani Setupu.
+4. Secure Boot i eFuse wymagają kontrolowanego fizycznego provisioningu.
+5. C6 ma dwie partycje OTA, ale kanał pozostaje `unsupported`, dopóki podpisana
    instalacja, health check i rollback nie zostaną wdrożone i sprawdzone na płytce.
-5. P4, C6 i CYD wymagają pełnego HIL bez pominiętych scenariuszy.
-6. Wydanie Home Control musi jawnie podawać brak bieżącego fizycznego HIL;
-   produkcyjne tagi firmware pozostają zablokowane do zamknięcia punktów 3–5.
+6. P4, C6 i CYD wymagają pełnego HIL bez pominiętych scenariuszy.
+7. Wydanie Home Control musi jawnie podawać brak bieżącego fizycznego HIL;
+   produkcyjne tagi firmware pozostają zablokowane do zamknięcia punktów 4–6.
 
 ## Interpretacja
 
 Zielone testy hostowe i kompilacje oznaczają gotowość aplikacji do wydania oraz
 dalszego HIL, nie certyfikację sprzętu. Wynik mock nigdy nie jest przedstawiany
-jako test fizyczny. CI gałęzi generuje artefakty walidacyjne, a chroniony workflow
-taga ponownie analizuje i testuje kod, buduje APK kluczem właściciela, sprawdza
-package, wersję, pojedynczego sygnatariusza i fingerprint oraz publikuje
-niezmienny manifest, SHA-256, SBOM i provenance.
+jako test fizyczny. CI gałęzi generuje artefakty walidacyjne. Chroniony workflow
+taga ponownie analizuje i testuje kod, buduje Windows Setup oraz APK kluczem
+właściciela, sprawdza dokładny zestaw i wersje artefaktów, package, pojedynczego
+sygnatariusza APK i fingerprint, a następnie publikuje SHA-256, manifest,
+wspólny CycloneDX SBOM i provenance. Setup pozostaje celowo niepodpisany do czasu
+dostarczenia certyfikatu Authenticode przez właściciela.
