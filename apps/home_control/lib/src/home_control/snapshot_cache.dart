@@ -1,7 +1,13 @@
 import 'dart:convert';
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:home_entities/home_entities.dart';
+
+import 'snapshot_storage.dart';
+import 'snapshot_storage_factory_stub.dart'
+    if (dart.library.io) 'snapshot_storage_factory_io.dart'
+    as platform_storage;
 
 abstract interface class HomeSnapshotCache {
   Future<HomeSnapshot?> load(HomeSourceKind kind, String sourceId);
@@ -13,7 +19,9 @@ abstract interface class HomeSnapshotCache {
 
 final class SecureHomeSnapshotCache implements HomeSnapshotCache {
   SecureHomeSnapshotCache({FlutterSecureStorage? storage})
-    : _storage = storage ?? const FlutterSecureStorage();
+    : this._(SecureSnapshotStorage(storage ?? const FlutterSecureStorage()));
+
+  SecureHomeSnapshotCache._(SnapshotStorage storage) : _storage = storage;
 
   static const int _schemaVersion = 1;
   static const int _maximumEntities = 512;
@@ -21,7 +29,7 @@ final class SecureHomeSnapshotCache implements HomeSnapshotCache {
   static const String _legacyKeyPrefix = 'home_control_snapshot_v1_';
   static const String _scopedKeyPrefix = 'home_control_snapshot_v2_';
 
-  final FlutterSecureStorage _storage;
+  final SnapshotStorage _storage;
 
   @override
   Future<HomeSnapshot?> load(HomeSourceKind kind, String sourceId) async {
@@ -418,4 +426,13 @@ final class SecureHomeSnapshotCache implements HomeSnapshotCache {
   static List<String> _stringList(Object? value) => value is List<Object?>
       ? value.whereType<String>().toList(growable: false)
       : const <String>[];
+}
+
+HomeSnapshotCache createDefaultHomeSnapshotCache() {
+  if (!kIsWeb && defaultTargetPlatform == TargetPlatform.windows) {
+    return SecureHomeSnapshotCache._(
+      platform_storage.createPlatformSnapshotStorage(),
+    );
+  }
+  return SecureHomeSnapshotCache();
 }

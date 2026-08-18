@@ -148,7 +148,10 @@ def expected_asset_names(identity: ReleaseIdentity) -> list[str]:
     if identity.kind == "mobile":
         return [f"AquaCYD-Control-{identity.version}-current.apk"]
     if identity.kind == "home":
-        return [f"Home-Control-{identity.version}.apk"]
+        return [
+            f"Home-Control-{identity.version}.apk",
+            f"Home-Control-{identity.version}-Windows-x64-Setup.exe",
+        ]
     names: list[str] = []
     for target in FIRMWARE_TARGETS:
         names.extend(
@@ -385,9 +388,11 @@ def run_self_test() -> int:
 
         home_apk = root / "Home-Control-4.2.1.apk"
         home_apk.write_bytes(b"self-test-home-apk")
+        home_setup = root / "Home-Control-4.2.1-Windows-x64-Setup.exe"
+        home_setup.write_bytes(b"self-test-home-windows-setup")
         home_identity, home_assets, home_build, home_contract = validate_release(
             tag="home-v4.2.1",
-            paths=[home_apk],
+            paths=[home_apk, home_setup],
             pubspec_path=pubspec,
             package_name=EXPECTED_HOME_PACKAGE,
             apk_version_name="4.2.1",
@@ -396,7 +401,7 @@ def run_self_test() -> int:
         )
         if (
             home_identity.kind != "home"
-            or len(home_assets) != 1
+            or len(home_assets) != 2
             or home_build != 17
             or home_contract is not None
         ):

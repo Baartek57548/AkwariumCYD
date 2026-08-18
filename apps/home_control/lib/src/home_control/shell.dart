@@ -124,7 +124,7 @@ final class _HomeControlShellState extends State<HomeControlShell> {
                       child: SizedBox(
                         width: extendedRail ? 240 : 96,
                         child: NavigationRail(
-                          scrollable: useFullRail,
+                          scrollable: true,
                           extended: extendedRail,
                           minWidth: 72,
                           selectedIndex: useFullRail

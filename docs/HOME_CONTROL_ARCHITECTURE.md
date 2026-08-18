@@ -11,7 +11,7 @@ AquaCYD Service pozostaje odrębnym narzędziem technicznym sterownika akwarium.
 
 ```mermaid
 flowchart TB
-    UI["Material 3: telefon, tablet i web"] --> CTRL["HomeControlController"]
+    UI["Material 3: telefon, tablet, Windows i web"] --> CTRL["HomeControlController"]
     CTRL --> PORT["HomeDataSource"]
     PORT --> HUB["AquaHubDataSource"]
     PORT --> HA["HomeAssistantDataSource"]
@@ -20,7 +20,8 @@ flowchart TB
     CTRL --> PREF["preferencje UI"]
     HUB --> HUBAPI["HTTPS REST + WSS + discovery"]
     HA --> HAAPI["HA REST + WebSocket + registry"]
-    CACHE --> SECURE["secure storage systemu"]
+    CACHE --> SECURE["secure storage: Android/iOS"]
+    CACHE --> WINCACHE["Local AppData cache: Windows"]
 ```
 
 Widgety nie znają HTTP, WebSocket, BLE, MQTT ani formatu snapshotu. Kontroler
@@ -43,6 +44,14 @@ Snapshot zawiera źródło, pomieszczenia, urządzenia, encje, automatyzacje,
 aktualizacje i stan synchronizacji. Cache ma wersję schematu, limit 512 KiB,
 walidację per encja i zachowuje ostatni odczyt jako jawnie offline. Cache innej
 instancji HA nie może zostać przywrócony do aktywnego profilu.
+
+Na Windows odtwarzalny snapshot nie współdzieli kontenera DPAPI z tokenami.
+Jest atomowo zapisywany jako zwykły tekst w nieroamingowym katalogu cache
+`LocalAppData`; może zawierać nazwy, topologię i ostatnie stany, ale nigdy tokeny
+ani dane parowania. Poświadczenia pozostają w systemowym secure storage. Taki
+podział ogranicza częste przepisywanie kontenera sekretów kosztem braku
+szyfrowania danych operacyjnych cache; cache można bezpiecznie usunąć i odbudować
+ze źródła.
 
 ## Źródła danych
 
@@ -115,9 +124,12 @@ główne cele dotykowe mają minimum 48 dp. Macierz regresji obejmuje 320×568 i
 Po wejściu aplikacja automatycznie sprawdza stabilny kanał `home-vX.Y.Z`.
 Instalacja na Androidzie wymaga świadomej zgody użytkownika; APK jest sprawdzany
 pod względem nazwy pakietu, wersji, rozmiaru, SHA-256 i certyfikatu podpisującego.
-Wstrzymanie aplikacji zatrzymuje aktywny polling, wznowienie wykonuje refresh i
-ponowne sprawdzenie OTA. iOS i web pokazują stan niewspierany zamiast udawać
-instalację poza mechanizmem platformy.
+Ukrycie lub wstrzymanie aplikacji zatrzymuje aktywny polling, a wznowienie
+wykonuje refresh i ponowne sprawdzenie OTA. Na Windows zdarzenie `inactive`
+oznacza także widoczne okno bez fokusu, dlatego nie zatrzymuje pollingu.
+Android instaluje zweryfikowany APK; Windows, iOS i web pokazują stan niewspierany
+zamiast udawać instalację poza mechanizmem platformy. Windows aktualizuje się
+przez niezależny Setup publikowany w tym samym release.
 
 ## Uruchomienie
 

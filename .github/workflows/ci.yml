@@ -25,6 +25,7 @@ jobs:
       firmware: ${{ steps.filter.outputs.firmware }}
       esp_idf: ${{ steps.filter.outputs.esp_idf }}
       flutter: ${{ steps.filter.outputs.flutter }}
+      home: ${{ steps.filter.outputs.home }}
       service: ${{ steps.filter.outputs.service }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
@@ -67,6 +68,7 @@ jobs:
           classify firmware '^(firmware/cyd_controller/|firmware/shared/|web/|sdcard/|platformio.ini)'
           classify esp_idf '^(firmware/esp32p4_hub/|firmware/esp32c6_gateway/|firmware/shared/)'
           classify flutter '^(apps/|packages/)'
+          classify home '^(apps/home_control/|packages/|design/home-control/|scripts/(build_home_control_windows|install_inno_setup|test_home_control_windows_installer)\.ps1|scripts/validate_release\.py|tools/generate_sbom\.py|\.github/workflows/)'
           classify service '^(apps/aquacyd_service/|packages/)'
 
   secret-security:
@@ -550,6 +552,53 @@ jobs:
         with:
           name: home-control-android-debug
           path: artifacts/Home-Control-ci-debug.apk*
+          if-no-files-found: error
+          retention-days: 7
+
+  home-windows:
+    name: Home Control Windows installer
+    needs: changes
+    if: needs.changes.outputs.home == 'true'
+    runs-on: windows-2025
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2 # v2.23.0
+        with:
+          flutter-version: "3.41.5"
+          channel: stable
+          cache: true
+      - name: Install pinned Inno Setup
+        id: inno
+        shell: pwsh
+        run: |
+          $compiler = ./scripts/install_inno_setup.ps1
+          "compiler=$compiler" >> $env:GITHUB_OUTPUT
+      - name: Build release bundle and installer wizard
+        shell: pwsh
+        run: |
+          ./scripts/build_home_control_windows.ps1 `
+            -InnoCompiler '${{ steps.inno.outputs.compiler }}' `
+            -OutputDirectory artifacts/home-control-windows
+      - name: Smoke-test silent install and uninstall
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $setup = @(Get-ChildItem `
+            -LiteralPath artifacts/home-control-windows `
+            -Filter '*-Setup.exe' `
+            -File)
+          if ($setup.Count -ne 1) {
+            throw "Expected exactly one Windows Setup; got $($setup.Count)."
+          }
+          ./scripts/test_home_control_windows_installer.ps1 `
+            -InstallerPath $setup.FullName `
+            -InstallDirectory (Join-Path $env:RUNNER_TEMP 'Home Control smoke')
+      - name: Upload Windows installer
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: home-control-windows-installer
+          path: artifacts/home-control-windows/*-Setup.exe
           if-no-files-found: error
           retention-days: 7
 

@@ -2,7 +2,7 @@
 
 | Produkt | Target / kanał | Sprawdzenie | Instalacja | Rollback |
 | --- | --- | --- | --- | --- |
-| Home Control | `home-vX.Y.Z` | automatycznie przy wejściu i wznowieniu | Android po zgodzie; iOS/web przez mechanizm platformy | poprzedni APK / store |
+| Home Control | `home-vX.Y.Z` | Android automatycznie; Windows ręcznie z release | Android po zgodzie; Windows przez Setup; iOS/web przez mechanizm platformy | poprzedni APK / poprzedni Setup / store |
 | AquaCYD Service | `mobile-vX.Y.Z` | w aplikacji serwisowej | Android po zgodzie i weryfikacji podpisu | poprzedni APK / store |
 | CYD Controller | `firmware-vX.Y.Z` + board ID | ręcznie z serwisu lub kontrolowany kanał | podpisany `.aqfw`, nieaktywny slot | bootloader po nieudanym health |
 | AquaHub P4 | osobny manifest `aquahub-p4` | UI Home Control/HMI | HTTPS do nieaktywnej partycji | ESP-IDF app rollback |
@@ -24,6 +24,13 @@ prerelease, a ponowne wejście po ustawieniu zgody Androida wznawia instalację.
 APK musi nazywać się `Home-Control-X.Y.Z.apk`. Tag `home-vX.Y.Z` zostaje
 zachowany, aby istniejące instalacje mogły migrować bez utraty kanału. Kanał beta
 powinien być oddzielnym, opt-in prerelease i nie jest domyślnie włączony.
+
+Ten sam release zawiera
+`Home-Control-X.Y.Z-Windows-x64-Setup.exe`. Windows nie uruchamia androidowego
+updatera: użytkownik pobiera nowszy Setup, który wykonuje upgrade in-place,
+zachowuje dane profilu i blokuje downgrade. Do czasu wdrożenia Authenticode
+SmartScreen może wymagać ręcznego potwierdzenia; przed uruchomieniem należy
+porównać SHA-256 z `SHA256SUMS` albo zweryfikować GitHub provenance.
 
 ## Firmware
 

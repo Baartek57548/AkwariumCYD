@@ -310,8 +310,86 @@ jobs:
             apps/aquacyd_service/android/key.properties \
             "$RUNNER_TEMP/aquacyd-release.jks"
 
+  home-windows:
+    name: Home Control Windows release artifact
+    if: ${{ startsWith(github.ref_name, 'home-v') }}
+    runs-on: windows-2025
+    timeout-minutes: 35
+    permissions:
+      attestations: write
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
+        with:
+          python-version: "3.13"
+      - uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2 # v2.23.0
+        with:
+          flutter-version: "3.41.5"
+          channel: stable
+          cache: true
+      - name: Install pinned Inno Setup
+        id: inno
+        shell: pwsh
+        run: |
+          $compiler = ./scripts/install_inno_setup.ps1
+          "compiler=$compiler" >> $env:GITHUB_OUTPUT
+      - name: Validate Home Control tag
+        shell: pwsh
+        run: >
+          python scripts/validate_release.py
+          --tag $env:GITHUB_REF_NAME
+          --pubspec apps/home_control/pubspec.yaml
+          --dry-run
+      - name: Build Windows bundle and installer wizard
+        shell: pwsh
+        run: |
+          $version = $env:GITHUB_REF_NAME -replace '^home-v', ''
+          ./scripts/build_home_control_windows.ps1 `
+            -ExpectedVersion $version `
+            -InnoCompiler '${{ steps.inno.outputs.compiler }}' `
+            -OutputDirectory artifacts/home-control-windows
+      - name: Verify Windows installer identity
+        shell: pwsh
+        run: |
+          $version = $env:GITHUB_REF_NAME -replace '^home-v', ''
+          $setup = Join-Path `
+            $PWD `
+            "artifacts/home-control-windows/Home-Control-$version-Windows-x64-Setup.exe"
+          if (-not (Test-Path -LiteralPath $setup -PathType Leaf)) {
+            throw "Expected Windows Setup is absent: $setup"
+          }
+          $signature = Get-AuthenticodeSignature -LiteralPath $setup
+          if ($signature.Status -ne 'NotSigned') {
+            throw "Unexpected Authenticode status: $($signature.Status)."
+          }
+          Get-FileHash -LiteralPath $setup -Algorithm SHA256 | Format-List
+      - name: Smoke-test release install and uninstall
+        shell: pwsh
+        run: |
+          $version = $env:GITHUB_REF_NAME -replace '^home-v', ''
+          $setup = Join-Path `
+            $PWD `
+            "artifacts/home-control-windows/Home-Control-$version-Windows-x64-Setup.exe"
+          ./scripts/test_home_control_windows_installer.ps1 `
+            -InstallerPath $setup `
+            -InstallDirectory (Join-Path $env:RUNNER_TEMP 'Home Control release smoke')
+      - name: Attest Windows installer build provenance
+        uses: actions/attest@f7c74d28b9d84cb8768d0b8ca14a4bac6ef463e6 # v4.2.0
+        with:
+          subject-path: artifacts/home-control-windows/*-Setup.exe
+      - name: Upload Windows release artifact
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: home-control-windows-release
+          path: artifacts/home-control-windows/*-Setup.exe
+          if-no-files-found: error
+          retention-days: 7
+
   home:
-    name: Signed Home Control release
+    name: Home Control release
+    needs: home-windows
     if: ${{ startsWith(github.ref_name, 'home-v') }}
     runs-on: ubuntu-latest
     timeout-minutes: 35
@@ -324,23 +402,20 @@ jobs:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           fetch-depth: 0
-      - name: Require the home tag commit to be on a remote branch
+      - name: Download Windows release artifact
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: home-control-windows-release
+          path: ${{ runner.temp }}/home-windows
+      - name: Require the home tag commit to be on origin/main
         shell: bash
         run: |
           set -euo pipefail
           git fetch --no-tags --prune origin \
-            '+refs/heads/*:refs/remotes/origin/*'
+            '+refs/heads/main:refs/remotes/origin/main'
           tag_commit="$(git rev-parse "${GITHUB_SHA}^{commit}")"
-          containing_refs="$(
-            git for-each-ref \
-              --format='%(refname)' \
-              --contains "$tag_commit" \
-              refs/remotes/origin/
-          )"
-          test -n "$containing_refs" || {
-            echo \
-              "Home tag commit $tag_commit is not reachable from a remote branch" \
-              >&2
+          git merge-base --is-ancestor "$tag_commit" origin/main || {
+            echo "Home tag commit $tag_commit is not reachable from origin/main" >&2
             exit 1
           }
       - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
@@ -438,10 +513,15 @@ jobs:
           version="${GITHUB_REF_NAME#home-v}"
           output_dir="$RUNNER_TEMP/home-release"
           apk="$output_dir/Home-Control-$version.apk"
+          windows_setup="$output_dir/Home-Control-$version-Windows-x64-Setup.exe"
           mkdir -p "$output_dir"
           cp \
             apps/home_control/build/app/outputs/flutter-apk/app-release.apk \
             "$apk"
+          cp \
+            "$RUNNER_TEMP/home-windows/Home-Control-$version-Windows-x64-Setup.exe" \
+            "$windows_setup"
+          test -s "$windows_setup"
           build_tools="${ANDROID_SDK_ROOT:-$ANDROID_HOME}/build-tools"
           aapt_path="$(
             find "$build_tools" -type f -name aapt -print |
@@ -491,6 +571,7 @@ jobs:
           python scripts/validate_release.py \
             --tag "$GITHUB_REF_NAME" \
             --asset "$apk" \
+            --asset "$windows_setup" \
             --pubspec apps/home_control/pubspec.yaml \
             --package-name "$package_name" \
             --apk-version-name "$version_name" \
@@ -504,6 +585,7 @@ jobs:
           {
             echo "directory=$output_dir"
             echo "apk=$apk"
+            echo "windows_setup=$windows_setup"
             echo "version=$version"
           } >> "$GITHUB_OUTPUT"
       - name: Generate Home Control CycloneDX SBOM
@@ -511,21 +593,34 @@ jobs:
         env:
           RELEASE_DIR: ${{ steps.home_metadata.outputs.directory }}
           RELEASE_APK: ${{ steps.home_metadata.outputs.apk }}
+          RELEASE_WINDOWS_SETUP: ${{ steps.home_metadata.outputs.windows_setup }}
           RELEASE_VERSION: ${{ steps.home_metadata.outputs.version }}
         run: |
+          sbom="$RELEASE_DIR/Home-Control-$RELEASE_VERSION.cdx.json"
           python tools/generate_sbom.py \
             --kind home \
             --version "$RELEASE_VERSION" \
             --artifact "$RELEASE_APK" \
-            --output "$RELEASE_DIR/Home-Control-$RELEASE_VERSION.cdx.json"
-      - name: Attest Home Control build provenance
+            --artifact "$RELEASE_WINDOWS_SETUP" \
+            --output "$sbom"
+          (
+            cd "$RELEASE_DIR"
+            sha256sum "$(basename "$sbom")" >> SHA256SUMS
+            sha256sum --check SHA256SUMS
+          )
+      - name: Attest Android build provenance
         uses: actions/attest@f7c74d28b9d84cb8768d0b8ca14a4bac6ef463e6 # v4.2.0
         with:
           subject-path: ${{ steps.home_metadata.outputs.apk }}
-      - name: Attest Home Control SBOM
+      - name: Attest Android SBOM
         uses: actions/attest@f7c74d28b9d84cb8768d0b8ca14a4bac6ef463e6 # v4.2.0
         with:
           subject-path: ${{ steps.home_metadata.outputs.apk }}
+          sbom-path: ${{ steps.home_metadata.outputs.directory }}/Home-Control-${{ steps.home_metadata.outputs.version }}.cdx.json
+      - name: Attest Windows SBOM
+        uses: actions/attest@f7c74d28b9d84cb8768d0b8ca14a4bac6ef463e6 # v4.2.0
+        with:
+          subject-path: ${{ steps.home_metadata.outputs.windows_setup }}
           sbom-path: ${{ steps.home_metadata.outputs.directory }}/Home-Control-${{ steps.home_metadata.outputs.version }}.cdx.json
       - name: Refuse overwrite of an existing Home Control release
         env:
@@ -535,22 +630,46 @@ jobs:
             echo "Release $GITHUB_REF_NAME already exists; refusing overwrite" >&2
             exit 1
           fi
-      - name: Publish immutable Home Control release
+      - name: Create and verify Home Control release draft
         env:
           GH_TOKEN: ${{ github.token }}
           RELEASE_DIR: ${{ steps.home_metadata.outputs.directory }}
           RELEASE_APK: ${{ steps.home_metadata.outputs.apk }}
+          RELEASE_WINDOWS_SETUP: ${{ steps.home_metadata.outputs.windows_setup }}
           RELEASE_VERSION: ${{ steps.home_metadata.outputs.version }}
         run: |
           gh release create "$GITHUB_REF_NAME" \
             "$RELEASE_APK" \
+            "$RELEASE_WINDOWS_SETUP" \
             "$RELEASE_DIR/SHA256SUMS" \
             "$RELEASE_DIR/release-manifest.json" \
             "$RELEASE_DIR/Home-Control-$RELEASE_VERSION.cdx.json" \
             --verify-tag \
+            --draft \
             --latest=false \
             --title "Home Control $RELEASE_VERSION" \
-            --notes "Natywne centrum domu z adapterami AquaHub, Home Assistant i Demo, modułem akwarium oraz bezpiecznymi aktualizacjami aplikacji na Androidzie. Aplikacja może być zainstalowana równolegle z AquaCYD Service."
+            --notes "Home Control dla Androida i Windows z adapterami AquaHub, Home Assistant i Demo oraz dedykowanym modułem akwarium. APK jest podpisany produkcyjnym certyfikatem Android; Windows Setup jest obecnie bez Authenticode, dlatego Windows SmartScreen może wymagać ręcznego potwierdzenia. Integralność obu artefaktów chronią SHA-256, manifest, SBOM i GitHub build provenance."
+          expected_assets="$(
+            printf '%s\n' \
+              "$(basename "$RELEASE_APK")" \
+              "$(basename "$RELEASE_WINDOWS_SETUP")" \
+              SHA256SUMS \
+              release-manifest.json \
+              "Home-Control-$RELEASE_VERSION.cdx.json" |
+              LC_ALL=C sort
+          )"
+          actual_assets="$(
+            gh release view "$GITHUB_REF_NAME" \
+              --json assets \
+              --jq '.assets[].name' |
+              LC_ALL=C sort
+          )"
+          test "$actual_assets" = "$expected_assets" || {
+            echo 'Release draft contains an unexpected asset set:' >&2
+            printf '%s\n' "$actual_assets" >&2
+            exit 1
+          }
+          gh release edit "$GITHUB_REF_NAME" --draft=false --latest=false
       - name: Remove Home Control signing material
         if: always()
         run: |

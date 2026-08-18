@@ -4,7 +4,7 @@
 
 | Produkt | Wersja/tag | Główne artefakty |
 | --- | --- | --- |
-| Home Control | `home-vX.Y.Z` | `Home-Control-X.Y.Z.apk`, manifest, SHA-256, SBOM, provenance |
+| Home Control | `home-vX.Y.Z` | APK, `Home-Control-X.Y.Z-Windows-x64-Setup.exe`, manifest, SHA-256, SBOM, provenance |
 | AquaCYD Service | `mobile-vX.Y.Z` | `AquaCYD-Control-X.Y.Z-current.apk`, manifest, SBOM |
 | CYD | `firmware-vX.Y.Z` | warianty `.aqfw`, manifesty, mapy pamięci, SBOM |
 | AquaHub P4 | niezależny manifest | `aquahub-p4-X.Y.Z.bin`, manifest, SBOM |
@@ -43,6 +43,7 @@ npm test
 python scripts/validate_release.py --self-test
 python tools/generate_sbom.py --help
 python tools/hil/runner.py --self-test
+./scripts/build_home_control_windows.ps1
 ```
 
 Build firmware wykonuje się przez PlatformIO oraz `tools/build-p4-c6.ps1` z
@@ -55,3 +56,17 @@ bramek hostowych, web i Android. Tag `home-v2.1.0` musi uruchomić chroniony
 workflow `production-mobile`; tylko jego podpisany i zweryfikowany APK może być
 zasobem wydania. Brak bieżącego fizycznego HIL pozostaje opisanym ograniczeniem
 i ta decyzja nie autoryzuje tagów firmware ani AquaCYD Service.
+
+## Decyzja dla Home Control 2.2.0
+
+Wydanie rozszerza ten sam produkt o natywny target Windows x64. Workflow tagu
+`home-v2.2.0` musi najpierw zbudować Windows Setup na `windows-2025`, a dopiero
+potem podpisany APK. Publikacja jest atomowa: walidator wymaga obu binariów i
+obejmuje je wspólnym `SHA256SUMS`, manifestem, SBOM-em oraz provenance.
+
+Windows Setup jest instalatorem per-user z kreatorem PL/EN, upgrade in-place,
+blokadą downgrade i zachowaniem danych użytkownika. Repozytorium nie posiada
+certyfikatu Authenticode; release notes muszą więc jawnie informować o możliwym
+ostrzeżeniu SmartScreen. Brak certyfikatu nie jest zastępowany samopodpisanym
+certyfikatem. Atestacja GitHub i SHA-256 zapewniają integralność pochodzenia, ale
+nie zastępują zaufania Authenticode w interfejsie Windows.

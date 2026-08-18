@@ -101,18 +101,29 @@ Zmiana gotowego pliku wymaga nowego numeru wersji i tagu.
 ## Wydanie aplikacji Home Control
 
 1. Zwiększ `version: X.Y.Z+N` w `apps/home_control/pubspec.yaml`.
-2. Uruchom analizę, testy oraz kompilację web i Android.
-3. Wypchnij commit na zdalną gałąź, a następnie utwórz tag `home-vX.Y.Z`.
-4. Workflow użyje tego samego chronionego certyfikatu Android, ale zbuduje
-   niezależny pakiet `pl.aquacyd.aquacyd_home`.
+2. Uruchom analizę, testy oraz kompilację web, Android i Windows.
+3. Scal zweryfikowany commit do `main`, a następnie utwórz na nim tag
+   `home-vX.Y.Z`.
+4. Workflow Windows zbuduje pełny bundle `HomeControl.exe`, dwujęzyczny Setup i
+   wykona cichą instalację, start oraz deinstalację; po jego sukcesie chroniony
+   job Android zbuduje niezależny pakiet `pl.aquacyd.aquacyd_home` tym samym
+   certyfikatem właściciela.
 5. Walidator potwierdzi package, wersję, pojedynczego sygnatariusza i publiczny
    fingerprint certyfikatu.
-6. Release publikuje `Home-Control-X.Y.Z.apk`, `SHA256SUMS`,
-   `release-manifest.json`, CycloneDX SBOM oraz atestację pochodzenia.
+6. Release publikuje `Home-Control-X.Y.Z.apk`,
+   `Home-Control-X.Y.Z-Windows-x64-Setup.exe`, `SHA256SUMS`,
+   `release-manifest.json`, wspólny CycloneDX SBOM oraz atestacje pochodzenia.
 
-Tag musi wskazywać commit osiągalny z co najmniej jednej zdalnej gałęzi.
+Tag musi wskazywać commit osiągalny z aktualnego `origin/main`.
 Workflow odmawia nadpisania istniejącego wydania i nie ustawia Home Control jako
 „Latest”, dzięki czemu głównym wydaniem pozostaje AquaCYD Control.
+
+Windows Setup wymaga Windows 10 build 18362 lub nowszego i instaluje aplikację do
+profilu bieżącego użytkownika. Jeżeli brakuje VC++ Runtime x64, kreator uruchamia
+dołączony, podpisany redystrybutor Microsoft; ten krok może wyświetlić systemową
+prośbę UAC o uprawnienia administratora. Do czasu
+dostarczenia chronionego certyfikatu Authenticode Setup pozostaje jawnie
+niepodpisany; SHA-256, manifest, SBOM i GitHub provenance są obowiązkowe.
 
 ## Wydanie firmware
 

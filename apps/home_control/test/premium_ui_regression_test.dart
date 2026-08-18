@@ -75,20 +75,19 @@ void main() {
     });
   }
 
-  testWidgets(
-    'wall panel exposes four primary rail destinations without scroll',
-    (tester) async {
-      _configureView(tester, size: const Size(800, 480));
-      await _pumpDemo(tester);
+  testWidgets('wall panel exposes four scrollable primary rail destinations', (
+    tester,
+  ) async {
+    _configureView(tester, size: const Size(800, 480));
+    await _pumpDemo(tester);
 
-      final railFinder = find.byType(NavigationRail);
-      expect(railFinder, findsOneWidget);
-      final rail = tester.widget<NavigationRail>(railFinder);
-      expect(rail.destinations, hasLength(4));
-      expect(rail.scrollable, isFalse);
-      expect(tester.takeException(), isNull);
-    },
-  );
+    final railFinder = find.byType(NavigationRail);
+    expect(railFinder, findsOneWidget);
+    final rail = tester.widget<NavigationRail>(railFinder);
+    expect(rail.destinations, hasLength(4));
+    expect(rail.scrollable, isTrue);
+    expect(tester.takeException(), isNull);
+  });
 
   for (final configuration in <({ThemeMode mode, Brightness brightness})>[
     (mode: ThemeMode.light, brightness: Brightness.light),

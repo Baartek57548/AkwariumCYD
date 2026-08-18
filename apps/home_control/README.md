@@ -32,10 +32,11 @@ Nazwa produktu, ikony, splash i interfejs użytkownika to **Home Control**.
   dialogów, paneli oraz stanów loading/empty/error używane przez wszystkie ekrany;
 - sterowanie bez przedwczesnej zmiany stanu: interfejs pokazuje `changing`, a
   wartość ON/OFF aktualizuje dopiero po potwierdzeniu źródła;
-- wersjonowany cache, stale data, reconnect z backoffem, zatrzymanie pollingu w
-  tle i natychmiastowe odświeżenie po wznowieniu;
-- opcjonalną biometrię dla zamków, alarmów, bram, ryzykownych wartości i
-  instalacji aktualizacji;
+- wersjonowany cache, stale data, reconnect z backoffem, zatrzymanie pollingu po
+  ukryciu aplikacji i natychmiastowe odświeżenie po wznowieniu; na Windows
+  widoczne okno bez fokusu pozostaje aktywne;
+- opcjonalne systemowe potwierdzenie tożsamości dla zamków, alarmów, bram,
+  ryzykownych wartości i instalacji aktualizacji, w tym Windows Hello;
 - automatyczną kontrolę dostępności aktualizacji aplikacji przy starcie oraz
   każdym wznowieniu.
 
@@ -61,13 +62,23 @@ konta ani sekretów, korzysta z produkcyjnego modelu domenowego i zawiera pokoje
 akwarium, alarm, historię, aktualizację, encję offline oraz nieznany typ encji.
 Dane Demo nie są zapisywane jako sesja produkcyjna.
 
-Przykładowe buildy dostępne na Windows:
+Buildy dostępne na Windows:
 
 ```powershell
 flutter build web --release
 flutter build apk --debug
 flutter build apk --release
+flutter build windows --release
+../../scripts/build_home_control_windows.ps1
 ```
+
+Ostatnie polecenie buduje `HomeControl.exe` wraz z pełnym bundle Flutter oraz
+dwujęzyczny kreator
+`artifacts/home-control-windows/Home-Control-X.Y.Z-Windows-x64-Setup.exe`.
+Wymaga Windows 10 1903 lub nowszego, Flutter 3.41.5, Visual Studio 2022 z C++ ATL
+oraz Inno Setup 6. Instalator działa per-user, obsługuje upgrade, blokuje
+downgrade, dodaje deinstalator i opcjonalny skrót pulpitu oraz dołącza VC++
+Runtime tylko wtedy, gdy system go nie posiada.
 
 Build iOS wymaga macOS z Xcode oraz tożsamości podpisującej właściciela.
 
@@ -110,14 +121,25 @@ do prywatnego cache i przed uruchomieniem instalatora weryfikuje:
 Włączona ochrona biometryczna blokuje pobranie/instalację do czasu potwierdzenia
 tożsamości. Android nadal pokazuje obowiązkowe systemowe potwierdzenie, a pierwsza
 instalacja spoza sklepu wymaga jednorazowej zgody. Po powrocie z ustawień proces
-jest wznawiany. Błąd kanału aktualizacji nie blokuje pulpitu. iOS korzysta z App
-Store, TestFlight albo zarządzanego MDM; web jest aktualizowany przez hosting.
+jest wznawiany. Błąd kanału aktualizacji nie blokuje pulpitu. Windows jest
+aktualizowany przez pobranie nowszego Setup z tego samego wydania `home-v*`;
+lokalny mechanizm APK pozostaje na nim wyłączony. iOS korzysta z App Store,
+TestFlight albo zarządzanego MDM; web jest aktualizowany przez hosting.
+
+Tokeny i sesje są przechowywane przez systemowy secure storage. Odtwarzalny
+cache snapshotów na Windows jest celowo rozdzielony od sekretów i zapisywany
+crash-safe jako zwykły tekst w nieroamingowym katalogu cache profilu użytkownika.
+Może zawierać nazwy, topologię i ostatnie stany, ale nie zawiera tokenów ani
+danych parowania. Zwykły uninstall zachowuje preferencje, poświadczenia i cache,
+aby upgrade lub reinstalacja nie zerwały konfiguracji domu.
 
 ## Walidacja i bezpieczeństwo
 
 Pełna brama lokalna obejmuje formatowanie, analizę, testy jednostkowe i widgetowe,
-build web release oraz Android debug/release. CI dodatkowo publikuje sumy SHA-256,
-SBOM, uruchamia skan sekretów i zależności oraz waliduje pozostałe części monorepo.
+build web release oraz Android debug/release. Osobny runner Windows buduje EXE i
+Setup oraz sprawdza cichą instalację, start aplikacji i deinstalację. CI
+dodatkowo publikuje sumy SHA-256, SBOM, uruchamia skan sekretów i zależności oraz
+waliduje pozostałe części monorepo.
 Sekretów, PIN-ów, prywatnych adresów domu i kluczy podpisujących nie wolno dodawać
 do repozytorium ani logów.
 
@@ -128,7 +150,7 @@ wizualne dla telefonu 393×852 i panelu 800×480. Goldeny znajdują się w
 live-region statusu, rozdzielenie semantyki szczegółów i szybkiej akcji oraz cele
 dotykowe minimum 48 dp.
 
-Aktualny rozwój produktu ma wersję `2.1.0+7`. Wyniki walidacji są w
+Aktualny rozwój produktu ma wersję `2.2.0+8`. Wyniki walidacji są w
 [`docs/QA_REPORT.md`](../../docs/QA_REPORT.md), architektura w
 [`docs/HOME_CONTROL_ARCHITECTURE.md`](../../docs/HOME_CONTROL_ARCHITECTURE.md),
 model zagrożeń w [`docs/SECURITY.md`](../../docs/SECURITY.md), a procedura wydania

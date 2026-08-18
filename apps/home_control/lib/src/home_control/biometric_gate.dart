@@ -61,7 +61,9 @@ final class DeviceBiometricAuthenticator implements BiometricAuthenticator {
     try {
       final authenticated = await _localAuthentication.authenticate(
         localizedReason: localizedReason,
-        biometricOnly: true,
+        // Windows Hello chooses the strongest enrolled system credential and
+        // rejects biometricOnly=true at the plugin boundary.
+        biometricOnly: biometricOnlyForPlatform(defaultTargetPlatform),
         sensitiveTransaction: true,
         persistAcrossBackgrounding: true,
       );
@@ -101,3 +103,7 @@ final class DeviceBiometricAuthenticator implements BiometricAuthenticator {
     _ => BiometricAuthorization.failed,
   };
 }
+
+@visibleForTesting
+bool biometricOnlyForPlatform(TargetPlatform platform) =>
+    platform != TargetPlatform.windows;

@@ -336,13 +336,13 @@ final class HomeControlStrings {
       'polish': 'Polski',
       'english': 'English',
       'security': 'Bezpieczeństwo',
-      'biometricProtection': 'Biometria dla operacji krytycznych',
+      'biometricProtection': 'Ochrona operacji krytycznych',
       'biometricProtectionDescription':
-          'Wymagaj odcisku palca lub rozpoznania twarzy przed zamkiem, alarmem, bramą i aktualizacją.',
+          'Wymagaj systemowego potwierdzenia tożsamości przed zamkiem, alarmem, bramą i aktualizacją.',
       'biometricUnavailable':
-          'Na tym urządzeniu nie ma skonfigurowanej biometrii.',
+          'Na tym urządzeniu nie ma skonfigurowanej bezpiecznej metody potwierdzania tożsamości.',
       'biometricCheckFailed':
-          'Nie udało się sprawdzić biometrii. Krytyczna operacja pozostanie zablokowana.',
+          'Nie udało się sprawdzić ochrony systemowej. Krytyczna operacja pozostanie zablokowana.',
       'sourceManagement': 'Zarządzanie źródłem',
       'haInstances': 'Instancje Home Assistant',
       'addHaInstance': 'Dodaj instancję Home Assistant',
@@ -728,13 +728,13 @@ final class HomeControlStrings {
       'polish': 'Polski',
       'english': 'English',
       'security': 'Security',
-      'biometricProtection': 'Biometrics for critical operations',
+      'biometricProtection': 'Critical operation protection',
       'biometricProtectionDescription':
-          'Require fingerprint or face recognition before lock, alarm, gate and update operations.',
+          'Require system identity verification before lock, alarm, gate and update operations.',
       'biometricUnavailable':
-          'No biometric authentication is configured on this device.',
+          'No secure identity verification method is configured on this device.',
       'biometricCheckFailed':
-          'Biometric availability could not be checked. Critical operations remain blocked.',
+          'System protection could not be checked. Critical operations remain blocked.',
       'sourceManagement': 'Source management',
       'haInstances': 'Home Assistant instances',
       'addHaInstance': 'Add Home Assistant instance',

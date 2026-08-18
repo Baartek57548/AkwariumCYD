@@ -1,4 +1,5 @@
 import 'package:aquacyd_design_system/aquacyd_design_system.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
 
@@ -65,7 +66,7 @@ final class _HomeControlAppState extends State<HomeControlApp>
           widget.hubCredentialsStore ?? SecureHubCredentialsStore(),
       homeAssistantCredentialsStore:
           widget.homeAssistantCredentialsStore ?? SecureCredentialsStore(),
-      snapshotCache: widget.snapshotCache ?? SecureHomeSnapshotCache(),
+      snapshotCache: widget.snapshotCache ?? createDefaultHomeSnapshotCache(),
       biometricAuthenticator: widget.biometricAuthenticator,
       homeAssistantSourceFactory: widget.homeAssistantSourceFactory,
       enablePolling: widget.enablePolling,
@@ -82,7 +83,11 @@ final class _HomeControlAppState extends State<HomeControlApp>
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
-    final active = state == AppLifecycleState.resumed;
+    final active = homeControlLifecycleIsActive(
+      state,
+      platform: defaultTargetPlatform,
+      isWeb: kIsWeb,
+    );
     controller.setAppActive(active);
     if (active) appUpdateController.onAppResumed();
   }
@@ -179,6 +184,19 @@ final class _HomeControlAppState extends State<HomeControlApp>
     HomeControlPhase.ready => HomeControlShell(controller: controller),
     HomeControlPhase.failure => _HomeFailure(controller: controller),
   };
+}
+
+@visibleForTesting
+bool homeControlLifecycleIsActive(
+  AppLifecycleState state, {
+  required TargetPlatform platform,
+  required bool isWeb,
+}) {
+  if (!isWeb && platform == TargetPlatform.windows) {
+    return state == AppLifecycleState.resumed ||
+        state == AppLifecycleState.inactive;
+  }
+  return state == AppLifecycleState.resumed;
 }
 
 final class _HomeLoading extends StatelessWidget {

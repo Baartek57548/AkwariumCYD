@@ -11,7 +11,7 @@ import 'package:http/http.dart' as http;
 
 import '../home_control/strings.dart';
 
-const homeControlVersionLabel = '2.0.1+6';
+const homeControlVersionLabel = '2.2.0+8';
 
 const _githubReleasesUri =
     'https://api.github.com/repos/Baartek57548/AkwariumCYD/releases?per_page=20';
