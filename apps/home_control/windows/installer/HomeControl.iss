@@ -81,14 +81,13 @@ Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{
 
 [Files]
 Source: "{#SourceDir}\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
-Source: "{#VCRedistPath}"; DestDir: "{tmp}"; DestName: "VC_redist.x64.exe"; Flags: deleteafterinstall; Check: VCRuntimeNeedsInstall
+Source: "{#VCRedistPath}"; DestDir: "{tmp}"; DestName: "VC_redist.x64.exe"; Flags: deleteafterinstall; Check: VCRuntimeNeedsInstall; AfterInstall: InstallVCRuntime
 
 [Icons]
 Name: "{autoprograms}\Home Control"; Filename: "{app}\{#MyAppExeName}"; WorkingDir: "{app}"; AppUserModelID: "AquaCYD.HomeControl"
 Name: "{autodesktop}\Home Control"; Filename: "{app}\{#MyAppExeName}"; WorkingDir: "{app}"; Tasks: desktopicon; AppUserModelID: "AquaCYD.HomeControl"
 
 [Run]
-Filename: "{tmp}\VC_redist.x64.exe"; Parameters: "/install /quiet /norestart"; StatusMsg: "{cm:InstallingDependency,Microsoft Visual C++ Runtime}"; Flags: waituntilterminated; Check: VCRuntimeNeedsInstall
 Filename: "{app}\{#MyAppExeName}"; Description: "{cm:LaunchProgram,Home Control}"; Flags: nowait postinstall skipifsilent
 
 [CustomMessages]
@@ -96,11 +95,18 @@ polish.InstallingDependency=Instalowanie składnika: %1...
 english.InstallingDependency=Installing component: %1...
 polish.NewerVersionInstalled=Na tym koncie jest już zainstalowana nowsza wersja Home Control (%1). Instalacja starszej wersji została zablokowana.
 english.NewerVersionInstalled=A newer Home Control version (%1) is already installed for this account. Downgrade has been blocked.
+polish.VCRuntimeInstallFailed=Instalacja Microsoft Visual C++ Runtime zakończyła się kodem %1.
+english.VCRuntimeInstallFailed=Microsoft Visual C++ Runtime installation exited with code %1.
+polish.VCRuntimeVerificationFailed=Po instalacji nie wykryto wymaganej wersji Microsoft Visual C++ Runtime (%1).
+english.VCRuntimeVerificationFailed=The required Microsoft Visual C++ Runtime version was not detected after installation (%1).
 
 [Code]
 const
   UninstallRegistryKey = 'Software\Microsoft\Windows\CurrentVersion\Uninstall\{4CF35972-CDA8-4A2A-B6E7-8E72D531FAF8}_is1';
   VCRuntimeRegistryKey = 'SOFTWARE\Microsoft\VisualStudio\14.0\VC\Runtimes\x64';
+
+var
+  VCRuntimeRestartRequired: Boolean;
 
 function TakeVersionPart(var Version: String): Integer;
 var
@@ -180,6 +186,50 @@ begin
     InstalledVersion,
     ExpandConstant('{#VCRedistVersion}')
   ) < 0;
+end;
+
+procedure InstallVCRuntime;
+var
+  ErrorMessage: String;
+  ResultCode: Integer;
+  ResultCodeText: String;
+  RequiredVersion: String;
+begin
+  RequiredVersion := ExpandConstant('{#VCRedistVersion}');
+  if not Exec(
+       ExpandConstant('{tmp}\VC_redist.x64.exe'),
+       '/install /quiet /norestart',
+       ExpandConstant('{tmp}'),
+       SW_HIDE,
+       ewWaitUntilTerminated,
+       ResultCode
+     ) then
+  begin
+    ResultCodeText := IntToStr(ResultCode);
+    ErrorMessage := FmtMessage(CustomMessage('VCRuntimeInstallFailed'), [ResultCodeText]);
+    RaiseException(ErrorMessage);
+  end;
+
+  if (ResultCode <> 0) and (ResultCode <> 3010) then
+  begin
+    ResultCodeText := IntToStr(ResultCode);
+    ErrorMessage := FmtMessage(CustomMessage('VCRuntimeInstallFailed'), [ResultCodeText]);
+    RaiseException(ErrorMessage);
+  end;
+
+  if VCRuntimeNeedsInstall then
+  begin
+    ErrorMessage := FmtMessage(CustomMessage('VCRuntimeVerificationFailed'), [RequiredVersion]);
+    RaiseException(ErrorMessage);
+  end;
+
+  if ResultCode = 3010 then
+    VCRuntimeRestartRequired := True;
+end;
+
+function NeedRestart(): Boolean;
+begin
+  Result := VCRuntimeRestartRequired;
 end;
 
 function InitializeSetup(): Boolean;

@@ -168,12 +168,42 @@ if (-not $VCRedist) {
         $candidates = foreach ($installation in $installations) {
             $redistRoot = Join-Path $installation 'VC\Redist\MSVC'
             if (Test-Path -LiteralPath $redistRoot -PathType Container) {
-                Get-ChildItem -LiteralPath $redistRoot -Recurse -Filter 'vc_redist.x64.exe' -File
+                foreach (
+                    $candidate in @(
+                        Get-ChildItem `
+                            -LiteralPath $redistRoot `
+                            -Recurse `
+                            -Filter 'vc_redist.x64.exe' `
+                            -File
+                    )
+                ) {
+                    $candidateVersionInfo = $candidate.VersionInfo
+                    $candidateVersionParts = @(
+                        $candidateVersionInfo.FileMajorPart,
+                        $candidateVersionInfo.FileMinorPart,
+                        $candidateVersionInfo.FileBuildPart,
+                        $candidateVersionInfo.FilePrivatePart
+                    )
+                    if (
+                        $candidateVersionParts[0] -eq 14 -and
+                        @($candidateVersionParts | Where-Object { $_ -lt 0 }).Count -eq 0
+                    ) {
+                        [pscustomobject]@{
+                            Path = $candidate.FullName
+                            Version = [Version]::new(
+                                $candidateVersionParts[0],
+                                $candidateVersionParts[1],
+                                $candidateVersionParts[2],
+                                $candidateVersionParts[3]
+                            )
+                        }
+                    }
+                }
             }
         }
         $VCRedist = $candidates |
-            Sort-Object -Property FullName -Descending |
-            Select-Object -First 1 -ExpandProperty FullName
+            Sort-Object -Property Version -Descending |
+            Select-Object -First 1 -ExpandProperty Path
     }
 }
 if (-not $VCRedist -or -not (Test-Path -LiteralPath $VCRedist -PathType Leaf)) {
