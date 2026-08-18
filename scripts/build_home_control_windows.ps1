@@ -72,8 +72,35 @@ function Invoke-CheckedCommand {
 }
 
 if (-not $SkipFlutterBuild) {
-    $visualStudioRoot = Join-Path ${env:ProgramFiles(x86)} 'Microsoft Visual Studio'
-    $atlHeader = Get-ChildItem -LiteralPath $visualStudioRoot -Recurse -Filter 'atlstr.h' -File -ErrorAction SilentlyContinue |
+    $vswhere = Join-Path ${env:ProgramFiles(x86)} 'Microsoft Visual Studio\Installer\vswhere.exe'
+    $atlSearchRoots = @()
+    if (Test-Path -LiteralPath $vswhere -PathType Leaf) {
+        $atlInstallations = @(& $vswhere `
+            -products * `
+            -requires `
+            Microsoft.VisualStudio.Component.VC.Tools.x86.x64 `
+            Microsoft.VisualStudio.Component.VC.ATL `
+            -property installationPath)
+        $atlSearchRoots = @($atlInstallations | Where-Object { $_ })
+    }
+    if ($atlSearchRoots.Count -eq 0) {
+        $atlSearchRoots = @(
+            (Join-Path $env:ProgramFiles 'Microsoft Visual Studio'),
+            (Join-Path ${env:ProgramFiles(x86)} 'Microsoft Visual Studio')
+        )
+    }
+    $atlHeader = $atlSearchRoots |
+        ForEach-Object {
+            $toolsRoot = Join-Path $_ 'VC\Tools\MSVC'
+            if (Test-Path -LiteralPath $toolsRoot -PathType Container) {
+                Get-ChildItem `
+                    -LiteralPath $toolsRoot `
+                    -Recurse `
+                    -Filter 'atlstr.h' `
+                    -File `
+                    -ErrorAction SilentlyContinue
+            }
+        } |
         Where-Object { $_.FullName -match '\\atlmfc\\include\\atlstr\.h$' } |
         Select-Object -First 1
     if (-not $atlHeader) {
