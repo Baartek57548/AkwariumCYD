@@ -187,6 +187,20 @@ if (
 ) {
     throw "Microsoft Visual C++ Redistributable has an invalid or unexpected Authenticode signature: $VCRedist"
 }
+$redistVersionInfo = (Get-Item -LiteralPath $VCRedist).VersionInfo
+$redistVersionParts = @(
+    $redistVersionInfo.FileMajorPart,
+    $redistVersionInfo.FileMinorPart,
+    $redistVersionInfo.FileBuildPart,
+    $redistVersionInfo.FilePrivatePart
+)
+if (
+    $redistVersionParts[0] -ne 14 -or
+    @($redistVersionParts | Where-Object { $_ -lt 0 }).Count -ne 0
+) {
+    throw "Microsoft Visual C++ Redistributable must expose a valid 14.x numeric FileVersion: $VCRedist"
+}
+$redistVersion = $redistVersionParts -join '.'
 
 $outputBaseName = "Home-Control-$version-Windows-x64-Setup"
 $installerScript = Join-Path $applicationRoot 'windows\installer\HomeControl.iss'
@@ -197,6 +211,7 @@ $compilerArguments = @(
     "/DOutputDir=$resolvedOutput",
     "/DOutputBaseFilename=$outputBaseName",
     "/DVCRedistPath=$VCRedist",
+    "/DVCRedistVersion=$redistVersion",
     $installerScript
 )
 Invoke-CheckedCommand -Executable $InnoCompiler -Arguments $compilerArguments -WorkingDirectory $applicationRoot

@@ -27,6 +27,10 @@
   #error "VCRedistPath must be supplied by build_home_control_windows.ps1"
 #endif
 
+#ifndef VCRedistVersion
+  #error "VCRedistVersion must be supplied by build_home_control_windows.ps1"
+#endif
+
 [Setup]
 AppId={#MyAppId}
 AppName={#MyAppName}
@@ -146,10 +150,36 @@ end;
 function VCRuntimeNeedsInstall: Boolean;
 var
   Installed: Cardinal;
+  InstalledVersion: String;
 begin
-  Result :=
-    (not RegQueryDWordValue(HKLM64, VCRuntimeRegistryKey, 'Installed', Installed)) or
-    (Installed <> 1);
+  Result := True;
+  if not RegQueryDWordValue(
+       HKLM64,
+       VCRuntimeRegistryKey,
+       'Installed',
+       Installed
+     ) or
+     (Installed <> 1) then
+    Exit;
+
+  if not RegQueryStringValue(
+       HKLM64,
+       VCRuntimeRegistryKey,
+       'Version',
+       InstalledVersion
+     ) then
+    Exit;
+
+  if Length(InstalledVersion) > 0 then
+  begin
+    if (InstalledVersion[1] = 'v') or (InstalledVersion[1] = 'V') then
+      Delete(InstalledVersion, 1, 1);
+  end;
+
+  Result := CompareSemanticVersions(
+    InstalledVersion,
+    ExpandConstant('{#VCRedistVersion}')
+  ) < 0;
 end;
 
 function InitializeSetup(): Boolean;

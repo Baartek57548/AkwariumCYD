@@ -20,8 +20,8 @@ systemu.
 | Home Control | web release i Android debug | PASS; web 38 250 510 B, debug APK 158 651 696 B |
 | Home Control APK debug | `aapt`, `apksigner`, SHA-256 | PASS; `pl.aquacyd.aquacyd_home`, `2.2.0`/`8`, jeden prawidłowy sygnatariusz debug, SHA-256 `7b76a8954f27428ddd0905a592faf52c00b438e22c8cdd18c3b15afc961dbbe5` |
 | Home Control UI | testy widget, goldeny i regresja responsywności w zestawie 110 testów | PASS; telefon, panel 800×480, light/dark, skalowanie tekstu i adaptacyjna nawigacja |
-| Home Control Windows x64 | hosted `flutter build windows --release`, Inno Setup, cicha instalacja, start aplikacji przez 5 s i cicha deinstalacja | PASS w CI `32155965239`; `HomeControl.exe` i Setup mają `FileVersion`/`ProductVersion` `2.2.0.8` |
-| Home Control Windows Setup | pobrany artefakt CI, ponowny lokalny smoke test, SHA-256 i Authenticode | PASS; 30 155 614 B, SHA-256 `ba4bb782513b78d302b5ce4578582655882e8c44ff9aab2ffcb928b3903250e8`, oczekiwany status `NotSigned` |
+| Home Control Windows x64 | hosted `flutter build windows --release`, Inno Setup, cicha instalacja, start aplikacji przez 5 s i cicha deinstalacja | PASS na `windows-2025`; `HomeControl.exe`: wersja tekstowa `2.2.0+8`, numeryczna PE `2.2.0.8`; Setup: `2.2.0.8` |
+| Home Control Windows Setup | pobrany artefakt CI, ponowny lokalny smoke test, SHA-256 i Authenticode | PASS; status `NotSigned`; dokładny hash każdego wydania trafia do publikowanego `SHA256SUMS` |
 | AquaCYD Service | analyze, pełne testy | PASS, 0 problemów, 240 testów |
 | AquaCYD Service | Android debug/release z jednorazowym kluczem walidacyjnym | PASS, APK release 65,5 MB |
 | Pakiety Dart | analyze/test każdego pakietu | PASS, 5 testów |

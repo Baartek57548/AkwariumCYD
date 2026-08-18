@@ -79,7 +79,7 @@ Wymaga Windows 10 1903 lub nowszego, Flutter 3.41.5, Visual Studio z workloadem
 Desktop development with C++ i ATL (produkcyjny runner: `windows-2025` z Visual
 Studio 2026) oraz Inno Setup 6. Instalator działa per-user, obsługuje upgrade,
 blokuje downgrade, dodaje deinstalator i opcjonalny skrót pulpitu oraz dołącza
-VC++ Runtime tylko wtedy, gdy system go nie posiada.
+VC++ Runtime tylko wtedy, gdy system nie ma zgodnej lub nowszej wersji.
 
 Build iOS wymaga macOS z Xcode oraz tożsamości podpisującej właściciela.
 
