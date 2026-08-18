@@ -13,9 +13,66 @@ abstract final class ProductSpacing {
 }
 
 abstract final class ProductRadius {
-  static const double control = 12;
-  static const double card = 18;
+  static const double control = 16;
+  static const double card = 22;
   static const double hero = 28;
+  static const double pill = 999;
+}
+
+/// Shared dimensions used by every adaptive Home Control surface.
+///
+/// Keeping breakpoints and minimum targets here prevents individual screens
+/// from drifting into subtly different responsive behaviour.
+abstract final class ProductLayout {
+  static const double minimumTouchTarget = 48;
+  static const double pageHorizontalPadding = 20;
+  static const double pageTopPadding = 20;
+  static const double pageBottomPadding = 100;
+  static const double compactBreakpoint = 420;
+  static const double twoColumnBreakpoint = 580;
+  static const double threeColumnBreakpoint = 900;
+  static const double maximumContentWidth = 1280;
+}
+
+abstract final class ProductIconSize {
+  static const double small = 18;
+  static const double medium = 24;
+  static const double large = 32;
+  static const double hero = 48;
+}
+
+abstract final class ProductMotion {
+  static const Duration fast = Duration(milliseconds: 120);
+  static const Duration standard = Duration(milliseconds: 220);
+  static const Duration emphasized = Duration(milliseconds: 320);
+
+  static const Curve enter = Curves.easeOutCubic;
+  static const Curve exit = Curves.easeInCubic;
+  static const Curve stateChange = Curves.easeInOutCubic;
+}
+
+abstract final class ProductElevation {
+  static const double flat = 0;
+  static const double raised = 1;
+  static const double overlay = 3;
+}
+
+abstract final class ProductShadows {
+  static List<BoxShadow> soft(Color color) => <BoxShadow>[
+    BoxShadow(
+      color: color.withValues(alpha: 0.12),
+      blurRadius: 24,
+      offset: const Offset(0, 10),
+    ),
+  ];
+
+  static List<BoxShadow> floating(Color color) => <BoxShadow>[
+    BoxShadow(
+      color: color.withValues(alpha: 0.18),
+      blurRadius: 32,
+      offset: const Offset(0, 16),
+    ),
+  ];
 }
 
 abstract final class ProductColors {

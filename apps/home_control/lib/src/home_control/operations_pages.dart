@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:home_entities/home_entities.dart';
 
 import '../aquahub/app_update.dart';
+import '../design/components.dart';
 import 'biometric_gate.dart';
 import 'controller.dart';
 import 'entity_widgets.dart';
@@ -28,6 +29,12 @@ final class AutomationsPage extends StatelessWidget {
             )
             .toList(growable: false)
           ..sort((a, b) => a.name.compareTo(b.name));
+    final scenes = routines
+        .where((entity) => entity.type == HomeEntityType.scene)
+        .toList(growable: false);
+    final scripts = routines
+        .where((entity) => entity.type == HomeEntityType.script)
+        .toList(growable: false);
     return CustomScrollView(
       key: const PageStorageKey<String>('automations-page'),
       slivers: <Widget>[
@@ -98,33 +105,208 @@ final class AutomationsPage extends StatelessWidget {
               },
             ),
           ),
-        if (routines.isNotEmpty) ...<Widget>[
+        if (scenes.isNotEmpty) ...<Widget>[
           SliverPadding(
             padding: const EdgeInsets.fromLTRB(20, 8, 20, 12),
             sliver: SliverToBoxAdapter(
-              child: Text(
-                strings.t('scenesAndScripts'),
-                style: Theme.of(
-                  context,
-                ).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w800),
+              child: HomeSectionHeader(
+                title: strings.t('scenes'),
+                subtitle: strings.t('scenesDescription'),
               ),
             ),
           ),
-          SliverPadding(
-            padding: const EdgeInsets.fromLTRB(20, 0, 20, 100),
-            sliver: SliverList.separated(
-              itemCount: routines.length,
-              separatorBuilder: (_, _) =>
-                  const SizedBox(height: ProductSpacing.sm),
-              itemBuilder: (context, index) => EntityCard(
-                entity: routines[index],
-                controller: controller,
-                compact: true,
-              ),
-            ),
-          ),
+          _RoutineGrid(routines: scenes, controller: controller),
         ],
+        if (scripts.isNotEmpty) ...<Widget>[
+          SliverPadding(
+            padding: const EdgeInsets.fromLTRB(20, 8, 20, 12),
+            sliver: SliverToBoxAdapter(
+              child: HomeSectionHeader(
+                title: strings.t('scripts'),
+                subtitle: strings.t('scriptsDescription'),
+              ),
+            ),
+          ),
+          _RoutineGrid(routines: scripts, controller: controller),
+        ],
+        const SliverToBoxAdapter(
+          child: SizedBox(height: ProductLayout.pageBottomPadding),
+        ),
       ],
+    );
+  }
+}
+
+final class _RoutineGrid extends StatelessWidget {
+  const _RoutineGrid({required this.routines, required this.controller});
+
+  final List<HomeEntity> routines;
+  final HomeControlController controller;
+
+  @override
+  Widget build(BuildContext context) => SliverPadding(
+    padding: const EdgeInsets.fromLTRB(
+      ProductLayout.pageHorizontalPadding,
+      0,
+      ProductLayout.pageHorizontalPadding,
+      ProductSpacing.md,
+    ),
+    sliver: SliverLayoutBuilder(
+      builder: (context, constraints) {
+        final textScale = MediaQuery.textScalerOf(context).scale(1);
+        final columns =
+            constraints.crossAxisExtent >= ProductLayout.threeColumnBreakpoint
+            ? 3
+            : constraints.crossAxisExtent >= ProductLayout.twoColumnBreakpoint
+            ? 2
+            : 1;
+        if (columns == 1) {
+          return SliverList.separated(
+            itemCount: routines.length,
+            separatorBuilder: (_, _) =>
+                const SizedBox(height: ProductSpacing.sm),
+            itemBuilder: (context, index) =>
+                SceneCard(entity: routines[index], controller: controller),
+          );
+        }
+        return SliverGrid(
+          gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+            crossAxisCount: columns,
+            mainAxisExtent: 112 + ((textScale - 1).clamp(0, 2) * 54),
+            crossAxisSpacing: ProductSpacing.sm,
+            mainAxisSpacing: ProductSpacing.sm,
+          ),
+          delegate: SliverChildBuilderDelegate(
+            (context, index) =>
+                SceneCard(entity: routines[index], controller: controller),
+            childCount: routines.length,
+          ),
+        );
+      },
+    ),
+  );
+}
+
+final class SceneCard extends StatelessWidget {
+  const SceneCard({required this.entity, required this.controller, super.key});
+
+  final HomeEntity entity;
+  final HomeControlController controller;
+
+  @override
+  Widget build(BuildContext context) {
+    assert(
+      entity.type == HomeEntityType.scene ||
+          entity.type == HomeEntityType.script,
+      'SceneCard accepts only scene and script entities.',
+    );
+    final strings = HomeControlStrings.of(context);
+    final scheme = Theme.of(context).colorScheme;
+    final pending = controller.isPending(entity.id);
+    final offline = controller.snapshot?.isOffline ?? true;
+    final enabled = entity.available && entity.writable && !offline && !pending;
+    final isScene = entity.type == HomeEntityType.scene;
+    final action = strings.t(isScene ? 'activateScene' : 'runScript');
+    final status = pending
+        ? strings.t('commandPending')
+        : offline
+        ? strings.t('offline')
+        : entity.available
+        ? strings.t(isScene ? 'sceneReady' : 'scriptReady')
+        : strings.t('unavailable');
+    final accent = isScene ? scheme.secondary : scheme.primary;
+    final accentContainer = isScene
+        ? scheme.secondaryContainer
+        : scheme.primaryContainer;
+    final onAccentContainer = isScene
+        ? scheme.onSecondaryContainer
+        : scheme.onPrimaryContainer;
+    return Card(
+      clipBehavior: Clip.antiAlias,
+      child: Padding(
+        padding: const EdgeInsets.all(ProductSpacing.md),
+        child: Row(
+          children: <Widget>[
+            ExcludeSemantics(
+              child: Container(
+                width: ProductLayout.minimumTouchTarget,
+                height: ProductLayout.minimumTouchTarget,
+                decoration: BoxDecoration(
+                  color: accentContainer,
+                  borderRadius: BorderRadius.circular(ProductRadius.control),
+                ),
+                child: Icon(
+                  isScene
+                      ? Icons.auto_awesome_rounded
+                      : Icons.play_circle_rounded,
+                  color: onAccentContainer,
+                ),
+              ),
+            ),
+            const SizedBox(width: ProductSpacing.sm),
+            Expanded(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: <Widget>[
+                  Text(
+                    entity.name,
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                    style: Theme.of(context).textTheme.titleMedium,
+                  ),
+                  const SizedBox(height: ProductSpacing.xxs),
+                  Text(
+                    status,
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                    style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                      color: enabled || pending ? accent : scheme.error,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(width: ProductSpacing.xs),
+            AnimatedSwitcher(
+              duration: ProductMotion.fast,
+              child: pending
+                  ? SizedBox.square(
+                      key: ValueKey<String>(
+                        'routine-pending-${entity.id.value}',
+                      ),
+                      dimension: ProductLayout.minimumTouchTarget,
+                      child: const Padding(
+                        padding: EdgeInsets.all(ProductSpacing.sm),
+                        child: CircularProgressIndicator(strokeWidth: 2.5),
+                      ),
+                    )
+                  : SizedBox.square(
+                      key: ValueKey<String>(
+                        'routine-action-${entity.id.value}',
+                      ),
+                      dimension: ProductLayout.minimumTouchTarget,
+                      child: IconButton.filledTonal(
+                        tooltip: '$action: ${entity.name}',
+                        onPressed: enabled
+                            ? () => requestEntityCommand(
+                                context,
+                                entity,
+                                true,
+                                controller,
+                              )
+                            : null,
+                        icon: Icon(
+                          isScene
+                              ? Icons.auto_awesome_rounded
+                              : Icons.play_arrow_rounded,
+                        ),
+                      ),
+                    ),
+            ),
+          ],
+        ),
+      ),
     );
   }
 }
@@ -410,12 +592,11 @@ final class SettingsPage extends StatelessWidget {
                       for (final mode in ThemeMode.values)
                         DropdownMenuItem<ThemeMode>(
                           value: mode,
-                          child: Text(
-                            strings.t(switch (mode) {
-                              ThemeMode.system => 'themeSystem',
-                              ThemeMode.light => 'themeLight',
-                              ThemeMode.dark => 'themeDark',
-                            }),
+                          child: Semantics(
+                            label: _themeLabel(strings, mode),
+                            child: ExcludeSemantics(
+                              child: Text(_themeLabel(strings, mode)),
+                            ),
                           ),
                         ),
                     ],
@@ -467,18 +648,15 @@ final class SettingsPage extends StatelessWidget {
         ),
         _SettingsSection(
           title: strings.t('security'),
-          child: SwitchListTile(
-            contentPadding: EdgeInsets.zero,
-            secondary: const Icon(Icons.fingerprint_rounded),
-            title: Text(strings.t('biometricProtection')),
-            subtitle: Text(
-              strings.t(switch (controller.biometricAvailability) {
-                BiometricAvailability.available =>
-                  'biometricProtectionDescription',
-                BiometricAvailability.unavailable => 'biometricUnavailable',
-                BiometricAvailability.failed => 'biometricCheckFailed',
-              }),
-            ),
+          child: HomeToggle(
+            icon: Icons.fingerprint_rounded,
+            label: strings.t('biometricProtection'),
+            description: strings.t(switch (controller.biometricAvailability) {
+              BiometricAvailability.available =>
+                'biometricProtectionDescription',
+              BiometricAvailability.unavailable => 'biometricUnavailable',
+              BiometricAvailability.failed => 'biometricCheckFailed',
+            }),
             value: controller.biometricProtectionEnabled,
             onChanged: controller.biometricBusy
                 ? null
@@ -511,15 +689,13 @@ final class SettingsPage extends StatelessWidget {
             title: strings.t('demoScenarios'),
             child: Column(
               children: <Widget>[
-                SwitchListTile(
-                  contentPadding: EdgeInsets.zero,
-                  title: Text(strings.t('simulateOffline')),
+                HomeToggle(
+                  label: strings.t('simulateOffline'),
                   value: controller.demoOffline,
                   onChanged: controller.setDemoOffline,
                 ),
-                SwitchListTile(
-                  contentPadding: EdgeInsets.zero,
-                  title: Text(strings.t('simulateAlarm')),
+                HomeToggle(
+                  label: strings.t('simulateAlarm'),
                   value: controller.demoAlarm,
                   onChanged: controller.setDemoAlarm,
                 ),
@@ -720,6 +896,13 @@ final class SettingsPage extends StatelessWidget {
     }
   }
 }
+
+String _themeLabel(HomeControlStrings strings, ThemeMode mode) =>
+    strings.t(switch (mode) {
+      ThemeMode.system => 'themeSystem',
+      ThemeMode.light => 'themeLight',
+      ThemeMode.dark => 'themeDark',
+    });
 
 final class _DiagnosticRow extends StatelessWidget {
   const _DiagnosticRow({required this.label, required this.value});

@@ -107,7 +107,7 @@ Zmiana gotowego pliku wymaga nowego numeru wersji i tagu.
    niezależny pakiet `pl.aquacyd.aquacyd_home`.
 5. Walidator potwierdzi package, wersję, pojedynczego sygnatariusza i publiczny
    fingerprint certyfikatu.
-6. Release publikuje `AquaCYD-Home-X.Y.Z.apk`, `SHA256SUMS`,
+6. Release publikuje `Home-Control-X.Y.Z.apk`, `SHA256SUMS`,
    `release-manifest.json`, CycloneDX SBOM oraz atestację pochodzenia.
 
 Tag musi wskazywać commit osiągalny z co najmniej jednej zdalnej gałęzi.

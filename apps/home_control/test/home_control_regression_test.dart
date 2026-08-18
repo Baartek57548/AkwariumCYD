@@ -498,6 +498,9 @@ void main() {
       await source.disposeStream();
     });
     await controller.initialize();
+    await controller.saveDashboard(
+      controller.dashboard.copyWith(largeCards: const <String>{'favorites'}),
+    );
 
     await tester.pumpWidget(
       _localizedApp(
@@ -508,31 +511,35 @@ void main() {
       ),
     );
     await tester.pumpAndSettle();
-
-    const aquariumLargeKey = ValueKey<String>(
-      'dashboard-section-aquarium-large',
-    );
-    const favoritesCompactKey = ValueKey<String>(
-      'dashboard-section-favorites-compact',
-    );
-    final aquariumWidth = tester.getSize(find.byKey(aquariumLargeKey)).width;
-    final compactWidth = tester.getSize(find.byKey(favoritesCompactKey)).width;
-    expect(aquariumWidth, greaterThan(compactWidth * 1.8));
-
-    await controller.saveDashboard(
-      controller.dashboard.copyWith(
-        largeCards: const <String>{'aquarium', 'favorites'},
-      ),
+    await tester.drag(
+      find.byType(CustomScrollView).first,
+      const Offset(0, -420),
     );
     await tester.pumpAndSettle();
 
     const favoritesLargeKey = ValueKey<String>(
       'dashboard-section-favorites-large',
     );
-    expect(find.byKey(favoritesCompactKey), findsNothing);
+    const areasCompactKey = ValueKey<String>('dashboard-section-areas-compact');
+    expect(controller.dashboard.largeCards, contains('favorites'));
+    expect(find.byKey(favoritesLargeKey), findsOneWidget);
+    expect(find.byKey(areasCompactKey), findsOneWidget);
+    final largeWidth = tester.getSize(find.byKey(favoritesLargeKey)).width;
+    final compactWidth = tester.getSize(find.byKey(areasCompactKey)).width;
+    expect(largeWidth, greaterThan(compactWidth * 1.8));
+
+    await controller.saveDashboard(
+      controller.dashboard.copyWith(
+        largeCards: const <String>{'favorites', 'areas'},
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    const areasLargeKey = ValueKey<String>('dashboard-section-areas-large');
+    expect(find.byKey(areasCompactKey), findsNothing);
     expect(
-      tester.getSize(find.byKey(favoritesLargeKey)).width,
-      moreOrLessEquals(aquariumWidth, epsilon: 0.1),
+      tester.getSize(find.byKey(areasLargeKey)).width,
+      moreOrLessEquals(largeWidth, epsilon: 0.1),
     );
     expect(tester.takeException(), isNull);
     await tester.pumpWidget(const SizedBox.shrink());

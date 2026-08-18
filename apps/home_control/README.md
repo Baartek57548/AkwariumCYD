@@ -19,10 +19,19 @@ Nazwa produktu, ikony, splash i interfejs użytkownika to **Home Control**.
 - 28 domen encji Home Assistant i bezpieczny widok nieznanego przyszłego typu;
 - pulpit domu, ulubione, obszary, wyszukiwanie, filtry, szybkie akcje, alarmy,
   automatyzacje, sceny, skrypty, historię, aktualizacje i diagnostykę źródeł;
+- katalog pomieszczeń z kartami kondycji, kluczowymi metrykami i osobnym,
+  responsywnym widokiem urządzeń każdego pokoju;
 - moduł Akwarium wykorzystujący faktyczne możliwości CYD/P4 bez przejmowania
   autonomicznej automatyki, interlocków ani operacji kalibracyjnych sterownika;
 - edytowalny układ dashboardu, motyw jasny/ciemny/systemowy, język polski i
   angielski oraz responsywną nawigację telefonu, tabletu i desktopu;
+- warstwę wizualną „calm intelligence”: jednoznaczny stan domu, centrum spraw
+  wymagających reakcji, moduły domenowe bez fałszywych komunikatów, semantyczne
+  kolory o zweryfikowanym kontraście oraz duże cele dotykowe dla panelu 800×480;
+- wspólny design system i komponenty kart, statusów, przełączników, suwaków,
+  dialogów, paneli oraz stanów loading/empty/error używane przez wszystkie ekrany;
+- sterowanie bez przedwczesnej zmiany stanu: interfejs pokazuje `changing`, a
+  wartość ON/OFF aktualizuje dopiero po potwierdzeniu źródła;
 - wersjonowany cache, stale data, reconnect z backoffem, zatrzymanie pollingu w
   tle i natychmiastowe odświeżenie po wznowieniu;
 - opcjonalną biometrię dla zamków, alarmów, bram, ryzykownych wartości i
@@ -112,7 +121,14 @@ SBOM, uruchamia skan sekretów i zależności oraz waliduje pozostałe części 
 Sekretów, PIN-ów, prywatnych adresów domu i kluczy podpisujących nie wolno dodawać
 do repozytorium ani logów.
 
-Aktualny rozwój produktu ma wersję `2.0.1+6`. Wyniki walidacji są w
+Regresje premium UI są sprawdzane dla telefonu 320×568 i panelu 800×480 przy
+dwukrotnie powiększonym tekście. Jasny i ciemny motyw mają osobne scenariusze
+wizualne dla telefonu 393×852 i panelu 800×480. Goldeny znajdują się w
+`test/goldens/`; osobne testy weryfikują kontrast motywu,
+live-region statusu, rozdzielenie semantyki szczegółów i szybkiej akcji oraz cele
+dotykowe minimum 48 dp.
+
+Aktualny rozwój produktu ma wersję `2.1.0+7`. Wyniki walidacji są w
 [`docs/QA_REPORT.md`](../../docs/QA_REPORT.md), architektura w
 [`docs/HOME_CONTROL_ARCHITECTURE.md`](../../docs/HOME_CONTROL_ARCHITECTURE.md),
 model zagrożeń w [`docs/SECURITY.md`](../../docs/SECURITY.md), a procedura wydania

@@ -542,9 +542,6 @@ final class HomeControlController extends ChangeNotifier {
     }
     _pending.add(entity.id.value);
     _failure = null;
-    _snapshot = snapshot.replaceEntity(
-      entity.copyWith(state: value, updatedAt: DateTime.now()),
-    );
     _notify();
     try {
       await source.sendCommand(entity, value, cancellation);
@@ -558,10 +555,8 @@ final class HomeControlController extends ChangeNotifier {
     } on AppFailure catch (failure) {
       if (!_isCurrentSource(source, generation, cancellation)) return false;
       _failure = failure;
-      _snapshot = _snapshot?.replaceEntity(entity);
       return false;
     } on OperationCancelled {
-      _snapshot = _snapshot?.replaceEntity(entity);
       return false;
     } finally {
       if (_sourceGeneration == generation) {

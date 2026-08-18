@@ -48,9 +48,10 @@ python tools/hil/runner.py --self-test
 Build firmware wykonuje się przez PlatformIO oraz `tools/build-p4-c6.ps1` z
 przypiętym ESP-IDF 5.4.4. Workflow GitHub jest kanoniczną automatyzacją.
 
-## Decyzja dla tej zmiany
+## Decyzja dla Home Control 2.1.0
 
-Zmiana Home Control 2.0 może zostać wypchnięta jako gałąź i PR obok aplikacji
-AquaCYD. Nie wolno tworzyć produkcyjnego taga ani GitHub Release, dopóki nie ma
-kluczy właściciela i dowodu fizycznego HIL. Jest to bramka bezpieczeństwa, a nie
-nieukończony fragment implementacji.
+Wydanie aplikacji zostało jawnie autoryzowane przez właściciela po przejściu
+bramek hostowych, web i Android. Tag `home-v2.1.0` musi uruchomić chroniony
+workflow `production-mobile`; tylko jego podpisany i zweryfikowany APK może być
+zasobem wydania. Brak bieżącego fizycznego HIL pozostaje opisanym ograniczeniem
+i ta decyzja nie autoryzuje tagów firmware ani AquaCYD Service.

@@ -1,9 +1,12 @@
+import 'dart:async';
 import 'dart:math' as math;
 
 import 'package:aquacyd_design_system/aquacyd_design_system.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:home_entities/home_entities.dart';
 
+import '../design/components.dart';
 import 'controller.dart';
 import 'strings.dart';
 
@@ -54,6 +57,13 @@ final class SourceStatusBanner extends StatelessWidget {
     final critical = snapshot.isOffline || failureKey != null;
     final warning = snapshot.isStale || snapshot.isPartial;
     if (!critical && !warning) return const SizedBox.shrink();
+    final status = failureKey != null
+        ? _SourceBannerStatus.failure
+        : snapshot.isOffline
+        ? _SourceBannerStatus.offline
+        : snapshot.isPartial
+        ? _SourceBannerStatus.partial
+        : _SourceBannerStatus.stale;
     final background = critical
         ? scheme.errorContainer
         : scheme.tertiaryContainer;
@@ -67,46 +77,87 @@ final class SourceStatusBanner extends StatelessWidget {
             : snapshot.isPartial
             ? 'partial'
             : 'stale');
-    return Semantics(
-      liveRegion: true,
-      container: true,
-      child: Material(
-        color: background,
-        child: SafeArea(
-          bottom: false,
-          child: Padding(
-            padding: const EdgeInsets.symmetric(
-              horizontal: ProductSpacing.md,
-              vertical: ProductSpacing.sm,
+    final message = strings.t(keyName);
+    return Material(
+      color: background,
+      child: SafeArea(
+        bottom: false,
+        child: DecoratedBox(
+          decoration: BoxDecoration(
+            border: Border(
+              left: Directionality.of(context) == TextDirection.ltr
+                  ? BorderSide(color: foreground, width: 4)
+                  : BorderSide.none,
+              right: Directionality.of(context) == TextDirection.rtl
+                  ? BorderSide(color: foreground, width: 4)
+                  : BorderSide.none,
             ),
-            child: Row(
-              children: <Widget>[
-                Icon(
-                  critical ? Icons.cloud_off_rounded : Icons.schedule_rounded,
-                  color: foreground,
-                ),
-                const SizedBox(width: ProductSpacing.sm),
-                Expanded(
-                  child: Text(
-                    strings.t(keyName),
-                    style: TextStyle(color: foreground),
+          ),
+          child: Row(
+            children: <Widget>[
+              Expanded(
+                child: Semantics(
+                  key: const ValueKey<String>('source-status-message'),
+                  container: true,
+                  liveRegion: true,
+                  label: message,
+                  child: ExcludeSemantics(
+                    child: Padding(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: ProductSpacing.md,
+                        vertical: ProductSpacing.sm,
+                      ),
+                      child: Row(
+                        crossAxisAlignment: CrossAxisAlignment.center,
+                        children: <Widget>[
+                          Icon(_iconForSourceStatus(status), color: foreground),
+                          const SizedBox(width: ProductSpacing.sm),
+                          Expanded(
+                            child: Text(
+                              message,
+                              maxLines: 3,
+                              overflow: TextOverflow.ellipsis,
+                              style: Theme.of(context).textTheme.bodyMedium
+                                  ?.copyWith(
+                                    color: foreground,
+                                    fontWeight: FontWeight.w600,
+                                  ),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
                   ),
                 ),
-                if (failureKey != null)
-                  IconButton(
+              ),
+              if (failureKey != null)
+                SizedBox.square(
+                  dimension: 48,
+                  child: IconButton(
+                    key: const ValueKey<String>('source-status-dismiss'),
                     tooltip: strings.t('dismiss'),
                     onPressed: onDismiss,
                     color: foreground,
                     icon: const Icon(Icons.close_rounded),
                   ),
-              ],
-            ),
+                ),
+              if (failureKey != null) const SizedBox(width: ProductSpacing.xs),
+            ],
           ),
         ),
       ),
     );
   }
 }
+
+enum _SourceBannerStatus { failure, offline, partial, stale }
+
+IconData _iconForSourceStatus(_SourceBannerStatus status) => switch (status) {
+  _SourceBannerStatus.failure => Icons.error_outline_rounded,
+  _SourceBannerStatus.offline => Icons.cloud_off_rounded,
+  _SourceBannerStatus.partial => Icons.sync_problem_rounded,
+  _SourceBannerStatus.stale => Icons.schedule_rounded,
+};
 
 final class EntityCard extends StatelessWidget {
   const EntityCard({
@@ -125,84 +176,237 @@ final class EntityCard extends StatelessWidget {
     final strings = HomeControlStrings.of(context);
     final scheme = Theme.of(context).colorScheme;
     final pending = controller.isPending(entity.id);
-    final enabled = entity.available && !controller.snapshot!.isOffline;
-    return Semantics(
-      container: true,
-      label: '${entity.name}, ${strings.entityState(entity)}',
-      child: Card(
+    final offline = controller.snapshot?.isOffline ?? true;
+    final enabled = entity.available && !offline && !pending;
+    final active = entity.booleanValue == true;
+    final hasQuickControl =
+        entity.writable &&
+        entity.type != HomeEntityType.unknown &&
+        (entity.type.supportsToggle || entity.type.supportsPress);
+    final stateText = pending
+        ? strings.t('commandPending')
+        : offline
+        ? strings.t('offline')
+        : strings.entityState(entity);
+    final stateColor = pending
+        ? scheme.primary
+        : entity.available && !offline
+        ? scheme.onSurfaceVariant
+        : scheme.error;
+    final surface = Color.alphaBlend(
+      (pending
+              ? scheme.secondary
+              : active && enabled
+              ? scheme.primary
+              : scheme.onSurface)
+          .withValues(
+            alpha: pending
+                ? 0.08
+                : active && enabled
+                ? 0.06
+                : 0.02,
+          ),
+      scheme.surfaceContainerLow,
+    );
+    void openDetails() {
+      showEntityDetails(context, entity, controller);
+    }
+
+    return TweenAnimationBuilder<Color?>(
+      tween: ColorTween(end: surface),
+      duration: ProductMotion.standard,
+      curve: ProductMotion.stateChange,
+      builder: (context, animatedSurface, child) => Card(
+        color: animatedSurface,
         clipBehavior: Clip.antiAlias,
-        child: InkWell(
-          onTap: () => showEntityDetails(context, entity, controller),
-          child: Padding(
-            padding: EdgeInsets.all(
-              compact ? ProductSpacing.sm : ProductSpacing.md,
-            ),
-            child: Row(
-              children: <Widget>[
-                Container(
-                  width: 46,
-                  height: 46,
-                  decoration: BoxDecoration(
-                    color: entity.booleanValue == true
-                        ? scheme.primaryContainer
-                        : scheme.surfaceContainerHighest,
-                    borderRadius: BorderRadius.circular(15),
-                  ),
-                  child: Icon(
-                    iconForEntity(entity.type),
-                    color: entity.booleanValue == true
-                        ? scheme.onPrimaryContainer
-                        : scheme.onSurfaceVariant,
-                  ),
-                ),
-                const SizedBox(width: ProductSpacing.sm),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: <Widget>[
-                      Text(
-                        entity.name,
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: Theme.of(context).textTheme.titleMedium
-                            ?.copyWith(fontWeight: FontWeight.w700),
+        child: child,
+      ),
+      child: Semantics(
+        container: true,
+        explicitChildNodes: true,
+        child: Row(
+          children: <Widget>[
+            Expanded(
+              child: Semantics(
+                key: ValueKey<String>('entity-details-${entity.id.value}'),
+                container: true,
+                excludeSemantics: true,
+                button: true,
+                enabled: true,
+                label: entity.name,
+                value: stateText,
+                hint: strings.t('details'),
+                onTap: openDetails,
+                child: InkWell(
+                  excludeFromSemantics: true,
+                  onTap: openDetails,
+                  child: ConstrainedBox(
+                    constraints: BoxConstraints(minHeight: compact ? 72 : 80),
+                    child: Padding(
+                      padding: EdgeInsets.fromLTRB(
+                        compact ? ProductSpacing.sm : ProductSpacing.md,
+                        compact ? ProductSpacing.sm : ProductSpacing.md,
+                        ProductSpacing.sm,
+                        compact ? ProductSpacing.sm : ProductSpacing.md,
                       ),
-                      const SizedBox(height: 2),
-                      Text(
-                        pending
-                            ? strings.t('commandPending')
-                            : strings.entityState(entity),
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                          color: enabled
-                              ? scheme.onSurfaceVariant
-                              : scheme.error,
-                        ),
+                      child: Row(
+                        children: <Widget>[
+                          _EntityIcon(
+                            entity: entity,
+                            active: active,
+                            enabled: entity.available && !offline,
+                            pending: pending,
+                          ),
+                          const SizedBox(width: ProductSpacing.sm),
+                          Expanded(
+                            child: Column(
+                              mainAxisSize: MainAxisSize.min,
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: <Widget>[
+                                Text(
+                                  entity.name,
+                                  maxLines: 2,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: Theme.of(context).textTheme.titleMedium
+                                      ?.copyWith(fontWeight: FontWeight.w700),
+                                ),
+                                const SizedBox(height: 2),
+                                Text(
+                                  stateText,
+                                  maxLines: 2,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: Theme.of(context).textTheme.bodySmall
+                                      ?.copyWith(
+                                        color: stateColor,
+                                        fontWeight: pending
+                                            ? FontWeight.w600
+                                            : FontWeight.w400,
+                                      ),
+                                ),
+                              ],
+                            ),
+                          ),
+                          if (!hasQuickControl) ...<Widget>[
+                            const SizedBox(width: ProductSpacing.xs),
+                            ExcludeSemantics(
+                              child: Icon(
+                                Icons.chevron_right_rounded,
+                                color: scheme.onSurfaceVariant,
+                              ),
+                            ),
+                          ],
+                        ],
                       ),
-                    ],
-                  ),
-                ),
-                const SizedBox(width: ProductSpacing.xs),
-                if (pending)
-                  const SizedBox(
-                    width: 24,
-                    height: 24,
-                    child: CircularProgressIndicator(strokeWidth: 2.5),
-                  )
-                else
-                  _QuickControl(
-                    entity: entity,
-                    enabled: enabled,
-                    onValue: (value) => requestEntityCommand(
-                      context,
-                      entity,
-                      value,
-                      controller,
                     ),
                   ),
-              ],
+                ),
+              ),
             ),
+            if (hasQuickControl) ...<Widget>[
+              const SizedBox(width: ProductSpacing.xs),
+              Padding(
+                padding: const EdgeInsets.only(right: ProductSpacing.sm),
+                child: AnimatedSwitcher(
+                  duration: ProductMotion.fast,
+                  reverseDuration: ProductMotion.fast,
+                  switchInCurve: ProductMotion.enter,
+                  switchOutCurve: ProductMotion.exit,
+                  transitionBuilder: (child, animation) => FadeTransition(
+                    opacity: animation,
+                    child: ScaleTransition(scale: animation, child: child),
+                  ),
+                  child: pending
+                      ? KeyedSubtree(
+                          key: ValueKey<String>(
+                            'pending-control-${entity.id.value}',
+                          ),
+                          child: _PendingControl(entity: entity),
+                        )
+                      : KeyedSubtree(
+                          key: ValueKey<String>(
+                            'quick-control-${entity.id.value}',
+                          ),
+                          child: _QuickControl(
+                            entity: entity,
+                            enabled: enabled,
+                            onValue: (value) => requestEntityCommand(
+                              context,
+                              entity,
+                              value,
+                              controller,
+                            ),
+                          ),
+                        ),
+                ),
+              ),
+            ],
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+final class _EntityIcon extends StatelessWidget {
+  const _EntityIcon({
+    required this.entity,
+    required this.active,
+    required this.enabled,
+    required this.pending,
+  });
+
+  final HomeEntity entity;
+  final bool active;
+  final bool enabled;
+  final bool pending;
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    final background = pending
+        ? scheme.secondaryContainer
+        : active && enabled
+        ? scheme.primaryContainer
+        : scheme.surfaceContainerHighest;
+    final foreground = pending
+        ? scheme.onSecondaryContainer
+        : active && enabled
+        ? scheme.onPrimaryContainer
+        : scheme.onSurfaceVariant.withValues(alpha: enabled ? 1 : 0.55);
+    return ExcludeSemantics(
+      child: Container(
+        width: 48,
+        height: 48,
+        decoration: BoxDecoration(
+          color: background,
+          borderRadius: BorderRadius.circular(ProductRadius.control),
+        ),
+        child: Icon(iconForEntity(entity.type), color: foreground),
+      ),
+    );
+  }
+}
+
+final class _PendingControl extends StatelessWidget {
+  const _PendingControl({required this.entity});
+
+  final HomeEntity entity;
+
+  @override
+  Widget build(BuildContext context) {
+    final label = HomeControlStrings.of(context).t('commandPending');
+    return Semantics(
+      key: ValueKey<String>('entity-pending-${entity.id.value}'),
+      container: true,
+      liveRegion: true,
+      label: entity.name,
+      value: label,
+      child: const ExcludeSemantics(
+        child: SizedBox.square(
+          dimension: 48,
+          child: Padding(
+            padding: EdgeInsets.all(12),
+            child: CircularProgressIndicator(strokeWidth: 2.5),
           ),
         ),
       ),
@@ -223,23 +427,59 @@ final class _QuickControl extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    if (!entity.writable || entity.type == HomeEntityType.unknown) {
-      return const Icon(Icons.chevron_right_rounded);
-    }
+    final strings = HomeControlStrings.of(context);
     if (entity.type.supportsToggle) {
-      return Switch(
-        value: entity.booleanValue == true,
-        onChanged: enabled ? onValue : null,
+      final value = entity.booleanValue == true;
+      final action = strings.t(value ? 'turnOff' : 'turnOn');
+      final activate = enabled ? () => onValue(!value) : null;
+      return Semantics(
+        key: ValueKey<String>('entity-toggle-${entity.id.value}'),
+        container: true,
+        label: '$action: ${entity.name}',
+        value: strings.entityState(entity),
+        toggled: value,
+        enabled: enabled,
+        onTap: activate,
+        child: Tooltip(
+          message: enabled ? action : strings.t('unavailable'),
+          excludeFromSemantics: true,
+          child: InkResponse(
+            excludeFromSemantics: true,
+            containedInkWell: true,
+            highlightShape: BoxShape.circle,
+            onTap: activate,
+            child: SizedBox.square(
+              dimension: 48,
+              child: Center(
+                child: ExcludeSemantics(
+                  child: IgnorePointer(
+                    child: Switch(
+                      value: value,
+                      onChanged: enabled ? (_) {} : null,
+                      materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ),
       );
     }
     if (entity.type.supportsPress) {
-      return IconButton.filledTonal(
-        tooltip: HomeControlStrings.of(context).t('run'),
-        onPressed: enabled ? () => onValue(true) : null,
-        icon: const Icon(Icons.play_arrow_rounded),
+      final run = strings.t('run');
+      return SizedBox.square(
+        dimension: 48,
+        child: IconButton.filledTonal(
+          key: ValueKey<String>('entity-run-${entity.id.value}'),
+          tooltip:
+              '${enabled ? run : strings.t('unavailable')}: ${entity.name}',
+          onPressed: enabled ? () => onValue(true) : null,
+          icon: const Icon(Icons.play_arrow_rounded),
+        ),
       );
     }
-    return const Icon(Icons.chevron_right_rounded);
+    return const SizedBox.shrink();
   }
 }
 
@@ -253,19 +493,15 @@ Future<bool> requestEntityCommand(
     final strings = HomeControlStrings.of(context);
     final confirmed = await showDialog<bool>(
       context: context,
-      builder: (context) => AlertDialog(
-        icon: Icon(
+      builder: (context) => HomeAlertDialog(
+        icon: entity.risk == HomeCommandRisk.critical
+            ? Icons.warning_amber_rounded
+            : Icons.info_outline_rounded,
+        title: strings.t('confirmTitle'),
+        message: strings.t(
           entity.risk == HomeCommandRisk.critical
-              ? Icons.warning_amber_rounded
-              : Icons.info_outline_rounded,
-        ),
-        title: Text(strings.t('confirmTitle')),
-        content: Text(
-          strings.t(
-            entity.risk == HomeCommandRisk.critical
-                ? 'confirmCritical'
-                : 'confirmConsequential',
-          ),
+              ? 'confirmCritical'
+              : 'confirmConsequential',
         ),
         actions: <Widget>[
           TextButton(
@@ -281,7 +517,14 @@ Future<bool> requestEntityCommand(
     );
     if (confirmed != true) return false;
   }
-  return controller.sendCommand(entity, value);
+  unawaited(switch (entity.risk) {
+    HomeCommandRisk.routine => HapticFeedback.selectionClick(),
+    HomeCommandRisk.consequential => HapticFeedback.mediumImpact(),
+    HomeCommandRisk.critical => HapticFeedback.heavyImpact(),
+  });
+  final accepted = await controller.sendCommand(entity, value);
+  if (accepted) unawaited(HapticFeedback.lightImpact());
+  return accepted;
 }
 
 Future<void> showEntityDetails(
@@ -737,26 +980,25 @@ final class _DetailedControlState extends State<_DetailedControl> {
             min,
             max,
           );
-      return Column(
-        children: <Widget>[
-          Slider(
-            value: current,
-            min: min,
-            max: max <= min ? min + 1 : max,
-            divisions: _divisions(entity, min, max),
-            label: current.toStringAsFixed(1),
-            onChanged: widget.enabled
-                ? (value) => setState(() => _draftNumber = value)
-                : null,
-            onChangeEnd: widget.enabled
-                ? (value) {
-                    widget.onValue(value);
-                    if (mounted) setState(() => _draftNumber = null);
-                  }
-                : null,
-          ),
-          Text(strings.withValue('setValue', current.toStringAsFixed(1))),
-        ],
+      final valueLabel = entity.unit.isEmpty
+          ? current.toStringAsFixed(1)
+          : '${current.toStringAsFixed(1)} ${entity.unit}';
+      return HomeSlider(
+        label: entity.name,
+        value: current,
+        minimum: min,
+        maximum: max <= min ? min + 1 : max,
+        divisions: _divisions(entity, min, max),
+        valueLabel: valueLabel,
+        onChanged: widget.enabled
+            ? (value) => setState(() => _draftNumber = value)
+            : null,
+        onChangeEnd: widget.enabled
+            ? (value) {
+                widget.onValue(value);
+                if (mounted) setState(() => _draftNumber = null);
+              }
+            : null,
       );
     }
     if (<HomeEntityType>{

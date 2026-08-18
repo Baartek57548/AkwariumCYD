@@ -8,6 +8,7 @@ import '../aquahub/hub_discovery.dart';
 import '../aquahub/setup_page.dart';
 import '../data/credentials_store.dart';
 import '../design/app_theme.dart';
+import '../design/components.dart';
 import 'biometric_gate.dart';
 import 'controller.dart';
 import 'onboarding.dart';
@@ -189,32 +190,11 @@ final class _HomeLoading extends StatelessWidget {
   Widget build(BuildContext context) {
     final strings = HomeControlStrings.of(context);
     return Scaffold(
-      body: Center(
-        child: Semantics(
-          liveRegion: true,
-          child: ConstrainedBox(
-            constraints: const BoxConstraints(maxWidth: 420),
-            child: Padding(
-              padding: const EdgeInsets.all(32),
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                children: <Widget>[
-                  const HomeControlMark(size: 88),
-                  const SizedBox(height: 24),
-                  Text(
-                    strings.t('appName'),
-                    style: Theme.of(context).textTheme.headlineMedium?.copyWith(
-                      fontWeight: FontWeight.w800,
-                    ),
-                  ),
-                  const SizedBox(height: 10),
-                  Text(strings.t(keyName), textAlign: TextAlign.center),
-                  const SizedBox(height: 28),
-                  const CircularProgressIndicator(),
-                ],
-              ),
-            ),
-          ),
+      body: _ScrollableStateFrame(
+        child: HomeLoadingState(
+          leading: const HomeControlMark(size: 88),
+          title: strings.t('appName'),
+          message: strings.t(keyName),
         ),
       ),
     );
@@ -252,57 +232,34 @@ final class _HomeFailure extends StatelessWidget {
     final strings = HomeControlStrings.of(context);
     final failure = controller.failure;
     return Scaffold(
-      body: SafeArea(
-        child: SingleChildScrollView(
-          padding: const EdgeInsets.all(24),
-          child: Center(
-            child: ConstrainedBox(
-              constraints: const BoxConstraints(maxWidth: 520),
-              child: Card(
-                child: Padding(
-                  padding: const EdgeInsets.all(28),
-                  child: Column(
-                    mainAxisSize: MainAxisSize.min,
-                    children: <Widget>[
-                      Icon(
-                        Icons.cloud_off_rounded,
-                        size: 58,
-                        color: Theme.of(context).colorScheme.error,
-                      ),
-                      const SizedBox(height: 20),
-                      Text(
-                        strings.t('errorTitle'),
-                        textAlign: TextAlign.center,
-                        style: Theme.of(context).textTheme.headlineSmall
-                            ?.copyWith(fontWeight: FontWeight.w800),
-                      ),
-                      const SizedBox(height: 12),
-                      Text(
-                        strings.t(failure?.messageKey ?? 'errorUnknown'),
-                        textAlign: TextAlign.center,
-                      ),
-                      const SizedBox(height: 24),
-                      SizedBox(
-                        width: double.infinity,
-                        child: FilledButton.icon(
-                          onPressed: controller.retry,
-                          icon: const Icon(Icons.refresh_rounded),
-                          label: Text(strings.t('retry')),
-                        ),
-                      ),
-                      const SizedBox(height: 8),
-                      TextButton(
-                        onPressed: controller.switchSource,
-                        child: Text(strings.t('reconfigure')),
-                      ),
-                    ],
-                  ),
-                ),
-              ),
-            ),
-          ),
+      body: _ScrollableStateFrame(
+        child: HomeErrorState(
+          title: strings.t('errorTitle'),
+          message: strings.t(failure?.messageKey ?? 'errorUnknown'),
+          retryLabel: strings.t('retry'),
+          onRetry: controller.retry,
+          secondaryActionLabel: strings.t('reconfigure'),
+          onSecondaryAction: controller.switchSource,
         ),
       ),
     );
   }
+}
+
+final class _ScrollableStateFrame extends StatelessWidget {
+  const _ScrollableStateFrame({required this.child});
+
+  final Widget child;
+
+  @override
+  Widget build(BuildContext context) => SafeArea(
+    child: LayoutBuilder(
+      builder: (context, constraints) => SingleChildScrollView(
+        child: ConstrainedBox(
+          constraints: BoxConstraints(minHeight: constraints.maxHeight),
+          child: child,
+        ),
+      ),
+    ),
+  );
 }

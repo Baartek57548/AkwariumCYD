@@ -38,3 +38,5 @@ firmware/esp32c6_gateway/main/aquahub.pem
 /mobile_app/
 /web — kopia/
 /web/settings_architecture_proposal.png
+# Pre-redesign visual baselines retained only in local working copies.
+/apps/home_control/test/goldens/dashboard_before_*.png

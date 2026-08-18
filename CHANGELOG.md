@@ -1,5 +1,43 @@
 # Changelog
 
+## home-v2.1.0 — 2026-08-18
+
+Kompletna, produktowa przebudowa Home Control do spójnego centrum inteligentnego
+domu z zachowaniem rzeczywistej integracji AquaHub i modułu akwarium.
+
+### What is included
+
+- własny język wizualny premium „calm intelligence” z dopracowanym jasnym i
+  ciemnym motywem, hierarchią typografii, semantycznymi kolorami oraz subtelnym
+  ruchem i haptics;
+- centralne tokeny layoutu, spacingu, promieni, elevation, cieni, ikon i animacji
+  oraz komplet współdzielonych kart, kontrolek, dialogów i stanów systemowych;
+- skalowalna nawigacja z czterema głównymi sekcjami i adaptacyjnym `Więcej`,
+  działająca od telefonu 320×568 po panel 800×480 i szeroki desktop;
+- nowy pulpit kondycji domu, szybkie akcje, centrum uwagi, aktywne urządzenia,
+  karty pomieszczeń i dedykowane szczegóły każdego pokoju;
+- profesjonalne SceneCard dla rzeczywistych scen i skryptów oraz czytelne
+  oddzielenie ich od automatyzacji bez implementowania fikcyjnego backendu;
+- jednoznaczne stany urządzeń: wartość nie zmienia się przed ACK źródła, komendy
+  są chronione przed wielokrotnym wysłaniem, a pending/offline/error pozostają
+  widoczne także dla czytnika ekranu;
+- responsywne loading, empty i error states, cele dotykowe minimum 48 dp,
+  kontrast WCAG, live regions i scenariusze ze skalą tekstu 200%;
+- usunięcie nieużywanego, równoległego stosu UI akwarium; prawdziwe transporty,
+  cache, bezpieczeństwo TLS, Home Assistant i AquaHub pozostają wspólnym źródłem
+  prawdy nowej architektury;
+- rozszerzone testy motywów, semantyki, nawigacji, stanów komend, małych ekranów
+  i wizualnych goldenów telefonu oraz panelu.
+
+### Verification
+
+- Flutter format/analyze/test, build web release i Android są częścią bramy
+  wydania;
+- podpisany APK jest generowany wyłącznie w chronionym GitHub Actions i
+  publikowany z SHA-256, manifestem, CycloneDX SBOM oraz provenance;
+- fizyczny HIL AquaHub/CYD nie jest zastępowany testem hostowym i pozostaje
+  osobną czynnością odbiorczą opisaną w `docs/QA_REPORT.md`.
+
 ## Unreleased — Home Control 2.0 i monorepo produktowe
 
 ### What is included

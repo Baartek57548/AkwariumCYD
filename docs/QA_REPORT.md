@@ -1,17 +1,23 @@
-# Raport QA — Home Control 2.0 / monorepo
+# Raport QA — Home Control 2.1 / monorepo
 
-Data raportu: 2026-08-13. Gałąź: `codex/home-control-monorepo`.
+Data raportu: 2026-08-18. Gałąź: `codex/home-control-monorepo`.
 
 ## Wynik końcowy
 
-Kod, testy hostowe i wszystkie kompilacje bez sprzętu są zielone. Stan jest
-gotowy do przeglądu i testów HIL, ale nie do publikacji produkcyjnego tagu:
-brakuje fizycznego stanowiska CYD/P4/C6 oraz kluczy właściciela.
+Kod Home Control, testy hostowe i wszystkie lokalne kompilacje bez sprzętu są
+zielone. Właścicielskie sekrety podpisu Androida są skonfigurowane wyłącznie w
+chronionym środowisku GitHub `production-mobile`; lokalny build release celowo
+nie korzysta z klucza produkcyjnego. Fizyczny HIL CYD/P4/C6 nie został wykonany
+i nie jest przedstawiany jako zastąpiony przez testy hostowe. Zmiana 2.1.0 nie
+modyfikuje firmware, ale ten brak pozostaje jawnym ograniczeniem odbioru całego
+systemu.
 
 | Obszar | Wykonana brama | Wynik |
 | --- | --- | --- |
-| Home Control | `flutter analyze`, pełne `flutter test --coverage` | PASS, 0 problemów, 80 testów, 58,57% pokrycia |
-| Home Control | web release, Android debug/release | PASS, APK release 55,7 MB; debug APK publikowany przez CI |
+| Home Control | pełny formatter Dart, `flutter analyze`, `flutter test --coverage` | PASS, 0 problemów, 103 testy, 63,58% pokrycia linii |
+| Home Control | web release, Android debug/release | PASS; web 38 250 332 B, debug APK 158 637 644 B, lokalny release AOT 58 838 196 B |
+| Home Control APK debug | `aapt`, `apksigner`, SHA-256 | PASS; `pl.aquacyd.aquacyd_home`, `2.1.0`/`7`, jeden prawidłowy sygnatariusz debug |
+| Home Control UI runtime | telefon 393×852, panel 800×480, light/dark, logi przeglądarki | PASS; dashboard, Więcej, pokoje/szczegóły, urządzenia, sceny i ustawienia bez nowych wyjątków ani overflowów |
 | AquaCYD Service | analyze, pełne testy | PASS, 0 problemów, 240 testów |
 | AquaCYD Service | Android debug/release z jednorazowym kluczem walidacyjnym | PASS, APK release 65,5 MB |
 | Pakiety Dart | analyze/test każdego pakietu | PASS, 5 testów |
@@ -30,7 +36,7 @@ brakuje fizycznego stanowiska CYD/P4/C6 oraz kluczy właściciela.
 | HIL mock | pełny self-test | PASS, 12 scenariuszy + 1 jawny SKIP portu |
 | HIL dry-run | uruchomienie bez stanowiska | 0 FAIL, 13 SKIP z podaną przyczyną |
 | HIL fizyczny | `--require-hardware --forbid-skips` | BLOCKED bez stanowiska |
-| Produkcyjne podpisy | klucze Android/OTA i fingerprint właściciela | BLOCKED bez sekretów CI |
+| Produkcyjny podpis Home Control | chronione sekrety `production-mobile`, `aapt` i `apksigner` w release workflow | CONFIGURED; wynik końcowy wymaga zielonego uruchomienia taga `home-v2.1.0` |
 
 Pierwsza równoległa kompilacja P4 została przerwana przez proces kompilatora bez
 diagnostyki przy małym zapasie pamięci hosta. Powtórzenie jednym zadaniem przeszło
@@ -57,10 +63,17 @@ flash i testu aktualizacji istniejącego urządzenia.
 - natywne REST, WebSocket, registry areas/devices/entities/services i reconnect;
 - historia REST oraz długoterminowe statystyki Recorder przez WebSocket z
   bezpiecznym fallbackiem dla encji bez statystyk i starszych serwerów;
-- pomieszczenia, urządzenia, 28 typów encji i bezpieczny fallback unknown;
-- kontrolki domenowe, potwierdzenia ryzyka, ACK/rollback i historia;
+- pomieszczenia z kartami kondycji i dedykowanymi szczegółami, urządzenia,
+  28 typów encji i bezpieczny fallback unknown;
+- kontrolki domenowe, potwierdzenia ryzyka, stan pending bez fałszywego ON przed
+  ACK oraz historia;
 - akwarium, alarm, sceny, skrypty, automatyzacje i aktualizacje;
 - edytowalny dashboard, PL/EN, motywy, telefon, tablet i duży tekst;
+- premium UI: status domu, centrum uwagi, sceny/skrypty, adaptacyjna nawigacja
+  800×480, semantyczne kolory, cele 48 dp i goldeny telefonu/panelu w obu
+  motywach;
+- centralne tokeny layoutu, ikon, cieni, elevation i ruchu oraz współdzielone
+  karty, statusy, kontrolki, panele i stany loading/empty/error;
 - opcjonalna biometria dla krytycznych poleceń i instalacji OTA z bezpiecznym
   zachowaniem przy anulowaniu, lockoucie lub braku skonfigurowanej biometrii;
 - wersjonowany cache offline odporny na uszkodzony snapshot i mieszanie źródeł;
@@ -72,16 +85,20 @@ flash i testu aktualizacji istniejącego urządzenia.
 1. Produkcyjne OAuth Home Assistant wymaga publicznego Client ID, kontrolowanego
    redirect URI i hostowanej polityki właściciela. Token długoterminowy pozostaje
    jawną opcją zaawansowaną, a nie atrapą OAuth.
-2. Produkcyjne APK wymagają keystore i fingerprintu certyfikatu właściciela.
+2. Produkcyjne APK powstają wyłącznie w chronionym workflow; lokalny host nie ma
+   i nie powinien mieć prywatnego keystore właściciela.
 3. Secure Boot i eFuse wymagają kontrolowanego fizycznego provisioningu.
 4. C6 ma dwie partycje OTA, ale kanał pozostaje `unsupported`, dopóki podpisana
    instalacja, health check i rollback nie zostaną wdrożone i sprawdzone na płytce.
 5. P4, C6 i CYD wymagają pełnego HIL bez pominiętych scenariuszy.
-6. Produkcyjny tag i GitHub Release są zabronione do czasu zamknięcia punktów 2–5.
+6. Wydanie Home Control musi jawnie podawać brak bieżącego fizycznego HIL;
+   produkcyjne tagi firmware pozostają zablokowane do zamknięcia punktów 3–5.
 
 ## Interpretacja
 
-Zielone testy hostowe i kompilacje oznaczają gotowość kodu do przeglądu oraz HIL,
-nie certyfikację sprzętu. Wynik mock nigdy nie jest przedstawiany jako test
-fizyczny. CI generuje wyłącznie artefakty walidacyjne bez produkcyjnych sekretów;
-kanał produkcyjny może zostać aktywowany dopiero po podpisaniu i odbiorze HIL.
+Zielone testy hostowe i kompilacje oznaczają gotowość aplikacji do wydania oraz
+dalszego HIL, nie certyfikację sprzętu. Wynik mock nigdy nie jest przedstawiany
+jako test fizyczny. CI gałęzi generuje artefakty walidacyjne, a chroniony workflow
+taga ponownie analizuje i testuje kod, buduje APK kluczem właściciela, sprawdza
+package, wersję, pojedynczego sygnatariusza i fingerprint oraz publikuje
+niezmienny manifest, SHA-256, SBOM i provenance.

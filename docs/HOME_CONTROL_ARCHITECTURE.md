@@ -24,8 +24,10 @@ flowchart TB
 ```
 
 Widgety nie znają HTTP, WebSocket, BLE, MQTT ani formatu snapshotu. Kontroler
-zarządza cyklem życia źródła, anulowaniem, pollingiem, optymistyczną zmianą i
-rollbackiem. Adaptery mapują dane do `home_entities`; semantyka akwarium z
+zarządza cyklem życia źródła, anulowaniem, pollingiem, serializacją komend i
+stanem oczekiwania. Ostatnia wartość potwierdzona przez źródło pozostaje widoczna
+do ACK lub kolejnego snapshotu, więc UI nigdy nie ogłasza ON przed backendem.
+Adaptery mapują dane do `home_entities`; semantyka akwarium z
 `aquacyd_protocol` podnosi ryzyko komendy, ale nie omija blokad CYD.
 
 ## Model domeny
@@ -76,16 +78,37 @@ semantyki ryzyka co źródła produkcyjne.
 
 ## UI/UX i dostępność
 
-Główna nawigacja ma Pulpit, Pomieszczenia, Urządzenia, Automatyzacje,
-Aktualizacje i Ustawienia. Telefon używa dolnej belki, a szeroki ekran
-`NavigationRail`. Dashboard pozwala zmieniać kolejność, widoczność, rozmiar kart
-i ulubione. Operacje konsekwencyjne lub krytyczne wymagają potwierdzenia, stan
-oczekujący jest widoczny, a brak ACK odtwarza stan serwera.
+Model informacji obejmuje Pulpit, Pomieszczenia, Urządzenia i Automatyzacje jako
+cztery główne cele. Aktualizacje oraz Ustawienia pozostają dostępne przez
+`Więcej`, dzięki czemu telefon i panel 800×480 nie są przeładowane; pełny
+`NavigationRail` pojawia się na większych ekranach. Dashboard pozwala zmieniać
+kolejność, widoczność, rozmiar kart i ulubione. Pomieszczenia mają własne karty
+kondycji oraz widoki szczegółowe, a sceny i skrypty są odróżnione od reguł
+automatyzacji. Operacje konsekwencyjne lub krytyczne wymagają potwierdzenia, stan
+oczekujący jest widoczny, a brak ACK pozostawia ostatni stan serwera.
+
+Pierwszy ekran stosuje hierarchię „calm intelligence”: zagregowany stan domu,
+centrum spraw wymagających reakcji, szybkie sterowanie, dostępne moduły domenowe,
+pomieszczenia i rzeczywiste zmiany encji. Moduł akwarium jest ukrywany, gdy źródło
+go nie udostępnia. Komunikat prawidłowego stanu oznacza brak aktywnych alarmów;
+offline, stare lub niepełne dane mają osobne stany i nie są przedstawiane jako
+bezpieczne. Liczniki OTA i urządzeń offline prowadzą bezpośrednio do właściwego
+ekranu.
 
 Interfejs obsługuje PL/EN, motyw systemowy/jasny/ciemny, powiększony tekst,
 semantykę kontrolek, stany loading/empty/offline/stale/partial/error i inputy bez
 polegania wyłącznie na kolorze. Aparaty i nieznane integracje są prezentowane
 bez wykonywania niezweryfikowanych akcji.
+
+Wspólny motyw definiuje jawną drabinę powierzchni, typografię, promienie i
+semantyczne pary kolorów success/warning/info. Centralne tokeny obejmują także
+spacing, rozmiary ikon, elevation, cienie, breakpointy i czasy animacji. Wspólne
+komponenty dostarczają DeviceCard, RoomCard, SceneCard, StatusChip, SectionHeader,
+Toggle, Slider, BottomSheet, Modal, Alert, Empty/Loading/ErrorState, MetricCard i
+QuickAction. Testy kontrastu pilnują minimum WCAG dla tekstu, a karta encji
+rozdziela akcję otwarcia szczegółów od przełącznika lub przycisku. Wszystkie
+główne cele dotykowe mają minimum 48 dp. Macierz regresji obejmuje 320×568 i
+800×480 przy skali tekstu 200%, oba motywy oraz goldeny obu formatów.
 
 ## Cykl życia i aktualizacje
 

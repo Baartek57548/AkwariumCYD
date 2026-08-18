@@ -6,6 +6,7 @@ import 'package:aquacyd_home/src/data/credentials_store.dart';
 import 'package:aquacyd_home/src/domain/models.dart';
 import 'package:aquacyd_home/src/home_control/app.dart';
 import 'package:aquacyd_home/src/home_control/biometric_gate.dart';
+import 'package:aquacyd_home/src/home_control/catalog_pages.dart';
 import 'package:aquacyd_home/src/home_control/controller.dart';
 import 'package:aquacyd_home/src/home_control/dashboard.dart';
 import 'package:aquacyd_home/src/home_control/demo_data_source.dart';
@@ -85,9 +86,20 @@ void main() {
 
     await tester.enterText(find.byType(TextField), 'Światło główne');
     await tester.pumpAndSettle();
+    expect(find.byType(RoomCard), findsOneWidget);
+    await tester.tap(find.byType(RoomCard));
+    await tester.pumpAndSettle();
+    expect(find.byType(RoomDetailsPage), findsOneWidget);
+    await tester.enterText(find.byType(TextField), 'Światło główne');
+    await tester.pumpAndSettle();
     final toggle = find.byType(Switch);
     expect(tester.widget<Switch>(toggle).value, isTrue);
-    await tester.tap(toggle);
+    final toggleControl = find.ancestor(
+      of: toggle,
+      matching: find.byType(InkResponse),
+    );
+    expect(toggleControl, findsOneWidget);
+    await tester.tap(toggleControl);
     await tester.pumpAndSettle();
     expect(tester.widget<Switch>(toggle).value, isFalse);
   });
@@ -133,6 +145,13 @@ void main() {
     expect(find.text('Automatyzacje'), findsOneWidget);
     expect(find.text('Aktualizacje'), findsOneWidget);
     expect(find.text('Ustawienia'), findsOneWidget);
+    await tester.tap(find.text('Automatyzacje'));
+    await tester.pumpAndSettle();
+
+    expect(find.byType(AutomationsPage), findsOneWidget);
+    expect(find.byType(SceneCard), findsWidgets);
+    await tester.tap(find.text('Więcej'));
+    await tester.pumpAndSettle();
     await tester.tap(find.text('Ustawienia'));
     await tester.pumpAndSettle();
 

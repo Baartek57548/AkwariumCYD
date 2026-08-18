@@ -1,7 +1,7 @@
 name: aquacyd_home
 description: Home Control — natywne, uniwersalne centrum urządzeń i czujników.
 publish_to: 'none'
-version: 2.0.1+6
+version: 2.1.0+7
 
 environment:
   sdk: ^3.11.3
