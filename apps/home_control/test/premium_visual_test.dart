@@ -1,3 +1,5 @@
+import 'dart:typed_data';
+
 import 'package:aquacyd_home/src/aquahub/app_update.dart';
 import 'package:aquacyd_home/src/aquahub/credentials_store.dart';
 import 'package:aquacyd_home/src/aquahub/domain.dart';
@@ -29,6 +31,14 @@ void main() {
     (name: 'panel_dark', size: const Size(800, 480), mode: ThemeMode.dark),
   ]) {
     testWidgets('captures ${configuration.name} dashboard', (tester) async {
+      final previousGoldenFileComparator = goldenFileComparator;
+      if (previousGoldenFileComparator is LocalFileComparator) {
+        goldenFileComparator = _TolerantGoldenFileComparator(
+          Uri.parse('test/premium_visual_test.dart'),
+          precisionTolerance: 0.02,
+        );
+        addTearDown(() => goldenFileComparator = previousGoldenFileComparator);
+      }
       tester.view.physicalSize = configuration.size;
       tester.view.devicePixelRatio = 1;
       addTearDown(tester.view.resetPhysicalSize);
@@ -59,6 +69,39 @@ void main() {
         ),
       );
     });
+  }
+}
+
+final class _TolerantGoldenFileComparator extends LocalFileComparator {
+  _TolerantGoldenFileComparator(
+    super.testFile, {
+    required double precisionTolerance,
+  }) : assert(
+         precisionTolerance >= 0 && precisionTolerance <= 1,
+         'precisionTolerance must be between 0 and 1',
+       ),
+       _precisionTolerance = precisionTolerance;
+
+  /// Rasteryzacja Skia i fontów systemowych może minimalnie różnić się między
+  /// Windows i Linux. Próg 2% toleruje ten szum, ale nadal wykrywa zmianę
+  /// geometrii, kolorów lub zawartości komercyjnego interfejsu.
+  final double _precisionTolerance;
+
+  @override
+  Future<bool> compare(Uint8List imageBytes, Uri golden) async {
+    final result = await GoldenFileComparator.compareLists(
+      imageBytes,
+      await getGoldenBytes(golden),
+    );
+    final passed = result.passed || result.diffPercent <= _precisionTolerance;
+    if (passed) {
+      result.dispose();
+      return true;
+    }
+
+    final error = await generateFailureOutput(result, golden, basedir);
+    result.dispose();
+    throw FlutterError(error);
   }
 }
 
