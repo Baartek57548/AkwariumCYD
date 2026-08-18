@@ -80,8 +80,8 @@ Name: "english"; MessagesFile: "compiler:Default.isl"
 Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{cm:AdditionalIcons}"; Flags: unchecked
 
 [Files]
+Source: "{#VCRedistPath}"; DestName: "VC_redist.x64.exe"; Flags: dontcopy noencryption
 Source: "{#SourceDir}\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
-Source: "{#VCRedistPath}"; DestDir: "{tmp}"; DestName: "VC_redist.x64.exe"; Flags: deleteafterinstall; Check: VCRuntimeNeedsInstall; AfterInstall: InstallVCRuntime
 
 [Icons]
 Name: "{autoprograms}\Home Control"; Filename: "{app}\{#MyAppExeName}"; WorkingDir: "{app}"; AppUserModelID: "AquaCYD.HomeControl"
@@ -188,13 +188,13 @@ begin
   ) < 0;
 end;
 
-procedure InstallVCRuntime;
+function InstallVCRuntime: String;
 var
-  ErrorMessage: String;
   ResultCode: Integer;
   ResultCodeText: String;
   RequiredVersion: String;
 begin
+  Result := '';
   RequiredVersion := ExpandConstant('{#VCRedistVersion}');
   if not Exec(
        ExpandConstant('{tmp}\VC_redist.x64.exe'),
@@ -206,25 +206,42 @@ begin
      ) then
   begin
     ResultCodeText := IntToStr(ResultCode);
-    ErrorMessage := FmtMessage(CustomMessage('VCRuntimeInstallFailed'), [ResultCodeText]);
-    RaiseException(ErrorMessage);
+    Result := FmtMessage(CustomMessage('VCRuntimeInstallFailed'), [ResultCodeText]);
+    Exit;
   end;
 
   if (ResultCode <> 0) and (ResultCode <> 3010) then
   begin
     ResultCodeText := IntToStr(ResultCode);
-    ErrorMessage := FmtMessage(CustomMessage('VCRuntimeInstallFailed'), [ResultCodeText]);
-    RaiseException(ErrorMessage);
+    Result := FmtMessage(CustomMessage('VCRuntimeInstallFailed'), [ResultCodeText]);
+    Exit;
   end;
 
   if VCRuntimeNeedsInstall then
   begin
-    ErrorMessage := FmtMessage(CustomMessage('VCRuntimeVerificationFailed'), [RequiredVersion]);
-    RaiseException(ErrorMessage);
+    Result := FmtMessage(CustomMessage('VCRuntimeVerificationFailed'), [RequiredVersion]);
+    Exit;
   end;
 
   if ResultCode = 3010 then
     VCRuntimeRestartRequired := True;
+end;
+
+function PrepareToInstall(var NeedsRestart: Boolean): String;
+begin
+  Result := '';
+  if not VCRuntimeNeedsInstall then
+    Exit;
+
+  try
+    ExtractTemporaryFile('VC_redist.x64.exe');
+    Result := InstallVCRuntime;
+  except
+    Result := GetExceptionMessage;
+  end;
+
+  if Result <> '' then
+    Log('Microsoft Visual C++ Runtime prerequisite failed: ' + Result);
 end;
 
 function NeedRestart(): Boolean;
