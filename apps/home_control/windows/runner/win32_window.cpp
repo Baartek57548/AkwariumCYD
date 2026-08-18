@@ -207,11 +207,12 @@ Win32Window::MessageHandler(HWND hwnd,
       const HMONITOR monitor =
           MonitorFromWindow(hwnd, MONITOR_DEFAULTTONEAREST);
       if (GetMonitorInfo(monitor, &monitor_info)) {
-        minimum_width = std::min(
-            minimum_width, monitor_info.rcWork.right - monitor_info.rcWork.left);
-        minimum_height = std::min(
-            minimum_height,
+        const int work_width = static_cast<int>(
+            monitor_info.rcWork.right - monitor_info.rcWork.left);
+        const int work_height = static_cast<int>(
             monitor_info.rcWork.bottom - monitor_info.rcWork.top);
+        minimum_width = std::min(minimum_width, work_width);
+        minimum_height = std::min(minimum_height, work_height);
       }
       min_max_info->ptMinTrackSize.x = minimum_width;
       min_max_info->ptMinTrackSize.y = minimum_height;
