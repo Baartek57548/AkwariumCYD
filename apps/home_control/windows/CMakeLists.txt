@@ -61,6 +61,12 @@ add_subdirectory("runner")
 set(CMAKE_DISABLE_FIND_PACKAGE_JNI TRUE)
 include(flutter/generated_plugins.cmake)
 
+# local_auth_windows currently consumes the legacy C++/WinRT coroutine header.
+# Visual Studio 2026 turns its deprecation into a hard STL error unless this
+# compatibility switch is scoped to the affected plugin target.
+target_compile_definitions(local_auth_windows_plugin PRIVATE
+  _SILENCE_EXPERIMENTAL_COROUTINE_DEPRECATION_WARNINGS)
+
 
 # === Installation ===
 # Support files are copied into place next to the executable, so that it can
