@@ -21,7 +21,7 @@ dependencies:
   http: ^1.6.0
   home_entities:
     path: ../../packages/home_entities
-  intl: ^0.20.2
+  intl: ^0.20.3
   local_auth: ^3.0.2
   nsd: ^5.0.1
   path_provider: ^2.1.5
