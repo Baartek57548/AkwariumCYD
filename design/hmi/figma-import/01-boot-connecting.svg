@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="600" viewBox="0 0 1024 600">
+  <title>HMI Screen Boot Connecting</title>
+  <rect x="0" y="0" width="1024" height="600" rx="0" fill="#07101F" stroke="none" stroke-width="0"/>
+  <rect x="460" y="120" width="104" height="104" rx="34" fill="#4D8DFF" stroke="none" stroke-width="0"/>
+  <text x="512" y="189" fill="#F4F8FF" font-family="Montserrat, Arial, sans-serif" font-size="42" font-weight="700" text-anchor="middle">A</text>
+  <text x="512" y="300" fill="#F4F8FF" font-family="Montserrat, Arial, sans-serif" font-size="38" font-weight="700" text-anchor="middle">AquaCYD</text>
+  <text x="512" y="350" fill="#91A8C7" font-family="Montserrat, Arial, sans-serif" font-size="19" font-weight="400" text-anchor="middle">MQTT online, oczekiwanie na telemetrię CYD…</text>
+  <rect x="302" y="393" width="420" height="8" rx="4" fill="#1B2D48" stroke="none" stroke-width="0"/>
+  <rect x="302" y="393" width="319" height="8" rx="4" fill="#4D8DFF" stroke="none" stroke-width="0"/>
+  <text x="512" y="452" fill="#68C5FF" font-family="Montserrat, Arial, sans-serif" font-size="14" font-weight="600" text-anchor="middle">ESP32-P4 • LVGL 9 • bezpieczna automatyka lokalna</text>
+</svg>

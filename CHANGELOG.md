@@ -1,5 +1,92 @@
 # Changelog
 
+## home-v2.1.0 — 2026-08-18
+
+Kompletna, produktowa przebudowa Home Control do spójnego centrum inteligentnego
+domu z zachowaniem rzeczywistej integracji AquaHub i modułu akwarium.
+
+### What is included
+
+- własny język wizualny premium „calm intelligence” z dopracowanym jasnym i
+  ciemnym motywem, hierarchią typografii, semantycznymi kolorami oraz subtelnym
+  ruchem i haptics;
+- centralne tokeny layoutu, spacingu, promieni, elevation, cieni, ikon i animacji
+  oraz komplet współdzielonych kart, kontrolek, dialogów i stanów systemowych;
+- skalowalna nawigacja z czterema głównymi sekcjami i adaptacyjnym `Więcej`,
+  działająca od telefonu 320×568 po panel 800×480 i szeroki desktop;
+- nowy pulpit kondycji domu, szybkie akcje, centrum uwagi, aktywne urządzenia,
+  karty pomieszczeń i dedykowane szczegóły każdego pokoju;
+- profesjonalne SceneCard dla rzeczywistych scen i skryptów oraz czytelne
+  oddzielenie ich od automatyzacji bez implementowania fikcyjnego backendu;
+- jednoznaczne stany urządzeń: wartość nie zmienia się przed ACK źródła, komendy
+  są chronione przed wielokrotnym wysłaniem, a pending/offline/error pozostają
+  widoczne także dla czytnika ekranu;
+- responsywne loading, empty i error states, cele dotykowe minimum 48 dp,
+  kontrast WCAG, live regions i scenariusze ze skalą tekstu 200%;
+- usunięcie nieużywanego, równoległego stosu UI akwarium; prawdziwe transporty,
+  cache, bezpieczeństwo TLS, Home Assistant i AquaHub pozostają wspólnym źródłem
+  prawdy nowej architektury;
+- rozszerzone testy motywów, semantyki, nawigacji, stanów komend, małych ekranów
+  i wizualnych goldenów telefonu oraz panelu.
+
+### Verification
+
+- Flutter format/analyze/test, build web release i Android są częścią bramy
+  wydania;
+- podpisany APK jest generowany wyłącznie w chronionym GitHub Actions i
+  publikowany z SHA-256, manifestem, CycloneDX SBOM oraz provenance;
+- fizyczny HIL AquaHub/CYD nie jest zastępowany testem hostowym i pozostaje
+  osobną czynnością odbiorczą opisaną w `docs/QA_REPORT.md`.
+
+## Unreleased — Home Control 2.0 i monorepo produktowe
+
+### What is included
+
+- Natywna aplikacja Flutter **Home Control** dla Androida, iOS i web z własnym
+  Material 3 UI; Home Assistant jest adapterem danych, a nie stroną w WebView.
+- Trzy źródła: AquaHub, wiele instancji Home Assistant i pełne Demo offline,
+  wspólny model pomieszczeń, urządzeń, 28 typów encji, historii i aktualizacji.
+- Bezpieczne profile HA, oficjalne REST/WebSocket oraz rejestry areas, devices,
+  entities i services, reconnect, snapshot cache i selektywne usuwanie danych.
+- Długoterminowe statystyki Home Assistant Recorder dla dłuższych wykresów z
+  tolerancyjnym parserem i fallbackiem do historii REST.
+- Poprawne natywne sterowanie m.in. klimatem, roletami, zamkami, alarmem,
+  odkurzaczem, scenami, skryptami, liczbami, listami i tekstem z ACK/rollbackiem.
+- Autoaktualizacja Home Control przy wejściu i wznowieniu, osobny asset
+  `Home-Control-X.Y.Z.apk`, hash, certyfikat, manifest, SBOM i provenance.
+- Opcjonalna natywna biometria blokująca operacje krytyczne oraz instalację OTA;
+  anulowanie, lockout i brak konfiguracji zachowują tryb fail-closed.
+- AquaCYD Service zachowany jako osobny produkt serwisowy bez regresji funkcji.
+- Monorepo podzielone na `apps`, `firmware`, `packages`, `services` i
+  `integrations` z kanoniczną dokumentacją architektury, bezpieczeństwa, OTA,
+  QA, HIL i release.
+- Bramka ESP32-C6 publikuje dodatkowo tryb grzałki i szesnaście pól czterech
+  harmonogramów potrzebnych aplikacji i panelom operatorskim.
+- Osobny, chroniony pipeline `home-vX.Y.Z` podpisuje Home Control, waliduje
+  package i certyfikat oraz publikuje APK, SHA-256, manifest, SBOM i atestację
+  pochodzenia bez zastępowania wydania AquaCYD Control.
+
+- Profesjonalny, natywny panel LVGL 9 dla Waveshare 7B z sześcioma ekranami,
+  animowanym startem, stanami offline/stale, alarmami, modalami i pełnym ACK.
+- Edycja harmonogramów obu lamp, filtra i napowietrzania, profili Aquael oraz
+  trybu, nastawy i histerezy termostatu.
+- Telemetria ESP-NOW v2 z kompatybilnym odczytem v1, atomowy zapis w CYD,
+  kontrola rewizji, walidacja zakresów i idempotencja.
+- Trzynaście edytowalnych ramek SVG do importu w Figma, manifest prototypu,
+  tokeny i specyfikacja animacji.
+- Plan instalacji Home Assistant OS na Raspberry Pi 5 4 GB, lokalny Mosquitto,
+  ACL, dashboard oraz skrypty HA używające tego samego kontraktu konfiguracji.
+- Odświeżony interfejs 320×240 na ESP32-CYD: wspólna paleta z P4, płaskie karty,
+  czytelne statusy urządzeń, alarm w pasku kondycji oraz sześć edytowalnych
+  ramek SVG przedstawiających wszystkie główne strony i stan alarmowy.
+
+### Verification
+
+- Aktualne wyniki pełnej macierzy i jawne blokery właściciela są utrzymywane w
+  `docs/QA_REPORT.md`.
+- Produkcyjny tag pozostaje zablokowany do czasu fizycznego HIL bez skipów i
+  użycia kluczy podpisu właściciela.
+
 ## mobile-v6.0.0 / firmware-v6.0.0 - 2026-07-29
 
 Produkcyjne wydanie centrum sterowania AquaCYD `6.0.0`.

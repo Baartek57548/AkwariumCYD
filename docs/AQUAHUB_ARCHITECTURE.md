@@ -1,0 +1,239 @@
+# AquaHub — architektura docelowa ESP32-P4 + ESP32-C6 + CYD
+
+> Dokument zachowuje szczegóły AquaHub. Granice całego systemu i aplikacji
+> określają [PRODUCT_SPEC.md](PRODUCT_SPEC.md) oraz
+> [HOME_CONTROL_ARCHITECTURE.md](HOME_CONTROL_ARCHITECTURE.md).
+
+## Decyzja
+
+AquaHub jest własnym, lekkim centrum urządzeń uruchamianym na panelu
+ESP32-P4. Nie jest instalacją Home Assistant Core. Korzysta z uniwersalnego
+modelu urządzenie–encja i zgodnego składniowo MQTT Discovery, dlatego może
+obsługiwać kolejne czujniki bez dopisywania ich nazw do firmware’u panelu.
+Oficjalny Home Assistant pozostaje opcjonalną integracją, a nie elementem
+wymaganym do działania akwarium.
+
+CYD zachowuje dotychczasowy kod, ekran, harmonogramy, interlocki i fizyczne
+sterowanie. Utrata panelu, Wi-Fi, MQTT lub aplikacji nie zatrzymuje filtra,
+grzałki ani zabezpieczeń.
+
+```mermaid
+flowchart LR
+    CYD["CYD ESP32<br/>automatyka, GPIO, fail-safe"]
+    GC6["stały ESP32-C6<br/>ESP-NOW ↔ MQTTS"]
+    P4["AquaHub ESP32-P4<br/>rejestr, historia, HTTPS, LVGL"]
+    HC6["pokładowy ESP32-C6<br/>ESP-Hosted Wi-Fi 6"]
+    APP["AquaHub Flutter<br/>Android / iOS / web"]
+    HA["opcjonalny Home Assistant<br/>kompatybilność Discovery"]
+
+    CYD <-->|"PMK/LMK, boot_id, sequence, TTL, ACK"| GC6
+    GC6 <-->|"MQTTS 8883"| HC6
+    HC6 <-->|"SDIO"| P4
+    APP <-->|"HTTPS 8443 + pinning TLS"| P4
+    HA <-.->|"opcjonalny MQTT Discovery"| GC6
+```
+
+W projekcie występują dwa różne C6. Układ na płytce Waveshare jest modemem P4,
+a osobny C6 przy akwarium jest stabilną bramką radiową. Wypięcie panelu ze
+stacji ściennej nie zmienia połączenia CYD ↔ stały C6.
+
+## Granice odpowiedzialności
+
+| Element | Odpowiedzialność | Zachowanie bez sieci |
+|---|---|---|
+| CYD | pomiary, harmonogramy, przekaźniki, alarmy i interlocki | pełna automatyka lokalna |
+| stały C6 | szyfrowany ESP-NOW, walidacja, retry, ACK, translacja encji | CYD działa, telemetria jest buforowana tylko w CYD |
+| P4 AquaHub | broker MQTTS, rejestr, krótka historia, HTTPS API, LVGL | lokalny ekran działa; brak nowych danych jest jawny |
+| Flutter AquaHub | uniwersalny pulpit, historia, sterowanie, diagnostyka | pokazuje błąd połączenia, nie omija P4 |
+| oficjalny HA | opcjonalna historia i integracje domu | nie jest wymagany |
+
+Źródłem prawdy dla stanu fizycznego i konfiguracji bezpieczeństwa jest CYD.
+AquaHub wysyła żądanie, a nie rozkaz bezwarunkowy. CYD może je odrzucić z
+powodu konfliktu rewizji, trybu fail-safe, niedozwolonego celu lub upływu TTL.
+
+## Uniwersalny kontrakt urządzeń
+
+Urządzenie publikuje zatrzymany dokument Discovery w przestrzeni
+`homeassistant/<component>/<device>/<entity>/config`. Nazwa prefiksu została
+zachowana celowo dla zgodności ekosystemu, ale dokument zawiera też pola
+AquaHub:
+
+```json
+{
+  "aquahub_schema": 1,
+  "unique_id": "aquacyd_filter",
+  "name": "Filtr",
+  "state_topic": "aquacyd/aquarium/state",
+  "command_topic": "aquacyd/aquarium/command/entity/filter/set",
+  "availability_topic": "aquacyd/aquarium/availability",
+  "aquahub_value_key": "filter_on",
+  "aquahub_critical": false,
+  "device": {
+    "identifiers": ["aquacyd_aquarium"],
+    "name": "AquaCYD Aquarium",
+    "model": "ESP32 CYD",
+    "manufacturer": "AquaCYD",
+    "sw_version": "1.0.0",
+    "suggested_area": "Akwarium"
+  }
+}
+```
+
+Obsługiwane typy to `sensor`, `binary_sensor`, `switch`, `number`, `select`,
+`button` i `light`. Rejestr P4 ma stałe limity 16 urządzeń, 128 encji i 8
+trwałych reguł automatyzacji. Identyfikatory, tematy, zakresy, listy opcji i konflikty
+tożsamości są walidowane przed rejestracją.
+
+Stan AquaCYD zawiera `boot_id` sterownika oraz rosnące `sequence`. AquaHub
+akceptuje nowy rozruch, ale odrzuca starszą lub powtórzoną wiadomość w obrębie
+tego samego rozruchu. `gateway_boot_id` służy diagnostyce bramki i nie zastępuje
+tożsamości źródłowego CYD.
+
+## Ścieżka komendy
+
+```mermaid
+sequenceDiagram
+    participant A as Flutter lub LVGL
+    participant P as P4 AquaHub
+    participant G as stały C6
+    participant C as CYD
+
+    A->>P: POST /entities/{id}/command
+    P->>P: token, typ, zakres, writable, critical
+    P->>G: MQTTS QoS 1, bez retained
+    G->>C: ESP-NOW Command + TTL + command_id
+    loop maksymalnie 4 próby
+        C-->>G: aplikacyjny ACK
+    end
+    G-->>P: command/ack
+    P-->>A: zaakceptowano lub jawny błąd
+```
+
+Uniwersalne przełączenie światła, filtra i napowietrzania tworzy na C6
+unikatowy `command_id` i godzinny override. Grzałka, CO₂ i dolewka nie są
+wystawiane jako zwykły `switch`. Krytyczne operacje nadal przechodzą przez
+wersjonowany kontrakt CYD i jego interlocki.
+
+## API aplikacji
+
+P4 udostępnia wyłącznie HTTPS:
+
+| Endpoint | Uwierzytelnienie | Znaczenie |
+|---|---:|---|
+| `GET /api/v1/info` | nie | produkt, wersja API, fingerprint, stan parowania |
+| `POST /api/v1/pair` | kod fizyczny | wydanie tokenu Bearer |
+| `GET /api/v1/system` | Bearer | stan P4 i rejestru |
+| `GET /api/v1/devices` | Bearer | wszystkie urządzenia |
+| `GET /api/v1/entities` | Bearer | stronicowana lista encji |
+| `GET /api/v1/history` | Bearer | do 512 zmian w pierścieniu PSRAM |
+| `POST /api/v1/entities/{id}/command` | Bearer | walidowana komenda |
+| `GET /api/v1/automations` | Bearer | lista trwałych reguł lokalnych |
+| `POST /api/v1/automations` | Bearer | walidowany zapis reguły |
+| `DELETE /api/v1/automations/{id}` | Bearer | usunięcie reguły |
+| `GET /api/v1/updates` | Bearer | wersja, wydanie i postęp OTA |
+| `POST /api/v1/updates/check` | Bearer | pobranie manifestu HTTPS |
+| `POST /api/v1/updates/install` | Bearer | instalacja zweryfikowanego obrazu |
+| `GET /api/v1/events` | Bearer | WebSocket zmian rejestru |
+
+Klucz P-256 i samopodpisany certyfikat powstają na P4 przy pierwszym
+uruchomieniu i są przechowywane w NVS. Kod parowania ma sześć cyfr i ograniczony
+czas życia. Aplikacja wymaga porównania SHA-256 z ekranem panelu, przypina
+certyfikat i zapisuje token w systemowym secure storage.
+
+Na Androidzie i iOS pierwszy ekran automatycznie wykrywa usługę
+`_aquahub._tcp` przez systemowe NSD/Bonjour. Użytkownik wybiera panel z listy,
+porównuje fingerprint i podaje kod; ręczny URL jest wyłącznie ścieżką awaryjną
+dla sieci blokujących multicast. Bez sprzętu można wejść do pełnego, wyraźnie
+oznaczonego trybu demo. Dane demonstracyjne nigdy nie są zapisywane jako sesja
+produkcyjna.
+
+## Provisioning MQTTS stałego C6
+
+1. Uruchomić P4 i otworzyć ekran `System`.
+2. Skopiować pełny fingerprint SHA-256.
+3. Pobrać certyfikat i zweryfikować go poza pasmem:
+
+   ```powershell
+   $fingerprint = Read-Host "Wklej pełny fingerprint SHA-256 z panelu"
+   .\tools\pin-aquahub-certificate.ps1 -ExpectedSha256 $fingerprint
+   ```
+
+4. W `firmware/esp32c6_gateway` uruchomić `idf.py menuconfig`.
+5. Ustawić `mqtts://aquahub.local:8883`, identyczne konto brokera jak na P4 i
+   włączyć `AQUACYD_MQTT_EMBED_HUB_CERTIFICATE`.
+6. Ustawić SSID, MAC CYD oraz unikatowe PMK/LMK i zbudować C6.
+
+Plik `main/aquahub.pem`, `sdkconfig` i sekrety są ignorowane przez Git.
+Firmware C6 odmawia startu klienta MQTT, jeśli URI nie używa `mqtts://`,
+certyfikat nie został osadzony albo hasło ma mniej niż 12 znaków.
+
+## Pamięć i trwałość
+
+Rejestr oraz historia powstają w 32 MB PSRAM P4. Kod nie wykonuje
+nieograniczonej alokacji w pętli telemetrii. Historia v1 jest krótkim buforem
+operacyjnym; po restarcie P4 zaczyna się od nowa. Docelowa wielomiesięczna
+historia wymaga karty SD, zewnętrznej bazy lub opcjonalnego oficjalnego HA.
+
+Tożsamość TLS, hash tokenu, jasność i ustawienia panelu są trwałe w NVS.
+Retained Discovery odbudowuje rejestr urządzeń po ponownym połączeniu brokera.
+
+## Aktualizacje
+
+Aplikacja Home Control na Androidzie sprawdza kanał GitHub `home-v*` przy każdym
+uruchomieniu. Pobiera wyłącznie wydanie produkcyjne, wiąże APK z
+`release-manifest.json`, kontroluje rozmiar i SHA-256, a następnie w natywnej
+warstwie Androida sprawdza nazwę pakietu, wzrost `versionCode` oraz zgodność
+certyfikatów z już zainstalowaną aplikacją. Plik leży wyłącznie w prywatnym
+cache udostępnianym instalatorowi przez nieeksportowany `FileProvider`.
+Pierwsza instalacja wymaga zgody na zaufanie temu źródłu, a każda instalacja
+końcowego potwierdzenia użytkownika. Nie jest to cicha instalacja i mechanizm
+nie wymaga dostępu roota ani trybu administratora urządzenia.
+
+P4 ma kompletną ścieżkę OTA A/B: pobiera wyłącznie `manifest.json` ze stałego
+adresu HTTPS, odrzuca przekierowania i nazwy zawierające ścieżki, ogranicza
+obraz do 5 MiB, porównuje rozmiar i SHA-256, zapisuje nieaktywną partycję,
+ustawia ją jako startową i potwierdza zdrowie dopiero po uruchomieniu usług.
+Nieudany start powoduje rollback dzięki `CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE`.
+Telefon nie przekazuje adresu ani pliku, tylko uruchamia sprawdzenie lub
+instalację już zweryfikowanego wydania.
+
+Kanał wydawniczy ustala się przez `AQUAHUB_OTA_BASE_URL`. Instrukcja hostingu,
+format manifestu i generator pakietu są w `AQUAHUB_OTA_RELEASES.md`. CYD nadal
+korzysta z istniejącego podpisanego `.aqfw`, natomiast dystrybucja OTA dla
+stałego C6 będzie osobnym targetem po dodaniu encji `update` do Discovery.
+Interfejs pokazuje tę różnicę jawnie i nie symuluje dostępnej aktualizacji.
+
+SHA-256 i zaufany HTTPS chronią transport i wykrywają uszkodzenie obrazu.
+Docelowe urządzenia produkcyjne muszą dodatkowo przejść kontrolowany provisioning
+Secure Boot v2 oraz Flash Encryption; firmware i skrypty nie przepalają eFuse
+automatycznie. Pierwsze wdrożenie i każda zmiana klucza wymagają testu na
+fizycznym panelu.
+
+## Stany awarii
+
+| Awaria | Oczekiwany rezultat |
+|---|---|
+| P4 wyłączony lub wypięty | CYD działa; aplikacja i MQTTS są niedostępne |
+| stały C6 wyłączony | CYD działa; AquaHub pokazuje urządzenie offline |
+| router wyłączony | CYD działa lokalnie; połączenie wraca automatycznie |
+| powtórzony stan MQTT | P4 odrzuca sekwencję |
+| powtórzona komenda QoS 1 | CYD odpowiada wynikiem idempotentnym |
+| brak ACK | C6 kończy po czterech próbach i publikuje timeout |
+| aktywny wyciek | CYD wykonuje fail-safe; zdalne obejście jest niemożliwe |
+| zmiana certyfikatu P4 | Flutter i C6 odmawiają połączenia do ponownego parowania |
+
+## Sprzęt i panel odpinany
+
+Referencją firmware’u jest Waveshare ESP32-P4-WIFI6-Touch-LCD-7B 1024×600.
+Elecrow wymaga osobnego BSP i nie może otrzymać obrazu Waveshare. Stacja
+ścienna powinna dostarczać 5 V przez złącze sprężynowe lub magnetyczne z
+mechanicznym prowadzeniem. Tryb przenośny wymaga certyfikowanego modułu
+ładowania, BMS, bezpiecznika i pomiaru temperatury ogniwa; ogniwa nie wolno
+łączyć bezpośrednio z wejściem płytki.
+
+## Kryterium wydania sprzętowego
+
+Kod stanowi kompletny pionowy przepływ programowy, ale instalację można uznać za
+produkcyjną dopiero po teście na fizycznych płytkach: minimum 72 h telemetrii,
+odcięcia zasilania każdego elementu, zmiany kanału Wi-Fi, utraty ACK, alarmów
+fail-safe, temperatury obudowy i pracy z panelu wypiętego ze stacji.

@@ -16,7 +16,7 @@ from collections.abc import Sequence
 
 
 TAG_PATTERN = re.compile(
-    r"^(?P<kind>mobile|firmware)-v"
+    r"^(?P<kind>mobile|home|firmware)-v"
     r"(?P<version>(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*))$"
 )
 PUBSPEC_VERSION_PATTERN = re.compile(
@@ -25,7 +25,8 @@ PUBSPEC_VERSION_PATTERN = re.compile(
     r"\+(?P<build>(?:0|[1-9]\d*))\s*$",
     re.MULTILINE,
 )
-EXPECTED_PACKAGE = "pl.cydakwarium.cyd_aquarium_mobile"
+EXPECTED_MOBILE_PACKAGE = "pl.cydakwarium.cyd_aquarium_mobile"
+EXPECTED_HOME_PACKAGE = "pl.aquacyd.aquacyd_home"
 FIRMWARE_TARGETS = ("ili9341", "st7789")
 FIRMWARE_PRODUCT_ID = "aquacyd-cyd"
 FIRMWARE_PACKAGE_FORMAT = "aqfw-v1"
@@ -81,7 +82,8 @@ def parse_tag(tag: str) -> ReleaseIdentity:
     match = TAG_PATTERN.fullmatch(tag.strip())
     if not match:
         raise ValidationError(
-            "tag must be mobile-vX.Y.Z or firmware-vX.Y.Z with canonical integers"
+            "tag must be mobile-vX.Y.Z, home-vX.Y.Z or firmware-vX.Y.Z "
+            "with canonical integers"
         )
     return ReleaseIdentity(match.group("kind"), match.group("version"))
 
@@ -145,6 +147,11 @@ def read_firmware_contract(config_path: pathlib.Path) -> FirmwareContract:
 def expected_asset_names(identity: ReleaseIdentity) -> list[str]:
     if identity.kind == "mobile":
         return [f"AquaCYD-Control-{identity.version}-current.apk"]
+    if identity.kind == "home":
+        return [
+            f"Home-Control-{identity.version}.apk",
+            f"Home-Control-{identity.version}-Windows-x64-Setup.exe",
+        ]
     names: list[str] = []
     for target in FIRMWARE_TARGETS:
         names.extend(
@@ -223,15 +230,21 @@ def validate_release(
         )
     build_number: int | None = None
     firmware_contract: FirmwareContract | None = None
-    if identity.kind == "mobile":
+    if identity.kind in {"mobile", "home"}:
         pubspec_version, build_number = read_mobile_version(pubspec_path)
         if pubspec_version != identity.version:
             raise ValidationError(
                 f"tag version {identity.version} does not match pubspec {pubspec_version}"
             )
-        if package_name != EXPECTED_PACKAGE:
+        expected_package = (
+            EXPECTED_MOBILE_PACKAGE
+            if identity.kind == "mobile"
+            else EXPECTED_HOME_PACKAGE
+        )
+        if package_name != expected_package:
             raise ValidationError(
-                f"APK package must be {EXPECTED_PACKAGE}; got {package_name or '<empty>'}"
+                f"APK package must be {expected_package}; "
+                f"got {package_name or '<empty>'}"
             )
         if apk_version_name != identity.version:
             raise ValidationError(
@@ -336,7 +349,7 @@ def run_self_test() -> int:
             tag="mobile-v4.2.1",
             paths=[apk],
             pubspec_path=pubspec,
-            package_name=EXPECTED_PACKAGE,
+            package_name=EXPECTED_MOBILE_PACKAGE,
             apk_version_name="4.2.1",
             apk_version_code="17",
             firmware_config_path=root / "config.h",
@@ -363,7 +376,7 @@ def run_self_test() -> int:
                 tag="mobile-v4.2.0",
                 paths=[apk],
                 pubspec_path=pubspec,
-                package_name=EXPECTED_PACKAGE,
+                package_name=EXPECTED_MOBILE_PACKAGE,
                 apk_version_name="4.2.1",
                 apk_version_code="17",
                 firmware_config_path=root / "config.h",
@@ -372,6 +385,27 @@ def run_self_test() -> int:
             pass
         else:
             raise ValidationError("self-test accepted a mismatched release")
+
+        home_apk = root / "Home-Control-4.2.1.apk"
+        home_apk.write_bytes(b"self-test-home-apk")
+        home_setup = root / "Home-Control-4.2.1-Windows-x64-Setup.exe"
+        home_setup.write_bytes(b"self-test-home-windows-setup")
+        home_identity, home_assets, home_build, home_contract = validate_release(
+            tag="home-v4.2.1",
+            paths=[home_apk, home_setup],
+            pubspec_path=pubspec,
+            package_name=EXPECTED_HOME_PACKAGE,
+            apk_version_name="4.2.1",
+            apk_version_code="17",
+            firmware_config_path=root / "config.h",
+        )
+        if (
+            home_identity.kind != "home"
+            or len(home_assets) != 2
+            or home_build != 17
+            or home_contract is not None
+        ):
+            raise ValidationError("self-test home release contract mismatch")
 
         firmware_config = root / "config.h"
         firmware_config.write_text(
@@ -476,7 +510,10 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="Validate release tag, version, asset names and SHA-256 metadata."
     )
-    parser.add_argument("--tag", help="mobile-vX.Y.Z or firmware-vX.Y.Z")
+    parser.add_argument(
+        "--tag",
+        help="mobile-vX.Y.Z, home-vX.Y.Z or firmware-vX.Y.Z",
+    )
     parser.add_argument(
         "--asset",
         action="append",
@@ -485,12 +522,12 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--pubspec",
-        default="mobile_app/pubspec.yaml",
+        default="apps/aquacyd_service/pubspec.yaml",
         help="mobile pubspec used as the version source",
     )
     parser.add_argument(
         "--firmware-config",
-        default="include/config.h",
+        default="firmware/cyd_controller/include/config.h",
         help="firmware configuration containing the FirmwareInfo contract",
     )
     parser.add_argument("--package-name", default="")
@@ -532,13 +569,16 @@ def main() -> int:
             print(json.dumps(dataclasses.asdict(contract), sort_keys=True))
             return 0
         if args.dry_run:
-            if identity.kind == "mobile":
+            if identity.kind in {"mobile", "home"}:
                 version, build = read_mobile_version(pathlib.Path(args.pubspec))
                 if version != identity.version:
                     raise ValidationError(
                         f"tag version {identity.version} does not match pubspec {version}"
                     )
-                print(f"Mobile version contract valid: {version}+{build}")
+                print(
+                    f"{identity.kind.capitalize()} version contract valid: "
+                    f"{version}+{build}"
+                )
             else:
                 contract = read_firmware_contract(firmware_config_path)
                 if contract.version != identity.version:

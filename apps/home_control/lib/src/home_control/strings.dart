@@ -1,0 +1,906 @@
+import 'package:flutter/foundation.dart';
+import 'package:flutter/widgets.dart';
+import 'package:home_entities/home_entities.dart';
+import 'package:intl/intl.dart';
+
+final class HomeControlStrings {
+  const HomeControlStrings(this.locale);
+
+  final Locale locale;
+
+  static HomeControlStrings of(BuildContext context) =>
+      Localizations.of<HomeControlStrings>(context, HomeControlStrings) ??
+      const HomeControlStrings(Locale('pl'));
+
+  static const LocalizationsDelegate<HomeControlStrings> delegate =
+      _HomeControlStringsDelegate();
+
+  String t(String key) =>
+      (_values[locale.languageCode] ?? _values['pl']!)[key] ?? key;
+
+  String withValue(String key, Object value) =>
+      t(key).replaceAll('{value}', '$value');
+
+  String withValues(String key, Map<String, Object> values) {
+    var result = t(key);
+    for (final entry in values.entries) {
+      result = result.replaceAll('{${entry.key}}', '${entry.value}');
+    }
+    return result;
+  }
+
+  String sourceName(HomeSourceKind kind) => switch (kind) {
+    HomeSourceKind.aquaHub => t('aquaHub'),
+    HomeSourceKind.homeAssistant => t('homeAssistant'),
+    HomeSourceKind.demo => t('demo'),
+  };
+
+  String entityType(HomeEntityType type) => t('entity_${type.name}');
+
+  String entityState(HomeEntity entity) {
+    if (!entity.available) return t('unavailable');
+    if (entity.state == null) return t('noData');
+    if (entity.type == HomeEntityType.lock) {
+      return entity.booleanValue == true ? t('unlocked') : t('locked');
+    }
+    if (entity.type == HomeEntityType.cover) {
+      return entity.booleanValue == true ? t('opened') : t('closed');
+    }
+    if (entity.type == HomeEntityType.alarmControlPanel) {
+      final key = 'alarm_${entity.state}';
+      final translated = t(key);
+      if (translated != key) return translated;
+    }
+    final boolean = entity.booleanValue;
+    if (boolean != null &&
+        (entity.type.supportsToggle ||
+            entity.type == HomeEntityType.binarySensor ||
+            entity.type == HomeEntityType.lock)) {
+      return boolean ? t('stateOn') : t('stateOff');
+    }
+    final number = entity.numericValue;
+    if (number != null &&
+        <HomeEntityType>{
+          HomeEntityType.sensor,
+          HomeEntityType.number,
+          HomeEntityType.inputNumber,
+        }.contains(entity.type)) {
+      final decimals = number == number.roundToDouble() ? 0 : 2;
+      final text = NumberFormat.decimalPatternDigits(
+        locale: locale.toLanguageTag(),
+        decimalDigits: decimals,
+      ).format(number);
+      return entity.unit.isEmpty ? text : '$text ${entity.unit}';
+    }
+    final rawState = entity.state.toString();
+    final stateKey = 'rawState_$rawState';
+    final translated = t(stateKey);
+    return translated == stateKey ? rawState.replaceAll('_', ' ') : translated;
+  }
+
+  String relativeTime(DateTime? value) {
+    if (value == null) return t('never');
+    final difference = DateTime.now().difference(value);
+    if (difference.isNegative || difference.inSeconds < 10) return t('justNow');
+    if (difference.inMinutes < 1) {
+      return withValue('secondsAgo', difference.inSeconds);
+    }
+    if (difference.inHours < 1) {
+      return withValue('minutesAgo', difference.inMinutes);
+    }
+    if (difference.inDays < 1) {
+      return withValue('hoursAgo', difference.inHours);
+    }
+    return DateFormat.yMMMd(locale.toLanguageTag()).add_Hm().format(value);
+  }
+
+  static const Map<String, Map<String, String>>
+  _values = <String, Map<String, String>>{
+    'pl': <String, String>{
+      'appName': 'Home Control',
+      'appSubtitle': 'Twój dom. Jedno bezpieczne centrum.',
+      'booting': 'Przygotowuję bezpieczne środowisko…',
+      'connecting': 'Łączenie ze źródłem danych…',
+      'sourceTitle': 'Wybierz źródło',
+      'sourceDescription':
+          'Home Control jest natywną aplikacją. Źródło dostarcza dane, ale nie definiuje interfejsu.',
+      'aquaHub': 'AquaHub',
+      'aquaHubDescription':
+          'Lokalny panel ESP32-P4, urządzenia ESP-NOW i akwarium.',
+      'hubWelcome': 'Witaj w AquaHub',
+      'hubConfirmPanel': 'Potwierdź panel',
+      'hubWelcomeDescription':
+          'Aplikacja automatycznie odnajdzie panel ESP32-P4 w sieci lokalnej. Jednorazowe parowanie otwiera natywny pulpit urządzeń, czujników, automatyzacji i aktualizacji.',
+      'hubConfirmDescription':
+          'Porównaj odcisk certyfikatu z ekranem System fizycznego panelu i wpisz wyświetlony kod.',
+      'hubDemo': 'Zobacz pełną aplikację w trybie demo',
+      'hubAutonomyHint':
+          'Sterownik CYD pozostaje autonomiczny. Token trafia do szyfrowanego magazynu systemu, a dostęp zdalny działa przez VPN.',
+      'hubSearching': 'Szukam panelu w sieci…',
+      'hubChooseFound': 'Wybierz znaleziony panel',
+      'hubAutoDiscovery': 'Automatyczne wykrywanie',
+      'hubSameWifi': 'Telefon i AquaHub muszą być w tej samej sieci Wi-Fi.',
+      'hubHttpsVerified': 'Połączenie zostanie zweryfikowane przez HTTPS.',
+      'hubNotFound': 'Nie znaleziono panelu. Sprawdź Wi-Fi i zasilanie P4.',
+      'hubMdns': 'Aplikacja używa natywnego Bonjour/mDNS.',
+      'scanAgain': 'Skanuj ponownie',
+      'hubAdvancedConnection': 'Połączenie zaawansowane',
+      'hubManualOnly': 'Ręczny adres tylko wtedy, gdy mDNS jest zablokowany',
+      'hubHttpsAddress': 'Adres HTTPS panelu',
+      'connectManually': 'Połącz ręcznie',
+      'hubSecureHttps': 'AquaHub ESP32-P4 · bezpieczne HTTPS',
+      'chooseAnotherHub': 'Wybierz inny panel',
+      'certificateFingerprint': 'Odcisk certyfikatu SHA-256',
+      'fingerprintMatches': 'Odcisk jest identyczny jak na panelu',
+      'pairingCode': '6‑cyfrowy kod z panelu',
+      'pairAndOpen': 'Sparuj i otwórz pulpit',
+      'hubDiscoveryFailed': 'Nie udało się uruchomić wykrywania AquaHub.',
+      'hubErrorSession': 'Nie udało się odczytać bezpiecznej sesji AquaHub.',
+      'hubErrorHttpsAddress':
+          'Podaj pełny adres HTTPS, np. https://aquahub.local:8443.',
+      'hubErrorDiscovery': 'Nie udało się odnaleźć AquaHub w sieci lokalnej.',
+      'hubErrorDiscoverFirst': 'Najpierw sprawdź połączenie z AquaHub.',
+      'hubErrorFingerprintConfirm':
+          'Porównaj odcisk z panelem i potwierdź jego zgodność.',
+      'hubErrorPairingCode': 'Kod parowania musi mieć dokładnie sześć cyfr.',
+      'hubErrorSaveSession': 'Nie udało się bezpiecznie zapisać sesji AquaHub.',
+      'hubErrorAuthentication': 'AquaHub odrzucił dane uwierzytelniające.',
+      'hubErrorNetwork': 'AquaHub jest nieosiągalny w sieci lokalnej.',
+      'hubErrorInvalidResponse': 'AquaHub zwrócił nieprawidłową odpowiedź.',
+      'hubErrorServer': 'AquaHub zwrócił błąd serwera.',
+      'hubErrorSecurity':
+          'Nie można potwierdzić bezpiecznej tożsamości AquaHub.',
+      'homeAssistant': 'Home Assistant',
+      'homeAssistantDescription':
+          'Istniejąca instancja lokalna lub bezpieczny adres zdalny.',
+      'demo': 'Demo offline',
+      'demoDescription':
+          'Pełny dom, akwarium, alarmy, historia i aktualizacje bez konta.',
+      'recommended': 'Zalecane',
+      'advanced': 'Zaawansowane',
+      'back': 'Wstecz',
+      'connectHa': 'Dodaj Home Assistant',
+      'haUrl': 'Adres instancji',
+      'haUrlHint': 'https://homeassistant.local:8123',
+      'haProfileName': 'Nazwa profilu',
+      'haProfileNameHint': 'Dom, biuro lub domek',
+      'haToken': 'Długoterminowy token dostępu',
+      'showToken': 'Pokaż token',
+      'hideToken': 'Ukryj token',
+      'testAndSave': 'Sprawdź i zapisz',
+      'oauthHint':
+          'To zaawansowane logowanie tokenem długoterminowym. OAuth wymaga publicznego Client ID i bezpiecznego redirect URI właściciela aplikacji; gotowa warstwa jest opisana w dokumentacji wydania.',
+      'secureStorageHint':
+          'Poświadczenia są przechowywane w bezpiecznym magazynie systemu. HTTP jest akceptowane wyłącznie w sieci lokalnej.',
+      'dashboard': 'Pulpit',
+      'rooms': 'Pomieszczenia',
+      'devices': 'Urządzenia',
+      'automations': 'Automatyzacje',
+      'updates': 'Aktualizacje',
+      'settings': 'Ustawienia',
+      'navDashboard': 'Pulpit',
+      'navRooms': 'Pokoje',
+      'navDevices': 'Sprzęt',
+      'navAutomations': 'Akcje',
+      'navUpdates': 'OTA',
+      'navSettings': 'Opcje',
+      'more': 'Więcej',
+      'home': 'Dom',
+      'homeHealthyTitle': 'Dom działa spokojnie',
+      'homeHealthyDescription':
+          'Wszystkie najważniejsze systemy odpowiadają prawidłowo.',
+      'homeAttentionTitle': 'Kilka rzeczy wymaga uwagi',
+      'homeAttentionDescription': '{value} spraw do krótkiego sprawdzenia.',
+      'homeOfflineTitle': 'Sterowanie jest chwilowo offline',
+      'homeOfflineDescription':
+          'Ostatni zapisany stan pozostaje dostępny tylko do odczytu.',
+      'liveStatus': 'Na żywo',
+      'devicesOnlineLabel': 'Urządzenia online',
+      'automationsActiveLabel': 'Aktywne reguły',
+      'updatesAvailableLabel': 'Do instalacji',
+      'refresh': 'Odśwież',
+      'source': 'Źródło',
+      'connected': 'Połączono',
+      'offline': 'Offline',
+      'stale': 'Dane nieaktualne',
+      'partial': 'Częściowa synchronizacja',
+      'lastSync': 'Ostatnia synchronizacja: {value}',
+      'favorites': 'Ulubione',
+      'quickControls': 'Szybkie sterowanie',
+      'quickControlsDescription': 'Najważniejsze funkcje zawsze pod ręką',
+      'customize': 'Dostosuj',
+      'chooseDevices': 'Wybierz urządzenia',
+      'noQuickControlsTitle': 'Zbuduj własny panel skrótów',
+      'areasOverview': 'Pomieszczenia',
+      'areasOverviewDescription':
+          'Najważniejsze informacje w jednym spojrzeniu',
+      'roomsSummary': '{rooms} pomieszczeń · {items} elementów',
+      'roomHealthy': 'Wszystko działa',
+      'roomOfflineDevices': '{value} urządzeń offline',
+      'roomDevicesOnline': '{online}/{all} urządzeń online',
+      'roomOpenHint': 'Otwórz szczegóły pomieszczenia',
+      'roomUnavailable': 'To pomieszczenie nie jest już dostępne.',
+      'devicesSummary': '{online} z {all} urządzeń online',
+      'seeAll': 'Zobacz wszystkie',
+      'noRoomsTitle': 'Brak aktywnych pomieszczeń',
+      'recentActivity': 'Ostatnia aktywność',
+      'recentChanges': 'Ostatnie zmiany',
+      'recentChangesDescription': 'Rzeczywiste zmiany stanu urządzeń',
+      'noRecentChangesTitle': 'W domu jest spokojnie',
+      'noRecentChanges': 'Nowe zdarzenia pojawią się tutaj automatycznie.',
+      'attentionCenter': 'Do sprawdzenia',
+      'attentionOfflineTitle': 'Brak połączenia ze źródłem',
+      'attentionOfflineDescription':
+          'Dotknij, aby spróbować połączyć ponownie.',
+      'attentionSyncTitle': 'Dane wymagają odświeżenia',
+      'attentionSyncDescription': 'Ostatnia synchronizacja nie jest kompletna.',
+      'attentionAquariumTitle': 'Alarm modułu akwarium',
+      'attentionAquariumDescription': 'Otwórz kartę i sprawdź aktywne alarmy.',
+      'attentionDevicesTitle': '{value} urządzeń jest offline',
+      'attentionDevicesDescription': 'Sprawdź zasilanie i łączność urządzeń.',
+      'attentionUpdatesTitle': '{value} aktualizacji czeka',
+      'attentionUpdatesDescription':
+          'Pakiety są gotowe do bezpiecznej instalacji.',
+      'aquarium': 'Akwarium',
+      'aquariumHealthy': 'Parametry stabilne',
+      'aquariumAlarm': 'Wymaga uwagi',
+      'aquariumNoAlarms': 'Brak aktywnych alarmów',
+      'aquariumOffline': 'Ostatni zapisany odczyt',
+      'aquariumIncomplete': 'Niepełny zestaw odczytów',
+      'aquariumStale': 'Odczyty wymagają odświeżenia',
+      'waterTemperature': 'Temperatura wody',
+      'waterChemistry': 'Chemia wody',
+      'connection': 'Połączenie',
+      'details': 'Szczegóły',
+      'noAquarium': 'To źródło nie udostępnia jeszcze modułu akwarium.',
+      'noAquariumTitle': 'Moduł akwarium nie jest dostępny',
+      'noFavorites':
+          'Wybierz urządzenia i funkcje, których używasz najczęściej.',
+      'noAreas': 'Źródło nie zwróciło pomieszczeń.',
+      'noDevices': 'Nie znaleziono urządzeń.',
+      'noAutomations': 'Brak automatyzacji w tym źródle.',
+      'scenesAndScripts': 'Sceny i skrypty',
+      'scenes': 'Sceny',
+      'scenesDescription': 'Jedno dotknięcie uruchamia gotowy nastrój domu.',
+      'scripts': 'Skrypty',
+      'scriptsDescription': 'Ręcznie uruchamiane sekwencje ze źródła.',
+      'activateScene': 'Aktywuj scenę',
+      'runScript': 'Uruchom skrypt',
+      'sceneReady': 'Gotowa do aktywacji',
+      'scriptReady': 'Gotowy do uruchomienia',
+      'noUpdates': 'Brak dostępnych aktualizacji.',
+      'entitiesCount': '{value} encji',
+      'itemsCount': '{value} elementów',
+      'onlineDevices': '{value} urządzeń online',
+      'available': 'Dostępne',
+      'unavailable': 'Niedostępne',
+      'unknown': 'Nieznane',
+      'removed': 'Usunięte',
+      'noData': 'Brak danych',
+      'stateOn': 'Włączone',
+      'stateOff': 'Wyłączone',
+      'activeEntities': '{value} aktywne',
+      'activeNow': '{value} aktywne teraz',
+      'rawState_heat': 'Grzanie',
+      'rawState_heating': 'Grzanie',
+      'rawState_cooling': 'Chłodzenie',
+      'rawState_playing': 'Odtwarzanie',
+      'rawState_paused': 'Wstrzymano',
+      'rawState_idle': 'Bezczynne',
+      'rawState_docked': 'W bazie',
+      'rawState_home': 'W domu',
+      'rawState_away': 'Poza domem',
+      'rawState_partlycloudy': 'Częściowe zachmurzenie',
+      'turnOn': 'Włącz',
+      'turnOff': 'Wyłącz',
+      'openCover': 'Otwórz',
+      'closeCover': 'Zamknij',
+      'opened': 'Otwarta',
+      'closed': 'Zamknięta',
+      'lockAction': 'Zablokuj',
+      'unlockAction': 'Odblokuj',
+      'locked': 'Zablokowany',
+      'unlocked': 'Odblokowany',
+      'alarmMode': 'Tryb alarmu',
+      'alarm_disarmed': 'Rozbrojony',
+      'alarm_armed_home': 'Czuwanie: dom',
+      'alarm_armed_away': 'Czuwanie: poza domem',
+      'alarm_armed_night': 'Czuwanie: noc',
+      'start': 'Uruchom',
+      'returnToBase': 'Wróć do bazy',
+      'textValue': 'Wartość tekstowa',
+      'run': 'Uruchom',
+      'setValue': 'Ustaw wartość: {value}',
+      'selectOption': 'Wybierz opcję',
+      'history': 'Historia',
+      'favorite': 'Ulubione',
+      'removeFavorite': 'Usuń z ulubionych',
+      'confirmTitle': 'Potwierdź operację',
+      'confirmRoutine': 'Polecenie zostanie wysłane do urządzenia.',
+      'confirmConsequential':
+          'Ta operacja może zmienić działanie urządzenia przez dłuższy czas.',
+      'confirmCritical':
+          'To operacja krytyczna. Sterownik nadal zweryfikuje blokady i może ją odrzucić.',
+      'cancel': 'Anuluj',
+      'confirm': 'Potwierdź',
+      'commandPending': 'Oczekiwanie na potwierdzenie…',
+      'editDashboard': 'Edytuj pulpit',
+      'resetDashboard': 'Przywróć pulpit',
+      'visible': 'Widoczna',
+      'largeCard': 'Duża karta',
+      'theme': 'Motyw',
+      'themeSystem': 'Systemowy',
+      'themeLight': 'Jasny',
+      'themeDark': 'Ciemny',
+      'language': 'Język',
+      'polish': 'Polski',
+      'english': 'English',
+      'security': 'Bezpieczeństwo',
+      'biometricProtection': 'Ochrona operacji krytycznych',
+      'biometricProtectionDescription':
+          'Wymagaj systemowego potwierdzenia tożsamości przed zamkiem, alarmem, bramą i aktualizacją.',
+      'biometricUnavailable':
+          'Na tym urządzeniu nie ma skonfigurowanej bezpiecznej metody potwierdzania tożsamości.',
+      'biometricCheckFailed':
+          'Nie udało się sprawdzić ochrony systemowej. Krytyczna operacja pozostanie zablokowana.',
+      'sourceManagement': 'Zarządzanie źródłem',
+      'haInstances': 'Instancje Home Assistant',
+      'addHaInstance': 'Dodaj instancję Home Assistant',
+      'removeHaInstance': 'Usuń instancję',
+      'removeHaInstanceConfirm':
+          'Profil „{value}”, jego token i lokalny cache zostaną usunięte z urządzenia.',
+      'switchSource': 'Przełącz źródło',
+      'removeSource': 'Usuń źródło i dane lokalne',
+      'removeSourceConfirm':
+          'Token, odcisk certyfikatu, sesja i cache tego źródła zostaną usunięte z urządzenia.',
+      'demoScenarios': 'Scenariusze Demo',
+      'simulateOffline': 'Symuluj brak sieci',
+      'simulateAlarm': 'Symuluj alarm akwarium',
+      'appUpdate': 'Aktualizacja Home Control',
+      'deviceUpdates': 'Aktualizacje urządzeń',
+      'currentVersion': 'Obecna: {value}',
+      'latestVersion': 'Najnowsza: {value}',
+      'install': 'Zainstaluj',
+      'upToDate': 'Aktualne',
+      'unsupported': 'Jeszcze nieobsługiwane',
+      'mandatory': 'Wymagana',
+      'availableVersion': 'Dostępna wersja {value}',
+      'later': 'Później',
+      'downloadAndInstall': 'Pobierz i zainstaluj',
+      'continueInstallation': 'Kontynuuj instalację',
+      'otaAvailableMessage':
+          'Aktualizacja zawiera poprawki i usprawnienia. Pakiet zostanie zweryfikowany przed instalacją.',
+      'otaDownloadingMessage':
+          'Pobieram podpisany pakiet i sprawdzam jego sumę SHA-256.',
+      'otaVerifyingMessage':
+          'Sprawdzam pakiet, wersję i certyfikat podpisujący.',
+      'otaPermissionMessage':
+          'Android otworzył ustawienia instalowania z tego źródła. Włącz zgodę dla Home Control, wróć do aplikacji i kontynuuj.',
+      'otaFailedMessage': 'Aktualizacja nie została zainstalowana.',
+      'otaPreparingMessage': 'Przygotowuję bezpieczną aktualizację aplikacji.',
+      'diagnostics': 'Diagnostyka',
+      'entities': 'Encje',
+      'lastSyncLabel': 'Ostatnia synchronizacja',
+      'localCache': 'Cache lokalny',
+      'encrypted': 'Szyfrowany',
+      'privacyAndAbout': 'Prywatność i informacje',
+      'privacy': 'Prywatność',
+      'privacyDescription':
+          'Home Control nie sprzedaje danych. Poświadczenia i ostatni snapshot pozostają w bezpiecznym magazynie urządzenia.',
+      'appVersion': 'Wersja {value}',
+      'openSourceLicenses': 'Licencje open source',
+      'attributes': 'Atrybuty źródłowe',
+      'entitySource': 'Źródło: {value}',
+      'entityUpdated': 'Aktualizacja: {value}',
+      'firmware': 'Firmware',
+      'manufacturer': 'Producent',
+      'model': 'Model',
+      'lastSeen': 'Ostatnio: {value}',
+      'search': 'Szukaj',
+      'searchHint': 'Urządzenie, encja lub pomieszczenie',
+      'noResults': 'Brak wyników dla tego zapytania.',
+      'searchEmptyHint': 'Zmień wyszukiwaną frazę lub wyczyść filtr.',
+      'noEntitiesInArea': 'W tym pomieszczeniu nie ma encji.',
+      'noEntitiesInAreaHint':
+          'Przypisane do pomieszczenia urządzenia pojawią się tutaj automatycznie.',
+      'noDevicesHint':
+          'Połącz źródło lub sprawdź rejestr urządzeń, aby zobaczyć sprzęt.',
+      'all': 'Wszystkie',
+      'unknownEntityHint':
+          'Przyszły lub niestandardowy typ jest pokazany bez zgadywania sposobu sterowania.',
+      'errorTitle': 'Nie udało się ukończyć operacji',
+      'errorNetwork':
+          'Źródło jest nieosiągalne. Sprawdź sieć lokalną, VPN lub Internet.',
+      'errorOffline':
+          'Brak połączenia. Ostatnie dane pozostają widoczne tylko do odczytu.',
+      'errorToken':
+          'Token wygasł, został odrzucony albo nie ma wymaganych uprawnień.',
+      'errorServer': 'Serwer zwrócił błąd. Spróbuj ponownie za chwilę.',
+      'errorInvalidResponse':
+          'Źródło zwróciło dane w nieobsługiwanym lub uszkodzonym formacie.',
+      'errorCertificate':
+          'Certyfikat lub jego odcisk zmienił się. Potwierdź tożsamość na zaufanym ekranie.',
+      'errorStorage':
+          'Nie udało się otworzyć lub zaktualizować bezpiecznego magazynu.',
+      'errorPermission': 'Ta operacja nie jest dozwolona dla wskazanej encji.',
+      'errorUnsupported':
+          'Ta funkcja nie jest jeszcze bezpiecznie obsługiwana przez źródło.',
+      'errorInvalidValue':
+          'Wartość jest poza dozwolonym zakresem albo ma zły format.',
+      'errorInvalidCredentials': 'Sprawdź adres i wklej pełny token dostępu.',
+      'errorInvalidHaUrl': 'Podaj pełny adres HTTP lub HTTPS instancji.',
+      'errorInvalidHaToken': 'Token musi zawierać co najmniej 20 znaków.',
+      'errorCommandUnavailable':
+          'Sterowanie jest zablokowane, gdy encja lub źródło jest niedostępne.',
+      'errorBiometricCancelled':
+          'Autoryzacja biometryczna została anulowana. Operacja nie została wysłana.',
+      'errorBiometricUnavailable':
+          'Biometria jest niedostępna. Skonfiguruj ją w systemie, aby wykonać tę operację.',
+      'errorBiometricLocked':
+          'Biometria została czasowo zablokowana. Odblokuj ją w systemie i spróbuj ponownie.',
+      'errorBiometricFailed':
+          'Nie udało się potwierdzić tożsamości. Operacja krytyczna pozostała zablokowana.',
+      'errorUnknown':
+          'Wystąpił nieoczekiwany błąd. Dane wrażliwe nie zostały zapisane w logu.',
+      'retry': 'Spróbuj ponownie',
+      'reconfigure': 'Wybierz inne źródło',
+      'dismiss': 'Zamknij',
+      'noticeRefreshed': 'Dane zostały odświeżone.',
+      'noticeCommandAccepted': 'Źródło potwierdziło polecenie.',
+      'noticeUpdateStarted': 'Proces aktualizacji został rozpoczęty.',
+      'noticeBiometricEnabled': 'Włączono biometrię dla operacji krytycznych.',
+      'noticeBiometricDisabled':
+          'Wyłączono biometrię dla operacji krytycznych.',
+      'justNow': 'przed chwilą',
+      'secondsAgo': '{value} s temu',
+      'minutesAgo': '{value} min temu',
+      'hoursAgo': '{value} godz. temu',
+      'never': 'nigdy',
+      'historyEmpty': 'Źródło nie zwróciło próbek dla wybranego okresu.',
+      'historyPrompt': 'Wybierz okres, aby pobrać historię.',
+      'historySummary':
+          'Wykres historii. Minimum {minimum}, maksimum {maximum}, liczba próbek {samples}.',
+      'history24h': '24 godziny',
+      'history7d': '7 dni',
+      'entity_light': 'Światło',
+      'entity_switchEntity': 'Przełącznik',
+      'entity_sensor': 'Czujnik',
+      'entity_binarySensor': 'Czujnik binarny',
+      'entity_climate': 'Klimat',
+      'entity_cover': 'Osłona',
+      'entity_lock': 'Zamek',
+      'entity_alarmControlPanel': 'Alarm',
+      'entity_camera': 'Kamera',
+      'entity_mediaPlayer': 'Odtwarzacz',
+      'entity_fan': 'Wentylator',
+      'entity_vacuum': 'Odkurzacz',
+      'entity_weather': 'Pogoda',
+      'entity_person': 'Osoba',
+      'entity_deviceTracker': 'Lokalizator',
+      'entity_scene': 'Scena',
+      'entity_script': 'Skrypt',
+      'entity_automation': 'Automatyzacja',
+      'entity_button': 'Przycisk',
+      'entity_inputButton': 'Przycisk wejściowy',
+      'entity_number': 'Liczba',
+      'entity_inputNumber': 'Liczba wejściowa',
+      'entity_select': 'Lista',
+      'entity_inputSelect': 'Lista wejściowa',
+      'entity_text': 'Tekst',
+      'entity_inputText': 'Tekst wejściowy',
+      'entity_update': 'Aktualizacja',
+      'entity_unknown': 'Typ niestandardowy',
+    },
+    'en': <String, String>{
+      'appName': 'Home Control',
+      'appSubtitle': 'Your home. One secure control center.',
+      'booting': 'Preparing the secure environment…',
+      'connecting': 'Connecting to the data source…',
+      'sourceTitle': 'Choose a source',
+      'sourceDescription':
+          'Home Control is a native app. A source provides data but does not define the interface.',
+      'aquaHub': 'AquaHub',
+      'aquaHubDescription':
+          'Local ESP32-P4 panel, ESP-NOW devices and aquarium.',
+      'hubWelcome': 'Welcome to AquaHub',
+      'hubConfirmPanel': 'Confirm the panel',
+      'hubWelcomeDescription':
+          'The app automatically finds the ESP32-P4 panel on your local network. One-time pairing unlocks the native devices, sensors, automations and updates dashboard.',
+      'hubConfirmDescription':
+          'Compare the certificate fingerprint with the System screen on the physical panel, then enter the displayed code.',
+      'hubDemo': 'Open the complete app in demo mode',
+      'hubAutonomyHint':
+          'The CYD controller remains autonomous. Its token is kept in encrypted system storage, while remote access works through a VPN.',
+      'hubSearching': 'Searching for a panel…',
+      'hubChooseFound': 'Choose a discovered panel',
+      'hubAutoDiscovery': 'Automatic discovery',
+      'hubSameWifi': 'The phone and AquaHub must use the same Wi-Fi network.',
+      'hubHttpsVerified': 'The connection will be verified over HTTPS.',
+      'hubNotFound': 'No panel found. Check Wi-Fi and P4 power.',
+      'hubMdns': 'The app uses native Bonjour/mDNS discovery.',
+      'scanAgain': 'Scan again',
+      'hubAdvancedConnection': 'Advanced connection',
+      'hubManualOnly': 'Use a manual address only when mDNS is blocked',
+      'hubHttpsAddress': 'Panel HTTPS address',
+      'connectManually': 'Connect manually',
+      'hubSecureHttps': 'AquaHub ESP32-P4 · secure HTTPS',
+      'chooseAnotherHub': 'Choose another panel',
+      'certificateFingerprint': 'SHA-256 certificate fingerprint',
+      'fingerprintMatches': 'The fingerprint matches the panel exactly',
+      'pairingCode': '6-digit code from the panel',
+      'pairAndOpen': 'Pair and open dashboard',
+      'hubDiscoveryFailed': 'AquaHub discovery could not be started.',
+      'hubErrorSession': 'The secure AquaHub session could not be read.',
+      'hubErrorHttpsAddress':
+          'Enter a full HTTPS address, such as https://aquahub.local:8443.',
+      'hubErrorDiscovery': 'AquaHub could not be found on the local network.',
+      'hubErrorDiscoverFirst': 'Check the AquaHub connection first.',
+      'hubErrorFingerprintConfirm':
+          'Compare the panel fingerprint and confirm that it matches.',
+      'hubErrorPairingCode':
+          'The pairing code must contain exactly six digits.',
+      'hubErrorSaveSession': 'The secure AquaHub session could not be saved.',
+      'hubErrorAuthentication': 'AquaHub rejected the authentication data.',
+      'hubErrorNetwork': 'AquaHub is unreachable on the local network.',
+      'hubErrorInvalidResponse': 'AquaHub returned an invalid response.',
+      'hubErrorServer': 'AquaHub returned a server error.',
+      'hubErrorSecurity': 'The secure AquaHub identity could not be verified.',
+      'homeAssistant': 'Home Assistant',
+      'homeAssistantDescription':
+          'An existing local instance or a secure remote address.',
+      'demo': 'Offline demo',
+      'demoDescription':
+          'A complete home, aquarium, alarms, history and updates without an account.',
+      'recommended': 'Recommended',
+      'advanced': 'Advanced',
+      'back': 'Back',
+      'connectHa': 'Add Home Assistant',
+      'haUrl': 'Instance address',
+      'haUrlHint': 'https://homeassistant.local:8123',
+      'haProfileName': 'Profile name',
+      'haProfileNameHint': 'Home, office or cabin',
+      'haToken': 'Long-lived access token',
+      'showToken': 'Show token',
+      'hideToken': 'Hide token',
+      'testAndSave': 'Test and save',
+      'oauthHint':
+          'This is the advanced long-lived-token sign-in. OAuth requires the app owner public Client ID and a secure redirect URI; the release documentation defines that activation gate.',
+      'secureStorageHint':
+          'Credentials are kept in the operating system secure storage. HTTP is accepted only on a local network.',
+      'dashboard': 'Dashboard',
+      'rooms': 'Rooms',
+      'devices': 'Devices',
+      'automations': 'Automations',
+      'updates': 'Updates',
+      'settings': 'Settings',
+      'navDashboard': 'Home',
+      'navRooms': 'Rooms',
+      'navDevices': 'Devices',
+      'navAutomations': 'Actions',
+      'navUpdates': 'Updates',
+      'navSettings': 'Settings',
+      'more': 'More',
+      'home': 'Home',
+      'homeHealthyTitle': 'Your home is running smoothly',
+      'homeHealthyDescription':
+          'All essential systems are responding as expected.',
+      'homeAttentionTitle': 'A few things need attention',
+      'homeAttentionDescription': '{value} items are worth a quick check.',
+      'homeOfflineTitle': 'Control is temporarily offline',
+      'homeOfflineDescription':
+          'The latest saved state remains available in read-only mode.',
+      'liveStatus': 'Live',
+      'devicesOnlineLabel': 'Devices online',
+      'automationsActiveLabel': 'Active rules',
+      'updatesAvailableLabel': 'Waiting',
+      'refresh': 'Refresh',
+      'source': 'Source',
+      'connected': 'Connected',
+      'offline': 'Offline',
+      'stale': 'Stale data',
+      'partial': 'Partial synchronization',
+      'lastSync': 'Last sync: {value}',
+      'favorites': 'Favorites',
+      'quickControls': 'Quick controls',
+      'quickControlsDescription': 'Your essential actions, always within reach',
+      'customize': 'Customize',
+      'chooseDevices': 'Choose devices',
+      'noQuickControlsTitle': 'Build your shortcuts panel',
+      'areasOverview': 'Rooms',
+      'areasOverviewDescription': 'The essentials at a glance',
+      'roomsSummary': '{rooms} rooms · {items} items',
+      'roomHealthy': 'Everything is working',
+      'roomOfflineDevices': '{value} devices offline',
+      'roomDevicesOnline': '{online}/{all} devices online',
+      'roomOpenHint': 'Open room details',
+      'roomUnavailable': 'This room is no longer available.',
+      'devicesSummary': '{online} of {all} devices online',
+      'seeAll': 'See all',
+      'noRoomsTitle': 'No active rooms',
+      'recentActivity': 'Recent activity',
+      'recentChanges': 'Recent changes',
+      'recentChangesDescription': 'Actual device state changes',
+      'noRecentChangesTitle': 'Everything is calm',
+      'noRecentChanges': 'New events will appear here automatically.',
+      'attentionCenter': 'Needs checking',
+      'attentionOfflineTitle': 'The source is offline',
+      'attentionOfflineDescription': 'Tap to try connecting again.',
+      'attentionSyncTitle': 'Data needs refreshing',
+      'attentionSyncDescription': 'The latest synchronization is incomplete.',
+      'attentionAquariumTitle': 'Aquarium module alarm',
+      'attentionAquariumDescription': 'Open the card and review active alarms.',
+      'attentionDevicesTitle': '{value} devices are offline',
+      'attentionDevicesDescription': 'Check device power and connectivity.',
+      'attentionUpdatesTitle': '{value} updates are waiting',
+      'attentionUpdatesDescription':
+          'Packages are ready for secure installation.',
+      'aquarium': 'Aquarium',
+      'aquariumHealthy': 'Parameters stable',
+      'aquariumAlarm': 'Needs attention',
+      'aquariumNoAlarms': 'No active alarms',
+      'aquariumOffline': 'Latest saved reading',
+      'aquariumIncomplete': 'Incomplete set of readings',
+      'aquariumStale': 'Readings need refreshing',
+      'waterTemperature': 'Water temperature',
+      'waterChemistry': 'Water chemistry',
+      'connection': 'Connection',
+      'details': 'Details',
+      'noAquarium': 'This source does not expose an aquarium module yet.',
+      'noAquariumTitle': 'Aquarium module is unavailable',
+      'noFavorites': 'Choose the devices and actions you use most often.',
+      'noAreas': 'The source returned no rooms.',
+      'noDevices': 'No devices found.',
+      'noAutomations': 'This source has no automations.',
+      'scenesAndScripts': 'Scenes and scripts',
+      'scenes': 'Scenes',
+      'scenesDescription': 'One tap activates a ready-made home mood.',
+      'scripts': 'Scripts',
+      'scriptsDescription': 'Manually triggered sequences from the source.',
+      'activateScene': 'Activate scene',
+      'runScript': 'Run script',
+      'sceneReady': 'Ready to activate',
+      'scriptReady': 'Ready to run',
+      'noUpdates': 'No updates are available.',
+      'entitiesCount': '{value} entities',
+      'itemsCount': '{value} items',
+      'onlineDevices': '{value} devices online',
+      'available': 'Available',
+      'unavailable': 'Unavailable',
+      'unknown': 'Unknown',
+      'removed': 'Removed',
+      'noData': 'No data',
+      'stateOn': 'On',
+      'stateOff': 'Off',
+      'activeEntities': '{value} active',
+      'activeNow': '{value} active now',
+      'rawState_heat': 'Heating',
+      'rawState_heating': 'Heating',
+      'rawState_cooling': 'Cooling',
+      'rawState_playing': 'Playing',
+      'rawState_paused': 'Paused',
+      'rawState_idle': 'Idle',
+      'rawState_docked': 'Docked',
+      'rawState_home': 'Home',
+      'rawState_away': 'Away',
+      'rawState_partlycloudy': 'Partly cloudy',
+      'turnOn': 'Turn on',
+      'turnOff': 'Turn off',
+      'openCover': 'Open',
+      'closeCover': 'Close',
+      'opened': 'Open',
+      'closed': 'Closed',
+      'lockAction': 'Lock',
+      'unlockAction': 'Unlock',
+      'locked': 'Locked',
+      'unlocked': 'Unlocked',
+      'alarmMode': 'Alarm mode',
+      'alarm_disarmed': 'Disarmed',
+      'alarm_armed_home': 'Armed home',
+      'alarm_armed_away': 'Armed away',
+      'alarm_armed_night': 'Armed night',
+      'start': 'Start',
+      'returnToBase': 'Return to base',
+      'textValue': 'Text value',
+      'run': 'Run',
+      'setValue': 'Set value: {value}',
+      'selectOption': 'Select option',
+      'history': 'History',
+      'favorite': 'Favorite',
+      'removeFavorite': 'Remove favorite',
+      'confirmTitle': 'Confirm operation',
+      'confirmRoutine': 'The command will be sent to the device.',
+      'confirmConsequential':
+          'This operation may change the device behavior for an extended time.',
+      'confirmCritical':
+          'This is a critical operation. The controller will still validate interlocks and may reject it.',
+      'cancel': 'Cancel',
+      'confirm': 'Confirm',
+      'commandPending': 'Waiting for acknowledgement…',
+      'editDashboard': 'Edit dashboard',
+      'resetDashboard': 'Reset dashboard',
+      'visible': 'Visible',
+      'largeCard': 'Large card',
+      'theme': 'Theme',
+      'themeSystem': 'System',
+      'themeLight': 'Light',
+      'themeDark': 'Dark',
+      'language': 'Language',
+      'polish': 'Polski',
+      'english': 'English',
+      'security': 'Security',
+      'biometricProtection': 'Critical operation protection',
+      'biometricProtectionDescription':
+          'Require system identity verification before lock, alarm, gate and update operations.',
+      'biometricUnavailable':
+          'No secure identity verification method is configured on this device.',
+      'biometricCheckFailed':
+          'System protection could not be checked. Critical operations remain blocked.',
+      'sourceManagement': 'Source management',
+      'haInstances': 'Home Assistant instances',
+      'addHaInstance': 'Add Home Assistant instance',
+      'removeHaInstance': 'Remove instance',
+      'removeHaInstanceConfirm':
+          'Profile “{value}”, its token and local cache will be removed from this device.',
+      'switchSource': 'Switch source',
+      'removeSource': 'Remove source and local data',
+      'removeSourceConfirm':
+          'The token, certificate fingerprint, session and source cache will be removed from this device.',
+      'demoScenarios': 'Demo scenarios',
+      'simulateOffline': 'Simulate offline',
+      'simulateAlarm': 'Simulate aquarium alarm',
+      'appUpdate': 'Home Control update',
+      'deviceUpdates': 'Device updates',
+      'currentVersion': 'Current: {value}',
+      'latestVersion': 'Latest: {value}',
+      'install': 'Install',
+      'upToDate': 'Up to date',
+      'unsupported': 'Not safely supported yet',
+      'mandatory': 'Required',
+      'availableVersion': 'Version {value} is available',
+      'later': 'Later',
+      'downloadAndInstall': 'Download and install',
+      'continueInstallation': 'Continue installation',
+      'otaAvailableMessage':
+          'This update contains fixes and improvements. The package will be verified before installation.',
+      'otaDownloadingMessage':
+          'Downloading the signed package and verifying its SHA-256 digest.',
+      'otaVerifyingMessage':
+          'Verifying package identity, version and signing certificate.',
+      'otaPermissionMessage':
+          'Android opened the install-source settings. Allow Home Control, return to the app and continue.',
+      'otaFailedMessage': 'The update was not installed.',
+      'otaPreparingMessage': 'Preparing the secure application update.',
+      'diagnostics': 'Diagnostics',
+      'entities': 'Entities',
+      'lastSyncLabel': 'Last synchronization',
+      'localCache': 'Local cache',
+      'encrypted': 'Encrypted',
+      'privacyAndAbout': 'Privacy and about',
+      'privacy': 'Privacy',
+      'privacyDescription':
+          'Home Control does not sell data. Credentials and the latest snapshot remain in the device secure storage.',
+      'appVersion': 'Version {value}',
+      'openSourceLicenses': 'Open-source licenses',
+      'attributes': 'Source attributes',
+      'entitySource': 'Source: {value}',
+      'entityUpdated': 'Updated: {value}',
+      'firmware': 'Firmware',
+      'manufacturer': 'Manufacturer',
+      'model': 'Model',
+      'lastSeen': 'Last seen: {value}',
+      'search': 'Search',
+      'searchHint': 'Device, entity or room',
+      'noResults': 'No results for this query.',
+      'searchEmptyHint': 'Change the search phrase or clear the filter.',
+      'noEntitiesInArea': 'This room has no entities.',
+      'noEntitiesInAreaHint':
+          'Devices assigned to this room will appear here automatically.',
+      'noDevicesHint':
+          'Connect a source or check its device registry to see hardware.',
+      'all': 'All',
+      'unknownEntityHint':
+          'A future or custom type is displayed without guessing how to control it.',
+      'errorTitle': 'The operation could not be completed',
+      'errorNetwork':
+          'The source is unreachable. Check your LAN, VPN or Internet connection.',
+      'errorOffline':
+          'There is no connection. Last known data remains read-only.',
+      'errorToken':
+          'The token expired, was rejected or lacks the required permissions.',
+      'errorServer': 'The server returned an error. Try again shortly.',
+      'errorInvalidResponse':
+          'The source returned damaged or unsupported data.',
+      'errorCertificate':
+          'The certificate or fingerprint changed. Confirm identity on a trusted display.',
+      'errorStorage': 'The secure storage could not be opened or updated.',
+      'errorPermission':
+          'This operation is not permitted for the selected entity.',
+      'errorUnsupported':
+          'The source does not safely support this feature yet.',
+      'errorInvalidValue':
+          'The value is outside its allowed range or has an invalid format.',
+      'errorInvalidCredentials':
+          'Check the address and paste the complete access token.',
+      'errorInvalidHaUrl': 'Enter the full HTTP or HTTPS instance address.',
+      'errorInvalidHaToken': 'The token must contain at least 20 characters.',
+      'errorCommandUnavailable':
+          'Control is locked while the source or entity is unavailable.',
+      'errorBiometricCancelled':
+          'Biometric authorization was cancelled. The operation was not sent.',
+      'errorBiometricUnavailable':
+          'Biometrics are unavailable. Configure them in the operating system to continue.',
+      'errorBiometricLocked':
+          'Biometrics are temporarily locked. Unlock them in the operating system and retry.',
+      'errorBiometricFailed':
+          'Identity could not be confirmed. The critical operation remains blocked.',
+      'errorUnknown':
+          'An unexpected error occurred. Sensitive data was not recorded in logs.',
+      'retry': 'Try again',
+      'reconfigure': 'Choose another source',
+      'dismiss': 'Dismiss',
+      'noticeRefreshed': 'Data refreshed.',
+      'noticeCommandAccepted': 'The source acknowledged the command.',
+      'noticeUpdateStarted': 'The update process has started.',
+      'noticeBiometricEnabled':
+          'Biometric protection is enabled for critical operations.',
+      'noticeBiometricDisabled':
+          'Biometric protection is disabled for critical operations.',
+      'justNow': 'just now',
+      'secondsAgo': '{value} sec ago',
+      'minutesAgo': '{value} min ago',
+      'hoursAgo': '{value} hr ago',
+      'never': 'never',
+      'historyEmpty': 'The source returned no samples for this period.',
+      'historyPrompt': 'Choose a period to load history.',
+      'historySummary':
+          'History chart. Minimum {minimum}, maximum {maximum}, {samples} samples.',
+      'history24h': '24 hours',
+      'history7d': '7 days',
+      'entity_light': 'Light',
+      'entity_switchEntity': 'Switch',
+      'entity_sensor': 'Sensor',
+      'entity_binarySensor': 'Binary sensor',
+      'entity_climate': 'Climate',
+      'entity_cover': 'Cover',
+      'entity_lock': 'Lock',
+      'entity_alarmControlPanel': 'Alarm',
+      'entity_camera': 'Camera',
+      'entity_mediaPlayer': 'Media player',
+      'entity_fan': 'Fan',
+      'entity_vacuum': 'Vacuum',
+      'entity_weather': 'Weather',
+      'entity_person': 'Person',
+      'entity_deviceTracker': 'Tracker',
+      'entity_scene': 'Scene',
+      'entity_script': 'Script',
+      'entity_automation': 'Automation',
+      'entity_button': 'Button',
+      'entity_inputButton': 'Input button',
+      'entity_number': 'Number',
+      'entity_inputNumber': 'Input number',
+      'entity_select': 'Select',
+      'entity_inputSelect': 'Input select',
+      'entity_text': 'Text',
+      'entity_inputText': 'Input text',
+      'entity_update': 'Update',
+      'entity_unknown': 'Custom type',
+    },
+  };
+}
+
+final class _HomeControlStringsDelegate
+    extends LocalizationsDelegate<HomeControlStrings> {
+  const _HomeControlStringsDelegate();
+
+  @override
+  bool isSupported(Locale locale) =>
+      <String>{'pl', 'en'}.contains(locale.languageCode);
+
+  @override
+  Future<HomeControlStrings> load(Locale locale) =>
+      SynchronousFuture<HomeControlStrings>(HomeControlStrings(locale));
+
+  @override
+  bool shouldReload(covariant LocalizationsDelegate<HomeControlStrings> old) =>
+      false;
+}

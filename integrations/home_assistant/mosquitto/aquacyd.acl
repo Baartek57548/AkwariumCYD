@@ -1,0 +1,22 @@
+# Własność pliku i uwierzytelnianie haseł konfiguruje administrator brokera.
+# Każdy komponent używa osobnego konta, aby ograniczyć skutki wycieku hasła.
+
+user aquacyd_gateway
+topic write aquacyd/aquarium/state
+topic write aquacyd/aquarium/availability
+topic write aquacyd/aquarium/command/ack
+topic read aquacyd/aquarium/command/set
+topic write homeassistant/sensor/aquacyd_aquarium/#
+topic write homeassistant/binary_sensor/aquacyd_aquarium/#
+
+user aquacyd_hmi
+topic read aquacyd/aquarium/state
+topic read aquacyd/aquarium/availability
+topic read aquacyd/aquarium/command/ack
+topic write aquacyd/aquarium/command/set
+topic write aquacyd/aquarium/hmi/availability
+
+user homeassistant
+topic readwrite aquacyd/aquarium/#
+topic read homeassistant/sensor/aquacyd_aquarium/#
+topic read homeassistant/binary_sensor/aquacyd_aquarium/#

@@ -1,0 +1,11 @@
+name: aquacyd_test_support
+description: Deterministic fixtures shared by AquaCYD application tests.
+version: 1.0.0
+publish_to: none
+
+environment:
+  sdk: ^3.11.3
+
+dependencies:
+  home_entities:
+    path: ../home_entities

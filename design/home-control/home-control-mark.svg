@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-labelledby="title description">
+  <title id="title">Home Control</title>
+  <desc id="description">Dom połączony z centralnym węzłem automatyki</desc>
+  <defs>
+    <linearGradient id="brand" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#18C7B5"/>
+      <stop offset="1" stop-color="#4254D0"/>
+    </linearGradient>
+  </defs>
+  <rect width="512" height="512" rx="144" fill="url(#brand)"/>
+  <path d="M102 256 256 116l154 140v144H102Z" fill="none" stroke="#fff" stroke-width="38" stroke-linecap="round" stroke-linejoin="round"/>
+  <circle cx="256" cy="282" r="54" fill="#fff"/>
+  <path d="m256 282 93 75" fill="none" stroke="#fff" stroke-width="28" stroke-linecap="round"/>
+</svg>

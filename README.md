@@ -1,75 +1,106 @@
-# cydAquarium
+# Home Control + AquaCYD
 
-Sterownik akwarium dla ESP32 CYD z interfejsem LVGL, panelem WWW, BLE,
-obsługą OTA i aplikacją Flutter.
+Monorepo zawiera uniwersalny panel domu **Home Control**, osobną aplikację serwisową **AquaCYD Service**, autonomiczny sterownik akwarium CYD, lokalny AquaHub ESP32-P4, bramkę ESP32-C6 oraz opcjonalne integracje. Home Assistant jest jednym ze źródeł danych, a nie warunkiem działania systemu ani nazwą aplikacji.
 
-Dokumentacja firmware, pinologia, profile kompilacji i procedura wgrywania:
-[docs/CYD_FIRMWARE.md](docs/CYD_FIRMWARE.md).
+## Architektura w skrócie
 
-Watchdog, fail-safe, kalibracja, bezpieczne profile Wi-Fi, trwałe alarmy oraz
-warunek zatwierdzenia OTA są opisane w
-[docs/FIRMWARE_RUNTIME_SAFETY.md](docs/FIRMWARE_RUNTIME_SAFETY.md).
+- CYD samodzielnie steruje sprzętem i pozostaje jedynym źródłem prawdy dla GPIO, harmonogramów, alarmów, blokad i fail-safe.
+- Home Control łączy cały dom przez wymienne adaptery AquaHub, Home Assistant i Demo.
+- AquaCYD Service zapewnia bezpośredni serwis REST/BLE, provisioning, odzyskiwanie, kalibrację i kontrolowane OTA CYD.
+- ESP32-P4 działa jako siedmiocalowy panel LVGL i lokalny AquaHub; ESP32-C6 jest mostem ESP-NOW/Wi-Fi.
+- Home Assistant, MQTT, brama zdalna i Raspberry Pi są opcjonalne. CYD ani P4 nie są wystawiane bezpośrednio do Internetu.
 
-Gotowe obrazy firmware ILI9341/ST7789 oraz instalacyjny APK są publikowane w
-[GitHub Releases](https://github.com/Baartek57548/AkwariumCYD/releases).
-Wybierz tag `firmware-vX.Y.Z` dla podpisanego pakietu `.aqfw` albo
-`mobile-vX.Y.Z` dla aplikacji Android.
-
-Najważniejsze katalogi:
-
-- `src/`, `include/`, `lib/` — firmware ESP32;
-- `test/` — testy logiki domenowej;
-- `web/` — panel WWW;
-- `gateway/` — opcjonalna brama HTTPS dla zdalnych alarmów i FCM;
-- `mobile_app/` — aplikacja Flutter;
-- `sdcard/` — struktura danych i zasobów karty SD.
-
-Sterownik traktuje dwie lampy Aquael Day&Night jako niezależne urządzenia:
-`front` (przednia) i `rear` (tylna), każde z profilami `DAY`, `DAYBREAK` i
-`NIGHT`. Krótki cykl OFF→ON trwa najwyżej 5 sekund, a OFF dłuższy niż 5 sekund
-resetuje lampę do `DAY`; implementacja używa impulsu 1 s oraz 6-sekundowej
-kalibracji startowej, nie zmieniając progu producenta wynoszącego 5 sekund.
-
-## CI/CD, HIL i bezpieczeństwo
-
-GitHub Actions automatycznie sprawdza aplikację Flutter, testy Android/JVM,
-firmware PlatformIO, panel WWW i narzędzia wydaniowe. Build z każdego commita
-udostępnia krótkotrwałe artefakty diagnostyczne; APK z CI jest celowo pozbawiony
-podpisu produkcyjnego. Dopiero tag `mobile-vX.Y.Z` albo `firmware-vX.Y.Z`
-uruchamia kontrolowaną publikację z walidacją wersji, nazw i SHA-256.
-
-Testy odporności sprzętowej można sprawdzić bez urządzenia:
-
-```powershell
-python tools/hil/runner.py --self-test
-python tools/hil/runner.py --dry-run
-python scripts/validate_release.py --self-test
-python scripts/verify_firmware_trust.py
-python tools/firmware_package.py self-test
-python scripts/audit_esp32_security.py --self-test
+```mermaid
+flowchart LR
+    HC["Home Control"] --> HUB["AquaHub ESP32-P4"]
+    HC --> HA["Home Assistant"]
+    HC --> DEMO["Demo offline"]
+    SERVICE["AquaCYD Service"] --> CYD["CYD Controller"]
+    HUB <--> C6["ESP32-C6 Gateway"]
+    C6 <--> CYD
+    CYD --> SAFE["interlocki i fail-safe"]
 ```
 
-Konfiguracja pipeline i wydań jest opisana w
-[docs/PRODUCTION_CI_CD.md](docs/PRODUCTION_CI_CD.md), stanowisko sprzętowe w
-[docs/PRODUCTION_HIL.md](docs/PRODUCTION_HIL.md), a model zagrożeń i zasady
-podpisywania artefaktów OTA, lokalnego rollbacku i docelowego Secure Boot v2 w
-[docs/PRODUCTION_SECURITY.md](docs/PRODUCTION_SECURITY.md). Dokładny kontrakt
-pakietu `.aqfw`, publiczny fingerprint oraz procedura fabrycznego provisioningu
-znajdują się w
-[docs/FIRMWARE_SIGNING_AND_PROVISIONING.md](docs/FIRMWARE_SIGNING_AND_PROVISIONING.md).
+## Struktura
 
-Opcjonalna brama nie udostępnia sterownika bezpośrednio w Internecie. Przyjmuje
-wyłącznie podpisane i chronione przed replayem zdarzenia HTTPS, przechowuje
-ograniczoną historię oraz może przekazywać alarmy do FCM. Provisioning odbywa się
-po bezpiecznym BLE, a sekret HMAC nie jest zapisywany w aplikacji mobilnej.
-Instrukcje uruchomienia znajdują się w [gateway/README.md](gateway/README.md), a
-zasady instalowalnego panelu w
-[docs/WEB_BUNDLE_AND_GATEWAY_PWA.md](docs/WEB_BUNDLE_AND_GATEWAY_PWA.md).
+| Ścieżka | Odpowiedzialność |
+| --- | --- |
+| `apps/home_control/` | natywna aplikacja całego domu |
+| `apps/aquacyd_service/` | aplikacja serwisowa sterownika akwarium |
+| `firmware/cyd_controller/` | autonomiczny firmware PlatformIO dla CYD |
+| `firmware/esp32p4_hub/` | panel LVGL i AquaHub w ESP-IDF |
+| `firmware/esp32c6_gateway/` | bramka radiowa w ESP-IDF |
+| `firmware/shared/` | współdzielone, wersjonowane kontrakty C++ |
+| `services/remote_gateway/` | opcjonalna brama HTTPS/FCM |
+| `integrations/home_assistant/` | pakiet, dashboard i ACL Home Assistant |
+| `web/`, `sdcard/` | źródła panelu web i pakiet dla urządzenia |
+| `packages/` | współdzielone pakiety Dart |
+| `design/`, `docs/`, `tools/`, `scripts/` | projekty UI, dokumentacja i automatyzacja |
 
-Sterownika nie należy wystawiać bezpośrednio do Internetu. Zdalny dostęp powinien
-działać przez VPN lub uwierzytelnioną bramę, z krótkotrwałymi tokenami i limitami
-żądań. Sekrety podpisujące pozostają wyłącznie w chronionych środowiskach CI.
-Firmware przyjmuje produkcyjnie tylko podpisany pakiet `.aqfw` zweryfikowany
-względem wbudowanego trust anchora. Sprzętowe Secure Boot v2 i Flash Encryption
-wymagają dodatkowo kontrolowanego provisioningu każdej płytki; żaden workflow
-ani skrypt w repozytorium nie przepala eFuse automatycznie.
+## Szybki start
+
+Home Control w bezpiecznym trybie Demo:
+
+```powershell
+cd apps/home_control
+flutter pub get
+flutter run -d chrome
+```
+
+AquaCYD Service:
+
+```powershell
+cd apps/aquacyd_service
+flutter pub get
+flutter run
+```
+
+Sterownik CYD i testy domenowe:
+
+```powershell
+pio test -d firmware/cyd_controller -e native
+pio run -d firmware/cyd_controller -e esp32dev
+```
+
+ESP32-P4 i ESP32-C6 z przypiętym ESP-IDF 5.4.4:
+
+```powershell
+.\tools\build-p4-c6.ps1 -IdfPath C:\esp\v5.4.4-full\esp-idf
+```
+
+Panel web i testy Node.js:
+
+```powershell
+npm ci
+npm test
+npm run test:e2e
+```
+
+## Bezpieczeństwo i wydania
+
+Firmware produkcyjny akceptuje podpisane pakiety, a klucze podpisu pozostają w chronionym środowisku CI. Repozytorium nie zapisuje sekretów, nie przepala eFuse i nie uznaje mocków za test sprzętowy. Aktualizacje Home Control, AquaCYD Service, CYD, P4 i C6 mają osobne zgodności, statusy i procesy publikacji.
+
+Aktualne źródła prawdy:
+
+- [specyfikacja produktów](docs/PRODUCT_SPEC.md),
+- [architektura monorepo](docs/MONOREPO_ARCHITECTURE.md),
+- [architektura Home Control](docs/HOME_CONTROL_ARCHITECTURE.md),
+- [granice AquaCYD Service](docs/AQUACYD_SERVICE.md),
+- [kontrakt urządzeń](docs/DEVICE_CONTRACT.md),
+- [bezpieczeństwo](docs/SECURITY.md),
+- [OTA](docs/OTA.md) i [proces wydania](docs/RELEASE.md),
+- [raport QA](docs/QA_REPORT.md) i [checklista HIL](docs/HIL_CHECKLIST.md),
+- [pomysły i roadmapa](docs/IDEAS_AND_ROADMAP.md),
+- [audyt bazowy](docs/BASELINE_AUDIT.md),
+- [plan migracji](docs/MIGRATION_PLAN.md),
+- [bezpieczeństwo runtime CYD](docs/FIRMWARE_RUNTIME_SAFETY.md),
+- [podpisywanie firmware](docs/FIRMWARE_SIGNING_AND_PROVISIONING.md).
+
+Artefakty instalacyjne są publikowane w [GitHub Releases](https://github.com/Baartek57548/AkwariumCYD/releases), nie w drzewie źródłowym. Brak kluczy produkcyjnych lub fizycznego HIL blokuje publikację produkcyjną i jest zawsze raportowany jawnie.
+
+## Projekty HMI
+
+Kod panelu 7″ LVGL znajduje się w `firmware/esp32p4_hub`, a importowalne do
+Figma ramki w `design/hmi`. Wizualizacje aktualnych ekranów CYD 320×240 są w
+`design/cyd-hmi`. Repozytorium zawiera tokeny, manifesty i generator, dzięki
+czemu Figma pozostaje warstwą projektową, a LVGL źródłem produkcyjnym.

@@ -1,0 +1,93 @@
+{
+  "meta": {
+    "name": "AquaCYD HMI Figma import pack",
+    "version": "2.1.0",
+    "frame": {
+      "width": 1024,
+      "height": 600
+    }
+  },
+  "importOrder": [
+    "figma-import/00-foundations-components.svg",
+    "figma-import/01-boot-connecting.svg",
+    "figma-import/dashboard-online.svg",
+    "figma-import/dashboard-critical.svg",
+    "figma-import/controls-ready.svg",
+    "figma-import/controls-confirm-filter-off.svg",
+    "figma-import/sensors-online.svg",
+    "figma-import/alarms-critical.svg",
+    "figma-import/automation-overview.svg",
+    "figma-import/automation-schedule-editor.svg",
+    "figma-import/automation-temperature-editor.svg",
+    "figma-import/system-online.svg",
+    "figma-import/recovery-controller-offline.svg"
+  ],
+  "prototypeConnections": [
+    {
+      "from": "dashboard-online.svg",
+      "trigger": "tap navigation Sterowanie",
+      "to": "controls-ready.svg",
+      "animation": "pageEnter"
+    },
+    {
+      "from": "controls-ready.svg",
+      "trigger": "tap Filtr Wyłącz",
+      "to": "controls-confirm-filter-off.svg",
+      "animation": "instant overlay with 120 ms fade"
+    },
+    {
+      "from": "controls-confirm-filter-off.svg",
+      "trigger": "tap Potwierdź",
+      "to": "controls-ready.svg",
+      "animation": "commandPending"
+    },
+    {
+      "from": "dashboard-online.svg",
+      "trigger": "alarm flags non-zero",
+      "to": "dashboard-critical.svg",
+      "animation": "alarmPulse"
+    },
+    {
+      "from": "dashboard-critical.svg",
+      "trigger": "tap alarm chip",
+      "to": "alarms-critical.svg",
+      "animation": "pageEnter"
+    },
+    {
+      "from": "automation-overview.svg",
+      "trigger": "tap Edytuj on schedule card",
+      "to": "automation-schedule-editor.svg",
+      "animation": "configurationEditorOpen"
+    },
+    {
+      "from": "automation-schedule-editor.svg",
+      "trigger": "tap Zapisz w CYD",
+      "to": "automation-overview.svg",
+      "animation": "commandPending"
+    },
+    {
+      "from": "automation-overview.svg",
+      "trigger": "tap Edytuj on temperature card",
+      "to": "automation-temperature-editor.svg",
+      "animation": "configurationEditorOpen"
+    },
+    {
+      "from": "automation-temperature-editor.svg",
+      "trigger": "tap Zapisz w CYD",
+      "to": "automation-overview.svg",
+      "animation": "commandPending"
+    },
+    {
+      "from": "recovery-controller-offline.svg",
+      "trigger": "controller telemetry received",
+      "to": "dashboard-online.svg",
+      "animation": "pageEnter"
+    }
+  ],
+  "sourceMapping": {
+    "designTokens": "aquacyd-hmi.tokens.json",
+    "motion": "motion-spec.json",
+    "firmware": "../../firmware/esp32p4_hub/main/hmi_ui.cpp",
+    "workflow": "../../docs/HMI_LVGL_FIGMA_WORKFLOW.md"
+  }
+}

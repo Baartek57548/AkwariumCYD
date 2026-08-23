@@ -1,0 +1,28 @@
+{
+  "meta": {
+    "name": "AquaCYD CYD Figma import pack",
+    "version": "1.0.0",
+    "frame": {
+      "width": 320,
+      "height": 240
+    }
+  },
+  "importOrder": [
+    "figma-import/01-start.svg",
+    "figma-import/02-plan.svg",
+    "figma-import/03-modules.svg",
+    "figma-import/04-chart.svg",
+    "figma-import/05-system.svg",
+    "figma-import/06-start-alarm.svg"
+  ],
+  "sourceMapping": {
+    "firmware": "../../src/gui_app.cpp",
+    "buildStatusBar": "build_status_bar",
+    "buildNavigation": "build_nav_bar",
+    "start": "build_home_page",
+    "plan": "build_schedules_page",
+    "modules": "build_optional_page",
+    "chart": "build_charts_page",
+    "system": "build_system_page"
+  }
+}

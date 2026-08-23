@@ -15,8 +15,95 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  changes:
+    name: Detect affected products
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      tooling: ${{ steps.filter.outputs.tooling }}
+      web: ${{ steps.filter.outputs.web }}
+      firmware: ${{ steps.filter.outputs.firmware }}
+      esp_idf: ${{ steps.filter.outputs.esp_idf }}
+      flutter: ${{ steps.filter.outputs.flutter }}
+      home: ${{ steps.filter.outputs.home }}
+      service: ${{ steps.filter.outputs.service }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          fetch-depth: 0
+      - id: filter
+        name: Classify changed paths
+        shell: bash
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          BEFORE_SHA: ${{ github.event.before }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: |
+          set -euo pipefail
+          if [[ "$EVENT_NAME" == "workflow_dispatch" ]]; then
+            changed="__all__"
+          else
+            base="$BEFORE_SHA"
+            if [[ "$EVENT_NAME" == "pull_request" ]]; then
+              base="$BASE_SHA"
+            fi
+            if [[ -z "$base" || "$base" =~ ^0+$ ]]; then
+              changed="__all__"
+            else
+              changed="$(git diff --name-only "$base" "$GITHUB_SHA")"
+            fi
+          fi
+          classify() {
+            local name="$1"
+            local pattern="$2"
+            if [[ "$changed" == "__all__" ]] ||
+               grep -Eq "$pattern" <<<"$changed"; then
+              echo "$name=true" >> "$GITHUB_OUTPUT"
+            else
+              echo "$name=false" >> "$GITHUB_OUTPUT"
+            fi
+          }
+          classify tooling '^(.github/|scripts/|tools/|package(-lock)?.json|pubspec.yaml)'
+          classify web '^(web/|sdcard/|tools/dev-server/|tools/web-e2e/|services/remote_gateway/|package(-lock)?.json)'
+          classify firmware '^(firmware/cyd_controller/|firmware/shared/|web/|sdcard/|platformio.ini)'
+          classify esp_idf '^(firmware/esp32p4_hub/|firmware/esp32c6_gateway/|firmware/shared/)'
+          classify flutter '^(apps/|packages/)'
+          classify home '^(apps/home_control/|packages/|design/home-control/|scripts/(build_home_control_windows|install_inno_setup|test_home_control_windows_installer)\.ps1|scripts/validate_release\.py|tools/generate_sbom\.py|\.github/workflows/)'
+          classify service '^(apps/aquacyd_service/|packages/)'
+
+  secret-security:
+    name: Secret history scan
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          fetch-depth: 0
+      - name: Scan commits for credentials and private keys
+        uses: gitleaks/gitleaks-action@dcedce43c6f43de0b836d1fe38946645c9c638dc # v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITLEAKS_ENABLE_COMMENTS: "false"
+          GITLEAKS_ENABLE_UPLOAD_ARTIFACT: "false"
+
+  dependency-security:
+    name: Dependency vulnerability scan
+    permissions:
+      actions: read
+      contents: read
+      security-events: write
+    uses: google/osv-scanner-action/.github/workflows/osv-scanner-reusable.yml@9a498708959aeaef5ef730655706c5a1df1edbc2 # v2.3.8
+    with:
+      scan-args: |-
+        --recursive
+        ./
+      upload-sarif: false
+      fail-on-vuln: true
+
   tooling:
     name: Release and HIL tooling
+    needs: changes
+    if: needs.changes.outputs.tooling == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
@@ -37,22 +124,22 @@ jobs:
         run: |
           mobile_version="$(
             sed -n 's/^version: \([0-9][0-9.]*\)+[0-9][0-9]*$/\1/p' \
-              mobile_app/pubspec.yaml
+              apps/aquacyd_service/pubspec.yaml
           )"
           firmware_version="$(
             sed -n 's/^constexpr char VERSION\[\] = "\([0-9][0-9.]*\)";$/\1/p' \
-              include/config.h
+              firmware/cyd_controller/include/config.h
           )"
           test -n "$mobile_version"
           test -n "$firmware_version"
           python scripts/validate_release.py --self-test
           python scripts/validate_release.py \
             --tag "mobile-v$mobile_version" \
-            --pubspec mobile_app/pubspec.yaml \
+            --pubspec apps/aquacyd_service/pubspec.yaml \
             --dry-run
           python scripts/validate_release.py \
             --tag "firmware-v$firmware_version" \
-            --firmware-config include/config.h \
+            --firmware-config firmware/cyd_controller/include/config.h \
             --dry-run
           python scripts/verify_firmware_trust.py
           python tools/firmware_package.py self-test
@@ -71,8 +158,10 @@ jobs:
 
   web:
     name: Web and Node
+    needs: changes
+    if: needs.changes.outputs.web == 'true'
     runs-on: ubuntu-latest
-    timeout-minutes: 25
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
@@ -137,6 +226,8 @@ jobs:
 
   firmware:
     name: PlatformIO firmware
+    needs: changes
+    if: needs.changes.outputs.firmware == 'true'
     runs-on: windows-latest
     timeout-minutes: 30
     steps:
@@ -149,26 +240,27 @@ jobs:
           path: |
             ~/.cache/pip
             ~/.platformio/.cache
-          key: platformio-${{ runner.os }}-${{ hashFiles('platformio.ini') }}
+          key: platformio-${{ runner.os }}-${{ hashFiles('firmware/cyd_controller/platformio.ini') }}
           restore-keys: platformio-${{ runner.os }}-
       - name: Install PlatformIO
         run: python -m pip install --disable-pip-version-check platformio==6.1.19
       - name: Run native domain tests
-        run: pio test --environment native
+        run: pio test --project-dir firmware/cyd_controller --environment native
       - name: Build production firmware variants
         run: |
-          pio run --environment esp32dev
-          pio run --environment esp32dev-st7789
+          pio run --project-dir firmware/cyd_controller --environment esp32dev
+          pio run --project-dir firmware/cyd_controller --environment esp32dev-st7789
+          pio run --project-dir firmware/cyd_controller --environment esp32dev-espnow
       - name: Collect firmware binaries and checksums
         shell: pwsh
         run: |
           $artifactDir = Join-Path $env:GITHUB_WORKSPACE "artifacts\firmware"
           New-Item -ItemType Directory -Force -Path $artifactDir | Out-Null
           Copy-Item `
-            ".pio\build\esp32dev\firmware.bin" `
+            "firmware\cyd_controller\.pio\build\esp32dev\firmware.bin" `
             (Join-Path $artifactDir "AquaCYD-Firmware-ci-ili9341.bin")
           Copy-Item `
-            ".pio\build\esp32dev-st7789\firmware.bin" `
+            "firmware\cyd_controller\.pio\build\esp32dev-st7789\firmware.bin" `
             (Join-Path $artifactDir "AquaCYD-Firmware-ci-st7789.bin")
           $checksumLines = Get-ChildItem -LiteralPath $artifactDir -Filter "*.bin" |
             Sort-Object Name |
@@ -188,8 +280,75 @@ jobs:
           if-no-files-found: error
           retention-days: 14
 
+  esp-idf-firmware:
+    name: ESP32-C6 gateway and ESP32-P4 HMI
+    needs: changes
+    if: needs.changes.outputs.esp_idf == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    container:
+      image: espressif/idf:v5.4.4
+    env:
+      CMAKE_BUILD_PARALLEL_LEVEL: "2"
+      NINJAFLAGS: "-j2"
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - name: Build ESP32-C6 gateway
+        shell: bash
+        run: |
+          set -euo pipefail
+          source "$IDF_PATH/export.sh"
+          idf.py -C firmware/esp32c6_gateway build
+      - name: Build ESP32-P4 HMI
+        shell: bash
+        run: |
+          set -euo pipefail
+          source "$IDF_PATH/export.sh"
+          idf.py -C firmware/esp32p4_hub build
+      - name: Collect flashable images and checksums
+        shell: bash
+        run: |
+          set -euo pipefail
+          output="$GITHUB_WORKSPACE/artifacts/esp-idf"
+          mkdir -p "$output/c6" "$output/p4"
+          cp firmware/esp32c6_gateway/build/bootloader/bootloader.bin \
+            "$output/c6/"
+          cp firmware/esp32c6_gateway/build/partition_table/partition-table.bin \
+            "$output/c6/"
+          cp firmware/esp32c6_gateway/build/ota_data_initial.bin \
+            "$output/c6/"
+          cp firmware/esp32c6_gateway/build/aquacyd_esp32c6_gateway.bin \
+            "$output/c6/"
+          cp firmware/esp32c6_gateway/build/flash_args \
+            "$output/c6/"
+          cp firmware/esp32p4_hub/build/bootloader/bootloader.bin \
+            "$output/p4/"
+          cp firmware/esp32p4_hub/build/partition_table/partition-table.bin \
+            "$output/p4/"
+          cp firmware/esp32p4_hub/build/ota_data_initial.bin \
+            "$output/p4/"
+          cp firmware/esp32p4_hub/build/aquahub_esp32p4.bin \
+            "$output/p4/"
+          cp firmware/esp32p4_hub/build/flash_args \
+            "$output/p4/"
+          (
+            cd "$output"
+            find c6 p4 -type f -print0 |
+              sort -z |
+              xargs -0 sha256sum > SHA256SUMS
+          )
+      - name: Upload ESP-IDF firmware
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: esp32-p4-c6-firmware
+          path: artifacts/esp-idf/
+          if-no-files-found: error
+          retention-days: 14
+
   flutter:
     name: Flutter and Android
+    needs: changes
+    if: needs.changes.outputs.flutter == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 35
     steps:
@@ -206,7 +365,7 @@ jobs:
           flutter-version: "3.41.5"
           channel: stable
           cache: true
-      - name: Create validation identity and recreate ignored Gradle wrapper
+      - name: Create validation identity and prepare Gradle wrapper
         shell: bash
         run: |
           set -euo pipefail
@@ -225,33 +384,57 @@ jobs:
             printf 'keyPassword=ci-validation-only\n'
             printf 'keyAlias=ci-validation\n'
             printf 'storeFile=%s\n' "$key_path"
-          } > mobile_app/android/key.properties
+          } > apps/aquacyd_service/android/key.properties
           flutter_sdk="$(dirname "$(dirname "$(command -v flutter)")")"
           android_sdk="${ANDROID_SDK_ROOT:-${ANDROID_HOME:-}}"
           test -n "$android_sdk"
           printf 'sdk.dir=%s\nflutter.sdk=%s\n' \
             "$android_sdk" "$flutter_sdk" \
-            > mobile_app/android/local.properties
-          gradle \
-            --project-dir mobile_app/android \
-            wrapper \
-            --gradle-version 8.14 \
-            --distribution-type all
-          chmod +x mobile_app/android/gradlew
+            > apps/aquacyd_service/android/local.properties
+          chmod +x apps/aquacyd_service/android/gradlew
       - name: Resolve Flutter dependencies
-        working-directory: mobile_app
+        working-directory: apps/aquacyd_service
         run: flutter pub get
+      - name: Check Dart formatting
+        shell: bash
+        run: |
+          set -euo pipefail
+          git ls-files -z -- '*.dart' |
+            xargs -0 dart format --output=none --set-exit-if-changed
+      - name: Analyze and test shared Dart packages
+        shell: bash
+        run: |
+          set -euo pipefail
+          for package in packages/*; do
+            test -f "$package/pubspec.yaml" || continue
+            (
+              cd "$package"
+              flutter pub get
+              flutter analyze
+              if [[ -d test ]]; then
+                flutter test
+              fi
+            )
+          done
       - name: Analyze Flutter
-        working-directory: mobile_app
+        working-directory: apps/aquacyd_service
         run: flutter analyze
       - name: Run Flutter tests
-        working-directory: mobile_app
+        working-directory: apps/aquacyd_service
         run: flutter test --coverage
+      - name: Validate Home Control application
+        working-directory: apps/home_control
+        run: |
+          flutter pub get
+          flutter analyze
+          flutter test --coverage
+          flutter build web --release
+          flutter build apk --debug
       - name: Run Android unit tests
-        working-directory: mobile_app/android
+        working-directory: apps/aquacyd_service/android
         run: ./gradlew testCurrentDebugUnitTest --no-daemon --console=plain
       - name: Compile release variant with disposable identity
-        working-directory: mobile_app
+        working-directory: apps/aquacyd_service
         run: >
           flutter build apk
           --release
@@ -261,7 +444,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          apk="mobile_app/build/app/outputs/flutter-apk/app-current-release.apk"
+          apk="apps/aquacyd_service/build/app/outputs/flutter-apk/app-current-release.apk"
           build_tools="${ANDROID_SDK_ROOT:-$ANDROID_HOME}/build-tools"
           aapt_path="$(
             find "$build_tools" -type f -name aapt -print |
@@ -282,7 +465,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          signed="mobile_app/build/app/outputs/flutter-apk/app-current-release.apk"
+          signed="apps/aquacyd_service/build/app/outputs/flutter-apk/app-current-release.apk"
           unpacked="$RUNNER_TEMP/aquacyd-apk-unpacked"
           output="artifacts/AquaCYD-Control-ci-current-unsigned.apk"
           test -s "$signed"
@@ -308,16 +491,46 @@ jobs:
             exit 1
           fi
           sha256sum "$output" > "$output.sha256"
-          rm -f "$signed" mobile_app/android/key.properties \
+          rm -f "$signed" apps/aquacyd_service/android/key.properties \
             "$RUNNER_TEMP/aquacyd-ci-validation.jks"
+      - name: Generate validation CycloneDX SBOMs
+        shell: bash
+        run: |
+          set -euo pipefail
+          mobile_version="$(
+            sed -n 's/^version: \([0-9][0-9.]*\)+[0-9][0-9]*$/\1/p' \
+              apps/aquacyd_service/pubspec.yaml
+          )"
+          home_version="$(
+            sed -n 's/^version: \([0-9][0-9.]*\)+[0-9][0-9]*$/\1/p' \
+              apps/home_control/pubspec.yaml
+          )"
+          test -n "$mobile_version"
+          test -n "$home_version"
+          cp \
+            apps/home_control/build/app/outputs/flutter-apk/app-debug.apk \
+            artifacts/Home-Control-ci-debug.apk
+          sha256sum artifacts/Home-Control-ci-debug.apk \
+            > artifacts/Home-Control-ci-debug.apk.sha256
+          python tools/generate_sbom.py \
+            --kind mobile \
+            --version "$mobile_version" \
+            --artifact artifacts/AquaCYD-Control-ci-current-unsigned.apk \
+            --output artifacts/AquaCYD-Control-ci.cdx.json
+          python tools/generate_sbom.py \
+            --kind home \
+            --version "$home_version" \
+            --artifact artifacts/Home-Control-ci-debug.apk \
+            --output artifacts/Home-Control-ci.cdx.json
       - name: Upload Flutter coverage and Android test reports
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: flutter-test-reports
           path: |
-            mobile_app/coverage/lcov.info
-            mobile_app/build/reports/tests/
+            apps/aquacyd_service/coverage/lcov.info
+            apps/aquacyd_service/build/reports/tests/
+            apps/home_control/coverage/lcov.info
           if-no-files-found: warn
           retention-days: 14
       - name: Upload unsigned validation APK
@@ -327,9 +540,72 @@ jobs:
           path: artifacts/AquaCYD-Control-ci-current-unsigned.apk*
           if-no-files-found: error
           retention-days: 7
+      - name: Upload validation SBOMs
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: validation-sboms
+          path: artifacts/*.cdx.json
+          if-no-files-found: error
+          retention-days: 14
+      - name: Upload Home Control debug APK
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: home-control-android-debug
+          path: artifacts/Home-Control-ci-debug.apk*
+          if-no-files-found: error
+          retention-days: 7
+
+  home-windows:
+    name: Home Control Windows installer
+    needs: changes
+    if: needs.changes.outputs.home == 'true'
+    runs-on: windows-2025
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2 # v2.23.0
+        with:
+          flutter-version: "3.41.5"
+          channel: stable
+          cache: true
+      - name: Install pinned Inno Setup
+        id: inno
+        shell: pwsh
+        run: |
+          $compiler = ./scripts/install_inno_setup.ps1
+          "compiler=$compiler" >> $env:GITHUB_OUTPUT
+      - name: Build release bundle and installer wizard
+        shell: pwsh
+        run: |
+          ./scripts/build_home_control_windows.ps1 `
+            -InnoCompiler '${{ steps.inno.outputs.compiler }}' `
+            -OutputDirectory artifacts/home-control-windows
+      - name: Smoke-test silent install and uninstall
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $setup = @(Get-ChildItem `
+            -LiteralPath artifacts/home-control-windows `
+            -Filter '*-Setup.exe' `
+            -File)
+          if ($setup.Count -ne 1) {
+            throw "Expected exactly one Windows Setup; got $($setup.Count)."
+          }
+          ./scripts/test_home_control_windows_installer.ps1 `
+            -InstallerPath $setup.FullName `
+            -InstallDirectory (Join-Path $env:RUNNER_TEMP 'Home Control smoke')
+      - name: Upload Windows installer
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: home-control-windows-installer
+          path: artifacts/home-control-windows/*-Setup.exe
+          if-no-files-found: error
+          retention-days: 7
 
   flutter-emulator-smoke:
     name: Android notification smoke (API 35)
+    needs: changes
+    if: needs.changes.outputs.service == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 35
     steps:
@@ -365,24 +641,34 @@ jobs:
             printf 'keyPassword=emulator-validation-only\n'
             printf 'keyAlias=emulator-validation\n'
             printf 'storeFile=%s\n' "$key_path"
-          } > mobile_app/android/key.properties
+          } > apps/aquacyd_service/android/key.properties
           flutter_sdk="$(dirname "$(dirname "$(command -v flutter)")")"
           android_sdk="${ANDROID_SDK_ROOT:-${ANDROID_HOME:-}}"
           test -n "$android_sdk"
           printf 'sdk.dir=%s\nflutter.sdk=%s\n' \
             "$android_sdk" "$flutter_sdk" \
-            > mobile_app/android/local.properties
-          gradle \
-            --project-dir mobile_app/android \
-            wrapper \
-            --gradle-version 8.14 \
-            --distribution-type all
-          chmod +x mobile_app/android/gradlew
+            > apps/aquacyd_service/android/local.properties
+          chmod +x apps/aquacyd_service/android/gradlew
           (
-            cd mobile_app
+            cd apps/aquacyd_service
             flutter pub get
             flutter test test/notification_intents_test.dart
           )
+          for attempt in 1 2 3; do
+            if (
+              cd apps/aquacyd_service/android
+              ./gradlew --version --no-daemon
+            ); then
+              break
+            fi
+            if [[ "$attempt" -eq 3 ]]; then
+              echo "Gradle wrapper bootstrap failed after $attempt attempts" >&2
+              exit 1
+            fi
+            delay_seconds=$((attempt * 10))
+            echo "Gradle wrapper bootstrap failed; retrying in ${delay_seconds}s" >&2
+            sleep "$delay_seconds"
+          done
       - name: Enable Linux KVM for the Android emulator
         shell: bash
         run: |
@@ -400,8 +686,8 @@ jobs:
           arch: x86_64
           profile: pixel_7
           disable-animations: true
-          working-directory: mobile_app
-          script: bash ../tools/android-emulator-smoke.sh
+          working-directory: apps/aquacyd_service
+          script: bash ../../tools/android-emulator-smoke.sh
       - name: Upload Android emulator diagnostics
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2

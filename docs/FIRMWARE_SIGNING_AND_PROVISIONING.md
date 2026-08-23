@@ -3,7 +3,7 @@
 ## Łańcuch zaufania
 
 Produkcyjny tag firmware ma postać `firmware-vX.Y.Z`. Wartość `X.Y.Z` musi być
-identyczna z `FirmwareInfo::VERSION` w `include/config.h`. Ten sam kontrakt
+identyczna z `FirmwareInfo::VERSION` w `firmware/cyd_controller/include/config.h`. Ten sam kontrakt
 źródłowy definiuje:
 
 - `SECURITY_VERSION` — monotoniczną wersję bezpieczeństwa;
@@ -15,7 +15,7 @@ wolno jej zmniejszać ani ponownie używać po wycofaniu wersji.
 
 Publiczny klucz RSA-3072 znajduje się w
 `security/firmware-signing-public.pem`, a identyczny trust anchor jest kompilowany
-z `include/firmware_trust_anchor.h`.
+z `firmware/cyd_controller/include/firmware_trust_anchor.h`.
 
 ```text
 keyId: 9470c281de5f898f
@@ -108,7 +108,7 @@ Poniższe polecenia są bezpieczne i nie modyfikują urządzenia:
 python scripts/validate_release.py --self-test
 python scripts/validate_release.py `
   --tag firmware-v5.1.0 `
-  --firmware-config include/config.h `
+  --firmware-config firmware/cyd_controller/include/config.h `
   --dry-run
 python scripts/verify_firmware_trust.py
 python tools/firmware_package.py self-test

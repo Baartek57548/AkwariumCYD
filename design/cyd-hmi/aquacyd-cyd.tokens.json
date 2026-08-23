@@ -1,0 +1,46 @@
+{
+  "meta": {
+    "name": "AquaCYD ESP32-CYD UI",
+    "version": "1.0.0",
+    "frameWidth": 320,
+    "frameHeight": 240,
+    "baseGrid": 2
+  },
+  "color": {
+    "canvas": "#07101F",
+    "surface": "#0D192C",
+    "card": "#142238",
+    "elevated": "#1B2D48",
+    "border": "#29405F",
+    "text": "#F4F8FF",
+    "muted": "#91A8C7",
+    "accent": "#4D8DFF",
+    "info": "#68C5FF",
+    "success": "#5CDBA2",
+    "warning": "#FFB45C",
+    "danger": "#FF6878"
+  },
+  "radius": {
+    "chip": 5,
+    "button": 8,
+    "card": 10
+  },
+  "size": {
+    "statusBarHeight": 25,
+    "contentHeight": 180,
+    "navigationHeight": 35,
+    "touchMinimum": 40
+  },
+  "font": {
+    "family": "Montserrat",
+    "caption": 10,
+    "body": 12,
+    "section": 14,
+    "metric": 24
+  },
+  "motion": {
+    "pressMs": 90,
+    "notificationEnterMs": 300,
+    "notificationHoldMs": 2000
+  }
+}

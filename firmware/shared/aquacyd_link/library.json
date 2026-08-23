@@ -1,0 +1,9 @@
+{
+  "name": "aquacyd_link",
+  "version": "1.0.0",
+  "description": "Bounded binary protocol shared by AquaCYD controllers, ESP-NOW gateways and HMI panels",
+  "build": {
+    "includeDir": "include",
+    "srcDir": "src"
+  }
+}

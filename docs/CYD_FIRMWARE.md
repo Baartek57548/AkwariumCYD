@@ -43,37 +43,37 @@ nie mają wewnętrznych rezystorów podciągających.
 Kompilacja produkcyjna dla standardowego CYD z ILI9341:
 
 ```powershell
-pio run -e esp32dev
+pio run -d firmware/cyd_controller -e esp32dev
 ```
 
 Kompilacja i wgranie przez USB:
 
 ```powershell
-pio run -e esp32dev -t upload
+pio run -d firmware/cyd_controller -e esp32dev -t upload
 pio device monitor -b 115200
 ```
 
 Profil deweloperski z symulowanymi czujnikami i rozszerzonym logowaniem:
 
 ```powershell
-pio run -e esp32dev-dev
+pio run -d firmware/cyd_controller -e esp32dev-dev
 ```
 
 Wariant płytki z panelem ST7789:
 
 ```powershell
-pio run -e esp32dev-st7789
+pio run -d firmware/cyd_controller -e esp32dev-st7789
 ```
 
 Testy logiki domenowej na komputerze:
 
 ```powershell
-pio test -e native
+pio test -d firmware/cyd_controller -e native
 ```
 
 Gotowy obraz produkcyjny powstaje w
-`.pio/build/esp32dev/firmware.bin`. Przed wgraniem profilu ST7789 należy
-użyć obrazu z `.pio/build/esp32dev-st7789/firmware.bin`.
+`firmware/cyd_controller/.pio/build/esp32dev/firmware.bin`. Przed wgraniem profilu ST7789 należy
+użyć obrazu z `firmware/cyd_controller/.pio/build/esp32dev-st7789/firmware.bin`.
 
 ## Wyświetlacz i dotyk
 

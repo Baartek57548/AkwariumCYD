@@ -85,7 +85,7 @@ Po buildzie usuwa materializowane pliki również przy błędzie.
 
 ## Wydanie aplikacji
 
-1. Zwiększ `version: X.Y.Z+N` w `mobile_app/pubspec.yaml`.
+1. Zwiększ `version: X.Y.Z+N` w `apps/aquacyd_service/pubspec.yaml`.
 2. Upewnij się, że cały CI jest zielony.
 3. Utwórz podpisany lub chroniony tag `mobile-vX.Y.Z` na zweryfikowanym commicie.
 4. Workflow sprawdzi tag względem pubspec, zweryfikuje konfigurację
@@ -98,10 +98,37 @@ Nazwa APK musi być dokładnie
 `AquaCYD-Control-X.Y.Z-current.apk`. Istniejące wydanie nie jest nadpisywane.
 Zmiana gotowego pliku wymaga nowego numeru wersji i tagu.
 
+## Wydanie aplikacji Home Control
+
+1. Zwiększ `version: X.Y.Z+N` w `apps/home_control/pubspec.yaml`.
+2. Uruchom analizę, testy oraz kompilację web, Android i Windows.
+3. Scal zweryfikowany commit do `main`, a następnie utwórz na nim tag
+   `home-vX.Y.Z`.
+4. Workflow Windows zbuduje pełny bundle `HomeControl.exe`, dwujęzyczny Setup i
+   wykona cichą instalację, start oraz deinstalację; po jego sukcesie chroniony
+   job Android zbuduje niezależny pakiet `pl.aquacyd.aquacyd_home` tym samym
+   certyfikatem właściciela.
+5. Walidator potwierdzi package, wersję, pojedynczego sygnatariusza i publiczny
+   fingerprint certyfikatu.
+6. Release publikuje `Home-Control-X.Y.Z.apk`,
+   `Home-Control-X.Y.Z-Windows-x64-Setup.exe`, `SHA256SUMS`,
+   `release-manifest.json`, wspólny CycloneDX SBOM oraz atestacje pochodzenia.
+
+Tag musi wskazywać commit osiągalny z aktualnego `origin/main`.
+Workflow odmawia nadpisania istniejącego wydania i nie ustawia Home Control jako
+„Latest”, dzięki czemu głównym wydaniem pozostaje AquaCYD Control.
+
+Windows Setup wymaga Windows 10 build 18362 lub nowszego i instaluje aplikację do
+profilu bieżącego użytkownika. Jeżeli brakuje VC++ Runtime x64, kreator uruchamia
+dołączony, podpisany redystrybutor Microsoft; ten krok może wyświetlić systemową
+prośbę UAC o uprawnienia administratora. Do czasu
+dostarczenia chronionego certyfikatu Authenticode Setup pozostaje jawnie
+niepodpisany; SHA-256, manifest, SBOM i GitHub provenance są obowiązkowe.
+
 ## Wydanie firmware
 
 1. Zakończ test na obu profilach ekranu oraz na stanowisku HIL.
-2. Zwiększ `FirmwareInfo::VERSION` w `include/config.h`. Jeśli wydanie wycofuje
+2. Zwiększ `FirmwareInfo::VERSION` w `firmware/cyd_controller/include/config.h`. Jeśli wydanie wycofuje
    starszy, poprawnie podpisany obraz, zwiększ również
    `FirmwareInfo::SECURITY_VERSION`.
 3. Po scaleniu zmian do `main` utwórz chroniony tag `firmware-vX.Y.Z` zgodny
@@ -143,7 +170,7 @@ python tools/hil/runner.py --dry-run
 actionlint
 npm ci
 npm run test:api
-pio test --environment native
+pio test --project-dir firmware/cyd_controller --environment native
 ```
 
 Self-test i dry-run nie zapisują eFuse ani nie wysyłają żądań do urządzenia.

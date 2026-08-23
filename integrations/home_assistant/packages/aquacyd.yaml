@@ -1,0 +1,426 @@
+input_number:
+  aquacyd_override_minutes:
+    name: AquaCYD - czas sterowania ręcznego
+    icon: mdi:timer-cog-outline
+    min: 1
+    max: 1440
+    step: 1
+    initial: 15
+    mode: box
+    unit_of_measurement: min
+
+  aquacyd_feeding_minutes:
+    name: AquaCYD - czas trybu karmienia
+    icon: mdi:fish
+    min: 1
+    max: 60
+    step: 1
+    initial: 10
+    mode: slider
+    unit_of_measurement: min
+
+script:
+  aquacyd_publish_command:
+    alias: AquaCYD - opublikuj bezpieczne polecenie
+    description: Wewnętrzna bramka komend z unikatowym identyfikatorem.
+    mode: parallel
+    max: 10
+    fields:
+      command_action:
+        name: Akcja
+        required: true
+        selector:
+          text: {}
+      command_target:
+        name: Cel
+        required: true
+        selector:
+          text: {}
+      command_value:
+        name: Wartość
+        required: true
+        selector:
+          number:
+            min: -2147483648
+            max: 2147483647
+            mode: box
+      command_duration_ms:
+        name: Czas w milisekundach
+        required: true
+        selector:
+          number:
+            min: 0
+            max: 4294967295
+            mode: box
+    variables:
+      command_id: >-
+        {%- set digits = "0123456789abcdef" -%}
+        {%- set ns = namespace(value="") -%}
+        {%- for unused in range(16) -%}
+          {%- set ns.value = ns.value ~ (digits | list | random) -%}
+        {%- endfor -%}
+        {{- ns.value -}}
+    sequence:
+      - action: mqtt.publish
+        data:
+          topic: aquacyd/aquarium/command/set
+          qos: 1
+          retain: false
+          payload: >-
+            {{ {
+              "command_id": command_id,
+              "action": command_action,
+              "target": command_target,
+              "value": command_value | int,
+              "duration_ms": command_duration_ms | int,
+              "expected_revision": 0
+            } | to_json }}
+
+  aquacyd_light_on:
+    alias: AquaCYD - włącz światło czasowo
+    icon: mdi:lightbulb-on
+    mode: single
+    sequence:
+      - action: script.aquacyd_publish_command
+        data:
+          command_action: set_output
+          command_target: light_primary
+          command_value: 1
+          command_duration_ms: >-
+            {{ (states("input_number.aquacyd_override_minutes") | int(15)) * 60000 }}
+
+  aquacyd_light_off:
+    alias: AquaCYD - wyłącz światło czasowo
+    icon: mdi:lightbulb-off
+    mode: single
+    sequence:
+      - action: script.aquacyd_publish_command
+        data:
+          command_action: set_output
+          command_target: light_primary
+          command_value: 0
+          command_duration_ms: >-
+            {{ (states("input_number.aquacyd_override_minutes") | int(15)) * 60000 }}
+
+  aquacyd_plant_light_on:
+    alias: AquaCYD - włącz światło roślinne czasowo
+    icon: mdi:sprout
+    mode: single
+    sequence:
+      - action: script.aquacyd_publish_command
+        data:
+          command_action: set_output
+          command_target: light_secondary
+          command_value: 1
+          command_duration_ms: >-
+            {{ (states("input_number.aquacyd_override_minutes") | int(15)) * 60000 }}
+
+  aquacyd_plant_light_off:
+    alias: AquaCYD - wyłącz światło roślinne czasowo
+    icon: mdi:sprout-off
+    mode: single
+    sequence:
+      - action: script.aquacyd_publish_command
+        data:
+          command_action: set_output
+          command_target: light_secondary
+          command_value: 0
+          command_duration_ms: >-
+            {{ (states("input_number.aquacyd_override_minutes") | int(15)) * 60000 }}
+
+  aquacyd_filter_on:
+    alias: AquaCYD - włącz filtr czasowo
+    icon: mdi:air-filter
+    mode: single
+    sequence:
+      - action: script.aquacyd_publish_command
+        data:
+          command_action: set_output
+          command_target: filter
+          command_value: 1
+          command_duration_ms: >-
+            {{ (states("input_number.aquacyd_override_minutes") | int(15)) * 60000 }}
+
+  aquacyd_filter_off:
+    alias: AquaCYD - wyłącz filtr czasowo
+    icon: mdi:air-filter
+    mode: single
+    sequence:
+      - action: script.aquacyd_publish_command
+        data:
+          command_action: set_output
+          command_target: filter
+          command_value: 0
+          command_duration_ms: >-
+            {{ (states("input_number.aquacyd_override_minutes") | int(15)) * 60000 }}
+
+  aquacyd_aerator_on:
+    alias: AquaCYD - włącz napowietrzanie czasowo
+    icon: mdi:chart-bubble
+    mode: single
+    sequence:
+      - action: script.aquacyd_publish_command
+        data:
+          command_action: set_output
+          command_target: aerator
+          command_value: 1
+          command_duration_ms: >-
+            {{ (states("input_number.aquacyd_override_minutes") | int(15)) * 60000 }}
+
+  aquacyd_aerator_off:
+    alias: AquaCYD - wyłącz napowietrzanie czasowo
+    icon: mdi:chart-bubble
+    mode: single
+    sequence:
+      - action: script.aquacyd_publish_command
+        data:
+          command_action: set_output
+          command_target: aerator
+          command_value: 0
+          command_duration_ms: >-
+            {{ (states("input_number.aquacyd_override_minutes") | int(15)) * 60000 }}
+
+  aquacyd_start_feeding:
+    alias: AquaCYD - rozpocznij karmienie
+    icon: mdi:food-drumstick
+    mode: single
+    sequence:
+      - action: script.aquacyd_publish_command
+        data:
+          command_action: trigger_feed
+          command_target: feeder
+          command_value: 1
+          command_duration_ms: >-
+            {{ (states("input_number.aquacyd_feeding_minutes") | int(10)) * 60000 }}
+
+  aquacyd_request_snapshot:
+    alias: AquaCYD - odśwież stan
+    icon: mdi:refresh
+    mode: single
+    sequence:
+      - action: script.aquacyd_publish_command
+        data:
+          command_action: request_snapshot
+          command_target: controller
+          command_value: 0
+          command_duration_ms: 0
+
+  aquacyd_save_schedule:
+    alias: AquaCYD - zapisz harmonogram CYD
+    description: >-
+      Zapisuje jeden kompletny harmonogram. Walidacja i atomowy zapis są
+      wykonywane przez sterownik CYD.
+    icon: mdi:calendar-clock
+    mode: single
+    fields:
+      schedule_target:
+        name: Urządzenie
+        required: true
+        selector:
+          select:
+            options:
+              - label: Światło główne
+                value: light_primary
+              - label: Światło roślinne
+                value: light_secondary
+              - label: Filtr
+                value: filter
+              - label: Napowietrzanie
+                value: aerator
+      schedule_mode:
+        name: Tryb
+        required: true
+        selector:
+          select:
+            options:
+              - label: Harmonogram
+                value: schedule
+              - label: Zawsze włączone
+                value: always_on
+              - label: Zawsze wyłączone
+                value: always_off
+      schedule_profile:
+        name: Profil lampy
+        description: Dla filtra i napowietrzania wartość jest ignorowana.
+        required: true
+        default: auto
+        selector:
+          select:
+            options:
+              - label: Cykl automatyczny
+                value: auto
+              - label: Day
+                value: day
+              - label: Daybreak
+                value: daybreak
+              - label: Night
+                value: night
+      schedule_start:
+        name: Początek
+        required: true
+        selector:
+          time: {}
+      schedule_end:
+        name: Koniec
+        required: true
+        selector:
+          time: {}
+    variables:
+      encoded_mode: >-
+        {% if schedule_mode == "always_on" %}1
+        {% elif schedule_mode == "always_off" %}2
+        {% else %}0{% endif %}
+      encoded_profile: >-
+        {% if schedule_profile == "day" %}1
+        {% elif schedule_profile == "daybreak" %}2
+        {% elif schedule_profile == "night" %}3
+        {% else %}0{% endif %}
+      start_parts: "{{ schedule_start.split(':') }}"
+      end_parts: "{{ schedule_end.split(':') }}"
+      start_minute: >-
+        {{ (start_parts[0] | int) * 60 + (start_parts[1] | int) }}
+      end_minute: >-
+        {{ (end_parts[0] | int) * 60 + (end_parts[1] | int) }}
+    sequence:
+      - action: script.aquacyd_publish_command
+        data:
+          command_action: set_schedule
+          command_target: "{{ schedule_target }}"
+          command_value: >-
+            {{ (encoded_mode | int) + (encoded_profile | int) * 256 }}
+          command_duration_ms: >-
+            {{ (start_minute | int) + (end_minute | int) * 65536 }}
+
+  aquacyd_save_thermostat:
+    alias: AquaCYD - zapisz termostat CYD
+    description: >-
+      Zapisuje tryb, temperaturę docelową i histerezę po walidacji w CYD.
+    icon: mdi:thermostat-cog
+    mode: single
+    fields:
+      heater_mode:
+        name: Tryb grzałki
+        required: true
+        selector:
+          select:
+            options:
+              - label: Regulacja progowa
+                value: threshold
+              - label: Wyłączona
+                value: "off"
+      target_temperature:
+        name: Temperatura docelowa
+        required: true
+        selector:
+          number:
+            min: 18
+            max: 30
+            step: 0.1
+            unit_of_measurement: °C
+            mode: box
+      temperature_hysteresis:
+        name: Histereza
+        required: true
+        selector:
+          number:
+            min: 0.1
+            max: 5
+            step: 0.1
+            unit_of_measurement: °C
+            mode: box
+    variables:
+      encoded_heater_mode: >-
+        {{ 2147483648 if heater_mode == "off" else 0 }}
+    sequence:
+      - action: script.aquacyd_publish_command
+        data:
+          command_action: set_setpoint
+          command_target: heater
+          command_value: >-
+            {{ (target_temperature | float * 1000) | round(0) | int }}
+          command_duration_ms: >-
+            {{ (encoded_heater_mode | int) +
+               ((temperature_hysteresis | float * 1000) | round(0) | int) }}
+
+automation:
+  - id: aquacyd_controller_availability
+    alias: AquaCYD - dostępność sterownika
+    mode: restart
+    triggers:
+      - trigger: mqtt
+        topic: aquacyd/aquarium/availability
+    actions:
+      - choose:
+          - conditions:
+              - condition: template
+                value_template: "{{ trigger.payload == 'offline' }}"
+            sequence:
+              - delay:
+                  seconds: 30
+              - action: persistent_notification.create
+                data:
+                  notification_id: aquacyd_controller_offline
+                  title: AquaCYD jest offline
+                  message: >-
+                    Bramka C6 nie odbiera telemetrii sterownika. Automatyka
+                    lokalna CYD nadal działa, ale sprawdź zasilanie, kanał
+                    2,4 GHz i zasięg ESP-NOW.
+        default:
+          - condition: template
+            value_template: "{{ trigger.payload == 'online' }}"
+          - action: persistent_notification.dismiss
+            data:
+              notification_id: aquacyd_controller_offline
+
+  - id: aquacyd_leak_detected
+    alias: AquaCYD - wykryto wyciek
+    mode: single
+    triggers:
+      - trigger: state
+        entity_id: binary_sensor.aquacyd_aquarium_leak
+        to: "on"
+    actions:
+      - action: persistent_notification.create
+        data:
+          notification_id: aquacyd_leak
+          title: AquaCYD wykrył wyciek
+          message: >-
+            CYD uruchomił lokalną procedurę bezpieczeństwa. Sprawdź akwarium
+            przed ponownym włączeniem urządzeń.
+
+  - id: aquacyd_water_level_low
+    alias: AquaCYD - niski poziom wody
+    mode: single
+    triggers:
+      - trigger: state
+        entity_id: binary_sensor.aquacyd_aquarium_water_low
+        to: "on"
+        for: "00:00:10"
+    actions:
+      - action: persistent_notification.create
+        data:
+          notification_id: aquacyd_water_low
+          title: AquaCYD - niski poziom wody
+          message: >-
+            Poziom wody pozostaje niski co najmniej 10 sekund. Sprawdź
+            akwarium i układ dolewki.
+
+  - id: aquacyd_command_transport_timeout
+    alias: AquaCYD - brak potwierdzenia polecenia
+    mode: queued
+    max: 5
+    triggers:
+      - trigger: mqtt
+        topic: aquacyd/aquarium/command/ack
+    conditions:
+      - condition: template
+        value_template: >-
+          {{ trigger.payload_json.transport_timeout | default(false) }}
+    actions:
+      - action: persistent_notification.create
+        data:
+          notification_id: aquacyd_command_timeout
+          title: AquaCYD nie potwierdził polecenia
+          message: >-
+            Polecenie {{ trigger.payload_json.command_id | default("nieznane") }}
+            nie uzyskało odpowiedzi CYD. Sprawdź bramkę C6 i łącze ESP-NOW.

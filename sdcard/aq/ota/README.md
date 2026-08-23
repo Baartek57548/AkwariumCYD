@@ -23,4 +23,4 @@ version.txt
 ```
 
 Firmware wymaga poprawnego PIN-u przed zamknieciem portalu albo startem OTA.
-Aktualny PIN domyslny jest zdefiniowany w `include/config.h`.
+Aktualny PIN domyślny jest zdefiniowany w `firmware/cyd_controller/include/config.h`.
