@@ -17,7 +17,7 @@ dependencies:
   file_picker: ^11.0.2
   connectivity_plus: ^7.3.1
   crypto: ^3.0.7
-  firebase_core: ^4.12.1
+  firebase_core: ^4.13.0
   firebase_messaging: ^16.4.3
   flutter_local_notifications: ^22.2.0
   flutter_reactive_ble: ^5.5.0
