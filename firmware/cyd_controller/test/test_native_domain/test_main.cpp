@@ -1445,6 +1445,186 @@ static void test_aquahub_automation_evaluates_condition_and_cooldown() {
                         2U));
 }
 
+static void test_ato_runtime_safety_limit_enforced_during_manual_override() {
+    aquarium::ControlModeManager modes;
+    aquarium::RuntimeLimiter ato_limiter;
+
+    const uint32_t start_ms = 1000U;
+    const uint32_t limit_ms = 120000U; // 120 seconds ATO limit
+
+    // Automatic demand is false
+    const bool auto_water_fill = false;
+
+    // User enables manual override for water dosing (ATO pump)
+    TEST_ASSERT_EQUAL_UINT8(
+        static_cast<uint8_t>(aquarium::ControlModeResult::Applied),
+        static_cast<uint8_t>(modes.set_override(
+            aquarium::OutputTarget::WaterDosing, true, 3600U, start_ms)));
+
+    // Verify manual override forces candidate to true
+    bool candidate = modes.resolve(aquarium::OutputTarget::WaterDosing, auto_water_fill, start_ms);
+    TEST_ASSERT_TRUE(candidate);
+
+    // Initial evaluation: pump turns ON and starts tracking runtime
+    bool tripped = false;
+    bool on = ato_limiter.update(candidate, start_ms, limit_ms, &tripped);
+    TEST_ASSERT_TRUE(on);
+    TEST_ASSERT_FALSE(tripped);
+    TEST_ASSERT_EQUAL_UINT32(start_ms, ato_limiter.started_ms);
+
+    // Mid-run: pump is still allowed ON, start timer is NOT reset
+    on = ato_limiter.update(candidate, start_ms + 60000U, limit_ms, &tripped);
+    TEST_ASSERT_TRUE(on);
+    TEST_ASSERT_FALSE(tripped);
+    TEST_ASSERT_EQUAL_UINT32(start_ms, ato_limiter.started_ms);
+
+    // Just before limit: still allowed
+    on = ato_limiter.update(candidate, start_ms + limit_ms - 1U, limit_ms, &tripped);
+    TEST_ASSERT_TRUE(on);
+    TEST_ASSERT_FALSE(tripped);
+
+    // Limit exceeded: actuator MUST be cut off and limit tripped/latched
+    on = ato_limiter.update(candidate, start_ms + limit_ms, limit_ms, &tripped);
+    TEST_ASSERT_FALSE(on);
+    TEST_ASSERT_TRUE(tripped);
+    TEST_ASSERT_TRUE(ato_limiter.limit_latched);
+
+    // Subsequent evaluations: manual override is STILL true, but actuator remains forced OFF
+    candidate = modes.resolve(aquarium::OutputTarget::WaterDosing, auto_water_fill, start_ms + limit_ms + 10000U);
+    TEST_ASSERT_TRUE(candidate);
+    on = ato_limiter.update(candidate, start_ms + limit_ms + 10000U, limit_ms, &tripped);
+    TEST_ASSERT_FALSE(on);
+    TEST_ASSERT_FALSE(tripped); // tripped only pulses once upon transition
+    TEST_ASSERT_TRUE(ato_limiter.limit_latched);
+
+    // Clear latch (e.g. high float switch trip or manual reset)
+    ato_limiter.clear_latch();
+    TEST_ASSERT_FALSE(ato_limiter.limit_latched);
+    TEST_ASSERT_EQUAL_UINT32(0U, ato_limiter.started_ms);
+}
+
+static void test_co2_runtime_safety_limit_enforced_during_manual_override() {
+    aquarium::ControlModeManager modes;
+    aquarium::RuntimeLimiter co2_limiter;
+
+    const uint32_t start_ms = 5000U;
+    const uint32_t limit_ms = 540U * 60000UL; // 540 minutes CO2 limit
+
+    // Automatic demand is false
+    const bool auto_co2 = false;
+
+    // User enables manual override for CO2
+    TEST_ASSERT_EQUAL_UINT8(
+        static_cast<uint8_t>(aquarium::ControlModeResult::Applied),
+        static_cast<uint8_t>(modes.set_override(
+            aquarium::OutputTarget::Co2, true, 86400U, start_ms)));
+
+    bool candidate = modes.resolve(aquarium::OutputTarget::Co2, auto_co2, start_ms);
+    TEST_ASSERT_TRUE(candidate);
+
+    // Initial evaluation
+    bool tripped = false;
+    bool on = co2_limiter.update(candidate, start_ms, limit_ms, &tripped);
+    TEST_ASSERT_TRUE(on);
+    TEST_ASSERT_FALSE(tripped);
+    TEST_ASSERT_EQUAL_UINT32(start_ms, co2_limiter.started_ms);
+
+    // Limit exceeded: actuator MUST be cut off and limit latched
+    on = co2_limiter.update(candidate, start_ms + limit_ms, limit_ms, &tripped);
+    TEST_ASSERT_FALSE(on);
+    TEST_ASSERT_TRUE(tripped);
+    TEST_ASSERT_TRUE(co2_limiter.limit_latched);
+
+    // Manual override cannot keep CO2 running past safety limit
+    on = co2_limiter.update(candidate, start_ms + limit_ms + 50000U, limit_ms, &tripped);
+    TEST_ASSERT_FALSE(on);
+    TEST_ASSERT_TRUE(co2_limiter.limit_latched);
+}
+
+static void test_feeding_schedule_trigger_succeeds_under_simulated_tick_jitter() {
+    aquarium::FeedingTriggerLatch latch;
+    const aquarium::TimeOfDay feeding_time = {14U, 0U}; // 14:00
+    const uint16_t target_minute = 14U * 60U;          // 840 minutes
+
+    // 13:59:59 - not feeding time yet
+    TEST_ASSERT_FALSE(latch.evaluate(target_minute - 1U, 59U, feeding_time, 1));
+    TEST_ASSERT_FALSE(aquarium::feeding_due(target_minute - 1U, 59U, feeding_time));
+
+    // Jitter occurrence: tick drifts past second 0, arrives at second 1 (14:00:01)
+    // Both feeding_due and FeedingTriggerLatch must recognize the trigger!
+    TEST_ASSERT_TRUE(aquarium::feeding_due(target_minute, 1U, feeding_time));
+    TEST_ASSERT_TRUE(latch.evaluate(target_minute, 1U, feeding_time, 1));
+
+    // Next tick at second 2 (14:00:02): latch prevents duplicate feeding
+    TEST_ASSERT_FALSE(latch.evaluate(target_minute, 2U, feeding_time, 1));
+
+    // Tick at second 59: still latched
+    TEST_ASSERT_FALSE(latch.evaluate(target_minute, 59U, feeding_time, 1));
+
+    // Next minute (14:01:00): not feeding time
+    TEST_ASSERT_FALSE(latch.evaluate(target_minute + 1U, 0U, feeding_time, 1));
+
+    // Next day at 14:00:03 (second 0 skipped again on day 2): successfully triggers!
+    TEST_ASSERT_TRUE(latch.evaluate(target_minute, 3U, feeding_time, 2));
+}
+
+static void test_runtime_limiter_boot_at_millis_zero_and_wraparound() {
+    aquarium::RuntimeLimiter limiter;
+    bool tripped = false;
+
+    // Boot at millis() == 0: must survive without false tripping
+    bool on = limiter.update(true, 0U, 5000U, &tripped);
+    TEST_ASSERT_TRUE(on);
+    TEST_ASSERT_FALSE(tripped);
+    TEST_ASSERT_FALSE(limiter.limit_latched);
+
+    // After 4999ms: still running
+    on = limiter.update(true, 4999U, 5000U, &tripped);
+    TEST_ASSERT_TRUE(on);
+    TEST_ASSERT_FALSE(tripped);
+
+    // At 5000ms: limit reached, cuts off and latches
+    on = limiter.update(true, 5000U, 5000U, &tripped);
+    TEST_ASSERT_FALSE(on);
+    TEST_ASSERT_TRUE(tripped);
+    TEST_ASSERT_TRUE(limiter.limit_latched);
+
+    // Unlatching
+    limiter.clear_latch();
+    TEST_ASSERT_FALSE(limiter.limit_latched);
+
+    // 32-bit wrap-around test across 0xFFFFFFFF
+    limiter.reset();
+    uint32_t start_ms = 0xFFFFFFF0U;
+    uint32_t limit_ms = 50U;
+    TEST_ASSERT_TRUE(limiter.update(true, start_ms, limit_ms, &tripped));
+    TEST_ASSERT_TRUE(limiter.update(true, 0xFFFFFFFEU, limit_ms, &tripped));
+    TEST_ASSERT_TRUE(limiter.update(true, 0x00000010U, limit_ms, &tripped));
+    // 0x25 - 0xFFFFFFF0 = 53 >= 50
+    bool on_wrap = limiter.update(true, 0x00000025U, limit_ms, &tripped);
+    TEST_ASSERT_FALSE(on_wrap);
+    TEST_ASSERT_TRUE(tripped);
+    TEST_ASSERT_TRUE(limiter.limit_latched);
+}
+
+static void test_feeding_schedule_day_latch_persists_across_minutes() {
+    aquarium::FeedingTriggerLatch latch;
+    const aquarium::TimeOfDay feeding_time = {14U, 0U};
+    const uint16_t target_minute = 14U * 60U; // 840
+
+    // Day 1: Trigger at 14:00
+    TEST_ASSERT_TRUE(latch.evaluate(target_minute, 0U, feeding_time, 100));
+
+    // Minute advances to 14:01 on Day 1
+    TEST_ASSERT_FALSE(latch.evaluate(target_minute + 1U, 0U, feeding_time, 100));
+
+    // Even if time matches target again on same day, day latch prevents repeat:
+    TEST_ASSERT_FALSE(latch.evaluate(target_minute, 0U, feeding_time, 100));
+
+    // Day 2 arrives (day_key 101): new day allows feeding to trigger again
+    TEST_ASSERT_TRUE(latch.evaluate(target_minute, 0U, feeding_time, 101));
+}
+
 int main(int, char **) {
     UNITY_BEGIN();
     RUN_TEST(test_regular_and_wrapped_windows);
@@ -1487,5 +1667,10 @@ int main(int, char **) {
     RUN_TEST(test_aquahub_registry_rejects_identity_conflict_and_replay);
     RUN_TEST(test_aquahub_registry_enforces_bounded_capacity);
     RUN_TEST(test_aquahub_automation_evaluates_condition_and_cooldown);
+    RUN_TEST(test_ato_runtime_safety_limit_enforced_during_manual_override);
+    RUN_TEST(test_co2_runtime_safety_limit_enforced_during_manual_override);
+    RUN_TEST(test_feeding_schedule_trigger_succeeds_under_simulated_tick_jitter);
+    RUN_TEST(test_runtime_limiter_boot_at_millis_zero_and_wraparound);
+    RUN_TEST(test_feeding_schedule_day_latch_persists_across_minutes);
     return UNITY_END();
 }

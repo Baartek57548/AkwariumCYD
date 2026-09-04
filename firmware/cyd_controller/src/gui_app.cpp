@@ -720,10 +720,18 @@ static lv_obj_t *diag_rtc_lbl = nullptr;
 static uint32_t boot_count_val = 0;
 static lv_obj_t *power_warning_lbl_global = nullptr;
 static lv_obj_t *power_state_lbl = nullptr;
-static lv_obj_t *screen_always_on_sw;
+static lv_obj_t *screen_always_on_sw = nullptr;
 static lv_obj_t *diag_dev_mode_sw = nullptr;
-static lv_obj_t *screen_manual_theme_sw;
-static lv_obj_t *screen_ldr_enable_sw;
+static lv_obj_t *screen_manual_theme_sw = nullptr;
+static lv_obj_t *screen_ldr_enable_sw = nullptr;
+static lv_obj_t *screen_theme_btn_dark = nullptr;
+static lv_obj_t *screen_theme_btn_light = nullptr;
+static lv_obj_t *screen_theme_btn_auto = nullptr;
+static lv_obj_t *screen_theme_desc_lbl = nullptr;
+static lv_obj_t *screen_brightness_slider = nullptr;
+static lv_obj_t *screen_brightness_val_lbl = nullptr;
+static lv_obj_t *screen_brightness_minus_btn = nullptr;
+static lv_obj_t *screen_brightness_plus_btn = nullptr;
 static lv_obj_t *log_list_normal = nullptr;
 static lv_obj_t *log_list_important = nullptr;
 static lv_obj_t *btn_log_normal = nullptr;
@@ -839,6 +847,7 @@ struct ScreenSnapshot {
     bool alwaysScreenOn;
     bool ldrThemeEnabled;
     bool manualLightTheme;
+    uint8_t brightness;
 };
 static ScreenSnapshot screen_snapshot;
 
@@ -1076,7 +1085,7 @@ constexpr uint32_t UI_PIN_INIT_MIN_FREE = 6000UL;
 constexpr uint32_t UI_PIN_INIT_MIN_LARGEST = 2048UL;
 constexpr uint32_t UI_RUNTIME_PIN_MIN_FREE = 6000UL;
 constexpr uint32_t UI_RUNTIME_PIN_MIN_LARGEST = 2048UL;
-constexpr uint32_t PIN_KEY_DEBOUNCE_MS = 70UL;
+constexpr uint32_t PIN_KEY_DEBOUNCE_MS = 180UL;
 constexpr char PIN_KEY_BACK[] = "DEL";
 constexpr char PIN_KEY_OK[] = "OK";
 constexpr uint16_t PIN_BACK_BTN_ID = 3;
@@ -1138,6 +1147,8 @@ static bool wifi_connect_pending = false;
 static bool ntp_sync_pending = false;
 static uint32_t ntp_sync_deadline_ms = 0U;
 static uint32_t ntp_result_until_ms = 0U;
+static uint32_t auto_ntp_sync_scheduled_ms = 0U;
+static uint32_t last_ntp_auto_sync_ms = 0U;
 static bool ota_http_upload_active = false;
 static uint32_t ota_reboot_at_ms = 0;
 static uint32_t ota_shutdown_at_ms = 0;
@@ -1795,6 +1806,25 @@ static bool sync_clock_from_ntp(uint32_t timeout_ms) {
 }
 
 static void service_ntp_sync(uint32_t now_ms) {
+    if (!wifi_connected) {
+        ntp_sync_pending = false;
+        auto_ntp_sync_scheduled_ms = 0U;
+        return;
+    }
+
+    // Auto NTP sync trigger (scheduled upon connection or periodic 6-hour refresh)
+    if (auto_ntp_sync_scheduled_ms != 0U) {
+        if (static_cast<int32_t>(now_ms - auto_ntp_sync_scheduled_ms) >= 0) {
+            auto_ntp_sync_scheduled_ms = 0U;
+            if (!ntp_sync_pending) {
+                sync_clock_from_ntp(15000U);
+            }
+        }
+    } else if (!ntp_sync_pending &&
+               (last_ntp_auto_sync_ms == 0U || static_cast<uint32_t>(now_ms - last_ntp_auto_sync_ms) >= 21600000UL)) {
+        sync_clock_from_ntp(15000U);
+    }
+
     if (!ntp_sync_pending) {
         if (ntp_result_until_ms != 0U &&
             static_cast<int32_t>(now_ms - ntp_result_until_ms) >= 0) {
@@ -1822,13 +1852,20 @@ static void service_ntp_sync(uint32_t now_ms) {
         const int minute = timeinfo.tm_min;
         const int second = timeinfo.tm_sec;
         if (clock_fields_valid(day, month, year, hour, minute, second)) {
+            GuiMutexGuard guard(100U);
             clock_year = year;
             clock_month = month;
             clock_day = day;
             clock_hour = hour;
             clock_minute = minute;
             clock_second = second;
+            main_reset_clock_tick(now_ms);
             success = gui_save_clock_settings(true, "ntp");
+            if (success) {
+                last_ntp_auto_sync_ms = now_ms;
+                Serial.printf("CLOCK: auto-NTP sync OK: %04d-%02d-%02d %02d:%02d:%02d\n",
+                              year, month, day, hour, minute, second);
+            }
         }
     }
 
@@ -1841,6 +1878,7 @@ static void service_ntp_sync(uint32_t now_ms) {
     ntp_result_until_ms = now_ms + 2500U;
     if (!success) {
         set_controller_clock_source(false, "ntp_err");
+        Serial.println("CLOCK: NTP sync failed or timed out.");
     }
     if (btn_sync_ntp_lbl_global != nullptr) {
         lv_label_set_text(btn_sync_ntp_lbl_global, success ? "Czas zapisany" : "Blad NTP");
@@ -2503,9 +2541,9 @@ static void gui_app_load_settings() {
 static const char *mode_label(uint8_t mode) {
     switch (static_cast<ScheduleMode>(mode)) {
     case ScheduleMode::AlwaysOn:
-        return "ON";
+        return "WL";
     case ScheduleMode::AlwaysOff:
-        return "OFF";
+        return "WYL";
     case ScheduleMode::Schedule:
     default:
         return "AUTO";
@@ -2561,6 +2599,17 @@ static const char *light_color_mode_label(uint8_t profile) {
         return "NIGHT";
     default:
         return "DAY";
+    }
+}
+
+static const char *light_color_mode_gui_label(uint8_t profile) {
+    switch (normalize_aquael_profile(profile)) {
+    case 1:
+        return "SWIT";
+    case 2:
+        return "NOC";
+    default:
+        return "DZIEN";
     }
 }
 
@@ -3583,7 +3632,7 @@ static void build_pin_guard_modal() {
     lv_obj_align(pin_matrix, LV_ALIGN_BOTTOM_MID, 0, -8);
     lv_btnmatrix_set_map(pin_matrix, pin_map);
     lv_btnmatrix_set_one_checked(pin_matrix, false);
-    lv_btnmatrix_set_btn_ctrl_all(pin_matrix, LV_BTNMATRIX_CTRL_NO_REPEAT);
+    lv_btnmatrix_set_btn_ctrl_all(pin_matrix, LV_BTNMATRIX_CTRL_CLICK_TRIG | LV_BTNMATRIX_CTRL_NO_REPEAT);
     lv_obj_add_event_cb(pin_matrix, pin_matrix_draw_cb, LV_EVENT_DRAW_PART_BEGIN, nullptr);
     lv_obj_add_event_cb(pin_matrix, pin_matrix_cb, LV_EVENT_VALUE_CHANGED, nullptr);
 
@@ -3678,7 +3727,6 @@ static void pin_matrix_cb(lv_event_t *e) {
     }
 
     const char *key = lv_btnmatrix_get_btn_text(matrix, btn_id);
-    lv_btnmatrix_set_selected_btn(matrix, LV_BTNMATRIX_BTN_NONE);
     if (key == nullptr || key[0] == '\0') {
         return;
     }
@@ -4330,14 +4378,14 @@ static uint8_t get_editor_hourly_mode(int hour) {
 static const char* hourly_mode_label(uint8_t val) {
     if (current_editor_device == ScheduleDevice::Light || current_editor_device == ScheduleDevice::PlantLight) {
         switch(val) {
-            case 0: return "OFF";
-            case 1: return "DAY";
-            case 2: return "DAYBR";
-            case 3: return "NIGHT";
-            default: return "OFF";
+            case 0: return "WYL";
+            case 1: return "DZIEN";
+            case 2: return "SWIT";
+            case 3: return "NOC";
+            default: return "WYL";
         }
     } else {
-        return val > 0 ? "ON" : "OFF";
+        return val > 0 ? "WL" : "WYL";
     }
 }
 
@@ -4666,12 +4714,14 @@ static void capture_screen_snapshot() {
     screen_snapshot.alwaysScreenOn = cfg.alwaysScreenOn;
     screen_snapshot.ldrThemeEnabled = cfg.ldrThemeEnabled;
     screen_snapshot.manualLightTheme = cfg.manualLightTheme;
+    screen_snapshot.brightness = display_max_brightness;
 }
 
 static bool is_screen_changed() {
     return screen_snapshot.alwaysScreenOn != cfg.alwaysScreenOn ||
            screen_snapshot.ldrThemeEnabled != cfg.ldrThemeEnabled ||
-           screen_snapshot.manualLightTheme != cfg.manualLightTheme;
+           screen_snapshot.manualLightTheme != cfg.manualLightTheme ||
+           screen_snapshot.brightness != display_max_brightness;
 }
 
 static void capture_sound_snapshot() {
@@ -4936,6 +4986,14 @@ static void reset_subpage_refs(ActiveSubpage subpage) {
         screen_manual_theme_sw = nullptr;
         screen_ldr_enable_sw = nullptr;
         diag_dev_mode_sw = nullptr;
+        screen_theme_btn_dark = nullptr;
+        screen_theme_btn_light = nullptr;
+        screen_theme_btn_auto = nullptr;
+        screen_theme_desc_lbl = nullptr;
+        screen_brightness_slider = nullptr;
+        screen_brightness_val_lbl = nullptr;
+        screen_brightness_minus_btn = nullptr;
+        screen_brightness_plus_btn = nullptr;
         break;
     case ActiveSubpage::Logs:
         subpage_logs = nullptr;
@@ -6893,20 +6951,24 @@ static void ota_portal_handle_root() {
     ota_portal_mark_web_activity();
     ota_portal_no_cache();
     if (ota_portal_sd_ready()) {
-        const bool use_gzip = ota_portal_client_accepts_gzip() && SD.exists("/aq/ota/index.html.gz");
-        const char *served_path = use_gzip ? "/aq/ota/index.html.gz" : OTA_PORTAL_INDEX_PATH;
-        File file = SD.open(served_path, FILE_READ);
-        if (file && !file.isDirectory()) {
-            if (use_gzip) {
-                ota_http_server.sendHeader("Content-Encoding", "gzip");
-                ota_http_server.sendHeader("Vary", "Accept-Encoding");
+        if (hal_sd_lock(1000U)) {
+            const bool use_gzip = ota_portal_client_accepts_gzip() && SD.exists("/aq/ota/index.html.gz");
+            const char *served_path = use_gzip ? "/aq/ota/index.html.gz" : OTA_PORTAL_INDEX_PATH;
+            File file = SD.open(served_path, FILE_READ);
+            if (file && !file.isDirectory()) {
+                if (use_gzip) {
+                    ota_http_server.sendHeader("Content-Encoding", "gzip");
+                    ota_http_server.sendHeader("Vary", "Accept-Encoding");
+                }
+                ota_http_server.streamFile(file, "text/html; charset=utf-8");
+                file.close();
+                hal_sd_unlock();
+                return;
             }
-            ota_http_server.streamFile(file, "text/html; charset=utf-8");
-            file.close();
-            return;
-        }
-        if (file) {
-            file.close();
+            if (file) {
+                file.close();
+            }
+            hal_sd_unlock();
         }
     }
     ota_http_server.send_P(200, "text/html; charset=utf-8", OTA_PORTAL_FALLBACK_INDEX);
@@ -9690,6 +9752,7 @@ static void wifi_check_timer_cb(lv_timer_t *timer) {
             wifi_retry_policy.on_connected();
             String ip_str = WiFi.localIP().toString();
             start_sta_service_portal();
+            auto_ntp_sync_scheduled_ms = millis() + 2500U;
 
             gui_app_update_wifi(1, wifi_rssi);
             const bool profile_save_attempted = pending_wifi_password_valid;
@@ -9790,6 +9853,7 @@ static void wifi_check_timer_cb(lv_timer_t *timer) {
         // Periodically monitor connection stability
         if (WiFi.status() != WL_CONNECTED) {
             wifi_connected = false;
+            auto_ntp_sync_scheduled_ms = 0U;
             wifi_rssi = 0;
             stop_ota_portal();
             gui_app_update_wifi(0, 0);
@@ -10426,6 +10490,63 @@ static void screen_manual_theme_handler(lv_event_t *e) {
     gui_app_save_settings();
 }
 
+static void screen_theme_btn_cb(lv_event_t *e) {
+    play_system_sound(SoundType::Click);
+    const int mode = static_cast<int>(reinterpret_cast<intptr_t>(lv_event_get_user_data(e)));
+    if (mode == 2) {
+        // Auto LDR
+        cfg.ldrThemeEnabled = true;
+        if (!cfg.devMode) {
+            const int ldr_val = analogRead(HwConfig::LDR_PIN);
+            bool should_be_light = ui_light_theme;
+            last_ldr_value = ldr_val;
+            last_ldr_valid = true;
+            if (ldr_value_to_light_theme(ldr_val, &should_be_light)) {
+                ui_light_theme = should_be_light;
+            }
+        }
+    } else if (mode == 1) {
+        // Manual Light
+        cfg.ldrThemeEnabled = false;
+        cfg.manualLightTheme = true;
+        ui_light_theme = true;
+        last_ldr_valid = false;
+    } else {
+        // Manual Dark
+        cfg.ldrThemeEnabled = false;
+        cfg.manualLightTheme = false;
+        ui_light_theme = false;
+        last_ldr_valid = false;
+    }
+    gui_app_save_settings();
+    rebuild_gui_tree_for_theme();
+}
+
+static void screen_brightness_slider_cb(lv_event_t *e) {
+    lv_obj_t *slider = lv_event_get_target(e);
+    const int val = clamp_u8(lv_slider_get_value(slider), 10, 100);
+    display_max_brightness = static_cast<uint8_t>(val);
+    apply_display_backlight(last_ldr_value, last_ldr_valid);
+    if (screen_brightness_val_lbl != nullptr) {
+        lv_label_set_text_fmt(screen_brightness_val_lbl, "%u%%", static_cast<unsigned>(display_max_brightness));
+    }
+}
+
+static void screen_brightness_step_cb(lv_event_t *e) {
+    play_system_sound(SoundType::Click);
+    const int step = static_cast<int>(reinterpret_cast<intptr_t>(lv_event_get_user_data(e)));
+    int new_val = static_cast<int>(display_max_brightness) + step;
+    new_val = constrain(new_val, 10, 100);
+    display_max_brightness = static_cast<uint8_t>(new_val);
+    apply_display_backlight(last_ldr_value, last_ldr_valid);
+    if (screen_brightness_slider != nullptr) {
+        lv_slider_set_value(screen_brightness_slider, display_max_brightness, LV_ANIM_OFF);
+    }
+    if (screen_brightness_val_lbl != nullptr) {
+        lv_label_set_text_fmt(screen_brightness_val_lbl, "%u%%", static_cast<unsigned>(display_max_brightness));
+    }
+}
+
 static void screen_ph_enable_handler(lv_event_t *e) {
     play_system_sound(SoundType::Click);
     lv_obj_t *obj = lv_event_get_target(e);
@@ -10647,7 +10768,7 @@ static void service_volume_slider_cb(lv_event_t *e) {
     lv_obj_t *slider = lv_event_get_target(e);
     musicVolume = lv_slider_get_value(slider);
     if (service_vol_lbl != nullptr) {
-        lv_label_set_text_fmt(service_vol_lbl, "Vol: %d0%%", musicVolume.load());
+        lv_label_set_text_fmt(service_vol_lbl, "Glosn: %d0%%", musicVolume.load());
     }
 }
 
@@ -10833,7 +10954,7 @@ static void build_status_bar() {
     lv_obj_set_style_text_align(label_date, LV_TEXT_ALIGN_CENTER, 0);
     lv_obj_align(label_date, LV_ALIGN_CENTER, 0, 0);
 
-    label_wifi_state = create_label(status_bar, "OFF", lv_color_make(148, 163, 184), &lv_font_montserrat_12);
+    label_wifi_state = create_label(status_bar, "WYL", lv_color_make(148, 163, 184), &lv_font_montserrat_12);
     lv_obj_set_width(label_wifi_state, 56);
     lv_label_set_long_mode(label_wifi_state, LV_LABEL_LONG_CLIP);
     lv_obj_set_style_text_align(label_wifi_state, LV_TEXT_ALIGN_CENTER, 0);
@@ -10925,18 +11046,18 @@ static lv_obj_t *create_home_feed_button(lv_obj_t *parent, lv_coord_t x, lv_coor
         lv_obj_add_event_cb(btn, cb, LV_EVENT_CLICKED, user_data);
     }
 
-    // Centered labels inside the button
-    lv_obj_t *title_lbl = create_label(btn, title, lv_color_make(100, 116, 139), &lv_font_montserrat_12);
+    // Centered labels inside the button, title in green
+    lv_obj_t *title_lbl = create_label(btn, title, lv_color_make(16, 185, 129), &lv_font_montserrat_12);
     lv_obj_set_width(title_lbl, static_cast<lv_coord_t>(w - 8));
     lv_label_set_long_mode(title_lbl, LV_LABEL_LONG_CLIP);
     lv_obj_set_style_text_align(title_lbl, LV_TEXT_ALIGN_CENTER, 0);
-    lv_obj_align(title_lbl, LV_ALIGN_TOP_MID, 0, 4);
+    lv_obj_align(title_lbl, LV_ALIGN_TOP_MID, 0, 3);
 
     lv_obj_t *val_lbl = create_label(btn, value, theme_text_main(), &lv_font_montserrat_12);
     lv_obj_set_width(val_lbl, static_cast<lv_coord_t>(w - 8));
     lv_label_set_long_mode(val_lbl, LV_LABEL_LONG_CLIP);
     lv_obj_set_style_text_align(val_lbl, LV_TEXT_ALIGN_CENTER, 0);
-    lv_obj_align(val_lbl, LV_ALIGN_BOTTOM_MID, 0, -4);
+    lv_obj_align(val_lbl, LV_ALIGN_BOTTOM_MID, 0, -3);
 
     if (value_label != nullptr) {
         *value_label = val_lbl;
@@ -10951,27 +11072,27 @@ static lv_obj_t *create_home_device_card(lv_obj_t *parent, lv_coord_t x, lv_coor
                                          lv_event_cb_t cb, void *user_data,
                                          lv_obj_t **state_label,
                                          lv_obj_t **detail_label) {
-    lv_obj_t *card = create_card(parent, w, 42, x, y);
+    lv_obj_t *card = create_card(parent, w, 38, x, y);
     lv_obj_set_style_pad_all(card, 4, 0);
-    create_accent_bar(card, accent, 26);
+    create_accent_bar(card, accent, 24);
     make_home_card_clickable(card, cb, user_data);
 
     lv_obj_t *icon_lbl = create_label(card, icon, accent, &lv_font_montserrat_14);
-    lv_obj_align(icon_lbl, LV_ALIGN_TOP_LEFT, 4, 0);
+    lv_obj_align(icon_lbl, LV_ALIGN_TOP_LEFT, 4, -1);
 
     lv_obj_t *title_lbl = create_label(card, title, theme_text_main(), &lv_font_montserrat_12);
     lv_obj_set_width(title_lbl, static_cast<lv_coord_t>(w - 34));
     lv_label_set_long_mode(title_lbl, LV_LABEL_LONG_DOT);
-    lv_obj_align(title_lbl, LV_ALIGN_TOP_LEFT, 24, 1);
+    lv_obj_align(title_lbl, LV_ALIGN_TOP_LEFT, 24, 0);
 
-    lv_obj_t *state_lbl = create_label(card, "[OFF]", theme_text_muted(), &lv_font_montserrat_12);
-    lv_obj_align(state_lbl, LV_ALIGN_BOTTOM_LEFT, 6, 1);
+    lv_obj_t *state_lbl = create_label(card, "[WYL]", theme_text_muted(), &lv_font_montserrat_12);
+    lv_obj_align(state_lbl, LV_ALIGN_BOTTOM_LEFT, 6, 0);
 
     lv_obj_t *detail_lbl = create_label(card, "AUTO", theme_text_muted(), &lv_font_montserrat_12);
     lv_obj_set_width(detail_lbl, static_cast<lv_coord_t>(w - 56));
     lv_label_set_long_mode(detail_lbl, LV_LABEL_LONG_CLIP);
     lv_obj_set_style_text_align(detail_lbl, LV_TEXT_ALIGN_RIGHT, 0);
-    lv_obj_align(detail_lbl, LV_ALIGN_BOTTOM_RIGHT, -5, 1);
+    lv_obj_align(detail_lbl, LV_ALIGN_BOTTOM_RIGHT, -5, 0);
 
     if (state_label != nullptr) {
         *state_label = state_lbl;
@@ -11001,9 +11122,11 @@ static void build_home_page() {
     home_air_state_lbl = nullptr;
     home_air_mode_lbl = nullptr;
 
-    lv_obj_t *temp_card = create_card(pages[0], 150, 86, 4, 4);
+    const lv_color_t color_water_cyan = lv_color_make(14, 165, 233);
+
+    lv_obj_t *temp_card = create_card(pages[0], 150, 82, 4, 6);
     lv_obj_set_style_pad_all(temp_card, 7, 0);
-    create_accent_bar(temp_card, theme_info(), 54);
+    create_accent_bar(temp_card, color_water_cyan, 50);
 
     lv_obj_t *temp_title = create_label(temp_card, "WODA", lv_color_make(100, 116, 139), &lv_font_montserrat_12);
     lv_obj_align(temp_title, LV_ALIGN_TOP_LEFT, 6, -1);
@@ -11012,69 +11135,69 @@ static void build_home_page() {
     lv_obj_align(home_temp_target_lbl, LV_ALIGN_TOP_RIGHT, -5, -1);
 
     home_temp_current = create_label(temp_card, "--.-", theme_text_main(), &lv_font_montserrat_24);
-    lv_obj_align(home_temp_current, LV_ALIGN_LEFT_MID, 7, 7);
+    lv_obj_align(home_temp_current, LV_ALIGN_LEFT_MID, 7, 5);
 
     lv_obj_t *temp_unit = create_label(
-        temp_card, "*C", theme_info(), &lv_font_montserrat_12);
-    lv_obj_align_to(temp_unit, home_temp_current, LV_ALIGN_OUT_RIGHT_BOTTOM, 4, -2);
+        temp_card, "*C", color_water_cyan, &lv_font_montserrat_12);
+    lv_obj_align(temp_unit, LV_ALIGN_LEFT_MID, 76, 9);
 
     home_temp_trend_lbl = create_label(temp_card, "Brak danych", theme_text_muted(), &lv_font_montserrat_12);
     lv_obj_align(home_temp_trend_lbl, LV_ALIGN_BOTTOM_LEFT, 7, 1);
 
     if (cfg.showPhSensor) {
-        lv_obj_t *ph_card = create_home_action_card(pages[0], 160, 4, 74, 41, "pH", "--",
-                                                    lv_color_make(16, 185, 129), open_ph_subpage_cb,
+        lv_obj_t *ph_card = create_home_action_card(pages[0], 160, 6, 74, 39, "pH", "--",
+                                                    color_water_cyan, open_ph_subpage_cb,
                                                     nullptr, &home_ph_current);
         lv_obj_t *ph_lbl = lv_obj_get_child(ph_card, 2);
         if (ph_lbl != nullptr) {
             lv_obj_set_style_text_font(ph_lbl, &lv_font_montserrat_14, 0);
         }
 
-        create_home_feed_button(pages[0], 240, 4, 76, 41, "KARMIJ", "--:--",
+        create_home_feed_button(pages[0], 240, 6, 76, 39, "POKARM", "--:--",
                                 feed_now_event_handler, nullptr, &home_feed_time_lbl);
     } else {
-        create_home_feed_button(pages[0], 160, 4, 156, 41, "KARMIJ TERAZ", "--:--",
+        create_home_feed_button(pages[0], 160, 6, 156, 39, "POKARM", "--:--",
                                 feed_now_event_handler, nullptr, &home_feed_time_lbl);
     }
 
-    create_home_action_card(pages[0], 160, 49, 156, 41, "SERWIS", "Sterowanie reczne",
-                            lv_color_make(239, 68, 68), service_tile_cb, nullptr, nullptr);
+    create_home_action_card(pages[0], 160, 49, 156, 39, "SERWIS", "Sterowanie reczne",
+                            color_water_cyan, service_tile_cb, nullptr, nullptr);
 
     const bool show_air = cfg.enableAerator;
     if (show_air) {
-        create_home_device_card(pages[0], 4, 94, 100, LV_SYMBOL_IMAGE, "Przednia",
+        create_home_device_card(pages[0], 4, 93, 100, LV_SYMBOL_IMAGE, "Przednia",
                                 lv_color_make(14, 165, 233), open_sched_editor_cb,
                                 reinterpret_cast<void *>(static_cast<intptr_t>(ScheduleDevice::Light)),
                                 &home_light_state_lbl, &home_light_mode_lbl);
-        create_home_device_card(pages[0], 110, 94, 100, LV_SYMBOL_IMAGE, "Tylna",
+        create_home_device_card(pages[0], 110, 93, 100, LV_SYMBOL_IMAGE, "Tylna",
                                 lv_color_make(34, 197, 94), open_sched_editor_cb,
                                 reinterpret_cast<void *>(static_cast<intptr_t>(ScheduleDevice::PlantLight)),
                                 &home_plant_state_lbl, &home_plant_mode_lbl);
-        create_home_device_card(pages[0], 216, 94, 100, LV_SYMBOL_LOOP, "Filtr",
+        create_home_device_card(pages[0], 216, 93, 100, LV_SYMBOL_LOOP, "Filtr",
                                 lv_color_make(6, 182, 212), open_sched_editor_cb,
                                 reinterpret_cast<void *>(static_cast<intptr_t>(ScheduleDevice::Filter)),
                                 &home_filter_state_lbl, &home_filter_mode_lbl);
-        create_home_device_card(pages[0], 4, 138, 153, LV_SYMBOL_CHARGE, "Grzalka",
+        create_home_device_card(pages[0], 4, 136, 153, LV_SYMBOL_CHARGE, "Grzalka",
                                 lv_color_make(249, 115, 22), open_heater_subpage_cb,
                                 nullptr, &home_heater_state_lbl, &home_heater_mode_lbl);
-        create_home_device_card(pages[0], 163, 138, 153, LV_SYMBOL_REFRESH, "Powietrze",
+        create_home_device_card(pages[0], 163, 136, 153, LV_SYMBOL_REFRESH, "Powietrze",
                                 lv_color_make(168, 85, 247), open_sched_editor_cb,
                                 reinterpret_cast<void *>(static_cast<intptr_t>(ScheduleDevice::Air)),
                                 &home_air_state_lbl, &home_air_mode_lbl);
     } else {
-        create_home_device_card(pages[0], 4, 94, 153, LV_SYMBOL_IMAGE, "Przednia",
+        create_home_device_card(pages[0], 4, 93, 153, LV_SYMBOL_IMAGE, "Przednia",
                                 lv_color_make(14, 165, 233), open_sched_editor_cb,
                                 reinterpret_cast<void *>(static_cast<intptr_t>(ScheduleDevice::Light)),
                                 &home_light_state_lbl, &home_light_mode_lbl);
-        create_home_device_card(pages[0], 163, 94, 153, LV_SYMBOL_IMAGE, "Tylna",
+        create_home_device_card(pages[0], 163, 93, 153, LV_SYMBOL_IMAGE, "Tylna",
                                 lv_color_make(34, 197, 94), open_sched_editor_cb,
                                 reinterpret_cast<void *>(static_cast<intptr_t>(ScheduleDevice::PlantLight)),
                                 &home_plant_state_lbl, &home_plant_mode_lbl);
-        create_home_device_card(pages[0], 4, 138, 153, LV_SYMBOL_LOOP, "Filtr",
+        create_home_device_card(pages[0], 4, 136, 153, LV_SYMBOL_LOOP, "Filtr",
                                 lv_color_make(6, 182, 212), open_sched_editor_cb,
                                 reinterpret_cast<void *>(static_cast<intptr_t>(ScheduleDevice::Filter)),
                                 &home_filter_state_lbl, &home_filter_mode_lbl);
-        create_home_device_card(pages[0], 163, 138, 153, LV_SYMBOL_CHARGE, "Grzalka",
+        create_home_device_card(pages[0], 163, 136, 153, LV_SYMBOL_CHARGE, "Grzalka",
                                 lv_color_make(249, 115, 22), open_heater_subpage_cb,
                                 nullptr, &home_heater_state_lbl, &home_heater_mode_lbl);
     }
@@ -11402,7 +11525,7 @@ static void build_charts_page() {
     lv_obj_align(btn_chart_ldr, LV_ALIGN_TOP_LEFT, 98, -2);
     style_chart_btn(btn_chart_ldr);
 
-    btn_chart_heap = create_button(panel, "HEAP", 45, 22, lv_color_make(35, 41, 55), select_chart_cb, reinterpret_cast<void *>(static_cast<intptr_t>(ActiveChart::Heap)));
+    btn_chart_heap = create_button(panel, "RAM", 45, 22, lv_color_make(35, 41, 55), select_chart_cb, reinterpret_cast<void *>(static_cast<intptr_t>(ActiveChart::Heap)));
     lv_obj_align(btn_chart_heap, LV_ALIGN_TOP_LEFT, 143, -2);
     style_chart_btn(btn_chart_heap);
 
@@ -11413,7 +11536,7 @@ static void build_charts_page() {
     chart_range_lbl = lv_obj_get_child(range_btn, 0);
 
     // Etykieta temperatury docelowej
-    chart_target_lbl = create_label(panel, "Target 25.0*C  H 0.5", lv_color_make(148, 163, 184), &lv_font_montserrat_12);
+    chart_target_lbl = create_label(panel, "Cel 25.0*C  H 0.5", lv_color_make(148, 163, 184), &lv_font_montserrat_12);
     lv_obj_align(chart_target_lbl, LV_ALIGN_TOP_LEFT, 0, 22);
 
     // 1. Wykres Temperatury
@@ -11486,7 +11609,7 @@ static void build_charts_page() {
     chart_max_lbl = create_label(stats, "--.-", lv_color_white(), &lv_font_montserrat_12);
     lv_obj_align(chart_max_lbl, LV_ALIGN_CENTER, 0, 6);
 
-    lv_obj_t *cur_title = create_label(stats, "CUR", lv_color_make(100, 116, 139), &lv_font_montserrat_12);
+    lv_obj_t *cur_title = create_label(stats, "AKT", lv_color_make(100, 116, 139), &lv_font_montserrat_12);
     lv_obj_align(cur_title, LV_ALIGN_RIGHT_MID, -10, -6);
     chart_cur_lbl = create_label(stats, "--.-", lv_color_white(), &lv_font_montserrat_12);
     lv_obj_align(chart_cur_lbl, LV_ALIGN_RIGHT_MID, -10, 6);
@@ -11530,9 +11653,9 @@ static void build_system_page() {
                            lv_color_make(245, 158, 11), ActiveSubpage::Logs);
     create_system_hub_item(pages[4], 166, 48, LV_SYMBOL_KEYBOARD, "Czas", "RTC / NTP",
                            lv_color_make(34, 197, 94), ActiveSubpage::Clock);
-    create_system_hub_item(pages[4], 4, 92, LV_SYMBOL_SETTINGS, "Diag", "Heap / CPU",
+    create_system_hub_item(pages[4], 4, 92, LV_SYMBOL_SETTINGS, "Diag", "RAM / CPU",
                            lv_color_make(168, 85, 247), ActiveSubpage::Diagnostics);
-    create_system_hub_item(pages[4], 166, 92, LV_SYMBOL_POWER, "Zasilanie", "Sleep / reset",
+    create_system_hub_item(pages[4], 166, 92, LV_SYMBOL_POWER, "Zasilanie", "Uspienie / reset",
                            lv_color_make(239, 68, 68), ActiveSubpage::Power);
     create_system_hub_item(pages[4], 4, 136, LV_SYMBOL_AUDIO, "Audio", "Dzwieki",
                            lv_color_make(20, 184, 166), ActiveSubpage::Sounds);
@@ -11842,6 +11965,7 @@ struct TimePickerData {
 
 struct DatePickerData {
     lv_obj_t *bg_overlay;
+    lv_obj_t *day_caption_lbl;
     lv_obj_t *day_lbl;
     lv_obj_t *month_lbl;
     lv_obj_t *year_lbl;
@@ -11877,11 +12001,21 @@ static void update_time_picker_labels() {
 }
 
 static void update_date_picker_labels() {
+    const int max_day = days_in_month_for(date_picker_state.month, date_picker_state.year);
+    if (date_picker_state.day_caption_lbl != nullptr) {
+        lv_label_set_text_fmt(date_picker_state.day_caption_lbl, "Dzien (%d)", max_day);
+    }
     if (date_picker_state.day_lbl != nullptr) {
         lv_label_set_text_fmt(date_picker_state.day_lbl, "%02d", date_picker_state.day);
     }
     if (date_picker_state.month_lbl != nullptr) {
-        lv_label_set_text_fmt(date_picker_state.month_lbl, "%02d", date_picker_state.month);
+        static const char *m_names[] = {
+            "Sty", "Lut", "Mar", "Kwi", "Maj", "Cze",
+            "Lip", "Sie", "Wrz", "Paz", "Lis", "Gru"
+        };
+        const char *m_str = (date_picker_state.month >= 1 && date_picker_state.month <= 12)
+            ? m_names[date_picker_state.month - 1] : "---";
+        lv_label_set_text_fmt(date_picker_state.month_lbl, "%02d %s", date_picker_state.month, m_str);
     }
     if (date_picker_state.year_lbl != nullptr) {
         lv_label_set_text_fmt(date_picker_state.year_lbl, "%04d", date_picker_state.year);
@@ -11897,6 +12031,9 @@ static void time_picker_ok_cb(lv_event_t *e) {
     lv_obj_t *overlay = time_picker_state.bg_overlay;
     memset(&time_picker_state, 0, sizeof(time_picker_state));
     delete_obj_async(overlay);
+    main_reset_clock_tick(millis());
+    gui_save_clock_settings(true, "manual");
+    capture_clock_snapshot();
     gui_sync_widgets_to_state();
     show_top_notification("Czas zapisany", true);
 }
@@ -12019,6 +12156,9 @@ static void date_picker_ok_cb(lv_event_t *e) {
     lv_obj_t *overlay = date_picker_state.bg_overlay;
     memset(&date_picker_state, 0, sizeof(date_picker_state));
     delete_obj_async(overlay);
+    main_reset_clock_tick(millis());
+    gui_save_clock_settings(true, "manual");
+    capture_clock_snapshot();
     gui_sync_widgets_to_state();
     show_top_notification("Data zapisana", true);
 }
@@ -12039,37 +12179,48 @@ static void date_step_cb(lv_event_t *e) {
 
     if (field == 0) {
         date_picker_state.day += delta;
+        const int max_day = days_in_month_for(date_picker_state.month, date_picker_state.year);
+        if (date_picker_state.day < 1) date_picker_state.day = max_day;
+        if (date_picker_state.day > max_day) date_picker_state.day = 1;
     } else if (field == 1) {
         date_picker_state.month += delta;
         if (date_picker_state.month < 1) date_picker_state.month = 12;
         if (date_picker_state.month > 12) date_picker_state.month = 1;
+        const int max_day = days_in_month_for(date_picker_state.month, date_picker_state.year);
+        if (date_picker_state.day > max_day) {
+            date_picker_state.day = max_day;
+        }
     } else {
         date_picker_state.year += delta;
         date_picker_state.year = constrain(date_picker_state.year, 2020, 2099);
+        const int max_day = days_in_month_for(date_picker_state.month, date_picker_state.year);
+        if (date_picker_state.day > max_day) {
+            date_picker_state.day = max_day;
+        }
     }
 
-    const int max_day = days_in_month_for(date_picker_state.month, date_picker_state.year);
-    if (date_picker_state.day < 1) date_picker_state.day = max_day;
-    if (date_picker_state.day > max_day) date_picker_state.day = 1;
     update_date_picker_labels();
 }
 
-static void add_date_stepper_group(lv_obj_t *parent, lv_coord_t x, const char *caption,
+static void add_date_stepper_group(lv_obj_t *parent, lv_coord_t x, lv_coord_t w, const char *caption,
                                    lv_obj_t **value_lbl, int field) {
     lv_obj_t *caption_lbl = create_label(parent, caption, theme_text_muted(), &lv_font_montserrat_12);
-    lv_obj_align(caption_lbl, LV_ALIGN_TOP_LEFT, x + 12, 0);
+    lv_obj_set_pos(caption_lbl, x + 6, 0);
+    if (field == 0) {
+        date_picker_state.day_caption_lbl = caption_lbl;
+    }
 
-    lv_obj_t *plus = create_button(parent, LV_SYMBOL_UP, 66, 28, lv_color_make(35, 41, 55),
+    lv_obj_t *plus = create_button(parent, LV_SYMBOL_UP, w, 28, lv_color_make(35, 41, 55),
                                    date_step_cb, reinterpret_cast<void *>(static_cast<intptr_t>(field * 10 + 1)));
     lv_obj_set_pos(plus, x, 22);
     apply_3d_button_properties(plus);
 
-    lv_obj_t *box = create_card(parent, 66, 38, x, 54);
+    lv_obj_t *box = create_card(parent, w, 38, x, 54);
     lv_obj_set_style_pad_all(box, 0, 0);
-    *value_lbl = create_label(box, field == 2 ? "2026" : "00", lv_color_make(6, 182, 212), &lv_font_montserrat_16);
+    *value_lbl = create_label(box, field == 2 ? "2026" : "00", lv_color_make(6, 182, 212), &lv_font_montserrat_14);
     lv_obj_align(*value_lbl, LV_ALIGN_CENTER, 0, 0);
 
-    lv_obj_t *minus = create_button(parent, LV_SYMBOL_DOWN, 66, 28, lv_color_make(35, 41, 55),
+    lv_obj_t *minus = create_button(parent, LV_SYMBOL_DOWN, w, 28, lv_color_make(35, 41, 55),
                                     date_step_cb, reinterpret_cast<void *>(static_cast<intptr_t>(field * 10 + 9)));
     lv_obj_set_pos(minus, x, 98);
     apply_3d_button_properties(minus);
@@ -12123,9 +12274,9 @@ static void open_date_picker_authorized() {
     lv_obj_set_style_pad_all(main_area, 0, 0);
     lv_obj_clear_flag(main_area, LV_OBJ_FLAG_SCROLLABLE);
 
-    add_date_stepper_group(main_area, 35, "Dzien", &date_picker_state.day_lbl, 0);
-    add_date_stepper_group(main_area, 127, "Mies", &date_picker_state.month_lbl, 1);
-    add_date_stepper_group(main_area, 219, "Rok", &date_picker_state.year_lbl, 2);
+    add_date_stepper_group(main_area, 20, 76, "Dzien", &date_picker_state.day_lbl, 0);
+    add_date_stepper_group(main_area, 106, 106, "Miesiac", &date_picker_state.month_lbl, 1);
+    add_date_stepper_group(main_area, 222, 78, "Rok", &date_picker_state.year_lbl, 2);
     update_date_picker_labels();
 
     lv_obj_t *btn_ok = create_button(main_area, "Zapisz", 150, 32, lv_color_make(16, 185, 129), date_picker_ok_cb, nullptr);
@@ -12313,10 +12464,10 @@ static void update_hardware_matrix_labels() {
         if (enabled) {
             ++active;
         }
-        snprintf(hw_state_texts[row], sizeof(hw_state_texts[row]), "%s", enabled ? "ON" : "OFF");
+        snprintf(hw_state_texts[row], sizeof(hw_state_texts[row]), "%s", enabled ? "WL" : "WYL");
     }
     if (hw_summary_lbl != nullptr && lv_obj_is_valid(hw_summary_lbl)) {
-        lv_label_set_text_fmt(hw_summary_lbl, "Aktywne: %u/7 | nazwa = szczegoly, ON/OFF = PIN", static_cast<unsigned>(active));
+        lv_label_set_text_fmt(hw_summary_lbl, "Aktywne: %u/7 | nazwa = szczegoly, WL/WYL = PIN", static_cast<unsigned>(active));
     }
     if (hw_matrix != nullptr && lv_obj_is_valid(hw_matrix)) {
         lv_btnmatrix_set_map(hw_matrix, hw_matrix_map);
@@ -12752,7 +12903,7 @@ static void build_co2_subpage() {
     lv_obj_align(co2_ph_lbl, LV_ALIGN_LEFT_MID, 6, 8);
 
     lv_obj_t *info_card = create_card(list, 300, 52, 0, 0);
-    lv_obj_t *info = create_label(info_card, "Kanal: MCP23017 CH_CO2.\nBrak odczytu pH wymusza stan bezpieczny OFF.", theme_text_muted(), &lv_font_montserrat_12);
+    lv_obj_t *info = create_label(info_card, "Kanal: MCP23017 CH_CO2.\nBrak odczytu pH wymusza stan bezpieczny WYL.", theme_text_muted(), &lv_font_montserrat_12);
     lv_obj_set_width(info, 286);
     lv_label_set_long_mode(info, LV_LABEL_LONG_WRAP);
     lv_obj_align(info, LV_ALIGN_LEFT_MID, 6, 0);
@@ -13010,76 +13161,123 @@ static void build_subpages(ActiveSubpage target) {
     }
 
     if (target == ActiveSubpage::Screen) {
-    subpage_screen = create_subpage("Ekran LCD");
-    
-    // Scrollable lista opcji ekranu
-    lv_obj_t *scr_list = lv_obj_create(subpage_screen);
-    lv_obj_set_size(scr_list, 312, 172);
-    lv_obj_set_pos(scr_list, 4, 32);
-    lv_obj_set_style_bg_opa(scr_list, LV_OPA_TRANSP, 0);
-    lv_obj_set_style_border_width(scr_list, 0, 0);
-    lv_obj_set_style_pad_all(scr_list, 0, 0);
-    lv_obj_set_flex_flow(scr_list, LV_FLEX_FLOW_COLUMN);
-    lv_obj_set_style_pad_row(scr_list, 5, 0);
-    lv_obj_set_scrollbar_mode(scr_list, LV_SCROLLBAR_MODE_AUTO);
+        subpage_screen = create_subpage("Ekran LCD");
 
-    // --- Karta: Motyw ekranu ---
-    lv_obj_t *theme_group = create_card(scr_list, 300, 94, 0, 0);
-    lv_obj_set_style_pad_all(theme_group, 0, 0);
-    lv_obj_clear_flag(theme_group, LV_OBJ_FLAG_SCROLLABLE);
+        // Scrollable lista opcji ekranu
+        lv_obj_t *scr_list = lv_obj_create(subpage_screen);
+        lv_obj_set_size(scr_list, 312, 172);
+        lv_obj_set_pos(scr_list, 4, 32);
+        lv_obj_set_style_bg_opa(scr_list, LV_OPA_TRANSP, 0);
+        lv_obj_set_style_border_width(scr_list, 0, 0);
+        lv_obj_set_style_pad_all(scr_list, 0, 0);
+        lv_obj_set_flex_flow(scr_list, LV_FLEX_FLOW_COLUMN);
+        lv_obj_set_style_pad_row(scr_list, 6, 0);
+        lv_obj_set_scrollbar_mode(scr_list, LV_SCROLLBAR_MODE_AUTO);
 
-    lv_obj_t *theme_title = create_label(theme_group, LV_SYMBOL_IMAGE "  MOTYW EKRANU", lv_color_make(14, 165, 233), &lv_font_montserrat_12);
-    lv_obj_set_width(theme_title, 280);
-    lv_obj_align(theme_title, LV_ALIGN_TOP_LEFT, 8, 6);
+        // --- Karta 1: Motyw ekranu ---
+        lv_obj_t *theme_group = create_card(scr_list, 300, 84, 0, 0);
+        lv_obj_set_style_pad_all(theme_group, 0, 0);
+        lv_obj_clear_flag(theme_group, LV_OBJ_FLAG_SCROLLABLE);
 
-    // Jasny motyw (reczny)
-    lv_obj_t *manual_theme_lbl = create_label(theme_group, "Jasny motyw (manual)", theme_text_main(), &lv_font_montserrat_12);
-    lv_obj_set_width(manual_theme_lbl, 200); // Ograniczona szerokosc - nie zakrywa switcha
-    lv_obj_align(manual_theme_lbl, LV_ALIGN_TOP_LEFT, 8, 28);
-    screen_manual_theme_sw = lv_switch_create(theme_group);
-    lv_obj_set_size(screen_manual_theme_sw, 40, 20);
-    lv_obj_align(screen_manual_theme_sw, LV_ALIGN_TOP_RIGHT, -8, 26);
-    style_switch_cyd(screen_manual_theme_sw);
-    lv_obj_add_event_cb(screen_manual_theme_sw, screen_manual_theme_handler, LV_EVENT_VALUE_CHANGED, nullptr);
+        lv_obj_t *theme_title = create_label(theme_group, LV_SYMBOL_IMAGE "  MOTYW EKRANU", lv_color_make(14, 165, 233), &lv_font_montserrat_12);
+        lv_obj_set_width(theme_title, 280);
+        lv_obj_align(theme_title, LV_ALIGN_TOP_LEFT, 8, 6);
 
-    // Czujnik LDR - auto motyw
-    lv_obj_t *ldr_enable_lbl = create_label(theme_group, "Auto LDR (<200 jasny)", theme_text_main(), &lv_font_montserrat_12);
-    lv_obj_set_width(ldr_enable_lbl, 200); // Ograniczona szerokosc - nie zakrywa switcha
-    lv_obj_align(ldr_enable_lbl, LV_ALIGN_TOP_LEFT, 8, 54);
-    screen_ldr_enable_sw = lv_switch_create(theme_group);
-    lv_obj_set_size(screen_ldr_enable_sw, 40, 20);
-    lv_obj_align(screen_ldr_enable_sw, LV_ALIGN_TOP_RIGHT, -8, 52);
-    style_switch_cyd(screen_ldr_enable_sw);
-    lv_obj_add_event_cb(screen_ldr_enable_sw, screen_ldr_enable_handler, LV_EVENT_VALUE_CHANGED, nullptr);
+        // 3 przyciski motywu: Ciemny, Jasny, Auto LDR
+        screen_theme_btn_dark = create_button(theme_group, "Ciemny", 90, 26, theme_elevated_bg(),
+                                              screen_theme_btn_cb, reinterpret_cast<void*>(static_cast<intptr_t>(0)));
+        lv_obj_set_pos(screen_theme_btn_dark, 8, 24);
 
-    // --- Karta: Ustawienia systemowe ---
-    lv_obj_t *sys_group = create_card(scr_list, 300, 52, 0, 0);
-    lv_obj_set_style_pad_all(sys_group, 0, 0);
-    lv_obj_clear_flag(sys_group, LV_OBJ_FLAG_SCROLLABLE);
+        screen_theme_btn_light = create_button(theme_group, "Jasny", 90, 26, theme_elevated_bg(),
+                                               screen_theme_btn_cb, reinterpret_cast<void*>(static_cast<intptr_t>(1)));
+        lv_obj_set_pos(screen_theme_btn_light, 104, 24);
 
-    // Always on display
-    lv_obj_t *screen_mode_lbl = create_label(sys_group, LV_SYMBOL_POWER "  Ekran zawsze aktywny", theme_text_main(), &lv_font_montserrat_12);
-    lv_obj_set_width(screen_mode_lbl, 200); // Ograniczona szerokosc
-    lv_obj_align(screen_mode_lbl, LV_ALIGN_TOP_LEFT, 8, 6);
-    screen_always_on_sw = lv_switch_create(sys_group);
-    lv_obj_set_size(screen_always_on_sw, 40, 20);
-    lv_obj_align(screen_always_on_sw, LV_ALIGN_TOP_RIGHT, -8, 4);
-    style_switch_cyd(screen_always_on_sw);
-    lv_obj_add_event_cb(screen_always_on_sw, screen_always_on_handler, LV_EVENT_VALUE_CHANGED, nullptr);
+        screen_theme_btn_auto = create_button(theme_group, "Auto LDR", 90, 26, theme_elevated_bg(),
+                                              screen_theme_btn_cb, reinterpret_cast<void*>(static_cast<intptr_t>(2)));
+        lv_obj_set_pos(screen_theme_btn_auto, 200, 24);
 
-    // Tryb deweloperski
-    lv_obj_t *dev_mode_lbl = create_label(sys_group, LV_SYMBOL_SETTINGS "  Tryb deweloperski", theme_text_main(), &lv_font_montserrat_12);
-    lv_obj_set_width(dev_mode_lbl, 200); // Ograniczona szerokosc
-    lv_obj_align(dev_mode_lbl, LV_ALIGN_TOP_LEFT, 8, 28);
-    diag_dev_mode_sw = lv_switch_create(sys_group);
-    lv_obj_set_size(diag_dev_mode_sw, 40, 20);
-    lv_obj_align(diag_dev_mode_sw, LV_ALIGN_TOP_RIGHT, -8, 26);
-    style_switch_cyd(diag_dev_mode_sw);
-    lv_obj_add_event_cb(diag_dev_mode_sw, diag_dev_mode_handler, LV_EVENT_VALUE_CHANGED, nullptr);
+        screen_theme_desc_lbl = create_label(theme_group, "", theme_text_muted(), &lv_font_montserrat_12);
+        lv_obj_set_width(screen_theme_desc_lbl, 284);
+        lv_label_set_long_mode(screen_theme_desc_lbl, LV_LABEL_LONG_DOT);
+        lv_obj_align(screen_theme_desc_lbl, LV_ALIGN_TOP_LEFT, 8, 56);
 
-    lv_obj_t *screen_save = create_button(subpage_screen, LV_SYMBOL_SAVE "  ZAPISZ USTAWIENIA", 200, 26, lv_color_make(16, 185, 129), save_screen_settings_cb, nullptr);
-    lv_obj_align(screen_save, LV_ALIGN_BOTTOM_MID, 0, -2);
-    return;
+        // --- Karta 2: Jasnosc podswietlenia ---
+        lv_obj_t *bright_group = create_card(scr_list, 300, 68, 0, 0);
+        lv_obj_set_style_pad_all(bright_group, 0, 0);
+        lv_obj_clear_flag(bright_group, LV_OBJ_FLAG_SCROLLABLE);
+
+        lv_obj_t *bright_title = create_label(bright_group, LV_SYMBOL_SETTINGS "  JASNOSC PODSWIETLENIA", lv_color_make(14, 165, 233), &lv_font_montserrat_12);
+        lv_obj_set_width(bright_title, 210);
+        lv_obj_align(bright_title, LV_ALIGN_TOP_LEFT, 8, 6);
+
+        char br_buf[16];
+        snprintf(br_buf, sizeof(br_buf), "%u%%", static_cast<unsigned>(display_max_brightness));
+        screen_brightness_val_lbl = create_label(bright_group, br_buf, theme_accent(), &lv_font_montserrat_12);
+        lv_obj_align(screen_brightness_val_lbl, LV_ALIGN_TOP_RIGHT, -10, 6);
+
+        screen_brightness_minus_btn = create_button(bright_group, "-", 34, 28, theme_elevated_bg(),
+                                                    screen_brightness_step_cb, reinterpret_cast<void*>(static_cast<intptr_t>(-10)));
+        lv_obj_set_pos(screen_brightness_minus_btn, 8, 28);
+
+        screen_brightness_slider = lv_slider_create(bright_group);
+        lv_obj_set_size(screen_brightness_slider, 196, 14);
+        lv_obj_set_ext_click_area(screen_brightness_slider, 10);
+        lv_obj_set_pos(screen_brightness_slider, 50, 35);
+        lv_slider_set_range(screen_brightness_slider, 10, 100);
+        lv_slider_set_value(screen_brightness_slider, display_max_brightness, LV_ANIM_OFF);
+        lv_obj_set_style_bg_color(screen_brightness_slider, resolve_bg_color(lv_color_make(30, 41, 59)), LV_PART_MAIN);
+        lv_obj_set_style_bg_color(screen_brightness_slider, theme_accent(), LV_PART_INDICATOR);
+        lv_obj_set_style_bg_color(screen_brightness_slider, lv_color_white(), LV_PART_KNOB);
+        lv_obj_set_style_pad_all(screen_brightness_slider, 0, LV_PART_KNOB);
+        lv_obj_add_event_cb(screen_brightness_slider, screen_brightness_slider_cb, LV_EVENT_VALUE_CHANGED, nullptr);
+
+        screen_brightness_plus_btn = create_button(bright_group, "+", 34, 28, theme_elevated_bg(),
+                                                   screen_brightness_step_cb, reinterpret_cast<void*>(static_cast<intptr_t>(10)));
+        lv_obj_set_pos(screen_brightness_plus_btn, 254, 28);
+
+        // --- Karta 3: Wygaszanie ekranu ---
+        lv_obj_t *sys_group = create_card(scr_list, 300, 52, 0, 0);
+        lv_obj_set_style_pad_all(sys_group, 0, 0);
+        lv_obj_clear_flag(sys_group, LV_OBJ_FLAG_SCROLLABLE);
+
+        lv_obj_t *screen_mode_lbl = create_label(sys_group, LV_SYMBOL_POWER "  Ekran stale wlaczony", theme_text_main(), &lv_font_montserrat_12);
+        lv_obj_set_width(screen_mode_lbl, 210);
+        lv_obj_align(screen_mode_lbl, LV_ALIGN_TOP_LEFT, 8, 6);
+
+        lv_obj_t *screen_mode_desc = create_label(sys_group, "Wylaczone: wygasza po 60s", theme_text_muted(), &lv_font_montserrat_12);
+        lv_obj_set_width(screen_mode_desc, 210);
+        lv_obj_align(screen_mode_desc, LV_ALIGN_TOP_LEFT, 8, 28);
+
+        screen_always_on_sw = lv_switch_create(sys_group);
+        lv_obj_set_size(screen_always_on_sw, 40, 20);
+        lv_obj_align(screen_always_on_sw, LV_ALIGN_TOP_RIGHT, -8, 14);
+        style_switch_cyd(screen_always_on_sw);
+        lv_obj_add_event_cb(screen_always_on_sw, screen_always_on_handler, LV_EVENT_VALUE_CHANGED, nullptr);
+
+        // --- Karta 4: Tryb deweloperski ---
+        lv_obj_t *dev_group = create_card(scr_list, 300, 52, 0, 0);
+        lv_obj_set_style_pad_all(dev_group, 0, 0);
+        lv_obj_clear_flag(dev_group, LV_OBJ_FLAG_SCROLLABLE);
+
+        lv_obj_t *dev_mode_lbl = create_label(dev_group, LV_SYMBOL_SETTINGS "  Tryb deweloperski", theme_text_main(), &lv_font_montserrat_12);
+        lv_obj_set_width(dev_mode_lbl, 210);
+        lv_obj_align(dev_mode_lbl, LV_ALIGN_TOP_LEFT, 8, 6);
+
+        lv_obj_t *dev_mode_desc = create_label(dev_group, "Symulacja i testy czujnikow", theme_text_muted(), &lv_font_montserrat_12);
+        lv_obj_set_width(dev_mode_desc, 210);
+        lv_obj_align(dev_mode_desc, LV_ALIGN_TOP_LEFT, 8, 28);
+
+        diag_dev_mode_sw = lv_switch_create(dev_group);
+        lv_obj_set_size(diag_dev_mode_sw, 40, 20);
+        lv_obj_align(diag_dev_mode_sw, LV_ALIGN_TOP_RIGHT, -8, 14);
+        style_switch_cyd(diag_dev_mode_sw);
+        lv_obj_add_event_cb(diag_dev_mode_sw, diag_dev_mode_handler, LV_EVENT_VALUE_CHANGED, nullptr);
+
+        // Przycisk zapisu
+        lv_obj_t *screen_save = create_button(subpage_screen, LV_SYMBOL_SAVE "  ZAPISZ USTAWIENIA", 220, 28, lv_color_make(16, 185, 129), save_screen_settings_cb, nullptr);
+        lv_obj_align(screen_save, LV_ALIGN_BOTTOM_MID, 0, -2);
+        apply_colored_3d_button(screen_save, lv_color_make(16, 185, 129), 160);
+        return;
     }
 
     if (target == ActiveSubpage::Logs) {
@@ -13137,7 +13335,7 @@ static void build_subpages(ActiveSubpage target) {
     lv_obj_set_style_pad_all(clock_box, 0, 0);
     label_clock_time = create_label(clock_box, "20:30:00", lv_color_white(), &lv_font_montserrat_24);
     lv_obj_align(label_clock_time, LV_ALIGN_CENTER, 0, -10);
-    label_clock_date = create_label(clock_box, "31 May 2026", lv_color_make(148, 163, 184), &lv_font_montserrat_12);
+    label_clock_date = create_label(clock_box, "31 Maj 2026", lv_color_make(148, 163, 184), &lv_font_montserrat_12);
     lv_obj_align(label_clock_date, LV_ALIGN_CENTER, 0, 14);
 
     // Karta 2: Ręczne ustawianie godziny (roller modal)
@@ -13236,7 +13434,7 @@ static void build_subpages(ActiveSubpage target) {
     lv_obj_t *modem_card = create_card(subpage_power, 304, 40, 8, 84);
     lv_obj_set_style_pad_all(modem_card, 0, 0);
     create_accent_bar(modem_card, lv_color_make(14, 165, 233), 24);
-    create_fixed_label(modem_card, "Modem Sleep", theme_text_main(),
+    create_fixed_label(modem_card, "Uspienie modemu", theme_text_main(),
                        &lv_font_montserrat_12, 210, 14, 5);
     create_fixed_label(modem_card, "wylacza radio WiFi",
                        theme_text_muted(), &lv_font_montserrat_12,
@@ -13271,7 +13469,7 @@ static void build_subpages(ActiveSubpage target) {
     lv_obj_set_pos(btn_hib, 166, 178);
     apply_colored_3d_button(btn_hib, lv_color_make(30, 41, 59), 130);
 
-    lv_obj_t *btn_reset = create_button(subpage_power, LV_SYMBOL_WARNING " Reset cfg", 304, 28,
+    lv_obj_t *btn_reset = create_button(subpage_power, LV_SYMBOL_WARNING " Reset pamieci", 304, 28,
                                         lv_color_make(185, 28, 28), btn_factory_reset_handler, nullptr);
     lv_obj_set_pos(btn_reset, 8, 210);
     apply_colored_3d_button(btn_reset, lv_color_make(185, 28, 28), 286);
@@ -13490,7 +13688,7 @@ static void build_subpages(ActiveSubpage target) {
     lv_obj_set_style_border_width(row_end, 0, 0);
     lv_obj_clear_flag(row_end, LV_OBJ_FLAG_SCROLLABLE);
 
-    lv_obj_t *lbl_end = create_label(row_end, "END", lv_color_white(), &lv_font_montserrat_12);
+    lv_obj_t *lbl_end = create_label(row_end, "KONIEC", lv_color_white(), &lv_font_montserrat_12);
     lv_obj_align(lbl_end, LV_ALIGN_LEFT_MID, 6, 0);
 
     lv_obj_t *eh_minus = create_button(row_end, "-", 24, 20, lv_color_make(35, 41, 55), adjust_schedule_time_cb, reinterpret_cast<void *>(static_cast<intptr_t>(39)));
@@ -13522,7 +13720,7 @@ static void build_subpages(ActiveSubpage target) {
     lv_obj_set_style_border_width(sched_editor_color_row, 0, 0);
     lv_obj_clear_flag(sched_editor_color_row, LV_OBJ_FLAG_SCROLLABLE);
 
-    lv_obj_t *lbl_color = create_label(sched_editor_color_row, "COLOR", lv_color_white(), &lv_font_montserrat_12);
+    lv_obj_t *lbl_color = create_label(sched_editor_color_row, "KOLOR", lv_color_white(), &lv_font_montserrat_12);
     lv_obj_align(lbl_color, LV_ALIGN_LEFT_MID, 6, 0);
 
     lv_obj_t *btn_container = lv_obj_create(sched_editor_color_row);
@@ -13535,7 +13733,7 @@ static void build_subpages(ActiveSubpage target) {
     lv_obj_set_style_border_width(btn_container, 0, 0);
     lv_obj_clear_flag(btn_container, LV_OBJ_FLAG_SCROLLABLE);
 
-    const char* light_modes[] = {"DAY", "DAYBR", "NIGHT"};
+    const char* light_modes[] = {"DZIEN", "SWIT", "NOC"};
     for (int i = 0; i < 3; i++) {
         editor_mode_btns[i] = create_button(btn_container, light_modes[i], 64, 22, lv_color_make(35, 41, 55), editor_mode_btn_cb, reinterpret_cast<void*>(static_cast<intptr_t>(i)));
         lv_obj_set_style_radius(editor_mode_btns[i], 4, 0);
@@ -13642,7 +13840,7 @@ static void build_subpages(ActiveSubpage target) {
     // Card 3: Hysteresis
     lv_obj_t *hyst_row = create_card(heat_list, 300, 46, 0, 0);
     lv_obj_set_style_pad_all(hyst_row, 0, 0);
-    lv_obj_t *hyst_title = create_label(hyst_row, "Hysteresis", lv_color_white(), &lv_font_montserrat_12);
+    lv_obj_t *hyst_title = create_label(hyst_row, "Histereza", lv_color_white(), &lv_font_montserrat_12);
     lv_obj_align(hyst_title, LV_ALIGN_LEFT_MID, 10, 0);
     lv_obj_t *btn_h_minus = create_button(hyst_row, "-", 30, 26, lv_color_make(35, 41, 55), adjust_hysteresis_cb, reinterpret_cast<void *>(static_cast<intptr_t>(-1)));
     lv_obj_align(btn_h_minus, LV_ALIGN_RIGHT_MID, -92, 0);
@@ -13692,7 +13890,7 @@ static void build_subpages(ActiveSubpage target) {
     lv_obj_set_scrollbar_mode(service_list, LV_SCROLLBAR_MODE_AUTO);
 
     lv_obj_t *timer_card = create_card(service_list, 300, 40, 0, 0);
-    lv_obj_t *timer_lbl = create_label(timer_card, "Service mode ends in: 30:00", lv_color_make(239, 68, 68), &lv_font_montserrat_14);
+    lv_obj_t *timer_lbl = create_label(timer_card, "Tryb serwisu wygasa za: 30:00", lv_color_make(239, 68, 68), &lv_font_montserrat_14);
     lv_obj_align(timer_lbl, LV_ALIGN_CENTER, 0, 0);
 
     lv_obj_t *row_grid = lv_obj_create(service_list);
@@ -13709,7 +13907,7 @@ static void build_subpages(ActiveSubpage target) {
     lv_obj_set_style_pad_all(light_sw_card, 0, 0);
     lv_obj_clear_flag(light_sw_card, LV_OBJ_FLAG_SCROLLABLE);
 
-    lv_obj_t *light_sw_lbl = create_label(light_sw_card, "Light", lv_color_white(), &lv_font_montserrat_12);
+    lv_obj_t *light_sw_lbl = create_label(light_sw_card, "Swiatlo", lv_color_white(), &lv_font_montserrat_12);
     lv_obj_align(light_sw_lbl, LV_ALIGN_LEFT_MID, 8, 0);
 
     service_light_sw = lv_switch_create(light_sw_card);
@@ -13723,7 +13921,7 @@ static void build_subpages(ActiveSubpage target) {
     lv_obj_set_style_pad_all(filter_sw_card, 0, 0);
     lv_obj_clear_flag(filter_sw_card, LV_OBJ_FLAG_SCROLLABLE);
 
-    lv_obj_t *filter_sw_lbl = create_label(filter_sw_card, "Filter", lv_color_white(), &lv_font_montserrat_12);
+    lv_obj_t *filter_sw_lbl = create_label(filter_sw_card, "Filtr", lv_color_white(), &lv_font_montserrat_12);
     lv_obj_align(filter_sw_lbl, LV_ALIGN_LEFT_MID, 8, 0);
 
     service_filter_sw = lv_switch_create(filter_sw_card);
@@ -13737,7 +13935,7 @@ static void build_subpages(ActiveSubpage target) {
     lv_obj_set_style_pad_all(music_card, 0, 0);
     lv_obj_clear_flag(music_card, LV_OBJ_FLAG_SCROLLABLE);
 
-    lv_obj_t *music_title = create_label(music_card, "Play music", lv_color_make(100, 116, 139), &lv_font_montserrat_12);
+    lv_obj_t *music_title = create_label(music_card, "Odtwarzacz", lv_color_make(100, 116, 139), &lv_font_montserrat_12);
     lv_obj_align(music_title, LV_ALIGN_TOP_LEFT, 10, 4);
 
     // Dropdown (Song Select)
@@ -13753,7 +13951,7 @@ static void build_subpages(ActiveSubpage target) {
     lv_obj_add_event_cb(song_dd, service_song_dd_cb, LV_EVENT_VALUE_CHANGED, nullptr);
 
     // Volume label
-    service_vol_lbl = create_label(music_card, "Vol: 50%", lv_color_white(), &lv_font_montserrat_12);
+    service_vol_lbl = create_label(music_card, "Glosn: 50%", lv_color_white(), &lv_font_montserrat_12);
     lv_obj_align(service_vol_lbl, LV_ALIGN_TOP_LEFT, 160, 26);
 
     // Volume slider
@@ -13824,7 +14022,7 @@ static void gui_sync_widgets_to_state() {
                                           static_cast<unsigned>(cfg.feedMinute1));
                 }
             } else {
-                lv_label_set_text(home_feed_time_lbl, "off");
+                lv_label_set_text(home_feed_time_lbl, "wyl.");
             }
         } else {
             if (day_active) {
@@ -13840,7 +14038,7 @@ static void gui_sync_widgets_to_state() {
                                           static_cast<unsigned>(cfg.feedMinute1));
                 }
             } else {
-                lv_label_set_text(home_feed_time_lbl, "off");
+                lv_label_set_text(home_feed_time_lbl, "wyl.");
             }
         }
     }
@@ -13855,29 +14053,29 @@ static void gui_sync_widgets_to_state() {
     };
 
     if (home_light_state_lbl != nullptr) {
-        set_binary_state(home_light_state_lbl, runtime.lightOn, "[ON]", "[OFF]", lv_color_make(92, 219, 162));
+        set_binary_state(home_light_state_lbl, runtime.lightOn, "[WL]", "[WYL]", lv_color_make(92, 219, 162));
     }
     if (home_light_mode_lbl != nullptr) {
         if (cfg.lightMode == static_cast<uint8_t>(ScheduleMode::Schedule)) {
-            lv_label_set_text_fmt(home_light_mode_lbl, "%s %s", mode_label(cfg.lightMode), light_color_mode_label(runtime.lightActiveMode));
+            lv_label_set_text_fmt(home_light_mode_lbl, "%s %s", mode_label(cfg.lightMode), light_color_mode_gui_label(runtime.lightActiveMode));
         } else {
-            lv_label_set_text_fmt(home_light_mode_lbl, "%s %s", mode_label(cfg.lightMode), light_color_mode_label(runtime.lightActiveMode));
+            lv_label_set_text_fmt(home_light_mode_lbl, "%s %s", mode_label(cfg.lightMode), light_color_mode_gui_label(runtime.lightActiveMode));
         }
     }
 
     if (home_plant_state_lbl != nullptr) {
-        set_binary_state(home_plant_state_lbl, runtime.plantLightOn, "[ON]", "[OFF]", lv_color_make(92, 219, 162));
+        set_binary_state(home_plant_state_lbl, runtime.plantLightOn, "[WL]", "[WYL]", lv_color_make(92, 219, 162));
     }
     if (home_plant_mode_lbl != nullptr) {
         if (cfg.plantLightMode == static_cast<uint8_t>(ScheduleMode::Schedule)) {
-            lv_label_set_text_fmt(home_plant_mode_lbl, "%s %s", mode_label(cfg.plantLightMode), light_color_mode_label(runtime.plantLightActiveMode));
+            lv_label_set_text_fmt(home_plant_mode_lbl, "%s %s", mode_label(cfg.plantLightMode), light_color_mode_gui_label(runtime.plantLightActiveMode));
         } else {
-            lv_label_set_text_fmt(home_plant_mode_lbl, "%s %s", mode_label(cfg.plantLightMode), light_color_mode_label(runtime.plantLightActiveMode));
+            lv_label_set_text_fmt(home_plant_mode_lbl, "%s %s", mode_label(cfg.plantLightMode), light_color_mode_gui_label(runtime.plantLightActiveMode));
         }
     }
 
     if (home_filter_state_lbl != nullptr) {
-        set_binary_state(home_filter_state_lbl, runtime.filterOn, "[ON]", "[OFF]", lv_color_make(92, 219, 162));
+        set_binary_state(home_filter_state_lbl, runtime.filterOn, "[WL]", "[WYL]", lv_color_make(92, 219, 162));
     }
     if (home_filter_mode_lbl != nullptr) {
         lv_label_set_text(home_filter_mode_lbl, mode_label(cfg.filterMode));
@@ -13885,12 +14083,12 @@ static void gui_sync_widgets_to_state() {
 
     if (home_heater_state_lbl != nullptr) {
         if (cfg.heaterMode == static_cast<uint8_t>(HeaterMode::Off)) {
-            lv_label_set_text(home_heater_state_lbl, "[OFF]");
+            lv_label_set_text(home_heater_state_lbl, "[WYL]");
             lv_obj_set_style_text_color(home_heater_state_lbl, theme_text_muted(), 0);
         } else {
             lv_label_set_text(
                 home_heater_state_lbl,
-                runtime.heaterOn ? "[HEAT]" : "[STBY]");
+                runtime.heaterOn ? "[GRZEJE]" : "[CZUWANIE]");
             lv_obj_set_style_text_color(
                 home_heater_state_lbl,
                 runtime.heaterOn ? lv_color_make(255, 180, 92) : theme_text_muted(),
@@ -13901,11 +14099,11 @@ static void gui_sync_widgets_to_state() {
         if (cfg.enableHeater) {
             lv_label_set_text_fmt(home_heater_mode_lbl, "%.1f*C", cfg.targetTemp);
         } else {
-            lv_label_set_text(home_heater_mode_lbl, "DIS");
+            lv_label_set_text(home_heater_mode_lbl, "WYL");
         }
     }
     if (home_air_state_lbl != nullptr) {
-        set_binary_state(home_air_state_lbl, runtime.airOn, "[ON]", "[OFF]", lv_color_make(92, 219, 162));
+        set_binary_state(home_air_state_lbl, runtime.airOn, "[WL]", "[WYL]", lv_color_make(92, 219, 162));
     }
     if (home_air_mode_lbl != nullptr) {
         lv_label_set_text(home_air_mode_lbl, mode_label(cfg.airMode));
@@ -13936,27 +14134,27 @@ static void gui_sync_widgets_to_state() {
         lv_label_set_text_fmt(device_light_detail_lbl, "%02u:%02u-%02u:%02u | %s | %s",
                               cfg.lightStartHour, cfg.lightStartMinute,
                               cfg.lightEndHour, cfg.lightEndMinute,
-                              light_color_mode_label(runtime.lightActiveMode),
-                              runtime.lightOn ? "ON" : "OFF");
+                              light_color_mode_gui_label(runtime.lightActiveMode),
+                              runtime.lightOn ? "WL" : "WYL");
     }
     if (device_plant_detail_lbl != nullptr) {
         lv_label_set_text_fmt(device_plant_detail_lbl, "%02u:%02u-%02u:%02u | %s | %s",
                               cfg.plantStartHour, cfg.plantStartMinute,
                               cfg.plantEndHour, cfg.plantEndMinute,
-                              light_color_mode_label(runtime.plantLightActiveMode),
-                              runtime.plantLightOn ? "ON" : "OFF");
+                              light_color_mode_gui_label(runtime.plantLightActiveMode),
+                              runtime.plantLightOn ? "WL" : "WYL");
     }
     if (device_filter_detail_lbl != nullptr) {
         lv_label_set_text_fmt(device_filter_detail_lbl, "%02u:%02u-%02u:%02u | %s",
                               cfg.filterStartHour, cfg.filterStartMinute,
                               cfg.filterEndHour, cfg.filterEndMinute,
-                              runtime.filterOn ? "ON" : "OFF");
+                              runtime.filterOn ? "WL" : "WYL");
     }
     if (device_air_detail_lbl != nullptr) {
         lv_label_set_text_fmt(device_air_detail_lbl, "%02u:%02u-%02u:%02u | %s",
                               cfg.airStartHour, cfg.airStartMinute,
                               cfg.airEndHour, cfg.airEndMinute,
-                              runtime.airOn ? "ON" : "OFF");
+                              runtime.airOn ? "WL" : "WYL");
     }
     if (device_heater_detail_lbl != nullptr) {
         char buf[64];
@@ -13964,22 +14162,22 @@ static void gui_sync_widgets_to_state() {
         lv_label_set_text(device_heater_detail_lbl, buf);
     }
     if (device_ph_detail_lbl != nullptr) {
-        lv_label_set_text(device_ph_detail_lbl, cfg.showPhSensor ? "Aktywny" : "OFF");
+        lv_label_set_text(device_ph_detail_lbl, cfg.showPhSensor ? "Aktywny" : "WYL");
     }
     if (device_co2_detail_lbl != nullptr) {
-        lv_label_set_text(device_co2_detail_lbl, cfg.enableCo2 ? "Modul aktywny" : "OFF");
+        lv_label_set_text(device_co2_detail_lbl, cfg.enableCo2 ? "Modul aktywny" : "WYL");
     }
     if (device_ec_detail_lbl != nullptr) {
-        lv_label_set_text(device_ec_detail_lbl, cfg.enableEc ? "Sensor aktywny" : "OFF");
+        lv_label_set_text(device_ec_detail_lbl, cfg.enableEc ? "Sensor aktywny" : "WYL");
     }
     if (device_water_detail_lbl != nullptr) {
-        lv_label_set_text(device_water_detail_lbl, cfg.enableWaterLevel ? "MCP wejscie" : "OFF");
+        lv_label_set_text(device_water_detail_lbl, cfg.enableWaterLevel ? "MCP wejscie" : "WYL");
     }
     if (device_leak_detail_lbl != nullptr) {
-        lv_label_set_text(device_leak_detail_lbl, cfg.enableLeak ? "Alarm wejscie" : "OFF");
+        lv_label_set_text(device_leak_detail_lbl, cfg.enableLeak ? "Alarm wejscie" : "WYL");
     }
     if (device_flow_detail_lbl != nullptr) {
-        lv_label_set_text(device_flow_detail_lbl, cfg.enableFlow ? "Puls wejscie" : "OFF");
+        lv_label_set_text(device_flow_detail_lbl, cfg.enableFlow ? "Puls wejscie" : "WYL");
     }
 
     set_checked(hw_heater_sw, cfg.enableHeater);
@@ -14010,7 +14208,7 @@ static void gui_sync_widgets_to_state() {
     
     if (sched_feed_lbl != nullptr) {
         if (!cfg.feedEnabled) {
-            lv_label_set_text(sched_feed_lbl, "OFF");
+            lv_label_set_text(sched_feed_lbl, "WYL");
         } else {
             if (cfg.feedCount == 2) {
                 lv_label_set_text_fmt(sched_feed_lbl, "2x/d: %02u:%02u, %02u:%02u",
@@ -14099,8 +14297,41 @@ static void gui_sync_widgets_to_state() {
             lv_obj_clear_state(screen_manual_theme_sw, LV_STATE_DISABLED);
         }
     }
+
+    const uint8_t active_theme_mode = cfg.ldrThemeEnabled ? 2 : (cfg.manualLightTheme ? 1 : 0);
+    auto style_theme_btn = [](lv_obj_t *btn, bool is_active) {
+        if (btn == nullptr) return;
+        lv_obj_set_style_bg_color(btn, is_active ? theme_accent() : theme_elevated_bg(), 0);
+        lv_obj_set_style_border_width(btn, is_active ? 2 : 1, 0);
+        lv_obj_set_style_border_color(btn, is_active ? lv_color_white() : theme_card_border(), 0);
+        lv_obj_t *lbl = lv_obj_get_child(btn, 0);
+        if (lbl != nullptr) {
+            lv_obj_set_style_text_color(lbl, is_active ? lv_color_white() : theme_text_main(), 0);
+        }
+    };
+
+    style_theme_btn(screen_theme_btn_dark, active_theme_mode == 0);
+    style_theme_btn(screen_theme_btn_light, active_theme_mode == 1);
+    style_theme_btn(screen_theme_btn_auto, active_theme_mode == 2);
+
+    if (screen_theme_desc_lbl != nullptr) {
+        if (active_theme_mode == 2) {
+            lv_label_set_text(screen_theme_desc_lbl, "Czujnik LDR: auto motyw (<200 jasny)");
+        } else if (active_theme_mode == 1) {
+            lv_label_set_text(screen_theme_desc_lbl, "Wymuszony jasny motyw interfejsu");
+        } else {
+            lv_label_set_text(screen_theme_desc_lbl, "Wymuszony ciemny motyw interfejsu");
+        }
+    }
+
+    if (screen_brightness_slider != nullptr) {
+        lv_slider_set_value(screen_brightness_slider, display_max_brightness, LV_ANIM_OFF);
+    }
+    if (screen_brightness_val_lbl != nullptr) {
+        lv_label_set_text_fmt(screen_brightness_val_lbl, "%u%%", static_cast<unsigned>(display_max_brightness));
+    }
     if (chart_target_lbl != nullptr) {
-        lv_label_set_text_fmt(chart_target_lbl, "Target %.1f*C  H %.1f", cfg.targetTemp, cfg.tempHysteresis);
+        lv_label_set_text_fmt(chart_target_lbl, "Cel %.1f*C  H %.1f", cfg.targetTemp, cfg.tempHysteresis);
     }
 
     set_checked(sound_enable_sw, cfg.soundEnabled);
@@ -14111,7 +14342,7 @@ static void gui_sync_widgets_to_state() {
     if (power_state_lbl != nullptr) {
         lv_label_set_text_fmt(power_state_lbl, "LCD %s | WiFi %s",
                               cfg.alwaysScreenOn ? "stale" : "auto",
-                              cfg.modemSleep ? "OFF" : (wifi_connected ? "STA" : "gotowe"));
+                              cfg.modemSleep ? "WYL" : (wifi_connected ? "STA" : "gotowe"));
     }
     if (service_light_sw != nullptr) {
         set_checked(service_light_sw, cfg.lightMode != static_cast<uint8_t>(ScheduleMode::AlwaysOff));
@@ -14120,7 +14351,7 @@ static void gui_sync_widgets_to_state() {
         set_checked(service_filter_sw, cfg.filterMode != static_cast<uint8_t>(ScheduleMode::AlwaysOff));
     }
     if (service_vol_lbl != nullptr) {
-        lv_label_set_text_fmt(service_vol_lbl, "Vol: %d0%%", musicVolume.load());
+        lv_label_set_text_fmt(service_vol_lbl, "Glosn: %d0%%", musicVolume.load());
     }
     if (sound_quiet_sched_lbl != nullptr) {
         lv_label_set_text_fmt(sound_quiet_sched_lbl, "%02u:%02u - %02u:%02u",
@@ -14626,6 +14857,14 @@ static void reset_gui_object_refs() {
     screen_manual_theme_sw = nullptr;
     screen_ph_enable_sw = nullptr;
     screen_ldr_enable_sw = nullptr;
+    screen_theme_btn_dark = nullptr;
+    screen_theme_btn_light = nullptr;
+    screen_theme_btn_auto = nullptr;
+    screen_theme_desc_lbl = nullptr;
+    screen_brightness_slider = nullptr;
+    screen_brightness_val_lbl = nullptr;
+    screen_brightness_minus_btn = nullptr;
+    screen_brightness_plus_btn = nullptr;
     btn_sync_ntp_global = nullptr;
     btn_sync_ntp_lbl_global = nullptr;
     modal_feeder_title_lbl = nullptr;
@@ -14817,6 +15056,12 @@ void gui_app_unlock(void) {
     if (gui_mutex != nullptr) {
         xSemaphoreGiveRecursive(gui_mutex);
     }
+}
+
+bool gui_app_lock_responsive(RuntimeSafetyTask task, uint32_t now_ms) {
+    (void)task;
+    (void)now_ms;
+    return true;
 }
 
 void gui_app_init(void) {
@@ -15104,7 +15349,7 @@ void gui_app_update_wifi(int state, int rssi) {
 
     if (state == 0) {
         snprintf(status_ip_address, sizeof(status_ip_address), "0.0.0.0");
-        lv_label_set_text(label_wifi_state, is_connecting ? "JOIN" : "OFF");
+        lv_label_set_text(label_wifi_state, is_connecting ? "LACZ." : "WYL");
         lv_obj_set_style_text_color(label_wifi_state,
                                     is_connecting ? lv_color_make(245, 158, 11) : lv_color_make(239, 68, 68),
                                     0);
@@ -15614,10 +15859,10 @@ void gui_update_metrics(float temp, float ph, uint32_t free_heap, const char *ti
     if (label_clock_date != nullptr) {
         char date_str[32];
         static const char *months[] = {
-            "Jan", "Feb", "Mar", "Apr", "May", "Jun",
-            "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"
+            "Sty", "Lut", "Mar", "Kwi", "Maj", "Cze",
+            "Lip", "Sie", "Wrz", "Paz", "Lis", "Gru"
         };
-        const char *month_name = (clock_month >= 1 && clock_month <= 12) ? months[clock_month - 1] : "May";
+        const char *month_name = (clock_month >= 1 && clock_month <= 12) ? months[clock_month - 1] : "Maj";
         snprintf(date_str, sizeof(date_str), "%d %s %d", clock_day, month_name, clock_year);
         lv_label_set_text(label_clock_date, date_str);
     }
@@ -15991,7 +16236,7 @@ void gui_app_update_sensor_debug(int ldr_value,
 
     if (co2_state_lbl != nullptr) {
         const bool co2_on = cfg.devMode ? runtime.co2On : mcp_bit(HwConfig::CH_CO2);
-        lv_label_set_text(co2_state_lbl, (mcp_valid || cfg.devMode) ? (co2_on ? "Stan: ON" : "Stan: OFF") : "Stan: --");
+        lv_label_set_text(co2_state_lbl, (mcp_valid || cfg.devMode) ? (co2_on ? "Stan: WL" : "Stan: WYL") : "Stan: --");
         lv_obj_set_style_text_color(co2_state_lbl,
                                     co2_on ? lv_color_make(16, 185, 129) : theme_text_main(), 0);
     }
@@ -16022,24 +16267,24 @@ void gui_app_update_sensor_debug(int ldr_value,
     }
 
     if (water_state_lbl != nullptr) {
-        lv_label_set_text(water_state_lbl, mcp_valid ? (water_raw ? "RAW HIGH" : "RAW LOW") : "--");
+        lv_label_set_text(water_state_lbl, mcp_valid ? (water_raw ? "WYSOKI" : "NISKI") : "--");
     }
     if (leak_state_lbl != nullptr) {
-        lv_label_set_text(leak_state_lbl, mcp_valid ? (leak_raw ? "RAW HIGH" : "RAW LOW") : "--");
+        lv_label_set_text(leak_state_lbl, mcp_valid ? (leak_raw ? "WYCIEK!" : "OK (sucho)") : "--");
         lv_obj_set_style_text_color(leak_state_lbl,
                                     (mcp_valid && leak_raw) ? lv_color_make(239, 68, 68) : theme_text_main(), 0);
     }
     if (flow_state_lbl != nullptr) {
-        lv_label_set_text(flow_state_lbl, mcp_valid ? (flow_raw ? "RAW HIGH" : "RAW LOW") : "--");
+        lv_label_set_text(flow_state_lbl, mcp_valid ? (flow_raw ? "IMPULS" : "BRAK") : "--");
     }
     if (device_water_detail_lbl != nullptr) {
-        lv_label_set_text(device_water_detail_lbl, mcp_valid ? (water_raw ? "HIGH" : "LOW") : "MCP --");
+        lv_label_set_text(device_water_detail_lbl, mcp_valid ? (water_raw ? "WYSOKI" : "NISKI") : "MCP --");
     }
     if (device_leak_detail_lbl != nullptr) {
-        lv_label_set_text(device_leak_detail_lbl, mcp_valid ? (leak_raw ? "HIGH" : "LOW") : "MCP --");
+        lv_label_set_text(device_leak_detail_lbl, mcp_valid ? (leak_raw ? "ALARM" : "OK") : "MCP --");
     }
     if (device_flow_detail_lbl != nullptr) {
-        lv_label_set_text(device_flow_detail_lbl, mcp_valid ? (flow_raw ? "HIGH" : "LOW") : "MCP --");
+        lv_label_set_text(device_flow_detail_lbl, mcp_valid ? (flow_raw ? "IMPULS" : "BRAK") : "MCP --");
     }
     if (device_ec_detail_lbl != nullptr && cfg.enableEc) {
         if (ec_valid) {
@@ -16051,7 +16296,7 @@ void gui_app_update_sensor_debug(int ldr_value,
     if (device_co2_detail_lbl != nullptr && cfg.enableCo2) {
         const bool co2_on = cfg.devMode ? runtime.co2On : mcp_bit(HwConfig::CH_CO2);
         lv_label_set_text(device_co2_detail_lbl,
-                          (mcp_valid || cfg.devMode) ? (co2_on ? "Zawor ON" : "Zawor OFF") : "MCP --");
+                          (mcp_valid || cfg.devMode) ? (co2_on ? "Zawor WL" : "Zawor WYL") : "MCP --");
     }
 }
 

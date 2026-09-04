@@ -60,7 +60,7 @@ bool load_state(PersistentGuardState *out) {
         return false;
     }
     Preferences storage;
-    if (!storage.begin(OTA_GUARD_NAMESPACE, true)) {
+    if (!storage.begin(OTA_GUARD_NAMESPACE, false)) {
         return false;
     }
     const size_t read = storage.getBytes(OTA_GUARD_KEY, out, sizeof(*out));

@@ -242,4 +242,10 @@ GuiBleCommandResult gui_app_trusted_link_action(const char *action,
 /** @brief Serializes the common HTTP/BLE protocol-v2 capability document. */
 bool gui_app_v2_capabilities_json(char *out, size_t out_size);
 
+/**
+ * @brief Resets the base tick timestamp for the local software clock.
+ * Must be called whenever the clock is set (NTP sync, web sync, UI manual adjustment).
+ */
+void main_reset_clock_tick(uint32_t now_ms);
+
 #endif // GUI_APP_H

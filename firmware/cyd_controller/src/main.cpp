@@ -15,17 +15,24 @@
 #include "remote_alarm_relay.h"
 #include "runtime_controller.h"
 #include "runtime_safety.h"
+#include <WiFi.h>
+#include <esp_bt.h>
 
 bool wifi_connected = false;
 int wifi_rssi = 0;
 bool wifi_ota_active = false;
 
-int clock_hour = 20;
-int clock_minute = 30;
+int clock_hour = 0;
+int clock_minute = 0;
 int clock_second = 0;
-int clock_day = 31;
-int clock_month = 5;
+int clock_day = 1;
+int clock_month = 1;
 int clock_year = 2026;
+uint32_t last_clock_tick_ms = 0U;
+
+void main_reset_clock_tick(uint32_t now_ms) {
+    last_clock_tick_ms = now_ms;
+}
 
 namespace {
 
@@ -35,7 +42,6 @@ constexpr uint32_t OTA_HEALTH_SERVICE_MS = 500U;
 constexpr uint32_t OTA_HEARTBEAT_MAX_AGE_MS = 3000U;
 
 uint32_t last_lvgl_tick_ms = 0U;
-uint32_t last_clock_tick_ms = 0U;
 uint32_t last_status_bar_ms = 0U;
 uint32_t last_ota_health_ms = 0U;
 uint32_t last_applied_telemetry_ms = 0U;
@@ -206,6 +212,18 @@ void setup() {
     Serial.begin(HwConfig::UartConsole::BAUD);
     Serial.println();
     Serial.println("--- ESP32 CYD AQUARIUM / PRODUKCYJNY RUNTIME ---");
+
+    // Całkowite uwolnienie pamięci Bluetooth (BTDM = Classic BT + BLE)
+    // z powrotem do ogólnej sterty systemowej DRAM (~66 KB dodatkowego RAMu).
+    const esp_err_t bt_rel_err = esp_bt_controller_mem_release(ESP_BT_MODE_BTDM);
+    Serial.printf("BOOT: Bluetooth memory release (BTDM): %s\n",
+                  bt_rel_err == ESP_OK ? "OK (+66KB DRAM)" : "pominięto");
+
+    // Wczesna inicjalizacja sterownika Wi-Fi w niesfragmentowanej pamięci DMA.
+    WiFi.persistent(false);
+    WiFi.mode(WIFI_STA);
+    log_ram_checkpoint("after_early_wifi");
+
     runtime_safety_initialize();
     runtime_safety_register_current_task(RuntimeSafetyTask::Ui);
     ota_guard_initialize(millis());
@@ -312,5 +330,6 @@ void loop() {
         ota_guard_service(now_ms, runtime_ready, ESP.getFreeHeap());
     }
 
-    vTaskDelay(pdMS_TO_TICKS(UI_LOOP_PERIOD_MS));
+    // Short delay (5ms) to prevent watchdog starvation in FreeRTOS (from cydAquarium backup)
+    delay(5);
 }

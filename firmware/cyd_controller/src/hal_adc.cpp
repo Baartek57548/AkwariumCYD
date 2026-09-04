@@ -174,10 +174,25 @@ bool hal_adc_read_raw(uint8_t ch, int16_t *out)
     }
 
     bool ok = write_register_locked(REG_CONFIG, config_for_channel(ch));
+    hal_i2c_bus_unlock();
+    if (!ok) {
+        if (hal_i2c_bus_lock(HwConfig::I2C_MUTEX_TIMEOUT_MS)) {
+            record_failure_locked(millis());
+            hal_i2c_bus_unlock();
+        }
+        return false;
+    }
+
     uint16_t cfg = 0;
-    const uint32_t started_ms = now_ms;
+    const uint32_t started_ms = millis();
     while (ok) {
+        vTaskDelay(pdMS_TO_TICKS(1U));
+        if (!hal_i2c_bus_lock(HwConfig::I2C_MUTEX_TIMEOUT_MS)) {
+            ok = false;
+            break;
+        }
         ok = read_register_locked(REG_CONFIG, &cfg);
+        hal_i2c_bus_unlock();
         if (!ok || (cfg & CFG_OS_SINGLE) != 0) {
             break;
         }
@@ -185,22 +200,29 @@ bool hal_adc_read_raw(uint8_t ch, int16_t *out)
             ok = false;
             break;
         }
-        vTaskDelay(pdMS_TO_TICKS(1U));
     }
 
     uint16_t raw = 0;
     if (ok) {
-        ok = read_register_locked(REG_CONVERSION, &raw);
-    }
-
-    if (ok) {
-        *out = static_cast<int16_t>(raw);
-        record_success_locked();
+        if (hal_i2c_bus_lock(HwConfig::I2C_MUTEX_TIMEOUT_MS)) {
+            ok = read_register_locked(REG_CONVERSION, &raw);
+            if (ok) {
+                *out = static_cast<int16_t>(raw);
+                record_success_locked();
+            } else {
+                record_failure_locked(millis());
+            }
+            hal_i2c_bus_unlock();
+        } else {
+            ok = false;
+        }
     } else {
-        record_failure_locked(millis());
+        if (hal_i2c_bus_lock(HwConfig::I2C_MUTEX_TIMEOUT_MS)) {
+            record_failure_locked(millis());
+            hal_i2c_bus_unlock();
+        }
     }
 
-    hal_i2c_bus_unlock();
     return ok;
 }
 

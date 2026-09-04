@@ -85,7 +85,7 @@ bool persist_queue_locked() {
 bool alarm_event_queue_initialize(uint32_t boot_id) {
     PersistentAlarmQueue loaded = {};
     Preferences storage;
-    if (storage.begin(ALARM_QUEUE_NAMESPACE, true)) {
+    if (storage.begin(ALARM_QUEUE_NAMESPACE, false)) {
         const size_t bytes =
             storage.getBytes(ALARM_QUEUE_KEY, &loaded, sizeof(loaded));
         storage.end();

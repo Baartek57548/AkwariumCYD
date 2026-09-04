@@ -2,13 +2,13 @@
     "version": "2.0.0",
     "tasks": [
         {
-            "label": "Build (esp32dev)",
+            "label": "Build (CYD 2.8 ILI9341)",
             "type": "shell",
             "command": "C:\\Users\\Bartek\\.platformio\\penv\\Scripts\\platformio.exe",
             "args": [
                 "run",
                 "--environment",
-                "esp32dev"
+                "cyd_2_8"
             ],
             "group": {
                 "kind": "build",
@@ -23,13 +23,13 @@
             }
         },
         {
-            "label": "Upload (esp32dev)",
+            "label": "Upload (CYD 2.8 ILI9341)",
             "type": "shell",
             "command": "C:\\Users\\Bartek\\.platformio\\penv\\Scripts\\platformio.exe",
             "args": [
                 "run",
                 "--environment",
-                "esp32dev",
+                "cyd_2_8",
                 "--target",
                 "upload"
             ],
@@ -42,7 +42,9 @@
             "command": "C:\\Users\\Bartek\\.platformio\\penv\\Scripts\\platformio.exe",
             "args": [
                 "device",
-                "monitor"
+                "monitor",
+                "--environment",
+                "cyd_2_8"
             ],
             "group": "build",
             "isBackground": true

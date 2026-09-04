@@ -248,7 +248,7 @@ jobs:
         run: pio test --project-dir firmware/cyd_controller --environment native
       - name: Build production firmware variants
         run: |
-          pio run --project-dir firmware/cyd_controller --environment esp32dev
+          pio run --project-dir firmware/cyd_controller --environment cyd_2_8
           pio run --project-dir firmware/cyd_controller --environment esp32dev-st7789
           pio run --project-dir firmware/cyd_controller --environment esp32dev-espnow
       - name: Collect firmware binaries and checksums
@@ -257,7 +257,7 @@ jobs:
           $artifactDir = Join-Path $env:GITHUB_WORKSPACE "artifacts\firmware"
           New-Item -ItemType Directory -Force -Path $artifactDir | Out-Null
           Copy-Item `
-            "firmware\cyd_controller\.pio\build\esp32dev\firmware.bin" `
+            "firmware\cyd_controller\.pio\build\cyd_2_8\firmware.bin" `
             (Join-Path $artifactDir "AquaCYD-Firmware-ci-ili9341.bin")
           Copy-Item `
             "firmware\cyd_controller\.pio\build\esp32dev-st7789\firmware.bin" `

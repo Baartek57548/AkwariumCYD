@@ -173,7 +173,7 @@ bool load_configuration(StoredConfiguration *output) {
         return false;
     }
     Preferences preferences;
-    if (!preferences.begin(NVS_NAMESPACE, true)) {
+    if (!preferences.begin(NVS_NAMESPACE, false)) {
         return false;
     }
     StoredConfiguration candidate = {};

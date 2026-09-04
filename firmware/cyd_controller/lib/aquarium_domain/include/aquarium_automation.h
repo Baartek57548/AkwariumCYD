@@ -116,6 +116,56 @@ bool evaluate_ato_control(const AtoControlInput &input);
 unsigned int evaluate_alarm_flags(const AlarmInput &input);
 unsigned int alarm_count(unsigned int flags);
 
+struct RuntimeLimiter {
+    uint32_t started_ms;
+    bool limit_latched;
+    bool running;
+
+    RuntimeLimiter() : started_ms(0U), limit_latched(false), running(false) {}
+
+    void reset() {
+        started_ms = 0U;
+        limit_latched = false;
+        running = false;
+    }
+
+    void clear_latch() {
+        limit_latched = false;
+        started_ms = 0U;
+        running = false;
+    }
+
+    bool update(bool desired_on, uint32_t now_ms, uint32_t limit_ms, bool *limit_tripped = nullptr) {
+        if (limit_tripped != nullptr) {
+            *limit_tripped = false;
+        }
+        if (!desired_on) {
+            if (!limit_latched) {
+                running = false;
+                started_ms = 0U;
+            }
+            return false;
+        }
+        if (limit_latched) {
+            return false;
+        }
+        if (!running) {
+            running = true;
+            started_ms = now_ms;
+        }
+        if (static_cast<uint32_t>(now_ms - started_ms) >= limit_ms) {
+            limit_latched = true;
+            running = false;
+            started_ms = 0U;
+            if (limit_tripped != nullptr) {
+                *limit_tripped = true;
+            }
+            return false;
+        }
+        return true;
+    }
+};
+
 } // namespace aquarium
 
 #endif // AQUARIUM_AUTOMATION_H

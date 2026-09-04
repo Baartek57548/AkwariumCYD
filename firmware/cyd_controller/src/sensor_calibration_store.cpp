@@ -72,7 +72,7 @@ bool sensor_calibration_store_initialize(void) {
     bool valid = false;
 
     Preferences storage;
-    if (storage.begin(CALIBRATION_NAMESPACE, true)) {
+    if (storage.begin(CALIBRATION_NAMESPACE, false)) {
         PersistentCalibration record = {};
         const size_t bytes =
             storage.getBytes(CALIBRATION_KEY, &record, sizeof(record));

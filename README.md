@@ -55,11 +55,12 @@ flutter pub get
 flutter run
 ```
 
-Sterownik CYD i testy domenowe:
+Sterownik CYD i testy domenowe (otwórz bezpośrednio katalog główny
+`cydAquarium` w PlatformIO):
 
 ```powershell
-pio test -d firmware/cyd_controller -e native
-pio run -d firmware/cyd_controller -e esp32dev
+pio test -e native
+pio run -e cyd_2_8
 ```
 
 ESP32-P4 i ESP32-C6 z przypiętym ESP-IDF 5.4.4:

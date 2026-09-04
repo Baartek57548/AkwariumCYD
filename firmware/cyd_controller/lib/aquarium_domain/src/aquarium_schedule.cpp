@@ -63,8 +63,40 @@ bool factory_light_profile_at(uint16_t now_minutes, LightProfile *profile) {
 }
 
 bool feeding_due(uint16_t now_minutes, uint8_t second, TimeOfDay feeding_time) {
-    return second == 0U && is_valid_time(feeding_time) &&
+    return second < 60U && is_valid_time(feeding_time) &&
            now_minutes == minutes_since_midnight(feeding_time);
+}
+
+FeedingTriggerLatch::FeedingTriggerLatch()
+    : last_fed_minute_(-1), last_fed_day_(-1) {
+}
+
+void FeedingTriggerLatch::reset() {
+    last_fed_minute_ = -1;
+    last_fed_day_ = -1;
+}
+
+bool FeedingTriggerLatch::evaluate(uint16_t now_minutes, uint8_t second, TimeOfDay feeding_time, int day_key) {
+    if (day_key != 0 && last_fed_day_ == day_key) {
+        return false;
+    }
+    if (!feeding_due(now_minutes, second, feeding_time)) {
+        if (last_fed_minute_ != -1 && now_minutes != static_cast<uint16_t>(last_fed_minute_)) {
+            last_fed_minute_ = -1;
+        }
+        return false;
+    }
+    const int target_minute = static_cast<int>(minutes_since_midnight(feeding_time));
+    if (last_fed_minute_ == target_minute && (day_key == 0 || last_fed_day_ == day_key)) {
+        return false;
+    }
+    last_fed_minute_ = target_minute;
+    last_fed_day_ = day_key;
+    return true;
+}
+
+bool FeedingTriggerLatch::evaluate(uint16_t now_minutes, TimeOfDay feeding_time, int day_key) {
+    return evaluate(now_minutes, 0U, feeding_time, day_key);
 }
 
 FactoryScheduleState factory_schedule_at(uint16_t now_minutes, uint8_t second) {

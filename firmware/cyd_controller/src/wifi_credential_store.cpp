@@ -157,7 +157,7 @@ bool wifi_credential_store_load(const char *ssid,
     char key[12] = {};
     credential_key(ssid, key, sizeof(key));
     Preferences storage;
-    if (!storage.begin(WIFI_CREDENTIAL_NAMESPACE, true)) {
+    if (!storage.begin(WIFI_CREDENTIAL_NAMESPACE, false)) {
         return false;
     }
     WifiCredentialRecord record = {};
@@ -186,7 +186,7 @@ bool wifi_credential_store_load_latest(char *ssid,
     password[0] = '\0';
 
     Preferences storage;
-    if (!storage.begin(WIFI_CREDENTIAL_NAMESPACE, true)) {
+    if (!storage.begin(WIFI_CREDENTIAL_NAMESPACE, false)) {
         return false;
     }
     char latest[WIFI_CREDENTIAL_SSID_BYTES] = {};

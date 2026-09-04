@@ -63,6 +63,20 @@ FactoryScheduleState factory_schedule_at(uint16_t now_minutes, uint8_t second);
 bool feeding_due(uint16_t now_minutes, uint8_t second, TimeOfDay feeding_time);
 const char *light_profile_code(LightProfile profile);
 
+class FeedingTriggerLatch {
+public:
+    FeedingTriggerLatch();
+    void reset();
+    bool evaluate(uint16_t now_minutes, uint8_t second, TimeOfDay feeding_time, int day_key = 0);
+    bool evaluate(uint16_t now_minutes, TimeOfDay feeding_time, int day_key = 0);
+    int last_fed_minute() const { return last_fed_minute_; }
+    int last_fed_day() const { return last_fed_day_; }
+
+private:
+    int last_fed_minute_;
+    int last_fed_day_;
+};
+
 } // namespace aquarium
 
 #endif // AQUARIUM_SCHEDULE_H

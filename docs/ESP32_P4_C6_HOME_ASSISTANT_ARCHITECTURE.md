@@ -191,7 +191,7 @@ python -c "import secrets; print('PMK=' + secrets.token_hex(16)); print('LMK=' +
 
 ### 3. CYD z ESP-NOW
 
-Zwykłe profile `esp32dev` i `esp32dev-st7789` zachowują dotychczasowe
+Zwykłe profile `cyd_2_8` i `esp32dev-st7789` zachowują dotychczasowe
 zachowanie. Nowy transport jest opt-in:
 
 ```powershell

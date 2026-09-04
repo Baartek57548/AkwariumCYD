@@ -33,7 +33,7 @@ constexpr size_t RELAY_SECRET_MAX_BYTES = 64U;
 constexpr size_t RELAY_CA_BYTES = 6144U;
 constexpr size_t RELAY_BODY_BYTES = 1024U;
 constexpr size_t RELAY_PATH_BYTES = 320U;
-constexpr uint32_t RELAY_TASK_STACK_BYTES = 8192U;
+constexpr uint32_t RELAY_TASK_STACK_BYTES = 6144U;
 constexpr UBaseType_t RELAY_TASK_PRIORITY = 1U;
 constexpr uint32_t RELAY_IDLE_PERIOD_MS = 1000U;
 constexpr uint32_t RELAY_INITIAL_RETRY_MS = 5000U;
@@ -936,7 +936,7 @@ bool remote_alarm_relay_initialize(void) {
     PersistentRelayConfiguration loaded = {};
     PersistentRelayCursor cursor = {};
     Preferences storage;
-    if (storage.begin(RELAY_NAMESPACE, true)) {
+    if (storage.begin(RELAY_NAMESPACE, false)) {
         storage.getBytes(
             RELAY_CONFIG_KEY, &loaded, sizeof(loaded));
         storage.getBytes(
@@ -980,9 +980,9 @@ bool remote_alarm_relay_initialize(void) {
         relay_status.ca_certificate_loaded = ca_loaded;
         unlock_relay();
     }
-    const bool task_started = ensure_task_started();
+    const bool task_started = relay_status.enabled ? ensure_task_started() : true;
     if (lock_relay()) {
-        relay_status.task_running = task_started;
+        relay_status.task_running = relay_task_handle != nullptr;
         unlock_relay();
     }
     return task_started;
@@ -1063,7 +1063,13 @@ bool remote_alarm_relay_configure(const char *base_url,
         saved ? device_id : "");
     unlock_relay();
     secure_zero(decoded, sizeof(decoded));
-    ensure_task_started();
+    if (saved && enabled) {
+        ensure_task_started();
+    }
+    if (lock_relay()) {
+        relay_status.task_running = relay_task_handle != nullptr;
+        unlock_relay();
+    }
     return saved;
 }
 
@@ -1090,6 +1096,13 @@ bool remote_alarm_relay_set_enabled(bool enabled) {
         : RemoteAlarmRelayError::StorageFailure;
     relay_status.next_retry_ms = 0U;
     unlock_relay();
+    if (saved && enabled) {
+        ensure_task_started();
+    }
+    if (lock_relay()) {
+        relay_status.task_running = relay_task_handle != nullptr;
+        unlock_relay();
+    }
     return saved;
 }
 

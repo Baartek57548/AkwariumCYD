@@ -3,14 +3,9 @@
 
 #include <stdint.h>
 
-/**
- * Schedules deletion of all BLE bonds in the BLE task. The request is
- * asynchronous so the command response can be delivered before the active
- * secure link is disconnected.
- */
-bool ble_controller_request_forget_bonds();
-
-/** Returns the number of peer identities currently persisted by NimBLE. */
-int ble_controller_bond_count();
+// Bluetooth is permanently disabled and removed to maximize RAM for Wi-Fi and LVGL.
+inline bool ble_controller_initialize(void) { return false; }
+inline bool ble_controller_request_forget_bonds(void) { return false; }
+inline int ble_controller_bond_count(void) { return 0; }
 
 #endif

@@ -3,7 +3,7 @@
 Ten dokument opisuje mechanizmy wykonawcze firmware CYD, które chronią
 automatykę akwarium przed zawieszeniem zadania, niestabilnym czujnikiem,
 uszkodzonym zapisem konfiguracji i utratą łączności. Dotyczy profili
-`esp32dev` (ILI9341) i `esp32dev-st7789`.
+`cyd_2_8` (ILI9341) i `esp32dev-st7789`.
 
 ## Watchdog, supervisor i stan bezpieczny
 
@@ -213,7 +213,7 @@ Minimalny zestaw przed publikacją firmware:
 
 ```powershell
 pio test -d firmware/cyd_controller -e native
-pio run -d firmware/cyd_controller -e esp32dev
+pio run -d firmware/cyd_controller -e cyd_2_8
 pio run -d firmware/cyd_controller -e esp32dev-st7789
 ```
 

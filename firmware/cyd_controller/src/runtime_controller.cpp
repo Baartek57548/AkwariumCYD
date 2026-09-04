@@ -31,7 +31,7 @@ constexpr uint32_t IO_TASK_PERIOD_MS = 10U;
 constexpr uint32_t TELEMETRY_INTERVAL_MS = 1000U;
 constexpr uint32_t MCP_POLL_INTERVAL_MS = 100U;
 constexpr uint32_t HAL_REPROBE_INTERVAL_MS = 5000U;
-constexpr uint32_t IO_TASK_STACK_BYTES = 8192U;
+constexpr uint32_t IO_TASK_STACK_BYTES = 16384U;
 constexpr UBaseType_t IO_TASK_PRIORITY = 2U;
 
 StaticQueue_t telemetry_queue_storage;
@@ -231,10 +231,10 @@ void io_task(void *) {
 
     for (;;) {
         const uint32_t now_ms = millis();
+        gui_app_service_background();
         io_heartbeat_ms = now_ms;
         runtime_safety_heartbeat(
             RuntimeSafetyTask::Io, now_ms, ESP.getFreeHeap());
-        gui_app_service_background();
 
         // DS18B20 jest maszyną stanów i musi być serwisowany częściej niż
         // publikowana jest telemetria.

@@ -10,6 +10,8 @@
 #include <freertos/task.h>
 #include <string.h>
 
+extern bool gui_app_lock_responsive(RuntimeSafetyTask task, uint32_t now_ms);
+
 namespace {
 
 constexpr char SAFETY_NAMESPACE[] = "aq_runtime";
@@ -18,9 +20,9 @@ constexpr uint32_t SAFETY_MAGIC = 0x32514641UL; // AFQ2
 constexpr uint16_t SAFETY_VERSION = 2U;
 constexpr uint32_t TASK_WATCHDOG_TIMEOUT_SECONDS = 8U;
 constexpr uint32_t SUPERVISOR_PERIOD_MS = 250U;
-constexpr uint32_t HEARTBEAT_TIMEOUT_MS = 4000U;
-constexpr uint32_t STARTUP_GRACE_MS = 15000U;
-constexpr uint32_t SUPERVISOR_STACK_BYTES = 4096U;
+constexpr uint32_t HEARTBEAT_TIMEOUT_MS = 15000U;
+constexpr uint32_t STARTUP_GRACE_MS = 60000U;
+constexpr uint32_t SUPERVISOR_STACK_BYTES = 2560U;
 constexpr UBaseType_t SUPERVISOR_PRIORITY = 4U;
 constexpr uint8_t RESET_HISTORY_CAPACITY = 8U;
 
@@ -233,6 +235,10 @@ void supervisor_task(void *) {
 
         if (static_cast<uint32_t>(now_ms - initialized_ms) >=
             STARTUP_GRACE_MS) {
+            if (!gui_app_lock_responsive(RuntimeSafetyTask::Ui, now_ms)) {
+                restart_after_fault(
+                    RuntimeFaultReason::UiHeartbeatStale);
+            }
             if (!ui_seen ||
                 static_cast<uint32_t>(
                     now_ms - ui_heartbeat) >
@@ -265,7 +271,7 @@ bool runtime_safety_initialize(void) {
         memset(&persistent, 0, sizeof(persistent));
 
         Preferences storage;
-        if (storage.begin(SAFETY_NAMESPACE, true)) {
+        if (storage.begin(SAFETY_NAMESPACE, false)) {
             PersistentSafetyState loaded = {};
             const size_t bytes =
                 storage.getBytes(
@@ -289,7 +295,7 @@ bool runtime_safety_initialize(void) {
     }
 
     const esp_err_t watchdog =
-        esp_task_wdt_init(TASK_WATCHDOG_TIMEOUT_SECONDS, true);
+        esp_task_wdt_init(TASK_WATCHDOG_TIMEOUT_SECONDS, false);
     const bool watchdog_ready =
         watchdog == ESP_OK ||
         watchdog == ESP_ERR_INVALID_STATE;
@@ -315,7 +321,10 @@ bool runtime_safety_register_current_task(RuntimeSafetyTask task) {
     if (!valid_task(task)) {
         return false;
     }
-    const esp_err_t result = esp_task_wdt_add(nullptr);
+    esp_err_t result = ESP_OK;
+    if (task != RuntimeSafetyTask::Ui) {
+        result = esp_task_wdt_add(nullptr);
+    }
     const bool registered =
         result == ESP_OK || result == ESP_ERR_INVALID_ARG;
     portENTER_CRITICAL(&safety_mux);
@@ -350,6 +359,30 @@ void runtime_safety_heartbeat(RuntimeSafetyTask task,
     if (reset_watchdog) {
         esp_task_wdt_reset();
     }
+}
+
+void runtime_safety_prepare_sleep(void) {
+    const uint32_t now_ms = millis();
+    portENTER_CRITICAL(&safety_mux);
+    for (uint8_t i = 0; i < static_cast<uint8_t>(RuntimeSafetyTask::Count); ++i) {
+        if (heartbeat_seen[i]) {
+            heartbeat_ms[i] = now_ms;
+        }
+    }
+    portEXIT_CRITICAL(&safety_mux);
+    esp_task_wdt_reset();
+}
+
+void runtime_safety_post_sleep(void) {
+    const uint32_t now_ms = millis();
+    portENTER_CRITICAL(&safety_mux);
+    for (uint8_t i = 0; i < static_cast<uint8_t>(RuntimeSafetyTask::Count); ++i) {
+        if (heartbeat_seen[i]) {
+            heartbeat_ms[i] = now_ms;
+        }
+    }
+    portEXIT_CRITICAL(&safety_mux);
+    esp_task_wdt_reset();
 }
 
 bool runtime_safety_start_supervisor(void) {

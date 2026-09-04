@@ -824,7 +824,7 @@ jobs:
           git diff --exit-code -- sdcard/aq/ota
       - name: Compile both display variants
         run: |
-          pio run --project-dir firmware/cyd_controller --environment esp32dev
+          pio run --project-dir firmware/cyd_controller --environment cyd_2_8
           pio run --project-dir firmware/cyd_controller --environment esp32dev-st7789
       - name: Materialize and validate the RSA-3072 signing identity
         id: signing
@@ -969,7 +969,7 @@ jobs:
             rm -f "$extracted_image"
           }
 
-          package_target esp32dev ili9341
+          package_target cyd_2_8 ili9341
           package_target esp32dev-st7789 st7789
 
           ili9341_bin="$output_dir/AquaCYD-Firmware-$version-ili9341-sbv2.bin"

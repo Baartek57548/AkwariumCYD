@@ -58,7 +58,7 @@ constexpr int8_t RESET_PIN = -1;
 constexpr int8_t BUSY_PIN = -1;
 constexpr uint32_t SPI_WRITE_FREQUENCY_HZ = 40000000UL;
 constexpr uint32_t SPI_READ_FREQUENCY_HZ = 16000000UL;
-constexpr uint16_t LVGL_DRAW_BUFFER_LINES = 10;
+constexpr uint16_t LVGL_DRAW_BUFFER_LINES = 40;
 constexpr uint16_t RGB565_STREAM_ROWS = 8;
 }
 
@@ -80,7 +80,7 @@ constexpr uint32_t RELEASE_DEBOUNCE_MS = 45UL;
 constexpr uint32_t WAKE_RELEASE_DEBOUNCE_MS = 75UL;
 constexpr int16_t POSITION_HYSTERESIS_PX = 3;
 constexpr int16_t POSITION_SNAP_THRESHOLD_PX = 28;
-constexpr bool DEBUG_LOGGING = false;
+constexpr bool DEBUG_LOGGING = true;
 }
 
 namespace Backlight {
