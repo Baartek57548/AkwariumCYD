@@ -11,6 +11,7 @@
 #include "config.h"
 #include "hal_display.h"
 #include "hal_sd.h"
+#include "runtime_safety.h"
 
 // Definicja niestandardowej klasy LovyanGFX dla płytek Cheap Yellow Display (ESP32-2432S028R)
 class LGFX : public lgfx::LGFX_Device {
@@ -99,6 +100,7 @@ static lv_indev_drv_t indev_drv;
 
 static uint32_t last_touch_timestamp = 0;
 static uint8_t display_brightness_percent = 100;
+static uint8_t configured_active_brightness = 100;
 
 DMA_ATTR uint16_t rgb565_stream_buffer[
     static_cast<size_t>(HwConfig::Display::WIDTH) *
@@ -132,7 +134,7 @@ static void my_touchpad_read(lv_indev_drv_t *indev_driver, lv_indev_data_t *data
         // ale ignorujemy wciśnięcie w LVGL, aby nie kliknąć w ciemno przypadkowego przycisku.
         if (display_brightness_percent == 0 || waking_from_blank) {
             waking_from_blank = true;
-            hal_display_set_brightness(100);
+            hal_display_set_brightness(configured_active_brightness > 0 ? configured_active_brightness : 50);
             last_touch_timestamp = millis();
             data->state = LV_INDEV_STATE_REL;
             return;
@@ -235,6 +237,9 @@ void hal_display_loop_cb(void) {
 
 void hal_display_set_brightness(uint8_t percent) {
     display_brightness_percent = percent > 100U ? 100U : percent;
+    if (display_brightness_percent > 0U) {
+        configured_active_brightness = display_brightness_percent;
+    }
     uint32_t duty = (static_cast<uint32_t>(display_brightness_percent) * HwConfig::Backlight::PWM_MAX_DUTY) / 100U;
     ledcWrite(HwConfig::Backlight::LEDC_CHANNEL, duty);
 }
@@ -312,6 +317,7 @@ bool hal_display_play_rgb565_sequence(const char *frame_pattern,
 
     for (uint16_t frame = 0U; frame < frame_count; ++frame) {
         const uint32_t frame_started_ms = millis();
+        runtime_safety_heartbeat(RuntimeSafetyTask::Ui, frame_started_ms, ESP.getFreeHeap());
         snprintf(frame_path, sizeof(frame_path), frame_pattern, static_cast<unsigned>(frame));
 
         if (!hal_display_draw_rgb565_file(frame_path, width, height)) {

@@ -59,7 +59,7 @@ constexpr int8_t BUSY_PIN = -1;
 constexpr uint32_t SPI_WRITE_FREQUENCY_HZ = 40000000UL;
 constexpr uint32_t SPI_READ_FREQUENCY_HZ = 16000000UL;
 constexpr uint16_t LVGL_DRAW_BUFFER_LINES = 40;
-constexpr uint16_t RGB565_STREAM_ROWS = 8;
+constexpr uint16_t RGB565_STREAM_ROWS = 24;
 }
 
 namespace Touch {

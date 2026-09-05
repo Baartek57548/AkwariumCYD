@@ -43,10 +43,19 @@ void hal_sd_unmount(void) {
         if (sd_mounted) {
             SD.end();
             sd_mounted = false;
+            last_mount_attempt_ms = millis();
             Serial.println("SD: unmounted.");
         }
         hal_sd_unlock();
     }
+}
+
+void hal_sd_notify_io_error(void) {
+    // Transient error: do not unmount card to keep existing filesystem state intact
+}
+
+bool hal_sd_check_health(void) {
+    return sd_mounted;
 }
 
 bool hal_sd_init(void)

@@ -170,7 +170,7 @@ constexpr uint32_t UI_RUNTIME_MODAL_MIN_FREE = 12000UL;
 constexpr uint32_t UI_RUNTIME_BIGGEST_MIN = 4096UL;
 constexpr uint32_t UI_RUNTIME_HARDWARE_MIN_FREE = 6000UL;
 constexpr uint32_t UI_RUNTIME_HARDWARE_MIN_LARGEST = 2048UL;
-constexpr uint32_t SENSOR_FRAME_STALE_MS = 3500UL;
+constexpr uint32_t SENSOR_FRAME_STALE_MS = 10000UL;
 constexpr uint32_t ACTUATOR_FAILURE_HOLD_MS = 5000UL;
 constexpr size_t WIFI_PASSWORD_MAX_LEN = 64;
 constexpr char WIFI_PROFILE_DIR[] = "/aq/config/wifi";
@@ -518,15 +518,18 @@ static unsigned int configured_alarm_sensor_mask() {
     return required;
 }
 
+static bool ota_portal_has_recent_web_activity(uint32_t now_ms);
+
 static unsigned int evaluate_live_alarm_flags(float temperature,
                                               bool temperature_valid,
                                               float ph,
                                               bool ph_valid) {
     const uint32_t now_ms = millis();
+    const uint32_t stale_limit = ota_portal_has_recent_web_activity(now_ms) ? 15000UL : SENSOR_FRAME_STALE_MS;
     const bool frame_stale =
-        sensor_debug.updatedMs == 0U ||
+        sensor_debug.updatedMs != 0U &&
         static_cast<uint32_t>(now_ms - sensor_debug.updatedMs) >
-            SENSOR_FRAME_STALE_MS;
+            stale_limit;
     const unsigned int required = configured_alarm_sensor_mask();
     unsigned int present = aquarium::AlarmNone;
     unsigned int stale = aquarium::AlarmNone;
@@ -535,7 +538,7 @@ static unsigned int evaluate_live_alarm_flags(float temperature,
         present |= aquarium::AlarmSensorTemperature;
         if (sensor_debug.temperatureStale ||
             !temperature_valid ||
-            sensor_debug.temperatureAgeMs > SENSOR_FRAME_STALE_MS ||
+            sensor_debug.temperatureAgeMs > stale_limit ||
             frame_stale) {
             stale |= aquarium::AlarmSensorTemperature;
         }
@@ -568,6 +571,9 @@ static unsigned int evaluate_live_alarm_flags(float temperature,
     const bool adc_required =
         (required &
          (aquarium::AlarmSensorPh | aquarium::AlarmSensorEc)) != 0U;
+    const bool mcp_required =
+        (required &
+         (aquarium::AlarmSensorWaterLevel | aquarium::AlarmSensorLeak)) != 0U;
     const bool temperature_bus_fault =
         (required & aquarium::AlarmSensorTemperature) != 0U &&
         sensor_debug.temperatureErrorCount > 0U &&
@@ -577,9 +583,8 @@ static unsigned int evaluate_live_alarm_flags(float temperature,
         temperature_bus_fault ||
         (adc_required &&
          (!sensor_debug.adcPresent || frame_stale)) ||
-        !sensor_debug.mcpPresent ||
-        !sensor_debug.mcpValid ||
-        frame_stale;
+        (mcp_required &&
+         (!sensor_debug.mcpPresent || !sensor_debug.mcpValid || frame_stale));
 
     const uint16_t water_level_mask = static_cast<uint16_t>(
         1U << static_cast<uint8_t>(HwConfig::CH_WATER_LEVEL));
@@ -703,6 +708,8 @@ static lv_obj_t *wifi_mode_lbl = nullptr;
 static lv_obj_t *wifi_rssi_lbl = nullptr;
 static lv_obj_t *wifi_mac_lbl = nullptr;
 static lv_obj_t *sta_list_obj = nullptr;
+static lv_obj_t *wifi_sta_subtitle_lbl = nullptr;
+static lv_obj_t *wifi_sta_rescan_btn = nullptr;
 static lv_obj_t *wifi_info_card = nullptr;
 static lv_obj_t *diag_uptime_lbl = nullptr;
 static lv_obj_t *diag_heap_lbl = nullptr;
@@ -1207,6 +1214,9 @@ static lv_obj_t *chart_ldr = nullptr;
 static lv_chart_series_t *chart_ldr_series = nullptr;
 static lv_obj_t *chart_heap = nullptr;
 static lv_chart_series_t *chart_heap_series = nullptr;
+static lv_obj_t *btn_chart_temp = nullptr;
+static lv_obj_t *btn_chart_ph = nullptr;
+static lv_obj_t *btn_chart_ldr = nullptr;
 static lv_obj_t *btn_chart_heap = nullptr;
 
 static lv_chart_series_t *chart_temp_target_series = nullptr;
@@ -1237,6 +1247,7 @@ static lv_obj_t *web_client_progress_bar = nullptr;
 static lv_obj_t *web_client_progress_lbl = nullptr;
 
 static void add_gui_log(const char *msg, bool is_important);
+static void gui_sync_widgets_to_state();
 static void chart_draw_event_cb(lv_event_t *e);
 static void redraw_charts();
 static void update_chart_stats();
@@ -1259,9 +1270,26 @@ static void apply_mcp_outputs(void);
 static bool run_feeder_pulse(const char *title, const char *message, bool critical_log);
 
 
-static lv_obj_t *btn_chart_temp = nullptr;
-static lv_obj_t *btn_chart_ph = nullptr;
-static lv_obj_t *btn_chart_ldr = nullptr;
+static lv_obj_t *day_schedule_panel = nullptr;
+static lv_obj_t *day_track_bars[6] = {nullptr};
+static lv_obj_t *day_track_bars_wrap[6] = {nullptr};
+static lv_obj_t *day_track_lbl[6] = {nullptr};
+static lv_obj_t *day_current_time_marker = nullptr;
+static lv_obj_t *day_time_lbl = nullptr;
+static lv_obj_t *day_status_lbl = nullptr;
+static lv_obj_t *chart_stats_panel = nullptr;
+
+static bool alarm_active_flag = false;
+static bool alarm_skipped = false;
+static lv_obj_t *alarm_modal_obj = nullptr;
+static lv_obj_t *sched_confirm_modal_obj = nullptr;
+static lv_obj_t *log_list = nullptr;
+
+static void show_critical_alert_dialog(const char *msg);
+static void dismiss_critical_alert(bool open_logs);
+static void refresh_unified_log_list();
+static void update_day_schedule_chart();
+static bool is_quiet_hours();
 
 enum class ActiveChart {
     Temp,
@@ -1639,6 +1667,12 @@ static void apply_display_backlight(int ldr_value, bool ldr_valid) {
             static_cast<uint32_t>(LDR_ADC_MAX));
     }
 
+    if (desired_percent > 0U && is_quiet_hours()) {
+        if (desired_percent > 50U) {
+            desired_percent = 50U;
+        }
+    }
+
     if (hal_display_get_brightness() != desired_percent) {
         hal_display_set_brightness(desired_percent);
     }
@@ -1863,8 +1897,12 @@ static void service_ntp_sync(uint32_t now_ms) {
             success = gui_save_clock_settings(true, "ntp");
             if (success) {
                 last_ntp_auto_sync_ms = now_ms;
+                auto_ntp_sync_scheduled_ms = 0U;
                 Serial.printf("CLOCK: auto-NTP sync OK: %04d-%02d-%02d %02d:%02d:%02d\n",
                               year, month, day, hour, minute, second);
+                add_gui_log("Czas zsynchronizowany z NTP", false);
+                gui_sync_widgets_to_state();
+                gui_app_update_status_bar(now_ms / 1000UL);
             }
         }
     }
@@ -1879,6 +1917,9 @@ static void service_ntp_sync(uint32_t now_ms) {
     if (!success) {
         set_controller_clock_source(false, "ntp_err");
         Serial.println("CLOCK: NTP sync failed or timed out.");
+        if (last_ntp_auto_sync_ms == 0U) {
+            auto_ntp_sync_scheduled_ms = now_ms + 10000U;
+        }
     }
     if (btn_sync_ntp_lbl_global != nullptr) {
         lv_label_set_text(btn_sync_ntp_lbl_global, success ? "Czas zapisany" : "Blad NTP");
@@ -2118,10 +2159,9 @@ static void load_default_config(AquariumUiConfig &out) {
     out.quietStartMinute = 0;
     out.quietEndHour = 10;
     out.quietEndMinute = 0;
-    out.devMode = true;
+    out.devMode = false;
     out.modemSleep = false;
     apply_factory_schedule(out);
-    apply_developer_demo_profile(out);
     out.crc32 = config_crc(out);
 }
 
@@ -2480,7 +2520,7 @@ static void gui_app_load_settings() {
                 Serial.println("GUI: NVS migrated to Aquael DAY/DAYBREAK/NIGHT profile.");
             } else if (stored.version == UI_CONFIG_VERSION_DEV_NO_SENSORS) {
                 cfg = stored;
-                cfg.devMode = true;
+                cfg.devMode = false;
                 cfg.ldrThemeEnabled = false;
                 cfg.showPhSensor = false;
                 cfg.enableHeater = false;
@@ -2495,7 +2535,7 @@ static void gui_app_load_settings() {
                 Serial.println("GUI: NVS migrated to developer no-sensors profile.");
             } else if (stored.version == UI_CONFIG_VERSION_LDR_DEFAULT_OFF) {
                 cfg = stored;
-                cfg.devMode = true;
+                cfg.devMode = false;
                 cfg.ldrThemeEnabled = false;
                 cfg.showPhSensor = false;
                 cfg.enableHeater = false;
@@ -3251,12 +3291,109 @@ static lv_obj_t *create_card(lv_obj_t *parent, lv_coord_t w, lv_coord_t h,
     return card;
 }
 
+#define LV_SYMBOL_LIGHTBULB "\xEF\x83\xAB"
+#define LV_SYMBOL_BUBBLES   "\xEF\x9E\x8C"
+
+// Custom 12x13 1-bpp icon bitmaps for LVGL font fallback
+// 1. Lightbulb: Classic bulb contour with clear screw threads and base
+static const uint8_t glyph_lightbulb_12x13[] = {
+    0x0F, 0x01, 0xF8, 0x3F, 0xC3, 0xFC, 0x3F, 0xC1, 0xF8, 0x0F,
+    0x00, 0xF0, 0x1F, 0x80, 0xF0, 0x1F, 0x80, 0xF0, 0x06, 0x00
+};
+
+// 2. Air bubbles: 3 distinct rising bubbles (hollow bubbles of varying sizes)
+static const uint8_t glyph_bubbles_12x13[] = {
+    0x00, 0xC0, 0x12, 0x01, 0x20, 0x0C, 0x78, 0x08, 0x40, 0x84,
+    0x08, 0x40, 0x78, 0xC0, 0x12, 0x01, 0x20, 0x0C, 0x00, 0x00
+};
+
+static bool custom_icon_get_glyph_dsc_14(const lv_font_t *font, lv_font_glyph_dsc_t *dsc_out, uint32_t letter, uint32_t letter_next) {
+    LV_UNUSED(font);
+    LV_UNUSED(letter_next);
+    if (letter == 0xF0EBU || letter == 0xF78CU) {
+        dsc_out->adv_w = 14 * 16;
+        dsc_out->box_w = 12;
+        dsc_out->box_h = 13;
+        dsc_out->ofs_x = 1;
+        dsc_out->ofs_y = -1;
+        dsc_out->bpp = 1;
+        dsc_out->is_placeholder = false;
+        return true;
+    }
+    return false;
+}
+
+static bool custom_icon_get_glyph_dsc_12(const lv_font_t *font, lv_font_glyph_dsc_t *dsc_out, uint32_t letter, uint32_t letter_next) {
+    LV_UNUSED(font);
+    LV_UNUSED(letter_next);
+    if (letter == 0xF0EBU || letter == 0xF78CU) {
+        dsc_out->adv_w = 13 * 16;
+        dsc_out->box_w = 12;
+        dsc_out->box_h = 13;
+        dsc_out->ofs_x = 0;
+        dsc_out->ofs_y = -1;
+        dsc_out->bpp = 1;
+        dsc_out->is_placeholder = false;
+        return true;
+    }
+    return false;
+}
+
+static const uint8_t *custom_icon_get_glyph_bitmap(const lv_font_t *font, uint32_t letter) {
+    LV_UNUSED(font);
+    if (letter == 0xF0EBU) {
+        return glyph_lightbulb_12x13;
+    }
+    if (letter == 0xF78CU) {
+        return glyph_bubbles_12x13;
+    }
+    return nullptr;
+}
+
+static lv_font_t custom_icon_font_14;
+static lv_font_t custom_icon_font_12;
+static lv_font_t font_montserrat_14_with_icons;
+static lv_font_t font_montserrat_12_with_icons;
+static bool custom_fonts_initialized = false;
+
+static void init_custom_fonts() {
+    if (custom_fonts_initialized) return;
+
+    memset(&custom_icon_font_14, 0, sizeof(custom_icon_font_14));
+    custom_icon_font_14.get_glyph_dsc = custom_icon_get_glyph_dsc_14;
+    custom_icon_font_14.get_glyph_bitmap = custom_icon_get_glyph_bitmap;
+    custom_icon_font_14.line_height = 16;
+    custom_icon_font_14.base_line = 3;
+
+    memset(&custom_icon_font_12, 0, sizeof(custom_icon_font_12));
+    custom_icon_font_12.get_glyph_dsc = custom_icon_get_glyph_dsc_12;
+    custom_icon_font_12.get_glyph_bitmap = custom_icon_get_glyph_bitmap;
+    custom_icon_font_12.line_height = 15;
+    custom_icon_font_12.base_line = 3;
+
+    font_montserrat_14_with_icons = lv_font_montserrat_14;
+    font_montserrat_14_with_icons.fallback = &custom_icon_font_14;
+
+    font_montserrat_12_with_icons = lv_font_montserrat_12;
+    font_montserrat_12_with_icons.fallback = &custom_icon_font_12;
+
+    custom_fonts_initialized = true;
+}
+
 static lv_obj_t *create_label(lv_obj_t *parent, const char *text, lv_color_t color,
                               const lv_font_t *font) {
+    if (!custom_fonts_initialized) {
+        init_custom_fonts();
+    }
     lv_obj_t *label = lv_label_create(parent);
     lv_label_set_text(label, text);
     lv_obj_set_style_text_color(label, resolve_text_color(color), 0);
     if (font != nullptr) {
+        if (font == &lv_font_montserrat_14) {
+            font = &font_montserrat_14_with_icons;
+        } else if (font == &lv_font_montserrat_12) {
+            font = &font_montserrat_12_with_icons;
+        }
         lv_obj_set_style_text_font(label, font, 0);
     }
     return label;
@@ -3342,12 +3479,15 @@ static void style_wifi_list_item(lv_obj_t *item, lv_color_t text_color) {
         return;
     }
 
-    lv_obj_set_height(item, 30);
+    lv_obj_set_height(item, 34);
     lv_obj_set_style_radius(item, 6, 0);
-    lv_obj_set_style_bg_color(item, resolve_bg_color(lv_color_make(15, 23, 42)), 0);
+    lv_obj_set_style_bg_color(item, theme_card_bg(), 0);
+    lv_obj_set_style_bg_color(item, lv_color_make(14, 116, 144), LV_STATE_PRESSED);
     lv_obj_set_style_border_color(item, theme_card_border(), 0);
+    lv_obj_set_style_border_color(item, lv_color_make(56, 189, 248), LV_STATE_PRESSED);
     lv_obj_set_style_border_width(item, 1, 0);
-    lv_obj_set_style_pad_all(item, 4, 0);
+    lv_obj_set_style_pad_ver(item, 4, 0);
+    lv_obj_set_style_pad_hor(item, 8, 0);
     lv_obj_set_style_text_font(item, &lv_font_montserrat_12, 0);
     lv_obj_set_style_text_color(item, resolve_text_color(text_color), 0);
 }
@@ -4406,22 +4546,22 @@ static void update_editor_fields() {
     if (editor_title_lbl != nullptr) {
         switch (current_editor_device) {
         case ScheduleDevice::Light:
-            lv_label_set_text(editor_title_lbl, "Przednia");
+            lv_label_set_text(editor_title_lbl, LV_SYMBOL_LIGHTBULB " Przednia");
             break;
         case ScheduleDevice::PlantLight:
-            lv_label_set_text(editor_title_lbl, "Tylna");
+            lv_label_set_text(editor_title_lbl, LV_SYMBOL_LIGHTBULB " Tylna");
             break;
         case ScheduleDevice::Filter:
-            lv_label_set_text(editor_title_lbl, "Filtr");
+            lv_label_set_text(editor_title_lbl, LV_SYMBOL_LOOP " Filtr");
             break;
         case ScheduleDevice::Air:
-            lv_label_set_text(editor_title_lbl, "Napowietrzanie");
+            lv_label_set_text(editor_title_lbl, LV_SYMBOL_BUBBLES " Napowietrzanie");
             break;
         case ScheduleDevice::Feed:
-            lv_label_set_text(editor_title_lbl, "Karmienie");
+            lv_label_set_text(editor_title_lbl, LV_SYMBOL_LIST " Karmienie");
             break;
         case ScheduleDevice::QuietHours:
-            lv_label_set_text(editor_title_lbl, "Cisza nocna");
+            lv_label_set_text(editor_title_lbl, LV_SYMBOL_EYE_CLOSE " Cisza nocna");
             break;
         }
     }
@@ -4606,13 +4746,150 @@ static bool is_sched_changed() {
     }
 }
 
-static void back_sched_editor_cb(lv_event_t *e) {
-    LV_UNUSED(e);
-    if (is_sched_changed()) {
+static void revert_sched_changes() {
+    switch (current_editor_device) {
+    case ScheduleDevice::Light:
+        cfg.lightMode = sched_snapshot.mode;
+        cfg.lightStartHour = sched_snapshot.startH;
+        cfg.lightStartMinute = sched_snapshot.startM;
+        cfg.lightEndHour = sched_snapshot.endH;
+        cfg.lightEndMinute = sched_snapshot.endM;
+        cfg.lightSchedColorMode = sched_snapshot.colorMode;
+        break;
+    case ScheduleDevice::PlantLight:
+        cfg.plantLightMode = sched_snapshot.mode;
+        cfg.plantStartHour = sched_snapshot.startH;
+        cfg.plantStartMinute = sched_snapshot.startM;
+        cfg.plantEndHour = sched_snapshot.endH;
+        cfg.plantEndMinute = sched_snapshot.endM;
+        cfg.plantSchedColorMode = sched_snapshot.colorMode;
+        break;
+    case ScheduleDevice::Filter:
+        cfg.filterMode = sched_snapshot.mode;
+        cfg.filterStartHour = sched_snapshot.startH;
+        cfg.filterStartMinute = sched_snapshot.startM;
+        cfg.filterEndHour = sched_snapshot.endH;
+        cfg.filterEndMinute = sched_snapshot.endM;
+        break;
+    case ScheduleDevice::Air:
+        cfg.airMode = sched_snapshot.mode;
+        cfg.airStartHour = sched_snapshot.startH;
+        cfg.airStartMinute = sched_snapshot.startM;
+        cfg.airEndHour = sched_snapshot.endH;
+        cfg.airEndMinute = sched_snapshot.endM;
+        break;
+    case ScheduleDevice::QuietHours:
+        cfg.quietHoursEnabled = (sched_snapshot.mode != 0);
+        cfg.quietStartHour = sched_snapshot.startH;
+        cfg.quietStartMinute = sched_snapshot.startM;
+        cfg.quietEndHour = sched_snapshot.endH;
+        cfg.quietEndMinute = sched_snapshot.endM;
+        break;
+    default:
+        break;
+    }
+}
+
+static void show_sched_confirm_dialog() {
+    if (sched_confirm_modal_obj != nullptr) return;
+
+    sched_confirm_modal_obj = lv_obj_create(lv_scr_act());
+    lv_obj_set_size(sched_confirm_modal_obj, 320, 240);
+    lv_obj_set_pos(sched_confirm_modal_obj, 0, 0);
+    lv_obj_set_style_bg_color(sched_confirm_modal_obj, lv_color_black(), 0);
+    lv_obj_set_style_bg_opa(sched_confirm_modal_obj, LV_OPA_70, 0);
+    lv_obj_set_style_border_width(sched_confirm_modal_obj, 0, 0);
+    lv_obj_set_style_pad_all(sched_confirm_modal_obj, 0, 0);
+    lv_obj_clear_flag(sched_confirm_modal_obj, LV_OBJ_FLAG_SCROLLABLE);
+
+    lv_obj_t *dialog = create_card(sched_confirm_modal_obj, 270, 136, 25, 52);
+    lv_obj_set_style_bg_color(dialog, resolve_bg_color(lv_color_make(15, 23, 42)), 0);
+    lv_obj_set_style_border_color(dialog, lv_color_make(14, 165, 233), 0);
+    lv_obj_set_style_border_width(dialog, 1, 0);
+    lv_obj_set_style_radius(dialog, 10, 0);
+    lv_obj_clear_flag(dialog, LV_OBJ_FLAG_SCROLLABLE);
+
+    const char *dev_name = "Harmonogram";
+    uint8_t new_startH = 0, new_startM = 0, new_endH = 0, new_endM = 0;
+    switch (current_editor_device) {
+    case ScheduleDevice::Light:
+        dev_name = "Swiatlo dzienne";
+        new_startH = cfg.lightStartHour; new_startM = cfg.lightStartMinute;
+        new_endH = cfg.lightEndHour; new_endM = cfg.lightEndMinute;
+        break;
+    case ScheduleDevice::PlantLight:
+        dev_name = "Swiatlo roslinne";
+        new_startH = cfg.plantStartHour; new_startM = cfg.plantStartMinute;
+        new_endH = cfg.plantEndHour; new_endM = cfg.plantEndMinute;
+        break;
+    case ScheduleDevice::Filter:
+        dev_name = "Filtr";
+        new_startH = cfg.filterStartHour; new_startM = cfg.filterStartMinute;
+        new_endH = cfg.filterEndHour; new_endM = cfg.filterEndMinute;
+        break;
+    case ScheduleDevice::Air:
+        dev_name = "Napowietrzanie";
+        new_startH = cfg.airStartHour; new_startM = cfg.airStartMinute;
+        new_endH = cfg.airEndHour; new_endM = cfg.airEndMinute;
+        break;
+    case ScheduleDevice::QuietHours:
+        dev_name = "Cisza nocna";
+        new_startH = cfg.quietStartHour; new_startM = cfg.quietStartMinute;
+        new_endH = cfg.quietEndHour; new_endM = cfg.quietEndMinute;
+        break;
+    default:
+        break;
+    }
+
+    char msg[128];
+    snprintf(msg, sizeof(msg), "%s:\nz %02u:%02u - %02u:%02u\nna %02u:%02u - %02u:%02u",
+             dev_name,
+             static_cast<unsigned>(sched_snapshot.startH), static_cast<unsigned>(sched_snapshot.startM),
+             static_cast<unsigned>(sched_snapshot.endH), static_cast<unsigned>(sched_snapshot.endM),
+             static_cast<unsigned>(new_startH), static_cast<unsigned>(new_startM),
+             static_cast<unsigned>(new_endH), static_cast<unsigned>(new_endM));
+
+    lv_obj_t *lbl = create_label(dialog, msg, lv_color_white(), &lv_font_montserrat_12);
+    lv_obj_set_width(lbl, 250);
+    lv_obj_set_style_text_align(lbl, LV_TEXT_ALIGN_CENTER, 0);
+    lv_obj_align(lbl, LV_ALIGN_TOP_MID, 0, 10);
+
+    lv_obj_t *btn_apply = create_button(dialog, "Zastosuj", 104, 28, lv_color_make(16, 185, 129), [](lv_event_t *e) {
+        LV_UNUSED(e);
+        play_system_sound(SoundType::Save);
         sanitize_config(cfg);
         gui_app_save_settings();
         gui_sync_widgets_to_state();
         show_top_notification("Zapisano zmiany", true);
+        if (sched_confirm_modal_obj != nullptr) {
+            lv_obj_del(sched_confirm_modal_obj);
+            sched_confirm_modal_obj = nullptr;
+        }
+        delete_runtime_subpages(true);
+    }, nullptr);
+    lv_obj_align(btn_apply, LV_ALIGN_BOTTOM_RIGHT, -14, -8);
+    apply_3d_button_properties(btn_apply);
+
+    lv_obj_t *btn_reject = create_button(dialog, "Odrzuc", 104, 28, lv_color_make(51, 65, 85), [](lv_event_t *e) {
+        LV_UNUSED(e);
+        play_system_sound(SoundType::Click);
+        revert_sched_changes();
+        gui_sync_widgets_to_state();
+        if (sched_confirm_modal_obj != nullptr) {
+            lv_obj_del(sched_confirm_modal_obj);
+            sched_confirm_modal_obj = nullptr;
+        }
+        delete_runtime_subpages(true);
+    }, nullptr);
+    lv_obj_align(btn_reject, LV_ALIGN_BOTTOM_LEFT, 14, -8);
+    apply_3d_button_properties(btn_reject);
+}
+
+static void back_sched_editor_cb(lv_event_t *e) {
+    LV_UNUSED(e);
+    if (is_sched_changed()) {
+        show_sched_confirm_dialog();
+        return;
     }
     delete_runtime_subpages(true);
 }
@@ -4973,6 +5250,8 @@ static void reset_subpage_refs(ActiveSubpage subpage) {
         wifi_rssi_lbl = nullptr;
         wifi_mac_lbl = nullptr;
         sta_list_obj = nullptr;
+        wifi_sta_subtitle_lbl = nullptr;
+        wifi_sta_rescan_btn = nullptr;
         btn_sta = nullptr;
         btn_ota = nullptr;
         btn_disconnect = nullptr;
@@ -6422,16 +6701,92 @@ static void try_autoconnect_wifi_profile(void) {
 
 static const char OTA_PORTAL_FALLBACK_INDEX[] PROGMEM = R"rawliteral(
 <!doctype html><html lang="pl"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>cydAkwarium OTA</title><style>
-body{margin:0;font-family:Arial,sans-serif;background:#f1f5f9;color:#0f172a}main{max-width:760px;margin:0 auto;padding:20px}
-.card{background:#fff;border:1px solid #cbd5e1;border-radius:10px;padding:16px;margin:12px 0;box-shadow:0 8px 24px rgba(15,23,42,.08)}
-h1{margin:0 0 4px;font-size:26px}.muted{color:#64748b}.row{display:flex;gap:10px;flex-wrap:wrap}.btn{border:0;border-radius:8px;padding:10px 14px;background:#0ea5e9;color:#fff;font-weight:700;text-decoration:none;display:inline-block}
-input{width:100%;box-sizing:border-box;border:1px solid #cbd5e1;border-radius:8px;padding:10px}progress{width:100%;height:18px}
-</style></head><body><main><h1>cydAkwarium OTA</h1><p class="muted">Awaryjna strona firmware. Wlasciwy plik powinien byc na SD: /aq/ota/index.html</p>
-<section class="card"><h2>Aktualizacja firmware</h2><form id="f"><label>PIN administratora</label><input id="pin" type="password" inputmode="numeric" required><p><input id="pkg" name="firmware" type="file" accept=".aqfw" required></p><p><progress id="p" max="100" value="0"></progress></p><button class="btn" type="submit">Zweryfikuj i wgraj .aqfw</button></form><p id="msg" class="muted"></p></section>
-<section class="card"><h2>Dane</h2><a class="btn" href="/api/history.csv">Pobierz aktualna historie CSV</a></section>
-</main><script>
-f.onsubmit=async function(e){e.preventDefault();var file=pkg.files[0];if(!file||!file.name.toLowerCase().endsWith('.aqfw')||file.size>1966592){msg.textContent='Wybierz poprawny pakiet .aqfw';return}try{var auth=await fetch('/api/v2/auth',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({pin:pin.value})});var body=await auth.json();var token=body&&body.data&&body.data.sessionToken;if(!auth.ok||!token){throw new Error(body.message||'Logowanie odrzucone')}var x=new XMLHttpRequest();x.open('POST','/update');x.setRequestHeader('X-AquaCYD-Session',token);x.upload.onprogress=function(ev){if(ev.lengthComputable)p.value=(ev.loaded*100/ev.total)|0};x.onload=function(){msg.textContent=x.responseText};x.onerror=function(){msg.textContent='Przerwane polaczenie OTA'};var d=new FormData();d.append('firmware',file,file.name);x.send(d)}catch(error){msg.textContent=error.message||'Blad autoryzacji'}};
+<title>cydAkwarium</title><style>
+body{margin:0;font-family:Arial,sans-serif;background:#0f172a;color:#f8fafc}
+main{max-width:760px;margin:0 auto;padding:16px}
+.card{background:#1e293b;border:1px solid #334155;border-radius:12px;padding:16px;margin:12px 0;box-shadow:0 4px 12px rgba(0,0,0,.3)}
+h1{margin:0 0 4px;font-size:24px;color:#38bdf8}h2{margin:0 0 12px;font-size:18px;color:#94a3b8}
+.muted{color:#94a3b8;font-size:13px}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:10px;margin:12px 0}
+.tile{background:#0f172a;padding:12px;border-radius:8px;border:1px solid #334155;text-align:center}
+.val{font-size:22px;font-weight:700;color:#38bdf8;margin-top:4px}
+.row{display:flex;gap:10px;flex-wrap:wrap;margin-top:10px}
+.btn{border:0;border-radius:8px;padding:10px 14px;background:#0284c7;color:#fff;font-weight:700;text-decoration:none;display:inline-block;cursor:pointer}
+.btn:hover{background:#0369a1}
+input{width:100%;box-sizing:border-box;border:1px solid #475569;border-radius:8px;padding:10px;background:#0f172a;color:#f8fafc}
+progress{width:100%;height:18px;margin-top:8px}
+</style></head><body><main>
+<h1>🐠 cydAkwarium</h1>
+<p class="muted">Panel awaryjny (karta SD niedostepna lub odmontowana)</p>
+
+<section class="card">
+<h2>Pomiary na zywo</h2>
+<div class="grid">
+<div class="tile"><div>Temperatura</div><div id="v_temp" class="val">--.- °C</div></div>
+<div class="tile"><div>pH</div><div id="v_ph" class="val">-.--</div></div>
+<div class="tile"><div>EC</div><div id="v_ec" class="val">-- µS/cm</div></div>
+<div class="tile"><div>Swiatlo (LDR)</div><div id="v_ldr" class="val">-- %</div></div>
+</div>
+<div class="muted" id="v_time">Oczekiwanie na dane...</div>
+</section>
+
+<section class="card">
+<h2>Aktualizacja firmware (.aqfw)</h2>
+<form id="f">
+<label class="muted">PIN administratora</label>
+<p><input id="pin" type="password" inputmode="numeric" placeholder="1234" required></p>
+<p><input id="pkg" name="firmware" type="file" accept=".aqfw" required></p>
+<p><progress id="p" max="100" value="0"></progress></p>
+<button class="btn" type="submit">Zweryfikuj i wgraj .aqfw</button>
+</form>
+<p id="msg" class="muted"></p>
+</section>
+
+<section class="card">
+<h2>Narzedzia i diagnostyka</h2>
+<div class="row">
+<a class="btn" href="/api/history.csv">Pobierz historie CSV</a>
+<a class="btn" href="/api/logs">Pokaz logi systemowe</a>
+<a class="btn" href="/api/bus-diagnostics">Diagnostyka magistrali I2C</a>
+</div>
+</section>
+</main>
+<script>
+async function upd(){
+ try{
+  let r=await fetch('/api/status');
+  if(!r.ok)return;
+  let d=await r.json();
+  if(d.temperature!=null) document.getElementById('v_temp').textContent=Number(d.temperature).toFixed(1)+' °C';
+  if(d.ph!=null) document.getElementById('v_ph').textContent=Number(d.ph).toFixed(2);
+  if(d.ec!=null) document.getElementById('v_ec').textContent=Math.round(Number(d.ec))+' µS/cm';
+  if(d.ldr!=null) document.getElementById('v_ldr').textContent=d.ldr+' %';
+  document.getElementById('v_time').textContent='Status: Polaczono | Pamiac RAM (heap): '+(d.freeHeap||'--')+' B';
+ }catch(e){}
+}
+setInterval(upd,3000);
+upd();
+
+f.onsubmit=async function(e){
+ e.preventDefault();
+ var file=pkg.files[0];
+ if(!file||!file.name.toLowerCase().endsWith('.aqfw')||file.size>1966592){msg.textContent='Wybierz poprawny pakiet .aqfw';return}
+ try{
+  var auth=await fetch('/api/v2/auth',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({pin:pin.value})});
+  var body=await auth.json();
+  var token=body&&body.data&&body.data.sessionToken;
+  if(!auth.ok||!token){throw new Error(body.message||'Logowanie odrzucone')}
+  var x=new XMLHttpRequest();
+  x.open('POST','/update');
+  x.setRequestHeader('X-AquaCYD-Session',token);
+  x.upload.onprogress=function(ev){if(ev.lengthComputable)p.value=(ev.loaded*100/ev.total)|0};
+  x.onload=function(){msg.textContent=x.responseText};
+  x.onerror=function(){msg.textContent='Przerwane polaczenie OTA'};
+  var d=new FormData();
+  d.append('firmware',file,file.name);
+  x.send(d);
+ }catch(error){msg.textContent=error.message||'Blad autoryzacji'}
+};
 </script></body></html>
 )rawliteral";
 
@@ -6449,7 +6804,13 @@ static const char *ota_portal_content_type(const char *path) {
     if (path == nullptr) {
         return "application/octet-stream";
     }
-    const char *ext = strrchr(path, '.');
+    char clean_path[128];
+    snprintf(clean_path, sizeof(clean_path), "%s", path);
+    size_t len = strlen(clean_path);
+    if (len > 3 && strcmp(clean_path + len - 3, ".gz") == 0) {
+        clean_path[len - 3] = '\0';
+    }
+    const char *ext = strrchr(clean_path, '.');
     if (ext == nullptr) {
         return "application/octet-stream";
     }
@@ -6457,12 +6818,57 @@ static const char *ota_portal_content_type(const char *path) {
     if (strcmp(ext, ".css") == 0) return "text/css; charset=utf-8";
     if (strcmp(ext, ".js") == 0) return "application/javascript; charset=utf-8";
     if (strcmp(ext, ".json") == 0) return "application/json; charset=utf-8";
+    if (strcmp(ext, ".webmanifest") == 0) return "application/manifest+json; charset=utf-8";
     if (strcmp(ext, ".csv") == 0) return "text/csv; charset=utf-8";
     if (strcmp(ext, ".txt") == 0 || strcmp(ext, ".log") == 0 || strcmp(ext, ".cfg") == 0) return "text/plain; charset=utf-8";
+    if (strcmp(ext, ".png") == 0) return "image/png";
+    if (strcmp(ext, ".jpg") == 0 || strcmp(ext, ".jpeg") == 0) return "image/jpeg";
+    if (strcmp(ext, ".ico") == 0) return "image/x-icon";
+    if (strcmp(ext, ".svg") == 0) return "image/svg+xml";
+    if (strcmp(ext, ".woff") == 0) return "font/woff";
+    if (strcmp(ext, ".woff2") == 0) return "font/woff2";
     if (strcmp(ext, ".bin") == 0 || strcmp(ext, ".aqbin") == 0 ||
         strcmp(ext, ".aqfw") == 0) return "application/octet-stream";
     if (strcmp(ext, ".gz") == 0) return "application/gzip";
     return "application/octet-stream";
+}
+
+static size_t ota_portal_stream_file(File &file, const char *content_type) {
+    if (!file) {
+        return 0U;
+    }
+    const size_t file_size = file.size();
+    ota_http_server.setContentLength(file_size);
+    ota_http_server.send(200, content_type, "");
+
+    WiFiClient client = ota_http_server.client();
+    uint8_t buffer[1460];
+    size_t total_sent = 0U;
+
+    while (file.available() && client.connected()) {
+        size_t to_read = file.available();
+        if (to_read > sizeof(buffer)) {
+            to_read = sizeof(buffer);
+        }
+        size_t bytes_read = file.read(buffer, to_read);
+        if (bytes_read == 0U) {
+            break;
+        }
+        size_t written = client.write(buffer, bytes_read);
+        total_sent += written;
+
+        const uint32_t now_ms = millis();
+        runtime_safety_heartbeat(RuntimeSafetyTask::Io, now_ms, ESP.getFreeHeap());
+
+#if defined(ARDUINO_ARCH_ESP32)
+        taskYIELD();
+#endif
+
+        if (written != bytes_read) {
+            break;
+        }
+    }
+    return total_sent;
 }
 
 static const char *ota_portal_basename(const char *path) {
@@ -6952,21 +7358,31 @@ static void ota_portal_handle_root() {
     ota_portal_no_cache();
     if (ota_portal_sd_ready()) {
         if (hal_sd_lock(1000U)) {
-            const bool use_gzip = ota_portal_client_accepts_gzip() && SD.exists("/aq/ota/index.html.gz");
-            const char *served_path = use_gzip ? "/aq/ota/index.html.gz" : OTA_PORTAL_INDEX_PATH;
-            File file = SD.open(served_path, FILE_READ);
-            if (file && !file.isDirectory()) {
+            File file;
+            bool use_gzip = false;
+            if (ota_portal_client_accepts_gzip()) {
+                file = SD.open("/aq/ota/index.html.gz", FILE_READ);
+                if (file && !file.isDirectory()) {
+                    use_gzip = true;
+                } else if (file) {
+                    file.close();
+                }
+            }
+            if (!file) {
+                file = SD.open(OTA_PORTAL_INDEX_PATH, FILE_READ);
+                if (file && file.isDirectory()) {
+                    file.close();
+                }
+            }
+            if (file) {
                 if (use_gzip) {
                     ota_http_server.sendHeader("Content-Encoding", "gzip");
                     ota_http_server.sendHeader("Vary", "Accept-Encoding");
                 }
-                ota_http_server.streamFile(file, "text/html; charset=utf-8");
+                ota_portal_stream_file(file, "text/html; charset=utf-8");
                 file.close();
                 hal_sd_unlock();
                 return;
-            }
-            if (file) {
-                file.close();
             }
             hal_sd_unlock();
         }
@@ -8368,7 +8784,10 @@ static void ota_portal_handle_action() {
         gui_app_save_settings();
         apply_mcp_outputs();
         if (!gui_web_focus_blocks_local_ui()) {
-            gui_sync_widgets_to_state();
+            GuiMutexGuard guard(50U);
+            if (guard.locked()) {
+                gui_sync_widgets_to_state();
+            }
         }
         ota_portal_send_action_result(true, "ok", "Stan zapisany.");
         return;
@@ -8429,7 +8848,10 @@ static void ota_portal_handle_action() {
         sanitize_config(cfg);
         gui_app_save_settings();
         if (!gui_web_focus_blocks_local_ui()) {
-            gui_sync_widgets_to_state();
+            GuiMutexGuard guard(50U);
+            if (guard.locked()) {
+                gui_sync_widgets_to_state();
+            }
         }
         ota_portal_send_action_result(true, "ok", "Harmonogramy zapisane.");
         return;
@@ -8450,7 +8872,10 @@ static void ota_portal_handle_action() {
         sanitize_config(cfg);
         gui_app_save_settings();
         if (!gui_web_focus_blocks_local_ui()) {
-            gui_sync_widgets_to_state();
+            GuiMutexGuard guard(50U);
+            if (guard.locked()) {
+                gui_sync_widgets_to_state();
+            }
         }
         ota_portal_send_action_result(true, "ok", "Ustawienia temperatury zapisane.");
         return;
@@ -8712,8 +9137,11 @@ static void ota_portal_handle_action() {
             return;
         }
         gui_logs_important_count = 0;
-        if (log_list_important != nullptr) {
-            lv_obj_clean(log_list_important);
+        {
+            GuiMutexGuard guard(50U);
+            if (guard.locked() && log_list_important != nullptr) {
+                lv_obj_clean(log_list_important);
+            }
         }
         ota_portal_send_action_result(true, "ok", "Wyczyszczono wazne logi.");
         return;
@@ -8795,7 +9223,10 @@ static void ota_portal_handle_action() {
         }
         gui_app_save_settings();
         if (!gui_web_focus_blocks_local_ui()) {
-            gui_sync_widgets_to_state();
+            GuiMutexGuard guard(50U);
+            if (guard.locked()) {
+                gui_sync_widgets_to_state();
+            }
         }
         ota_portal_send_action_result(true, "ok", "Ustawienia CO2 zapisane.");
         return;
@@ -8815,7 +9246,10 @@ static void ota_portal_handle_action() {
         gui_app_save_settings();
         apply_mcp_outputs();
         if (!gui_web_focus_blocks_local_ui()) {
-            gui_sync_widgets_to_state();
+            GuiMutexGuard guard(50U);
+            if (guard.locked()) {
+                gui_sync_widgets_to_state();
+            }
         }
         ota_portal_send_action_result(true, "ok", "Ustawienia ATO zapisane.");
         return;
@@ -8833,7 +9267,10 @@ static void ota_portal_handle_action() {
         }
         gui_app_save_settings();
         if (!gui_web_focus_blocks_local_ui()) {
-            gui_sync_widgets_to_state();
+            GuiMutexGuard guard(50U);
+            if (guard.locked()) {
+                gui_sync_widgets_to_state();
+            }
         }
         ota_portal_send_action_result(true, "ok", "Ustawienia wycieku zapisane.");
         return;
@@ -9144,18 +9581,24 @@ static void ota_portal_handle_download() {
         return;
     }
 
+    if (!hal_sd_lock(1000U)) {
+        ota_http_server.send(503, "text/plain", "SD busy");
+        return;
+    }
+
     File file = SD.open(path, FILE_READ);
     if (!file || file.isDirectory()) {
         if (file) file.close();
+        hal_sd_unlock();
         ota_http_server.send(404, "text/plain", "File not found");
         return;
     }
 
     char disposition[180];
     snprintf(disposition, sizeof(disposition), "attachment; filename=\"%s\"", ota_portal_basename(path));
-    ota_http_server.sendHeader("Content-Disposition", disposition);
-    ota_http_server.streamFile(file, ota_portal_content_type(path));
+    ota_portal_stream_file(file, ota_portal_content_type(path));
     file.close();
+    hal_sd_unlock();
 }
 
 static bool ota_portal_require_pin() {
@@ -9452,40 +9895,67 @@ static void ota_portal_handle_not_found() {
         if (uri.length() > 0 && uri.length() < 72 && uri.indexOf("..") < 0) {
             char path[112];
             snprintf(path, sizeof(path), "/aq/ota%s", uri.c_str());
-            if (ota_portal_sd_ready() && SD.exists(path)) {
-                char served_path[116];
-                snprintf(served_path, sizeof(served_path), "%s", path);
-                bool use_gzip = false;
-                if (ota_portal_client_accepts_gzip()) {
-                    char gzip_path[116];
-                    snprintf(gzip_path, sizeof(gzip_path), "%s.gz", path);
-                    if (SD.exists(gzip_path)) {
-                        snprintf(served_path, sizeof(served_path), "%s", gzip_path);
-                        use_gzip = true;
+
+            if (ota_portal_sd_ready()) {
+                if (hal_sd_lock(1000U)) {
+                    File file;
+                    bool use_gzip = false;
+                    if (ota_portal_client_accepts_gzip()) {
+                        char gzip_path[116];
+                        snprintf(gzip_path, sizeof(gzip_path), "%s.gz", path);
+                        file = SD.open(gzip_path, FILE_READ);
+                        if (file && !file.isDirectory()) {
+                            use_gzip = true;
+                        } else if (file) {
+                            file.close();
+                        }
                     }
-                }
-                File file = SD.open(served_path, FILE_READ);
-                if (file && !file.isDirectory()) {
-                    ota_portal_mark_web_activity();
-                    ota_http_server.sendHeader("Cache-Control", "public, max-age=31536000, immutable");
-                    if (use_gzip) {
-                        ota_http_server.sendHeader("Content-Encoding", "gzip");
-                        ota_http_server.sendHeader("Vary", "Accept-Encoding");
+                    if (!file) {
+                        file = SD.open(path, FILE_READ);
+                        if (file && file.isDirectory()) {
+                            file.close();
+                        }
                     }
-                    ota_http_server.streamFile(file, ota_portal_content_type(path));
-                    file.close();
-                    return;
+                    if (file) {
+                        ota_portal_mark_web_activity();
+                        if (uri.endsWith(".html") || uri.endsWith(".htm")) {
+                            ota_portal_no_cache();
+                        } else {
+                            ota_http_server.sendHeader("Cache-Control", "public, max-age=31536000, immutable");
+                        }
+                        if (use_gzip) {
+                            ota_http_server.sendHeader("Content-Encoding", "gzip");
+                            ota_http_server.sendHeader("Vary", "Accept-Encoding");
+                        }
+                        ota_portal_stream_file(file, ota_portal_content_type(path));
+                        file.close();
+                        hal_sd_unlock();
+                        return;
+                    }
+                    hal_sd_unlock();
                 }
-                if (file) file.close();
+            }
+
+            // If URI looks like a static asset with a file extension, send 404 immediately!
+            // NEVER redirect missing assets to / with 302!
+            if (uri.indexOf('.') >= 0) {
+                ota_http_server.send(404, "text/plain", "Not Found");
+                return;
             }
         }
     }
 
-    const IPAddress ip = wifi_ota_active ? WiFi.softAPIP() : WiFi.localIP();
-    char redirect[64];
-    snprintf(redirect, sizeof(redirect), "http://%u.%u.%u.%u/", ip[0], ip[1], ip[2], ip[3]);
-    ota_http_server.sendHeader("Location", redirect, true);
-    ota_http_server.send(302, "text/plain", "");
+    // Only redirect for captive portal detection when softAP is active
+    if (wifi_ota_active) {
+        const IPAddress ip = WiFi.softAPIP();
+        char redirect[64];
+        snprintf(redirect, sizeof(redirect), "http://%u.%u.%u.%u/", ip[0], ip[1], ip[2], ip[3]);
+        ota_http_server.sendHeader("Location", redirect, true);
+        ota_http_server.send(302, "text/plain", "");
+        return;
+    }
+
+    ota_http_server.send(404, "text/plain", "Not Found");
 }
 
 static void register_ota_portal_routes() {
@@ -9678,9 +10148,16 @@ static void wifi_check_timer_cb(lv_timer_t *timer) {
                     if (scan_fail_retries > 4) {
                         scan_fail_retries = 0;
                         is_scanning = false;
+                        if (wifi_sta_rescan_btn != nullptr) {
+                            lv_obj_clear_state(wifi_sta_rescan_btn, LV_STATE_DISABLED);
+                        }
+                        if (wifi_sta_subtitle_lbl != nullptr) {
+                            lv_label_set_text(wifi_sta_subtitle_lbl, "Blad skanowania sieci");
+                        }
                         if (sta_list_obj != nullptr) {
+                            free_wifi_scan_user_data();
                             lv_obj_clean(sta_list_obj);
-                            lv_obj_t *list_btn = lv_list_add_btn(sta_list_obj, LV_SYMBOL_WARNING, "Skanowanie nieudane. Sprobuj ponownie");
+                            lv_obj_t *list_btn = lv_list_add_btn(sta_list_obj, LV_SYMBOL_WARNING, "  Skanowanie nieudane. Kliknij aby ponowic");
                             style_wifi_list_item(list_btn, lv_color_make(239, 68, 68));
                             lv_obj_add_event_cb(list_btn, btn_sta_handler, LV_EVENT_CLICKED, nullptr);
                         }
@@ -9692,32 +10169,98 @@ static void wifi_check_timer_cb(lv_timer_t *timer) {
             if (n >= 0) {
                 is_scanning = false;
                 scan_started = false;
+                if (wifi_sta_rescan_btn != nullptr) {
+                    lv_obj_clear_state(wifi_sta_rescan_btn, LV_STATE_DISABLED);
+                }
                 if (sta_list_obj != nullptr) {
-                    uint32_t cnt = lv_obj_get_child_cnt(sta_list_obj);
-                    for (uint32_t i = 0; i < cnt; i++) {
-                        void *ud = lv_obj_get_user_data(lv_obj_get_child(sta_list_obj, i));
-                        if (ud != nullptr) {
-                            free(ud);
-                        }
-                    }
+                    free_wifi_scan_user_data();
                     lv_obj_clean(sta_list_obj);
 
                     if (n == 0) {
-                        lv_obj_t *list_btn = lv_list_add_btn(sta_list_obj, LV_SYMBOL_WARNING, "Brak sieci. Szukaj ponownie");
-                        style_wifi_list_item(list_btn, lv_color_make(239, 68, 68));
+                        if (wifi_sta_subtitle_lbl != nullptr) {
+                            lv_label_set_text(wifi_sta_subtitle_lbl, "Brak sieci w zasiegu");
+                        }
+                        lv_obj_t *list_btn = lv_list_add_btn(sta_list_obj, LV_SYMBOL_WARNING, "  Brak sieci w zasiegu. Skanuj ponownie");
+                        style_wifi_list_item(list_btn, lv_color_make(245, 158, 11));
                         lv_obj_add_event_cb(list_btn, btn_sta_handler, LV_EVENT_CLICKED, nullptr);
                     } else {
-                        for (int i = 0; i < n; i++) {
-                            String ssid = WiFi.SSID(i);
-                            int32_t rssi = WiFi.RSSI(i);
-                            char item_text[96];
-                            snprintf(item_text, sizeof(item_text), "%s (%d dBm)", ssid.c_str(), rssi);
+                        if (wifi_sta_subtitle_lbl != nullptr) {
+                            lv_label_set_text_fmt(wifi_sta_subtitle_lbl, "Znaleziono: %d (wybierz z listy)", n);
+                        }
 
-                            lv_obj_t *list_btn = lv_list_add_btn(sta_list_obj, LV_SYMBOL_WIFI, item_text);
+                        int indices[64];
+                        const int count = n > 64 ? 64 : n;
+                        for (int i = 0; i < count; ++i) indices[i] = i;
+                        for (int i = 0; i < count - 1; ++i) {
+                            for (int j = i + 1; j < count; ++j) {
+                                if (WiFi.RSSI(indices[j]) > WiFi.RSSI(indices[i])) {
+                                    int tmp = indices[i];
+                                    indices[i] = indices[j];
+                                    indices[j] = tmp;
+                                }
+                            }
+                        }
+
+                        int added = 0;
+                        for (int k = 0; k < count; ++k) {
+                            int idx = indices[k];
+                            String ssid = WiFi.SSID(idx);
+                            if (ssid.length() == 0) {
+                                continue;
+                            }
+                            int32_t rssi = WiFi.RSSI(idx);
+                            wifi_auth_mode_t auth = WiFi.encryptionType(idx);
+                            bool is_locked = (auth != WIFI_AUTH_OPEN);
+
+                            lv_color_t sig_color;
+                            if (rssi >= -60) {
+                                sig_color = lv_color_make(16, 185, 129);
+                            } else if (rssi >= -72) {
+                                sig_color = lv_color_make(14, 165, 233);
+                            } else if (rssi >= -82) {
+                                sig_color = lv_color_make(245, 158, 11);
+                            } else {
+                                sig_color = lv_color_make(239, 68, 68);
+                            }
+
+                            lv_obj_t *list_btn = lv_list_add_btn(sta_list_obj, LV_SYMBOL_WIFI, ssid.c_str());
                             style_wifi_list_item(list_btn, theme_text_main());
+
+                            if (lv_obj_get_child_cnt(list_btn) > 0) {
+                                lv_obj_t *icon_obj = lv_obj_get_child(list_btn, 0);
+                                if (icon_obj != nullptr) {
+                                    lv_obj_set_style_text_color(icon_obj, sig_color, 0);
+                                }
+                            }
+
+                            if (lv_obj_get_child_cnt(list_btn) > 1) {
+                                lv_obj_t *txt_lbl = lv_obj_get_child(list_btn, 1);
+                                if (txt_lbl != nullptr) {
+                                    lv_obj_set_width(txt_lbl, 160);
+                                    lv_label_set_long_mode(txt_lbl, LV_LABEL_LONG_DOT);
+                                }
+                            }
+
+                            lv_obj_t *badge = lv_label_create(list_btn);
+                            char badge_buf[32];
+                            snprintf(badge_buf, sizeof(badge_buf), "%s%ld dBm",
+                                     is_locked ? LV_SYMBOL_SETTINGS " " : "",
+                                     static_cast<long>(rssi));
+                            lv_label_set_text(badge, badge_buf);
+                            lv_obj_set_style_text_font(badge, &lv_font_montserrat_12, 0);
+                            lv_obj_set_style_text_color(badge, sig_color, 0);
+                            lv_obj_align(badge, LV_ALIGN_RIGHT_MID, -6, 0);
+
                             char *ssid_copy = strdup(ssid.c_str());
                             lv_obj_set_user_data(list_btn, ssid_copy);
                             lv_obj_add_event_cb(list_btn, select_network_cb, LV_EVENT_CLICKED, nullptr);
+                            added++;
+                        }
+
+                        if (added == 0) {
+                            lv_obj_t *list_btn = lv_list_add_btn(sta_list_obj, LV_SYMBOL_WARNING, "  Brak widocznych sieci");
+                            style_wifi_list_item(list_btn, lv_color_make(245, 158, 11));
+                            lv_obj_add_event_cb(list_btn, btn_sta_handler, LV_EVENT_CLICKED, nullptr);
                         }
                     }
                 }
@@ -9725,16 +10268,16 @@ static void wifi_check_timer_cb(lv_timer_t *timer) {
             } else if (n == WIFI_SCAN_FAILED) {
                 is_scanning = false;
                 scan_started = false;
+                if (wifi_sta_rescan_btn != nullptr) {
+                    lv_obj_clear_state(wifi_sta_rescan_btn, LV_STATE_DISABLED);
+                }
+                if (wifi_sta_subtitle_lbl != nullptr) {
+                    lv_label_set_text(wifi_sta_subtitle_lbl, "Blad skanowania sieci");
+                }
                 if (sta_list_obj != nullptr) {
-                    uint32_t cnt = lv_obj_get_child_cnt(sta_list_obj);
-                    for (uint32_t i = 0; i < cnt; i++) {
-                        void *ud = lv_obj_get_user_data(lv_obj_get_child(sta_list_obj, i));
-                        if (ud != nullptr) {
-                            free(ud);
-                        }
-                    }
+                    free_wifi_scan_user_data();
                     lv_obj_clean(sta_list_obj);
-                    lv_obj_t *list_btn = lv_list_add_btn(sta_list_obj, LV_SYMBOL_WARNING, "Skanowanie nieudane. Sprobuj ponownie");
+                    lv_obj_t *list_btn = lv_list_add_btn(sta_list_obj, LV_SYMBOL_WARNING, "  Skanowanie nieudane. Kliknij aby ponowic");
                     style_wifi_list_item(list_btn, lv_color_make(239, 68, 68));
                     lv_obj_add_event_cb(list_btn, btn_sta_handler, LV_EVENT_CLICKED, nullptr);
                 }
@@ -9752,7 +10295,10 @@ static void wifi_check_timer_cb(lv_timer_t *timer) {
             wifi_retry_policy.on_connected();
             String ip_str = WiFi.localIP().toString();
             start_sta_service_portal();
-            auto_ntp_sync_scheduled_ms = millis() + 2500U;
+            Serial.printf("WIFI_STA: Polaczono z %s! Adres IP: http://%s/ lub http://%s.local/\n",
+                          WiFi.SSID().c_str(), ip_str.c_str(), Secrets::OTA_HOSTNAME);
+            auto_ntp_sync_scheduled_ms = 0U;
+            sync_clock_from_ntp(15000U);
 
             gui_app_update_wifi(1, wifi_rssi);
             const bool profile_save_attempted = pending_wifi_password_valid;
@@ -9877,6 +10423,9 @@ static void wifi_check_timer_cb(lv_timer_t *timer) {
                 wifi_rssi = current_rssi;
                 gui_app_update_wifi(1, wifi_rssi);
             }
+            if (!ota_portal_running && !cfg.modemSleep) {
+                start_sta_service_portal();
+            }
         }
     }
 }
@@ -9987,17 +10536,19 @@ static void btn_sta_handler(lv_event_t *e) {
     if (wifi_main_panel != nullptr) lv_obj_add_flag(wifi_main_panel, LV_OBJ_FLAG_HIDDEN);
     if (wifi_sta_panel != nullptr) lv_obj_clear_flag(wifi_sta_panel, LV_OBJ_FLAG_HIDDEN);
 
+    if (wifi_sta_subtitle_lbl != nullptr) {
+        lv_label_set_text(wifi_sta_subtitle_lbl, "Wyszukiwanie sieci w pasmie 2.4 GHz...");
+    }
+    if (wifi_sta_rescan_btn != nullptr) {
+        lv_obj_add_state(wifi_sta_rescan_btn, LV_STATE_DISABLED);
+    }
+
     if (sta_list_obj != nullptr) {
-        uint32_t cnt = lv_obj_get_child_cnt(sta_list_obj);
-        for (uint32_t i = 0; i < cnt; i++) {
-            void *ud = lv_obj_get_user_data(lv_obj_get_child(sta_list_obj, i));
-            if (ud != nullptr) {
-                free(ud);
-            }
-        }
+        free_wifi_scan_user_data();
         lv_obj_clean(sta_list_obj);
-        lv_obj_t *scan_item = lv_list_add_btn(sta_list_obj, LV_SYMBOL_LOOP, "Skanowanie sieci...");
+        lv_obj_t *scan_item = lv_list_add_btn(sta_list_obj, LV_SYMBOL_REFRESH, "  Skanowanie pasma 2.4 GHz...");
         style_wifi_list_item(scan_item, lv_color_make(14, 165, 233));
+        lv_obj_clear_flag(scan_item, LV_OBJ_FLAG_CLICKABLE);
     }
 
     is_scanning = true;
@@ -10183,14 +10734,12 @@ static void cancel_sta_cb(lv_event_t *e) {
     wifi_scan_prepare_pending = false;
     WiFi.scanDelete();
 
+    if (wifi_sta_rescan_btn != nullptr) {
+        lv_obj_clear_state(wifi_sta_rescan_btn, LV_STATE_DISABLED);
+    }
+
     if (sta_list_obj != nullptr) {
-        uint32_t cnt = lv_obj_get_child_cnt(sta_list_obj);
-        for (uint32_t i = 0; i < cnt; i++) {
-            void *ud = lv_obj_get_user_data(lv_obj_get_child(sta_list_obj, i));
-            if (ud != nullptr) {
-                free(ud);
-            }
-        }
+        free_wifi_scan_user_data();
         lv_obj_clean(sta_list_obj);
     }
 
@@ -10592,80 +11141,130 @@ static void append_gui_log_entry(GuiLogEntry *entries, uint8_t &count, const cha
     snprintf(entry.message, sizeof(entry.message), "%s", msg);
 }
 
+static void refresh_unified_log_list() {
+    if (log_list == nullptr) {
+        return;
+    }
+    lv_obj_clean(log_list);
+    uint32_t total = 0;
+
+    // 1. Critical logs on top in red with warning symbol
+    for (int i = static_cast<int>(gui_logs_important_count) - 1; i >= 0; --i) {
+        lv_obj_t *btn = lv_list_add_btn(log_list, LV_SYMBOL_WARNING, gui_logs_important[i].message);
+        lv_obj_set_style_text_font(btn, &lv_font_montserrat_12, 0);
+        lv_obj_set_style_text_color(btn, lv_color_make(239, 68, 68), 0);
+        total++;
+    }
+
+    // 2. Normal logs below in standard text color
+    for (int i = static_cast<int>(gui_logs_normal_count) - 1; i >= 0; --i) {
+        lv_obj_t *btn = lv_list_add_btn(log_list, LV_SYMBOL_LIST, gui_logs_normal[i].message);
+        lv_obj_set_style_text_font(btn, &lv_font_montserrat_12, 0);
+        lv_obj_set_style_text_color(btn, theme_text_main(), 0);
+        total++;
+    }
+
+    if (total == 0) {
+        lv_obj_t *btn = lv_list_add_btn(log_list, LV_SYMBOL_OK, "Brak zdarzen w rejestrze");
+        lv_obj_set_style_text_font(btn, &lv_font_montserrat_12, 0);
+        lv_obj_set_style_text_color(btn, theme_text_muted(), 0);
+    }
+}
+
+static void dismiss_critical_alert(bool open_logs) {
+    if (alarm_modal_obj != nullptr) {
+        lv_obj_del(alarm_modal_obj);
+        alarm_modal_obj = nullptr;
+    }
+    if (open_logs) {
+        alarm_active_flag = false;
+        alarm_skipped = false;
+        open_or_build_subpage(ActiveSubpage::Logs);
+    } else {
+        alarm_skipped = true;
+    }
+}
+
+static void show_critical_alert_dialog(const char *msg) {
+    // Nie wyświetlaj modalnego okna alarmu podczas rozruchu (pierwsze 30 sekund)
+    if (millis() < 30000UL) {
+        return;
+    }
+    if (alarm_modal_obj != nullptr) {
+        return;
+    }
+    if (subpage_logs != nullptr && !lv_obj_has_flag(subpage_logs, LV_OBJ_FLAG_HIDDEN)) {
+        return;
+    }
+
+    alarm_modal_obj = lv_obj_create(lv_scr_act());
+    lv_obj_set_size(alarm_modal_obj, 320, 240);
+    lv_obj_set_pos(alarm_modal_obj, 0, 0);
+    lv_obj_set_style_bg_color(alarm_modal_obj, lv_color_black(), 0);
+    lv_obj_set_style_bg_opa(alarm_modal_obj, LV_OPA_70, 0);
+    lv_obj_set_style_border_width(alarm_modal_obj, 0, 0);
+    lv_obj_set_style_pad_all(alarm_modal_obj, 0, 0);
+    lv_obj_clear_flag(alarm_modal_obj, LV_OBJ_FLAG_SCROLLABLE);
+
+    lv_obj_t *dialog = create_card(alarm_modal_obj, 260, 140, 30, 50);
+    lv_obj_set_style_bg_color(dialog, resolve_bg_color(lv_color_make(15, 23, 42)), 0);
+    lv_obj_set_style_border_color(dialog, lv_color_make(239, 68, 68), 0);
+    lv_obj_set_style_border_width(dialog, 2, 0);
+    lv_obj_set_style_radius(dialog, 10, 0);
+    lv_obj_clear_flag(dialog, LV_OBJ_FLAG_SCROLLABLE);
+
+    lv_obj_t *icon = create_label(dialog, LV_SYMBOL_WARNING "  ALARM", lv_color_make(239, 68, 68), &lv_font_montserrat_14);
+    lv_obj_align(icon, LV_ALIGN_TOP_MID, 0, 8);
+
+    lv_obj_t *lbl = create_label(dialog, msg != nullptr ? msg : "Wykryto zdarzenie", lv_color_white(), &lv_font_montserrat_12);
+    lv_obj_set_width(lbl, 230);
+    lv_obj_set_style_text_align(lbl, LV_TEXT_ALIGN_CENTER, 0);
+    lv_obj_align(lbl, LV_ALIGN_CENTER, 0, -6);
+
+    lv_obj_t *btn_skip = create_button(dialog, "POMIN", 100, 30, lv_color_make(51, 65, 85), [](lv_event_t *e) {
+        LV_UNUSED(e);
+        play_system_sound(SoundType::Click);
+        dismiss_critical_alert(false);
+    }, nullptr);
+    lv_obj_align(btn_skip, LV_ALIGN_BOTTOM_LEFT, 16, -10);
+    apply_3d_button_properties(btn_skip);
+
+    lv_obj_t *btn_logs = create_button(dialog, "LOGI", 100, 30, lv_color_make(239, 68, 68), [](lv_event_t *e) {
+        LV_UNUSED(e);
+        play_system_sound(SoundType::Click);
+        dismiss_critical_alert(true);
+    }, nullptr);
+    lv_obj_align(btn_logs, LV_ALIGN_BOTTOM_RIGHT, -16, -10);
+    apply_3d_button_properties(btn_logs);
+
+    play_system_sound(SoundType::Warning);
+}
+
 static void add_gui_log(const char *msg, bool is_important) {
+    if (msg == nullptr) return;
     Serial.printf("LOG_GUI [%s]: %s\n", is_important ? "IMPORTANT" : "NORMAL", msg);
     if (is_important) {
-        append_gui_log_entry(gui_logs_important, gui_logs_important_count, msg != nullptr ? msg : "", true);
+        append_gui_log_entry(gui_logs_important, gui_logs_important_count, msg, true);
+        if (millis() > 30000UL) {
+            alarm_active_flag = true;
+            alarm_skipped = false;
+            show_critical_alert_dialog(msg);
+        }
     } else {
-        append_gui_log_entry(gui_logs_normal, gui_logs_normal_count, msg != nullptr ? msg : "", false);
+        append_gui_log_entry(gui_logs_normal, gui_logs_normal_count, msg, false);
     }
-    lv_obj_t *target_list = is_important ? log_list_important : log_list_normal;
-    if (target_list != nullptr) {
-        uint32_t cnt = lv_obj_get_child_cnt(target_list);
-        if (cnt >= 15) {
-            lv_obj_t *oldest = lv_obj_get_child(target_list, 0);
-            if (oldest != nullptr) {
-                lv_obj_del(oldest);
-            }
-        }
-        const char *icon = is_important ? LV_SYMBOL_WARNING : LV_SYMBOL_LIST;
-        lv_obj_t *list_btn = lv_list_add_btn(target_list, icon, msg);
-        lv_obj_set_style_text_font(list_btn, &lv_font_montserrat_12, 0);
-        if (is_important) {
-            lv_obj_set_style_text_color(list_btn, lv_color_make(239, 68, 68), 0);
-        } else {
-            lv_obj_set_style_text_color(list_btn, theme_text_main(), 0);
-        }
-    }
-}
-
-static void btn_log_normal_cb(lv_event_t *e) {
-    LV_UNUSED(e);
-    play_system_sound(SoundType::Click);
-    showing_important_logs = false;
-    if (btn_log_normal != nullptr) {
-        lv_obj_set_style_bg_color(btn_log_normal, lv_color_make(59, 130, 246), 0);
-    }
-    if (btn_log_important != nullptr) {
-        lv_obj_set_style_bg_color(btn_log_important, resolve_bg_color(lv_color_make(35, 41, 55)), 0);
-    }
-    if (log_list_normal != nullptr) {
-        lv_obj_clear_flag(log_list_normal, LV_OBJ_FLAG_HIDDEN);
-    }
-    if (log_list_important != nullptr) {
-        lv_obj_add_flag(log_list_important, LV_OBJ_FLAG_HIDDEN);
-    }
-}
-
-static void btn_log_important_cb(lv_event_t *e) {
-    LV_UNUSED(e);
-    play_system_sound(SoundType::Click);
-    showing_important_logs = true;
-    if (btn_log_normal != nullptr) {
-        lv_obj_set_style_bg_color(btn_log_normal, resolve_bg_color(lv_color_make(35, 41, 55)), 0);
-    }
-    if (btn_log_important != nullptr) {
-        lv_obj_set_style_bg_color(btn_log_important, lv_color_make(239, 68, 68), 0);
-    }
-    if (log_list_normal != nullptr) {
-        lv_obj_add_flag(log_list_normal, LV_OBJ_FLAG_HIDDEN);
-    }
-    if (log_list_important != nullptr) {
-        lv_obj_clear_flag(log_list_important, LV_OBJ_FLAG_HIDDEN);
-    }
+    refresh_unified_log_list();
 }
 
 static void clear_logs_cb(lv_event_t *e) {
     LV_UNUSED(e);
     play_system_sound(SoundType::Click);
-    if (log_list_normal != nullptr) {
-        lv_obj_clean(log_list_normal);
-        lv_list_add_btn(log_list_normal, LV_SYMBOL_LIST, "Brak logow");
-    }
-    if (log_list_important != nullptr) {
-        lv_obj_clean(log_list_important);
-        lv_list_add_btn(log_list_important, LV_SYMBOL_WARNING, "Brak waznych logow");
-    }
+    gui_logs_important_count = 0;
+    gui_logs_normal_count = 0;
+    alarm_active_flag = false;
+    alarm_skipped = false;
+    refresh_unified_log_list();
+    show_save_toast("Wyczyszczono logi");
 }
 
 static void sound_enable_handler(lv_event_t *e) {
@@ -10892,8 +11491,8 @@ static lv_obj_t *create_subpage(const char *title, lv_event_cb_t back_cb = nullp
     lv_obj_set_style_pad_all(header, 0, 0);
     style_panel(header, lv_color_make(20, 26, 40), lv_color_make(20, 26, 40), 0);
 
-    lv_obj_t *back = create_button(header, LV_SYMBOL_LEFT, 32, 22, lv_color_make(30, 41, 59), nullptr, nullptr);
-    lv_obj_align(back, LV_ALIGN_LEFT_MID, 6, 0);
+    lv_obj_t *back = create_button(header, LV_SYMBOL_LEFT, 40, 26, lv_color_make(30, 41, 59), nullptr, nullptr);
+    lv_obj_align(back, LV_ALIGN_LEFT_MID, 4, 0);
     if (back_cb != nullptr) {
         lv_obj_add_event_cb(back, back_cb, LV_EVENT_CLICKED, back_user_data);
     } else {
@@ -10931,10 +11530,9 @@ static void build_status_bar() {
     lv_obj_set_style_border_side(status_bar, LV_BORDER_SIDE_BOTTOM, 0);
 
     label_system_health = create_label(
-        status_bar, "AQ", theme_accent(), &lv_font_montserrat_12);
-    lv_obj_set_width(label_system_health, 24);
-    lv_obj_set_style_text_align(label_system_health, LV_TEXT_ALIGN_CENTER, 0);
-    lv_obj_align(label_system_health, LV_ALIGN_LEFT_MID, 6, 0);
+        status_bar, "", theme_accent(), &lv_font_montserrat_12);
+    lv_obj_set_width(label_system_health, 0);
+    lv_obj_add_flag(label_system_health, LV_OBJ_FLAG_HIDDEN);
 
     label_power_mode = create_label(
         status_bar, "T --.-*C", theme_info(), &lv_font_montserrat_12);
@@ -10946,16 +11544,24 @@ static void build_status_bar() {
     lv_obj_set_style_radius(label_power_mode, 4, 0);
     lv_obj_set_style_pad_top(label_power_mode, 2, 0);
     lv_obj_set_style_pad_bottom(label_power_mode, 2, 0);
-    lv_obj_align(label_power_mode, LV_ALIGN_LEFT_MID, 34, 0);
+    lv_obj_align(label_power_mode, LV_ALIGN_LEFT_MID, 6, 0);
 
-    label_date = create_label(status_bar, "--:-- .--- --s", lv_color_make(226, 232, 240), &lv_font_montserrat_12);
-    lv_obj_set_width(label_date, 116);
+    label_date = create_label(status_bar, "--:--  --.--", lv_color_make(226, 232, 240), &lv_font_montserrat_12);
+    lv_obj_set_width(label_date, 104);
     lv_label_set_long_mode(label_date, LV_LABEL_LONG_CLIP);
     lv_obj_set_style_text_align(label_date, LV_TEXT_ALIGN_CENTER, 0);
     lv_obj_align(label_date, LV_ALIGN_CENTER, 0, 0);
+    lv_obj_add_flag(label_date, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_add_event_cb(label_date, [](lv_event_t *e) {
+        LV_UNUSED(e);
+        if (alarm_active_flag || alarm_skipped) {
+            play_system_sound(SoundType::Click);
+            open_or_build_subpage(ActiveSubpage::Logs);
+        }
+    }, LV_EVENT_CLICKED, nullptr);
 
     label_wifi_state = create_label(status_bar, "WYL", lv_color_make(148, 163, 184), &lv_font_montserrat_12);
-    lv_obj_set_width(label_wifi_state, 56);
+    lv_obj_set_width(label_wifi_state, 52);
     lv_label_set_long_mode(label_wifi_state, LV_LABEL_LONG_CLIP);
     lv_obj_set_style_text_align(label_wifi_state, LV_TEXT_ALIGN_CENTER, 0);
     lv_obj_set_style_bg_color(label_wifi_state, resolve_bg_color(lv_color_make(15, 23, 42)), 0);
@@ -10963,10 +11569,10 @@ static void build_status_bar() {
     lv_obj_set_style_radius(label_wifi_state, 4, 0);
     lv_obj_set_style_pad_top(label_wifi_state, 2, 0);
     lv_obj_set_style_pad_bottom(label_wifi_state, 2, 0);
-    lv_obj_align(label_wifi_state, LV_ALIGN_RIGHT_MID, -42, 0);
+    lv_obj_align(label_wifi_state, LV_ALIGN_RIGHT_MID, -48, 0);
 
     label_rtc_bat = create_label(status_bar, "--", lv_color_make(245, 158, 11), &lv_font_montserrat_12);
-    lv_obj_set_width(label_rtc_bat, 34);
+    lv_obj_set_width(label_rtc_bat, 40);
     lv_label_set_long_mode(label_rtc_bat, LV_LABEL_LONG_CLIP);
     lv_obj_set_style_text_align(label_rtc_bat, LV_TEXT_ALIGN_CENTER, 0);
     lv_obj_set_style_bg_color(label_rtc_bat, resolve_bg_color(lv_color_make(6, 78, 59)), 0);
@@ -11165,11 +11771,11 @@ static void build_home_page() {
 
     const bool show_air = cfg.enableAerator;
     if (show_air) {
-        create_home_device_card(pages[0], 4, 93, 100, LV_SYMBOL_IMAGE, "Przednia",
+        create_home_device_card(pages[0], 4, 93, 100, LV_SYMBOL_LIGHTBULB, "Przednia",
                                 lv_color_make(14, 165, 233), open_sched_editor_cb,
                                 reinterpret_cast<void *>(static_cast<intptr_t>(ScheduleDevice::Light)),
                                 &home_light_state_lbl, &home_light_mode_lbl);
-        create_home_device_card(pages[0], 110, 93, 100, LV_SYMBOL_IMAGE, "Tylna",
+        create_home_device_card(pages[0], 110, 93, 100, LV_SYMBOL_LIGHTBULB, "Tylna",
                                 lv_color_make(34, 197, 94), open_sched_editor_cb,
                                 reinterpret_cast<void *>(static_cast<intptr_t>(ScheduleDevice::PlantLight)),
                                 &home_plant_state_lbl, &home_plant_mode_lbl);
@@ -11180,16 +11786,16 @@ static void build_home_page() {
         create_home_device_card(pages[0], 4, 136, 153, LV_SYMBOL_CHARGE, "Grzalka",
                                 lv_color_make(249, 115, 22), open_heater_subpage_cb,
                                 nullptr, &home_heater_state_lbl, &home_heater_mode_lbl);
-        create_home_device_card(pages[0], 163, 136, 153, LV_SYMBOL_REFRESH, "Powietrze",
+        create_home_device_card(pages[0], 163, 136, 153, LV_SYMBOL_BUBBLES, "Powietrze",
                                 lv_color_make(168, 85, 247), open_sched_editor_cb,
                                 reinterpret_cast<void *>(static_cast<intptr_t>(ScheduleDevice::Air)),
                                 &home_air_state_lbl, &home_air_mode_lbl);
     } else {
-        create_home_device_card(pages[0], 4, 93, 153, LV_SYMBOL_IMAGE, "Przednia",
+        create_home_device_card(pages[0], 4, 93, 153, LV_SYMBOL_LIGHTBULB, "Przednia",
                                 lv_color_make(14, 165, 233), open_sched_editor_cb,
                                 reinterpret_cast<void *>(static_cast<intptr_t>(ScheduleDevice::Light)),
                                 &home_light_state_lbl, &home_light_mode_lbl);
-        create_home_device_card(pages[0], 163, 93, 153, LV_SYMBOL_IMAGE, "Tylna",
+        create_home_device_card(pages[0], 163, 93, 153, LV_SYMBOL_LIGHTBULB, "Tylna",
                                 lv_color_make(34, 197, 94), open_sched_editor_cb,
                                 reinterpret_cast<void *>(static_cast<intptr_t>(ScheduleDevice::PlantLight)),
                                 &home_plant_state_lbl, &home_plant_mode_lbl);
@@ -11348,30 +11954,356 @@ static lv_obj_t *create_tile_3d(lv_obj_t *parent, const char *icon, const char *
     return tile;
 }
 
+static void update_day_schedule_chart() {
+    if (day_schedule_panel == nullptr) return;
+
+    struct TrackCfg {
+        uint8_t mode;
+        uint16_t start_min;
+        uint16_t end_min;
+    };
+
+    TrackCfg tracks[5] = {
+        {
+            cfg.lightMode,
+            static_cast<uint16_t>(cfg.lightStartHour * 60U + cfg.lightStartMinute),
+            static_cast<uint16_t>(cfg.lightEndHour * 60U + cfg.lightEndMinute)
+        },
+        {
+            cfg.plantLightMode,
+            static_cast<uint16_t>(cfg.plantStartHour * 60U + cfg.plantStartMinute),
+            static_cast<uint16_t>(cfg.plantEndHour * 60U + cfg.plantEndMinute)
+        },
+        {
+            cfg.filterMode,
+            static_cast<uint16_t>(cfg.filterStartHour * 60U + cfg.filterStartMinute),
+            static_cast<uint16_t>(cfg.filterEndHour * 60U + cfg.filterEndMinute)
+        },
+        {
+            cfg.airMode,
+            static_cast<uint16_t>(cfg.airStartHour * 60U + cfg.airStartMinute),
+            static_cast<uint16_t>(cfg.airEndHour * 60U + cfg.airEndMinute)
+        },
+        {
+            cfg.enableHeater ? static_cast<uint8_t>(ScheduleMode::AlwaysOn) : static_cast<uint8_t>(ScheduleMode::AlwaysOff),
+            0U,
+            1440U
+        }
+    };
+
+    const uint8_t light_profile = schedule_profile_to_aquael(cfg.lightSchedColorMode);
+    const uint8_t plant_profile = schedule_profile_to_aquael(cfg.plantSchedColorMode);
+
+    const lv_color_t default_track_colors[6] = {
+        lv_color_make(14, 165, 233), // Przednia: Sky Blue
+        lv_color_make(34, 197, 94),  // Tylna: Emerald Green
+        lv_color_make(6, 182, 212),  // Filtr: Cyan
+        lv_color_make(168, 85, 247), // Powietrze: Purple
+        lv_color_make(249, 115, 22), // Grzalka: Orange
+        lv_color_make(16, 185, 129)  // Pokarm: Emerald Green
+    };
+
+    const int bar_max_w = 222;
+
+    for (int i = 0; i < 6; ++i) {
+        lv_obj_t *bar1 = day_track_bars[i];
+        lv_obj_t *bar2 = day_track_bars_wrap[i];
+        lv_obj_t *lbl = day_track_lbl[i];
+
+        // Dynamiczny kolor w zależności od aktywnego profilu Aquael (DZIEN / SWIT / NOC)
+        lv_color_t track_c = default_track_colors[i];
+        if (i == 0) {
+            if (light_profile == 1) track_c = lv_color_make(168, 85, 247);      // SWIT (fiolet)
+            else if (light_profile == 2) track_c = lv_color_make(59, 130, 246); // NOC (błękit indygo)
+        } else if (i == 1) {
+            if (plant_profile == 1) track_c = lv_color_make(168, 85, 247);      // SWIT (fiolet)
+            else if (plant_profile == 2) track_c = lv_color_make(59, 130, 246); // NOC (błękit indygo)
+        }
+
+        if (i == 5) {
+            // Pokarm (Karmnik)
+            if (!cfg.feedEnabled) {
+                if (bar1 != nullptr) {
+                    lv_obj_set_size(bar1, 0, 16);
+                    lv_obj_add_flag(bar1, LV_OBJ_FLAG_HIDDEN);
+                }
+                if (bar2 != nullptr) {
+                    lv_obj_set_size(bar2, 0, 16);
+                    lv_obj_add_flag(bar2, LV_OBJ_FLAG_HIDDEN);
+                }
+                if (lbl != nullptr) {
+                    lv_label_set_text(lbl, "WYL");
+                }
+            } else {
+                uint16_t t1 = static_cast<uint16_t>(cfg.feedHour1 * 60U + cfg.feedMinute1);
+                int x1 = (static_cast<int>(t1) * bar_max_w) / 1440 - 3;
+                if (x1 < 0) x1 = 0;
+                if (x1 + 6 > bar_max_w) x1 = bar_max_w - 6;
+
+                if (bar1 != nullptr) {
+                    lv_obj_set_style_bg_color(bar1, track_c, 0);
+                    lv_obj_set_pos(bar1, x1, 0);
+                    lv_obj_set_size(bar1, 6, 16);
+                    lv_obj_clear_flag(bar1, LV_OBJ_FLAG_HIDDEN);
+                }
+
+                if (cfg.feedCount >= 2) {
+                    uint16_t t2 = static_cast<uint16_t>(cfg.feedHour2 * 60U + cfg.feedMinute2);
+                    int x2 = (static_cast<int>(t2) * bar_max_w) / 1440 - 3;
+                    if (x2 < 0) x2 = 0;
+                    if (x2 + 6 > bar_max_w) x2 = bar_max_w - 6;
+
+                    if (bar2 != nullptr) {
+                        lv_obj_set_style_bg_color(bar2, track_c, 0);
+                        lv_obj_set_pos(bar2, x2, 0);
+                        lv_obj_set_size(bar2, 6, 16);
+                        lv_obj_clear_flag(bar2, LV_OBJ_FLAG_HIDDEN);
+                    }
+                    if (lbl != nullptr) {
+                        lv_label_set_text_fmt(lbl, "%02u:%02u, %02u:%02u", cfg.feedHour1, cfg.feedMinute1, cfg.feedHour2, cfg.feedMinute2);
+                    }
+                } else {
+                    if (bar2 != nullptr) {
+                        lv_obj_set_size(bar2, 0, 16);
+                        lv_obj_add_flag(bar2, LV_OBJ_FLAG_HIDDEN);
+                    }
+                    if (lbl != nullptr) {
+                        lv_label_set_text_fmt(lbl, "%02u:%02u", cfg.feedHour1, cfg.feedMinute1);
+                    }
+                }
+            }
+        } else {
+            if (bar1 != nullptr) {
+                lv_obj_set_style_bg_color(bar1, track_c, 0);
+                if (tracks[i].mode == static_cast<uint8_t>(ScheduleMode::AlwaysOn)) {
+                    lv_obj_set_pos(bar1, 0, 0);
+                    lv_obj_set_size(bar1, bar_max_w, 18);
+                    lv_obj_clear_flag(bar1, LV_OBJ_FLAG_HIDDEN);
+                    if (bar2 != nullptr) lv_obj_add_flag(bar2, LV_OBJ_FLAG_HIDDEN);
+                } else if (tracks[i].mode == static_cast<uint8_t>(ScheduleMode::AlwaysOff)) {
+                    lv_obj_set_size(bar1, 0, 18);
+                    lv_obj_add_flag(bar1, LV_OBJ_FLAG_HIDDEN);
+                    if (bar2 != nullptr) lv_obj_add_flag(bar2, LV_OBJ_FLAG_HIDDEN);
+                } else {
+                    uint16_t s = tracks[i].start_min;
+                    uint16_t e = tracks[i].end_min;
+                    if (s == e) {
+                        lv_obj_set_size(bar1, 0, 18);
+                        lv_obj_add_flag(bar1, LV_OBJ_FLAG_HIDDEN);
+                        if (bar2 != nullptr) lv_obj_add_flag(bar2, LV_OBJ_FLAG_HIDDEN);
+                    } else if (s < e) {
+                        int x1 = (static_cast<int>(s) * bar_max_w) / 1440;
+                        int w1 = (static_cast<int>(e - s) * bar_max_w) / 1440;
+                        if (w1 < 2) w1 = 2;
+                        if (x1 + w1 > bar_max_w) w1 = bar_max_w - x1;
+                        lv_obj_set_pos(bar1, x1, 0);
+                        lv_obj_set_size(bar1, w1, 18);
+                        lv_obj_clear_flag(bar1, LV_OBJ_FLAG_HIDDEN);
+                        if (bar2 != nullptr) lv_obj_add_flag(bar2, LV_OBJ_FLAG_HIDDEN);
+                    } else {
+                        int x1 = (static_cast<int>(s) * bar_max_w) / 1440;
+                        int w1 = bar_max_w - x1;
+                        if (w1 < 2) w1 = 2;
+                        lv_obj_set_pos(bar1, x1, 0);
+                        lv_obj_set_size(bar1, w1, 18);
+                        lv_obj_clear_flag(bar1, LV_OBJ_FLAG_HIDDEN);
+
+                        int w2 = (static_cast<int>(e) * bar_max_w) / 1440;
+                        if (w2 < 2) w2 = 2;
+                        if (bar2 != nullptr) {
+                            lv_obj_set_style_bg_color(bar2, track_c, 0);
+                            lv_obj_set_pos(bar2, 0, 0);
+                            lv_obj_set_size(bar2, w2, 18);
+                            lv_obj_clear_flag(bar2, LV_OBJ_FLAG_HIDDEN);
+                        }
+                    }
+                }
+            }
+
+            if (lbl != nullptr) {
+                if (i == 0) {
+                    const char *mode_name = light_color_mode_gui_label(light_profile);
+                    if (tracks[0].mode == static_cast<uint8_t>(ScheduleMode::AlwaysOn)) {
+                        lv_label_set_text_fmt(lbl, "Stale WL [%s]", mode_name);
+                    } else if (tracks[0].mode == static_cast<uint8_t>(ScheduleMode::AlwaysOff)) {
+                        lv_label_set_text(lbl, "Stale WYL");
+                    } else {
+                        uint16_t sH = tracks[0].start_min / 60U;
+                        uint16_t sM = tracks[0].start_min % 60U;
+                        uint16_t eH = tracks[0].end_min / 60U;
+                        uint16_t eM = tracks[0].end_min % 60U;
+                        lv_label_set_text_fmt(lbl, "%02u:%02u-%02u:%02u [%s]", sH, sM, eH, eM, mode_name);
+                    }
+                } else if (i == 1) {
+                    const char *mode_name = light_color_mode_gui_label(plant_profile);
+                    if (tracks[1].mode == static_cast<uint8_t>(ScheduleMode::AlwaysOn)) {
+                        lv_label_set_text_fmt(lbl, "Stale WL [%s]", mode_name);
+                    } else if (tracks[1].mode == static_cast<uint8_t>(ScheduleMode::AlwaysOff)) {
+                        lv_label_set_text(lbl, "Stale WYL");
+                    } else {
+                        uint16_t sH = tracks[1].start_min / 60U;
+                        uint16_t sM = tracks[1].start_min % 60U;
+                        uint16_t eH = tracks[1].end_min / 60U;
+                        uint16_t eM = tracks[1].end_min % 60U;
+                        lv_label_set_text_fmt(lbl, "%02u:%02u-%02u:%02u [%s]", sH, sM, eH, eM, mode_name);
+                    }
+                } else if (i < 4) {
+                    if (tracks[i].mode == static_cast<uint8_t>(ScheduleMode::AlwaysOn)) {
+                        lv_label_set_text(lbl, "Stale WL");
+                    } else if (tracks[i].mode == static_cast<uint8_t>(ScheduleMode::AlwaysOff)) {
+                        lv_label_set_text(lbl, "Stale WYL");
+                    } else {
+                        uint16_t sH = tracks[i].start_min / 60U;
+                        uint16_t sM = tracks[i].start_min % 60U;
+                        uint16_t eH = tracks[i].end_min / 60U;
+                        uint16_t eM = tracks[i].end_min % 60U;
+                        lv_label_set_text_fmt(lbl, "%02u:%02u - %02u:%02u", sH, sM, eH, eM);
+                    }
+                } else {
+                    if (!cfg.enableHeater) {
+                        lv_label_set_text(lbl, "WYL");
+                    } else {
+                        lv_label_set_text_fmt(lbl, "Cel: %.1f*C", cfg.targetTemp);
+                    }
+                }
+            }
+        }
+    }
+
+    if (day_current_time_marker != nullptr) {
+        uint16_t now_mins = static_cast<uint16_t>(clock_hour) * 60U + static_cast<uint16_t>(clock_minute);
+        if (now_mins > 1440U) now_mins = 1440U;
+        int marker_x = 78 + (static_cast<int>(now_mins) * bar_max_w) / 1440;
+        lv_obj_set_pos(day_current_time_marker, marker_x - 1, 18);
+    }
+
+    if (day_status_lbl != nullptr) {
+        int active_count = (runtime.lightOn ? 1 : 0) +
+                           (runtime.plantLightOn ? 1 : 0) +
+                           (runtime.filterOn ? 1 : 0) +
+                           (runtime.airOn ? 1 : 0) +
+                           (runtime.heaterOn ? 1 : 0) +
+                           (feeder_pulse_active ? 1 : 0);
+        lv_label_set_text_fmt(day_status_lbl, "Aktywne: %d/6", active_count);
+    }
+}
+
 static void build_schedules_page() {
-    lv_obj_set_flex_flow(pages[1], LV_FLEX_FLOW_ROW_WRAP);
-    lv_obj_set_style_pad_all(pages[1], 8, 0);
-    lv_obj_set_style_pad_row(pages[1], 8, 0);
-    lv_obj_set_style_pad_column(pages[1], 8, 0);
-    lv_obj_set_flex_align(pages[1], LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START);
+    lv_obj_set_style_pad_all(pages[1], 0, 0);
+    lv_obj_clear_flag(pages[1], LV_OBJ_FLAG_SCROLLABLE);
 
-    tile_light = create_tile_3d(pages[1], LV_SYMBOL_IMAGE, "Przednia", open_sched_editor_cb, reinterpret_cast<void *>(static_cast<intptr_t>(ScheduleDevice::Light)));
-    sched_light_lbl = lv_obj_get_child(tile_light, 2);
+    day_schedule_panel = create_card(pages[1], 312, 168, 4, 6);
+    lv_obj_set_style_pad_all(day_schedule_panel, 4, 0);
+    lv_obj_clear_flag(day_schedule_panel, LV_OBJ_FLAG_SCROLLABLE);
 
-    tile_plant = create_tile_3d(pages[1], LV_SYMBOL_IMAGE, "Tylna", open_sched_editor_cb, reinterpret_cast<void *>(static_cast<intptr_t>(ScheduleDevice::PlantLight)));
-    sched_plant_lbl = lv_obj_get_child(tile_plant, 2);
+    // Nagłówek panelu Plan
+    lv_obj_t *title_icon = create_label(day_schedule_panel, LV_SYMBOL_LIST, lv_color_make(14, 165, 233), &lv_font_montserrat_12);
+    lv_obj_align(title_icon, LV_ALIGN_TOP_LEFT, 2, 0);
 
-    tile_filter = create_tile_3d(pages[1], LV_SYMBOL_LOOP, "Filtr", open_sched_editor_cb, reinterpret_cast<void *>(static_cast<intptr_t>(ScheduleDevice::Filter)));
-    // Rozszerz kafelek Filtr na pelna szerokosc (dwa kafelki)
-    lv_obj_set_width(tile_filter, 296);
-    lv_obj_t *filter_title_lbl = lv_obj_get_child(tile_filter, 1);
-    if (filter_title_lbl != nullptr) {
-        lv_obj_set_width(filter_title_lbl, 258);
+    lv_obj_t *title_lbl = create_label(day_schedule_panel, "Plan pracy urzadzen (24h)", theme_text_main(), &lv_font_montserrat_12);
+    lv_obj_align(title_lbl, LV_ALIGN_TOP_LEFT, 20, 0);
+
+    day_status_lbl = create_label(day_schedule_panel, "Aktywne: -/6", lv_color_make(203, 213, 225), &lv_font_montserrat_12);
+    lv_obj_align(day_status_lbl, LV_ALIGN_TOP_RIGHT, -4, 0);
+    day_time_lbl = nullptr;
+
+    const char *track_names[6] = {
+        LV_SYMBOL_LIGHTBULB " Przednia",
+        LV_SYMBOL_LIGHTBULB " Tylna",
+        LV_SYMBOL_LOOP " Filtr",
+        LV_SYMBOL_BUBBLES " Powietrze",
+        LV_SYMBOL_CHARGE " Grzalka",
+        LV_SYMBOL_LIST " Pokarm"
+    };
+    const lv_color_t track_colors[6] = {
+        lv_color_make(14, 165, 233), // Przednia: Sky Blue
+        lv_color_make(34, 197, 94),  // Tylna: Emerald Green
+        lv_color_make(6, 182, 212),  // Filtr: Cyan
+        lv_color_make(168, 85, 247), // Powietrze: Purple
+        lv_color_make(249, 115, 22), // Grzalka: Orange
+        lv_color_make(16, 185, 129)  // Pokarm: Emerald Green
+    };
+
+    const ScheduleDevice track_devices[4] = {
+        ScheduleDevice::Light,
+        ScheduleDevice::PlantLight,
+        ScheduleDevice::Filter,
+        ScheduleDevice::Air
+    };
+
+    for (int i = 0; i < 6; ++i) {
+        lv_coord_t y_pos = static_cast<lv_coord_t>(18 + i * 21);
+
+        lv_obj_t *lbl = create_label(day_schedule_panel, track_names[i], track_colors[i], &lv_font_montserrat_12);
+        lv_obj_set_size(lbl, 74, 18);
+        lv_obj_set_pos(lbl, 2, y_pos + 1);
+
+        lv_obj_t *bg_bar = lv_obj_create(day_schedule_panel);
+        lv_obj_set_size(bg_bar, 222, 18);
+        lv_obj_set_pos(bg_bar, 78, y_pos);
+        lv_obj_set_style_pad_all(bg_bar, 0, 0);
+        lv_obj_set_style_bg_color(bg_bar, resolve_bg_color(lv_color_make(18, 24, 38)), 0);
+        lv_obj_set_style_bg_color(bg_bar, lv_color_make(32, 42, 64), LV_STATE_PRESSED);
+        lv_obj_set_style_border_color(bg_bar, lv_color_make(38, 48, 68), 0);
+        lv_obj_set_style_border_width(bg_bar, 1, 0);
+        lv_obj_set_style_radius(bg_bar, 3, 0);
+        lv_obj_clear_flag(bg_bar, LV_OBJ_FLAG_SCROLLABLE);
+
+        day_track_bars[i] = lv_obj_create(bg_bar);
+        lv_obj_set_size(day_track_bars[i], 0, 16);
+        lv_obj_set_pos(day_track_bars[i], 0, 0);
+        lv_obj_set_style_pad_all(day_track_bars[i], 0, 0);
+        lv_obj_set_style_bg_color(day_track_bars[i], track_colors[i], 0);
+        lv_obj_set_style_border_width(day_track_bars[i], 0, 0);
+        lv_obj_set_style_radius(day_track_bars[i], 2, 0);
+        lv_obj_clear_flag(day_track_bars[i], LV_OBJ_FLAG_SCROLLABLE);
+        lv_obj_clear_flag(day_track_bars[i], LV_OBJ_FLAG_CLICKABLE);
+
+        day_track_bars_wrap[i] = lv_obj_create(bg_bar);
+        lv_obj_set_size(day_track_bars_wrap[i], 0, 16);
+        lv_obj_set_pos(day_track_bars_wrap[i], 0, 0);
+        lv_obj_set_style_pad_all(day_track_bars_wrap[i], 0, 0);
+        lv_obj_set_style_bg_color(day_track_bars_wrap[i], track_colors[i], 0);
+        lv_obj_set_style_border_width(day_track_bars_wrap[i], 0, 0);
+        lv_obj_set_style_radius(day_track_bars_wrap[i], 2, 0);
+        lv_obj_clear_flag(day_track_bars_wrap[i], LV_OBJ_FLAG_SCROLLABLE);
+        lv_obj_clear_flag(day_track_bars_wrap[i], LV_OBJ_FLAG_CLICKABLE);
+
+        day_track_lbl[i] = create_label(bg_bar, "", lv_color_white(), &lv_font_montserrat_12);
+        lv_obj_set_style_text_align(day_track_lbl[i], LV_TEXT_ALIGN_CENTER, 0);
+        lv_obj_align(day_track_lbl[i], LV_ALIGN_CENTER, 0, 0);
+        lv_obj_clear_flag(day_track_lbl[i], LV_OBJ_FLAG_CLICKABLE);
+
+        // Uczyń klikalnym w celu bezpośredniej zmiany godzin / parametrów
+        if (i < 4) {
+            void *user_data = reinterpret_cast<void *>(static_cast<intptr_t>(track_devices[i]));
+            make_object_clickable(bg_bar, open_sched_editor_cb, user_data);
+            make_object_clickable(lbl, open_sched_editor_cb, user_data);
+        } else if (i == 4) {
+            make_object_clickable(bg_bar, open_heater_subpage_cb, nullptr);
+            make_object_clickable(lbl, open_heater_subpage_cb, nullptr);
+        } else {
+            void *user_data = reinterpret_cast<void *>(static_cast<intptr_t>(ScheduleDevice::Feed));
+            make_object_clickable(bg_bar, open_sched_editor_cb, user_data);
+            make_object_clickable(lbl, open_sched_editor_cb, user_data);
+        }
     }
-    sched_filter_lbl = lv_obj_get_child(tile_filter, 2);
-    if (sched_filter_lbl != nullptr) {
-        lv_obj_set_width(sched_filter_lbl, 276);
-    }
+
+    // Wskaźnik bieżącego czasu (czerwona pionowa linia)
+    day_current_time_marker = lv_obj_create(day_schedule_panel);
+    lv_obj_set_size(day_current_time_marker, 2, 123);
+    lv_obj_set_pos(day_current_time_marker, 78, 18);
+    lv_obj_set_style_pad_all(day_current_time_marker, 0, 0);
+    lv_obj_set_style_bg_color(day_current_time_marker, lv_color_make(239, 68, 68), 0);
+    lv_obj_set_style_border_width(day_current_time_marker, 0, 0);
+    lv_obj_set_style_radius(day_current_time_marker, 1, 0);
+    lv_obj_clear_flag(day_current_time_marker, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_clear_flag(day_current_time_marker, LV_OBJ_FLAG_CLICKABLE);
+
+    lv_obj_t *legend_lbl = create_label(day_schedule_panel, "Aquael: DZIEN / SWIT / NOC", lv_color_make(100, 116, 139), &lv_font_montserrat_12);
+    lv_obj_align(legend_lbl, LV_ALIGN_BOTTOM_LEFT, 4, -2);
+
+    update_day_schedule_chart();
 }
 
 static void build_optional_page() {
@@ -11395,27 +12327,27 @@ static void build_optional_page() {
     } else tile_heater = nullptr;
 
     if (cfg.showPhSensor) {
-        tile_ph = create_tile_3d(pages[2], LV_SYMBOL_EDIT, "pH", open_ph_subpage_cb, nullptr);
+        tile_ph = create_tile_3d(pages[2], LV_SYMBOL_TINT, "pH", open_ph_subpage_cb, nullptr);
         device_ph_detail_lbl = lv_obj_get_child(tile_ph, 2);
     } else tile_ph = nullptr;
 
     if (cfg.enableAerator) {
-        tile_air = create_tile_3d(pages[2], LV_SYMBOL_REFRESH, "Powietrze", open_sched_editor_cb, reinterpret_cast<void *>(static_cast<intptr_t>(ScheduleDevice::Air)));
+        tile_air = create_tile_3d(pages[2], LV_SYMBOL_BUBBLES, "Powietrze", open_sched_editor_cb, reinterpret_cast<void *>(static_cast<intptr_t>(ScheduleDevice::Air)));
         device_air_detail_lbl = lv_obj_get_child(tile_air, 2);
     } else tile_air = nullptr;
 
     if (cfg.enableCo2) {
-        tile_co2 = create_tile_3d(pages[2], LV_SYMBOL_SETTINGS, "CO2", open_co2_subpage_cb, nullptr);
+        tile_co2 = create_tile_3d(pages[2], LV_SYMBOL_REFRESH, "CO2", open_co2_subpage_cb, nullptr);
         device_co2_detail_lbl = lv_obj_get_child(tile_co2, 2);
     } else tile_co2 = nullptr;
 
     if (cfg.enableEc) {
-        tile_ec = create_tile_3d(pages[2], LV_SYMBOL_EDIT, "EC", open_ec_subpage_cb, nullptr);
+        tile_ec = create_tile_3d(pages[2], LV_SYMBOL_BARS, "EC", open_ec_subpage_cb, nullptr);
         device_ec_detail_lbl = lv_obj_get_child(tile_ec, 2);
     } else tile_ec = nullptr;
 
     if (cfg.enableWaterLevel) {
-        tile_water = create_tile_3d(pages[2], LV_SYMBOL_UPLOAD, "Poziom", open_water_subpage_cb, nullptr);
+        tile_water = create_tile_3d(pages[2], LV_SYMBOL_TINT, "Poziom", open_water_subpage_cb, nullptr);
         device_water_detail_lbl = lv_obj_get_child(tile_water, 2);
     } else tile_water = nullptr;
 
@@ -11511,7 +12443,7 @@ static void build_charts_page() {
     lv_obj_t *panel = create_card(pages[3], 312, 172, 4, 4);
     lv_obj_set_style_pad_all(panel, 6, 0);
 
-    // Wybór wykresu (TEMP, pH, LDR, HEAP)
+    // Wybór wykresu (TEMP, pH, LDR, RAM)
     btn_chart_temp = create_button(panel, "TEMP", 50, 22, lv_color_make(35, 41, 55), select_chart_cb, reinterpret_cast<void *>(static_cast<intptr_t>(ActiveChart::Temp)));
     lv_obj_align(btn_chart_temp, LV_ALIGN_TOP_LEFT, 0, -2);
     style_chart_btn(btn_chart_temp);
@@ -11598,6 +12530,7 @@ static void build_charts_page() {
     lv_obj_set_style_border_width(stats, 0, 0);
     lv_obj_set_style_radius(stats, 4, 0);
     lv_obj_clear_flag(stats, LV_OBJ_FLAG_SCROLLABLE);
+    chart_stats_panel = stats;
 
     lv_obj_t *min_title = create_label(stats, "MIN", lv_color_make(100, 116, 139), &lv_font_montserrat_12);
     lv_obj_align(min_title, LV_ALIGN_LEFT_MID, 10, -6);
@@ -11613,6 +12546,10 @@ static void build_charts_page() {
     lv_obj_align(cur_title, LV_ALIGN_RIGHT_MID, -10, -6);
     chart_cur_lbl = create_label(stats, "--.-", lv_color_white(), &lv_font_montserrat_12);
     lv_obj_align(chart_cur_lbl, LV_ALIGN_RIGHT_MID, -10, 6);
+
+    active_chart = ActiveChart::Temp;
+    redraw_charts();
+    update_chart_stats();
 }
 
 
@@ -11647,11 +12584,11 @@ static void build_system_page() {
     lv_obj_set_style_pad_all(pages[4], 0, 0);
     create_system_hub_item(pages[4], 4, 4, LV_SYMBOL_WIFI, "WiFi", "STA / OTA",
                            lv_color_make(14, 165, 233), ActiveSubpage::Wifi);
-    create_system_hub_item(pages[4], 166, 4, LV_SYMBOL_IMAGE, "Ekran", "Motyw / LDR",
+    create_system_hub_item(pages[4], 166, 4, LV_SYMBOL_EYE_OPEN, "Ekran", "Motyw / LDR",
                            lv_color_make(6, 182, 212), ActiveSubpage::Screen);
     create_system_hub_item(pages[4], 4, 48, LV_SYMBOL_LIST, "Logi", "Zdarzenia",
                            lv_color_make(245, 158, 11), ActiveSubpage::Logs);
-    create_system_hub_item(pages[4], 166, 48, LV_SYMBOL_KEYBOARD, "Czas", "RTC / NTP",
+    create_system_hub_item(pages[4], 166, 48, LV_SYMBOL_BELL, "Czas", "RTC / NTP",
                            lv_color_make(34, 197, 94), ActiveSubpage::Clock);
     create_system_hub_item(pages[4], 4, 92, LV_SYMBOL_SETTINGS, "Diag", "RAM / CPU",
                            lv_color_make(168, 85, 247), ActiveSubpage::Diagnostics);
@@ -11659,7 +12596,7 @@ static void build_system_page() {
                            lv_color_make(239, 68, 68), ActiveSubpage::Power);
     create_system_hub_item(pages[4], 4, 136, LV_SYMBOL_AUDIO, "Audio", "Dzwieki",
                            lv_color_make(20, 184, 166), ActiveSubpage::Sounds);
-    create_system_hub_item(pages[4], 166, 136, LV_SYMBOL_PLUS, "Sprzet", "Moduly",
+    create_system_hub_item(pages[4], 166, 136, LV_SYMBOL_USB, "Sprzet", "Moduly",
                            lv_color_make(100, 116, 139), ActiveSubpage::Hardware);
 }
 
@@ -11697,6 +12634,15 @@ static void reset_page_object_refs(uint8_t index) {
         sched_plant_lbl = nullptr;
         sched_filter_lbl = nullptr;
         sched_air_lbl = nullptr;
+        day_schedule_panel = nullptr;
+        for (int i = 0; i < 6; ++i) {
+            day_track_bars[i] = nullptr;
+            day_track_bars_wrap[i] = nullptr;
+            day_track_lbl[i] = nullptr;
+        }
+        day_current_time_marker = nullptr;
+        day_time_lbl = nullptr;
+        day_status_lbl = nullptr;
         break;
     case 2:
         tile_feeder = nullptr;
@@ -11730,6 +12676,7 @@ static void reset_page_object_refs(uint8_t index) {
         btn_chart_ph = nullptr;
         btn_chart_ldr = nullptr;
         btn_chart_heap = nullptr;
+        chart_stats_panel = nullptr;
         chart_ph = nullptr;
         chart_ph_series = nullptr;
         chart_ldr = nullptr;
@@ -12829,48 +13776,113 @@ static void open_calibration_wizard_authorized(int type) {
 }
 
 static void build_hardware_subpage() {
-    subpage_hardware = create_subpage("Sprzet / Moduly", nullptr, nullptr);
+    subpage_hardware = create_subpage("Sprzet i Moduly", nullptr, nullptr);
 
-    hw_summary_lbl = create_label(subpage_hardware, "", theme_text_muted(), &lv_font_montserrat_12);
-    lv_obj_set_width(hw_summary_lbl, 300);
-    lv_label_set_long_mode(hw_summary_lbl, LV_LABEL_LONG_CLIP);
-    lv_obj_align(hw_summary_lbl, LV_ALIGN_TOP_MID, 0, 38);
+    lv_obj_t *hw_list = lv_obj_create(subpage_hardware);
+    lv_obj_set_size(hw_list, 312, 204);
+    lv_obj_set_pos(hw_list, 4, 32);
+    lv_obj_set_style_bg_opa(hw_list, LV_OPA_TRANSP, 0);
+    lv_obj_set_style_border_width(hw_list, 0, 0);
+    lv_obj_set_style_pad_all(hw_list, 0, 0);
+    lv_obj_set_flex_flow(hw_list, LV_FLEX_FLOW_COLUMN);
+    lv_obj_set_style_pad_row(hw_list, 6, 0);
+    lv_obj_set_scrollbar_mode(hw_list, LV_SCROLLBAR_MODE_AUTO);
 
-    // Runtime heap on CYD is heavily fragmented when this page is opened from
-    // Sys. A single btnmatrix replaces seven switch cards and avoids the
-    // lv_btn_create crash seen with ~3 KB largest free block.
-    hw_matrix = lv_btnmatrix_create(subpage_hardware);
-    if (hw_matrix == nullptr) {
-        Serial.println("UI_HW: matrix allocation failed");
-        return;
-    }
-    update_hardware_matrix_labels();
-    lv_obj_set_size(hw_matrix, 300, 160);
-    lv_obj_align(hw_matrix, LV_ALIGN_BOTTOM_MID, 0, -8);
-    lv_btnmatrix_set_one_checked(hw_matrix, false);
-    for (uint8_t row = 0; row < 7; ++row) {
-        lv_btnmatrix_set_btn_width(hw_matrix, static_cast<uint16_t>(row * 2), 3);
-        lv_btnmatrix_set_btn_width(hw_matrix, static_cast<uint16_t>(row * 2 + 1), 1);
-    }
-    lv_obj_add_event_cb(hw_matrix, hardware_matrix_cb, LV_EVENT_VALUE_CHANGED, nullptr);
-    lv_obj_set_style_bg_color(hw_matrix, resolve_bg_color(lv_color_make(20, 26, 40)), LV_PART_MAIN);
-    lv_obj_set_style_border_color(hw_matrix, theme_card_border(), LV_PART_MAIN);
-    lv_obj_set_style_border_width(hw_matrix, 1, LV_PART_MAIN);
-    lv_obj_set_style_radius(hw_matrix, 6, LV_PART_MAIN);
-    lv_obj_set_style_pad_all(hw_matrix, 4, LV_PART_MAIN);
-    lv_obj_set_style_text_font(hw_matrix, &lv_font_montserrat_12, LV_PART_ITEMS);
-    lv_obj_set_style_text_color(hw_matrix, theme_text_main(), LV_PART_ITEMS);
-    lv_obj_set_style_bg_color(hw_matrix, theme_matrix_item_bg(), LV_PART_ITEMS);
-    const lv_style_selector_t hw_matrix_pressed_selector =
-        static_cast<lv_style_selector_t>(static_cast<uint32_t>(LV_PART_ITEMS) | static_cast<uint32_t>(LV_STATE_PRESSED));
-    lv_obj_set_style_bg_color(hw_matrix, theme_matrix_pressed_bg(), hw_matrix_pressed_selector);
-    lv_obj_set_style_border_width(hw_matrix, 1, LV_PART_ITEMS);
-    lv_obj_set_style_border_color(hw_matrix, theme_card_border(), LV_PART_ITEMS);
-    lv_obj_set_style_radius(hw_matrix, 5, LV_PART_ITEMS);
-    Serial.printf("UI_HW: hardware matrix ready obj=%p heap_free=%lu heap_largest=%lu\n",
-                  static_cast<void *>(hw_matrix),
-                  static_cast<unsigned long>(heap_caps_get_free_size(MALLOC_CAP_8BIT)),
-                  static_cast<unsigned long>(heap_caps_get_largest_free_block(MALLOC_CAP_8BIT)));
+    auto create_hw_card = [&](const char *icon, const char *title, const char *desc,
+                              const char *badge_text, lv_color_t icon_c, lv_color_t badge_c) {
+        lv_obj_t *card = create_card(hw_list, 300, 48, 0, 0);
+        lv_obj_set_style_pad_all(card, 0, 0);
+        lv_obj_clear_flag(card, LV_OBJ_FLAG_SCROLLABLE);
+
+        lv_obj_t *icon_lbl = create_label(card, icon, icon_c, &lv_font_montserrat_14);
+        lv_obj_align(icon_lbl, LV_ALIGN_LEFT_MID, 10, -6);
+
+        lv_obj_t *title_lbl = create_label(card, title, theme_text_main(), &lv_font_montserrat_12);
+        lv_obj_align(title_lbl, LV_ALIGN_LEFT_MID, 32, -6);
+
+        lv_obj_t *desc_lbl = create_label(card, desc, theme_text_muted(), &lv_font_montserrat_12);
+        lv_obj_align(desc_lbl, LV_ALIGN_LEFT_MID, 32, 10);
+
+        lv_obj_t *badge = create_label(card, badge_text, badge_c, &lv_font_montserrat_12);
+        lv_obj_align(badge, LV_ALIGN_RIGHT_MID, -10, 0);
+        return card;
+    };
+
+    auto create_periph_card = [&](const char *icon, const char *title, const char *desc,
+                                  bool enabled, lv_obj_t *&sw_ref, lv_event_cb_t detail_cb,
+                                  void *user_data) {
+        lv_obj_t *card = create_card(hw_list, 300, 48, 0, 0);
+        lv_obj_set_style_pad_all(card, 0, 0);
+        lv_obj_clear_flag(card, LV_OBJ_FLAG_SCROLLABLE);
+        if (detail_cb != nullptr) {
+            make_object_clickable(card, detail_cb, user_data);
+            lv_obj_set_style_bg_color(card, lv_color_make(30, 41, 59), LV_STATE_PRESSED);
+        }
+
+        lv_obj_t *icon_lbl = create_label(card, icon, theme_accent(), &lv_font_montserrat_14);
+        lv_obj_align(icon_lbl, LV_ALIGN_LEFT_MID, 10, -6);
+
+        lv_obj_t *title_lbl = create_label(card, title, theme_text_main(), &lv_font_montserrat_12);
+        lv_obj_align(title_lbl, LV_ALIGN_LEFT_MID, 32, -6);
+
+        lv_obj_t *desc_lbl = create_label(card, desc, theme_text_muted(), &lv_font_montserrat_12);
+        lv_obj_align(desc_lbl, LV_ALIGN_LEFT_MID, 32, 10);
+
+        sw_ref = lv_switch_create(card);
+        lv_obj_set_size(sw_ref, 40, 20);
+        lv_obj_align(sw_ref, LV_ALIGN_RIGHT_MID, -10, 0);
+        style_switch_cyd(sw_ref);
+        set_checked(sw_ref, enabled);
+        lv_obj_add_event_cb(sw_ref, hw_switch_handler, LV_EVENT_VALUE_CHANGED, nullptr);
+        return card;
+    };
+
+    // 1. Moduły sprzętowe magistrali
+    const bool mcp_ok = hal_mcp_is_present();
+    create_hw_card(LV_SYMBOL_SETTINGS, "Ekspander I2C (MCP23017)",
+                   "Adres 0x27 • 16 kanalow I/O",
+                   mcp_ok ? "[WYKRYTY]" : "[BRAK]",
+                   lv_color_make(14, 165, 233),
+                   mcp_ok ? lv_color_make(16, 185, 129) : lv_color_make(239, 68, 68));
+
+    const bool espnow_ok = espnow_link_is_enabled();
+    create_hw_card(LV_SYMBOL_WIFI, "Modul wykonawczy (ESP-NOW)",
+                   "Link radiowy 2.4 GHz • AES-128",
+                   espnow_ok ? "[AKTYWNY]" : "[LOKALNY]",
+                   lv_color_make(168, 85, 247),
+                   espnow_ok ? lv_color_make(16, 185, 129) : lv_color_make(148, 163, 184));
+
+    create_hw_card(LV_SYMBOL_CHARGE, "Magistrala 1-Wire (DS18B20)",
+                   "GPIO 4 • Czujnik temperatury",
+                   "[OK]",
+                   lv_color_make(249, 115, 22),
+                   lv_color_make(16, 185, 129));
+
+    const bool sd_ok = hal_sd_is_mounted();
+    create_hw_card(LV_SYMBOL_SD_CARD, "Karta microSD (SPI)",
+                   "System plikow FAT32 • Web / Logi",
+                   sd_ok ? "[ZAMONTOWANA]" : "[BRAK]",
+                   lv_color_make(34, 197, 94),
+                   sd_ok ? lv_color_make(16, 185, 129) : lv_color_make(245, 158, 11));
+
+    create_hw_card(LV_SYMBOL_BELL, "Zegar RTC (DS3231) & Bateria",
+                   "Magistrala I2C • Podtrzymanie",
+                   "[AKTYWNY]",
+                   lv_color_make(234, 179, 8),
+                   lv_color_make(16, 185, 129));
+
+    // 2. Nagłówek sekcji peryferiów
+    lv_obj_t *sec_lbl = create_label(hw_list, "PERYFERIA I CZUJNIKI (Dotknij by przejsc)", lv_color_make(14, 165, 233), &lv_font_montserrat_12);
+    lv_obj_set_style_pad_top(sec_lbl, 6, 0);
+
+    // 3. Akcesoria wykonawcze z przełącznikami i kliknięciem do szczegółów
+    create_periph_card(LV_SYMBOL_CHARGE, "Grzalka", "Termostat i histereza", cfg.enableHeater, hw_heater_sw, open_heater_subpage_cb, nullptr);
+    create_periph_card(LV_SYMBOL_BUBBLES, "Napowietrzacz", "Cykl napowietrzania wody", cfg.enableAerator, hw_aerator_sw, open_sched_editor_cb, reinterpret_cast<void *>(static_cast<intptr_t>(ScheduleDevice::Air)));
+    create_periph_card(LV_SYMBOL_REFRESH, "Zawor CO2", "Dozowanie i pH-stat", cfg.enableCo2, hw_co2_sw, open_co2_subpage_cb, nullptr);
+    create_periph_card(LV_SYMBOL_BARS, "Czujnik EC", "Konduktometr / zasolenie", cfg.enableEc, hw_ec_sw, open_ec_subpage_cb, nullptr);
+    create_periph_card(LV_SYMBOL_TINT, "Poziom wody (ATO)", "Automatyczna dolewka", cfg.enableWaterLevel, hw_water_level_sw, open_water_subpage_cb, nullptr);
+    create_periph_card(LV_SYMBOL_WARNING, "Czujnik wycieku", "Zabezpieczenie przed zalaniem", cfg.enableLeak, hw_leak_sw, open_leak_subpage_cb, nullptr);
+    create_periph_card(LV_SYMBOL_LOOP, "Przeplywomierz", "Kontrola obiegu filtra", cfg.enableFlow, hw_flow_sw, open_flow_subpage_cb, nullptr);
 }
 
 
@@ -13044,7 +14056,11 @@ static void build_subpages(ActiveSubpage target) {
                                                    "Sieci WiFi",
                                                    "Skanuj i wybierz SSID",
                                                    lv_color_make(14, 165, 233));
-        LV_UNUSED(sta_header);
+        if (lv_obj_get_child_cnt(sta_header) >= 3) {
+            wifi_sta_subtitle_lbl = lv_obj_get_child(sta_header, 2);
+        } else {
+            wifi_sta_subtitle_lbl = nullptr;
+        }
 
         sta_list_obj = lv_list_create(wifi_sta_panel);
         lv_obj_set_size(sta_list_obj, 304, 116);
@@ -13054,18 +14070,19 @@ static void build_subpages(ActiveSubpage target) {
         lv_obj_set_style_border_width(sta_list_obj, 1, 0);
         lv_obj_set_style_radius(sta_list_obj, 8, 0);
         lv_obj_set_style_pad_all(sta_list_obj, 4, 0);
+        lv_obj_set_style_pad_row(sta_list_obj, 4, 0);
 
-        lv_obj_t *list_btn = lv_list_add_btn(sta_list_obj, LV_SYMBOL_WIFI, "Skanuj sieci");
+        lv_obj_t *list_btn = lv_list_add_btn(sta_list_obj, LV_SYMBOL_WIFI, "  Kliknij 'Skanuj' aby wyszukac sieci");
         style_wifi_list_item(list_btn, lv_color_make(14, 165, 233));
         lv_obj_add_event_cb(list_btn, btn_sta_handler, LV_EVENT_CLICKED, nullptr);
 
-        lv_obj_t *back_sta_btn = create_button(wifi_sta_panel, LV_SYMBOL_LEFT "  Wstecz", 146, 30, lv_color_make(30, 41, 59), cancel_sta_cb, nullptr);
-        lv_obj_set_pos(back_sta_btn, 8, 174);
-        apply_colored_3d_button(back_sta_btn, lv_color_make(30, 41, 59), 126);
+        lv_obj_t *back_sta_btn = create_button(wifi_sta_panel, LV_SYMBOL_LEFT "  Wstecz", 146, 32, lv_color_make(51, 65, 85), cancel_sta_cb, nullptr);
+        lv_obj_set_pos(back_sta_btn, 8, 172);
+        apply_colored_3d_button(back_sta_btn, lv_color_make(51, 65, 85), 126);
 
-        lv_obj_t *rescan_btn = create_button(wifi_sta_panel, LV_SYMBOL_REFRESH "  Skanuj", 146, 30, lv_color_make(14, 165, 233), btn_sta_handler, nullptr);
-        lv_obj_set_pos(rescan_btn, 166, 174);
-        apply_colored_3d_button(rescan_btn, lv_color_make(14, 165, 233), 126);
+        wifi_sta_rescan_btn = create_button(wifi_sta_panel, LV_SYMBOL_REFRESH "  Skanuj", 146, 32, lv_color_make(14, 165, 233), btn_sta_handler, nullptr);
+        lv_obj_set_pos(wifi_sta_rescan_btn, 166, 172);
+        apply_colored_3d_button(wifi_sta_rescan_btn, lv_color_make(14, 165, 233), 126);
 
         wifi_pwd_panel = lv_obj_create(subpage_wifi);
         lv_obj_set_size(wifi_pwd_panel, 320, 210);
@@ -13161,11 +14178,18 @@ static void build_subpages(ActiveSubpage target) {
     }
 
     if (target == ActiveSubpage::Screen) {
-        subpage_screen = create_subpage("Ekran LCD");
+        subpage_screen = create_subpage("Ekran LCD", [](lv_event_t *e) {
+            LV_UNUSED(e);
+            if (is_screen_changed()) {
+                sanitize_config(cfg);
+                gui_app_save_settings();
+            }
+            delete_runtime_subpages(true);
+        }, nullptr);
 
         // Scrollable lista opcji ekranu
         lv_obj_t *scr_list = lv_obj_create(subpage_screen);
-        lv_obj_set_size(scr_list, 312, 172);
+        lv_obj_set_size(scr_list, 312, 196);
         lv_obj_set_pos(scr_list, 4, 32);
         lv_obj_set_style_bg_opa(scr_list, LV_OPA_TRANSP, 0);
         lv_obj_set_style_border_width(scr_list, 0, 0);
@@ -13179,7 +14203,7 @@ static void build_subpages(ActiveSubpage target) {
         lv_obj_set_style_pad_all(theme_group, 0, 0);
         lv_obj_clear_flag(theme_group, LV_OBJ_FLAG_SCROLLABLE);
 
-        lv_obj_t *theme_title = create_label(theme_group, LV_SYMBOL_IMAGE "  MOTYW EKRANU", lv_color_make(14, 165, 233), &lv_font_montserrat_12);
+        lv_obj_t *theme_title = create_label(theme_group, LV_SYMBOL_EYE_OPEN "  MOTYW EKRANU", lv_color_make(14, 165, 233), &lv_font_montserrat_12);
         lv_obj_set_width(theme_title, 280);
         lv_obj_align(theme_title, LV_ALIGN_TOP_LEFT, 8, 6);
 
@@ -13235,7 +14259,37 @@ static void build_subpages(ActiveSubpage target) {
                                                    screen_brightness_step_cb, reinterpret_cast<void*>(static_cast<intptr_t>(10)));
         lv_obj_set_pos(screen_brightness_plus_btn, 254, 28);
 
-        // --- Karta 3: Wygaszanie ekranu ---
+        // --- Karta 3: Tryb Nocny (Cisza) ---
+        lv_obj_t *quiet_card = create_card(scr_list, 300, 78, 0, 0);
+        lv_obj_set_style_pad_all(quiet_card, 0, 0);
+        lv_obj_clear_flag(quiet_card, LV_OBJ_FLAG_SCROLLABLE);
+
+        lv_obj_t *quiet_title = create_label(quiet_card, LV_SYMBOL_EYE_CLOSE "  Tryb Nocny (Cisza)", lv_color_make(14, 165, 233), &lv_font_montserrat_12);
+        lv_obj_set_width(quiet_title, 210);
+        lv_obj_align(quiet_title, LV_ALIGN_TOP_LEFT, 8, 6);
+
+        lv_obj_t *quiet_desc = create_label(quiet_card, "Max 50% jasnosci + wyciszenie", theme_text_muted(), &lv_font_montserrat_12);
+        lv_obj_set_width(quiet_desc, 210);
+        lv_obj_align(quiet_desc, LV_ALIGN_TOP_LEFT, 8, 24);
+
+        sound_quiet_enable_sw = lv_switch_create(quiet_card);
+        lv_obj_set_size(sound_quiet_enable_sw, 40, 20);
+        lv_obj_align(sound_quiet_enable_sw, LV_ALIGN_TOP_RIGHT, -8, 10);
+        style_switch_cyd(sound_quiet_enable_sw);
+        lv_obj_add_event_cb(sound_quiet_enable_sw, sound_quiet_enable_handler, LV_EVENT_VALUE_CHANGED, nullptr);
+
+        char quiet_sched_str[32];
+        snprintf(quiet_sched_str, sizeof(quiet_sched_str), "%02u:%02u - %02u:%02u",
+                 static_cast<unsigned>(cfg.quietStartHour), static_cast<unsigned>(cfg.quietStartMinute),
+                 static_cast<unsigned>(cfg.quietEndHour), static_cast<unsigned>(cfg.quietEndMinute));
+        sound_quiet_sched_lbl = create_label(quiet_card, quiet_sched_str, lv_color_make(148, 163, 184), &lv_font_montserrat_12);
+        lv_obj_align(sound_quiet_sched_lbl, LV_ALIGN_BOTTOM_LEFT, 8, -8);
+
+        lv_obj_t *quiet_sched_btn = create_button(quiet_card, "Harmonogram", 94, 24, theme_elevated_bg(), open_sched_editor_cb, reinterpret_cast<void *>(static_cast<intptr_t>(ScheduleDevice::QuietHours)));
+        lv_obj_align(quiet_sched_btn, LV_ALIGN_BOTTOM_RIGHT, -8, -6);
+        apply_3d_button_properties(quiet_sched_btn);
+
+        // --- Karta 4: Wygaszanie ekranu ---
         lv_obj_t *sys_group = create_card(scr_list, 300, 52, 0, 0);
         lv_obj_set_style_pad_all(sys_group, 0, 0);
         lv_obj_clear_flag(sys_group, LV_OBJ_FLAG_SCROLLABLE);
@@ -13254,7 +14308,7 @@ static void build_subpages(ActiveSubpage target) {
         style_switch_cyd(screen_always_on_sw);
         lv_obj_add_event_cb(screen_always_on_sw, screen_always_on_handler, LV_EVENT_VALUE_CHANGED, nullptr);
 
-        // --- Karta 4: Tryb deweloperski ---
+        // --- Karta 5: Tryb deweloperski ---
         lv_obj_t *dev_group = create_card(scr_list, 300, 52, 0, 0);
         lv_obj_set_style_pad_all(dev_group, 0, 0);
         lv_obj_clear_flag(dev_group, LV_OBJ_FLAG_SCROLLABLE);
@@ -13272,113 +14326,75 @@ static void build_subpages(ActiveSubpage target) {
         lv_obj_align(diag_dev_mode_sw, LV_ALIGN_TOP_RIGHT, -8, 14);
         style_switch_cyd(diag_dev_mode_sw);
         lv_obj_add_event_cb(diag_dev_mode_sw, diag_dev_mode_handler, LV_EVENT_VALUE_CHANGED, nullptr);
-
-        // Przycisk zapisu
-        lv_obj_t *screen_save = create_button(subpage_screen, LV_SYMBOL_SAVE "  ZAPISZ USTAWIENIA", 220, 28, lv_color_make(16, 185, 129), save_screen_settings_cb, nullptr);
-        lv_obj_align(screen_save, LV_ALIGN_BOTTOM_MID, 0, -2);
-        apply_colored_3d_button(screen_save, lv_color_make(16, 185, 129), 160);
         return;
     }
 
     if (target == ActiveSubpage::Logs) {
-    subpage_logs = create_subpage("Logi");
+        subpage_logs = create_subpage("Logi");
+        alarm_active_flag = false;
+        alarm_skipped = false;
 
-    btn_log_normal = create_button(subpage_logs, "Zwykle", 130, 28, lv_color_make(59, 130, 246), btn_log_normal_cb, nullptr);
-    lv_obj_align(btn_log_normal, LV_ALIGN_TOP_LEFT, 20, 36);
-    apply_3d_button_properties(btn_log_normal);
+        log_list = lv_list_create(subpage_logs);
+        lv_obj_set_size(log_list, 304, 150);
+        lv_obj_align(log_list, LV_ALIGN_TOP_MID, 0, 36);
+        lv_obj_set_style_bg_color(log_list, resolve_bg_color(lv_color_make(15, 23, 42)), 0);
+        lv_obj_set_style_border_color(log_list, theme_card_border(), 0);
+        lv_obj_set_style_pad_all(log_list, 4, 0);
 
-    btn_log_important = create_button(subpage_logs, "Wazne", 130, 28, lv_color_make(35, 41, 55), btn_log_important_cb, nullptr);
-    lv_obj_align(btn_log_important, LV_ALIGN_TOP_RIGHT, -20, 36);
-    apply_3d_button_properties(btn_log_important);
+        refresh_unified_log_list();
 
-    log_list_normal = lv_list_create(subpage_logs);
-    lv_obj_set_size(log_list_normal, 280, 110);
-    lv_obj_align(log_list_normal, LV_ALIGN_TOP_MID, 0, 70);
-    lv_obj_set_style_bg_color(log_list_normal, resolve_bg_color(lv_color_make(20, 26, 40)), 0);
-    lv_obj_set_style_border_color(log_list_normal, theme_card_border(), 0);
-    lv_obj_set_style_pad_all(log_list_normal, 4, 0);
-
-    log_list_important = lv_list_create(subpage_logs);
-    lv_obj_set_size(log_list_important, 280, 110);
-    lv_obj_align(log_list_important, LV_ALIGN_TOP_MID, 0, 70);
-    lv_obj_set_style_bg_color(log_list_important, resolve_bg_color(lv_color_make(20, 26, 40)), 0);
-    lv_obj_set_style_border_color(log_list_important, theme_card_border(), 0);
-    lv_obj_set_style_pad_all(log_list_important, 4, 0);
-    lv_obj_add_flag(log_list_important, LV_OBJ_FLAG_HIDDEN); // Initially hidden
-
-    // Populate initial system startup logs
-    add_gui_log("System uruchomiony poprawnie", false);
-    add_gui_log("Zaladowano konfiguracje NVS", false);
-    add_gui_log("Panel dotykowy gotowy", false);
-    add_gui_log("Brak polaczenia Wi-Fi przy starcie", true);
-
-    lv_obj_t *clear_logs = create_button(subpage_logs, "Wyczysc", 120, 28, lv_color_make(35, 41, 55), clear_logs_cb, nullptr);
-    lv_obj_align(clear_logs, LV_ALIGN_BOTTOM_MID, 0, -12);
-    apply_3d_button_properties(clear_logs);
-    return;
+        lv_obj_t *clear_logs = create_button(subpage_logs, "Wyczysc rejestr", 140, 26, theme_elevated_bg(), clear_logs_cb, nullptr);
+        lv_obj_align(clear_logs, LV_ALIGN_BOTTOM_MID, 0, -8);
+        apply_3d_button_properties(clear_logs);
+        return;
     }
 
     if (target == ActiveSubpage::Clock) {
-    subpage_clock = create_subpage("Zegar", back_clock_cb, nullptr);
-    
-    lv_obj_t *clock_list = lv_obj_create(subpage_clock);
-    lv_obj_set_size(clock_list, 312, 196);
-    lv_obj_set_pos(clock_list, 4, 34);
-    lv_obj_set_style_bg_opa(clock_list, LV_OPA_TRANSP, 0);
-    lv_obj_set_style_border_width(clock_list, 0, 0);
-    lv_obj_set_style_pad_all(clock_list, 0, 0);
-    lv_obj_set_flex_flow(clock_list, LV_FLEX_FLOW_COLUMN);
-    lv_obj_set_style_pad_row(clock_list, 6, 0);
-    lv_obj_set_scrollbar_mode(clock_list, LV_SCROLLBAR_MODE_AUTO);
+        subpage_clock = create_subpage("Zegar", back_clock_cb, nullptr);
+        
+        lv_obj_t *clock_list = lv_obj_create(subpage_clock);
+        lv_obj_set_size(clock_list, 312, 196);
+        lv_obj_set_pos(clock_list, 4, 34);
+        lv_obj_set_style_bg_opa(clock_list, LV_OPA_TRANSP, 0);
+        lv_obj_set_style_border_width(clock_list, 0, 0);
+        lv_obj_set_style_pad_all(clock_list, 0, 0);
+        lv_obj_set_flex_flow(clock_list, LV_FLEX_FLOW_COLUMN);
+        lv_obj_set_style_pad_row(clock_list, 6, 0);
+        lv_obj_set_scrollbar_mode(clock_list, LV_SCROLLBAR_MODE_AUTO);
 
-    lv_obj_t *clock_box = create_card(clock_list, 300, 70, 0, 0);
-    lv_obj_set_style_pad_all(clock_box, 0, 0);
-    label_clock_time = create_label(clock_box, "20:30:00", lv_color_white(), &lv_font_montserrat_24);
-    lv_obj_align(label_clock_time, LV_ALIGN_CENTER, 0, -10);
-    label_clock_date = create_label(clock_box, "31 Maj 2026", lv_color_make(148, 163, 184), &lv_font_montserrat_12);
-    lv_obj_align(label_clock_date, LV_ALIGN_CENTER, 0, 14);
+        lv_obj_t *clock_box = create_card(clock_list, 300, 70, 0, 0);
+        lv_obj_set_style_pad_all(clock_box, 0, 0);
+        label_clock_time = create_label(clock_box, "--:--:--", lv_color_white(), &lv_font_montserrat_24);
+        lv_obj_align(label_clock_time, LV_ALIGN_CENTER, 0, -10);
+        label_clock_date = create_label(clock_box, "--.--.----", lv_color_make(148, 163, 184), &lv_font_montserrat_12);
+        lv_obj_align(label_clock_date, LV_ALIGN_CENTER, 0, 14);
 
-    // Karta 2: Ręczne ustawianie godziny (roller modal)
-    lv_obj_t *adj_time_row = create_card(clock_list, 300, 46, 0, 0);
-    lv_obj_set_style_pad_all(adj_time_row, 0, 0);
-    lv_obj_t *adj_time_lbl = create_label(adj_time_row, "Ustaw godzine", lv_color_white(), &lv_font_montserrat_12);
-    lv_obj_align(adj_time_lbl, LV_ALIGN_LEFT_MID, 10, 0);
-    lv_obj_t *btn_adjust_time = create_button(adj_time_row, "Dostosuj", 80, 28, lv_color_make(35, 41, 55), open_time_picker_cb, nullptr);
-    lv_obj_align(btn_adjust_time, LV_ALIGN_RIGHT_MID, -10, 0);
-    apply_3d_button_properties(btn_adjust_time);
+        // Karta 2: Ręczne ustawianie godziny (roller modal)
+        lv_obj_t *adj_time_row = create_card(clock_list, 300, 46, 0, 0);
+        lv_obj_set_style_pad_all(adj_time_row, 0, 0);
+        lv_obj_t *adj_time_lbl = create_label(adj_time_row, "Ustaw godzine", lv_color_white(), &lv_font_montserrat_12);
+        lv_obj_align(adj_time_lbl, LV_ALIGN_LEFT_MID, 10, 0);
+        lv_obj_t *btn_adjust_time = create_button(adj_time_row, "Dostosuj", 80, 28, lv_color_make(35, 41, 55), open_time_picker_cb, nullptr);
+        lv_obj_align(btn_adjust_time, LV_ALIGN_RIGHT_MID, -10, 0);
+        apply_3d_button_properties(btn_adjust_time);
 
-    // Karta 3: Wybór daty w kalendarzu
-    lv_obj_t *adj_date_row = create_card(clock_list, 300, 46, 0, 0);
-    lv_obj_set_style_pad_all(adj_date_row, 0, 0);
-    lv_obj_t *adj_date_lbl = create_label(adj_date_row, "Ustaw date", lv_color_white(), &lv_font_montserrat_12);
-    lv_obj_align(adj_date_lbl, LV_ALIGN_LEFT_MID, 10, 0);
-    lv_obj_t *btn_adjust_date = create_button(adj_date_row, "Kalendarz", 80, 28, lv_color_make(35, 41, 55), open_calendar_picker_cb, nullptr);
-    lv_obj_align(btn_adjust_date, LV_ALIGN_RIGHT_MID, -10, 0);
-    apply_3d_button_properties(btn_adjust_date);
+        // Karta 3: Wybór daty w kalendarzu
+        lv_obj_t *adj_date_row = create_card(clock_list, 300, 46, 0, 0);
+        lv_obj_set_style_pad_all(adj_date_row, 0, 0);
+        lv_obj_t *adj_date_lbl = create_label(adj_date_row, "Ustaw date", lv_color_white(), &lv_font_montserrat_12);
+        lv_obj_align(adj_date_lbl, LV_ALIGN_LEFT_MID, 10, 0);
+        lv_obj_t *btn_adjust_date = create_button(adj_date_row, "Kalendarz", 80, 28, lv_color_make(35, 41, 55), open_calendar_picker_cb, nullptr);
+        lv_obj_align(btn_adjust_date, LV_ALIGN_RIGHT_MID, -10, 0);
+        apply_3d_button_properties(btn_adjust_date);
 
-    // Karta 4: NTP Sync Button inside scrollable list
-    clock_ntp_row = create_card(clock_list, 300, 46, 0, 0);
-    lv_obj_set_style_pad_all(clock_ntp_row, 0, 0);
-    btn_sync_ntp_global = create_button(
-        clock_ntp_row,
-        "Synchronizuj NTP",
-        280,
-        32,
-        lv_color_make(35, 41, 55),
-        btn_sync_ntp_handler,
-        nullptr);
-    lv_obj_align(btn_sync_ntp_global, LV_ALIGN_CENTER, 0, 0);
-    btn_sync_ntp_lbl_global = lv_obj_get_child(btn_sync_ntp_global, 0);
-
-    // Initial NTP Sync row visibility based on connection status
-    if (!wifi_connected) {
-        lv_obj_add_flag(clock_ntp_row, LV_OBJ_FLAG_HIDDEN);
-    }
-    return;
+        clock_ntp_row = nullptr;
+        btn_sync_ntp_global = nullptr;
+        btn_sync_ntp_lbl_global = nullptr;
+        return;
     }
 
     if (target == ActiveSubpage::Diagnostics) {
-    subpage_diagnostics = create_subpage("Diag");
+    subpage_diagnostics = create_subpage("Diagnostyka");
 
     lv_obj_t *diag_panel = create_card(subpage_diagnostics, 304, 190, 8, 36);
     lv_obj_set_style_pad_all(diag_panel, 0, 0);
@@ -13421,24 +14437,24 @@ static void build_subpages(ActiveSubpage target) {
     if (target == ActiveSubpage::Power) {
     subpage_power = create_subpage("Zasilanie");
 
-    lv_obj_t *state_card = create_card(subpage_power, 304, 42, 8, 36);
+    lv_obj_t *state_card = create_card(subpage_power, 304, 38, 8, 34);
     lv_obj_set_style_pad_all(state_card, 0, 0);
     lv_obj_set_style_border_color(state_card, lv_color_make(239, 68, 68), 0);
-    create_accent_bar(state_card, lv_color_make(239, 68, 68), 26);
+    create_accent_bar(state_card, lv_color_make(239, 68, 68), 24);
     create_fixed_label(state_card, "ENERGIA", lv_color_make(239, 68, 68),
-                       &lv_font_montserrat_12, 268, 14, 5, LV_LABEL_LONG_CLIP);
+                       &lv_font_montserrat_12, 268, 14, 4, LV_LABEL_LONG_CLIP);
     power_state_lbl = create_fixed_label(state_card, "LCD auto | WiFi gotowe",
                                          theme_text_main(), &lv_font_montserrat_12,
-                                         278, 14, 23);
+                                         278, 14, 20);
 
-    lv_obj_t *modem_card = create_card(subpage_power, 304, 40, 8, 84);
+    lv_obj_t *modem_card = create_card(subpage_power, 304, 38, 8, 76);
     lv_obj_set_style_pad_all(modem_card, 0, 0);
     create_accent_bar(modem_card, lv_color_make(14, 165, 233), 24);
     create_fixed_label(modem_card, "Uspienie modemu", theme_text_main(),
-                       &lv_font_montserrat_12, 210, 14, 5);
+                       &lv_font_montserrat_12, 210, 14, 4);
     create_fixed_label(modem_card, "wylacza radio WiFi",
                        theme_text_muted(), &lv_font_montserrat_12,
-                       210, 14, 22);
+                       210, 14, 20);
     power_modem_sleep_sw = lv_switch_create(modem_card);
     lv_obj_set_size(power_modem_sleep_sw, 42, 22);
     lv_obj_align(power_modem_sleep_sw, LV_ALIGN_RIGHT_MID, -10, 0);
@@ -13447,31 +14463,31 @@ static void build_subpages(ActiveSubpage target) {
 
     power_warning_lbl_global = create_fixed_label(subpage_power, "PIN wymagany dla akcji krytycznych",
                                                   theme_text_muted(), &lv_font_montserrat_12,
-                                                  304, 8, 128, LV_LABEL_LONG_DOT);
+                                                  304, 8, 118, LV_LABEL_LONG_DOT);
 
     lv_obj_t *btn_restart = create_button(subpage_power, LV_SYMBOL_REFRESH " Restart", 146, 28,
                                           lv_color_make(239, 68, 68), btn_restart_event_handler, nullptr);
-    lv_obj_set_pos(btn_restart, 8, 146);
+    lv_obj_set_pos(btn_restart, 8, 136);
     apply_colored_3d_button(btn_restart, lv_color_make(239, 68, 68), 130);
 
     lv_obj_t *btn_light = create_button(subpage_power, "Sen lekki 10s", 146, 28,
                                         lv_color_make(59, 130, 246), btn_light_sleep_handler, nullptr);
-    lv_obj_set_pos(btn_light, 166, 146);
+    lv_obj_set_pos(btn_light, 166, 136);
     apply_colored_3d_button(btn_light, lv_color_make(59, 130, 246), 130);
 
     lv_obj_t *btn_deep = create_button(subpage_power, "Sen gleboki", 146, 28,
                                        lv_color_make(71, 85, 105), btn_deep_sleep_handler, nullptr);
-    lv_obj_set_pos(btn_deep, 8, 178);
+    lv_obj_set_pos(btn_deep, 8, 168);
     apply_colored_3d_button(btn_deep, lv_color_make(71, 85, 105), 130);
 
     lv_obj_t *btn_hib = create_button(subpage_power, "Hibernacja", 146, 28,
                                       lv_color_make(30, 41, 59), btn_hibernation_handler, nullptr);
-    lv_obj_set_pos(btn_hib, 166, 178);
+    lv_obj_set_pos(btn_hib, 166, 168);
     apply_colored_3d_button(btn_hib, lv_color_make(30, 41, 59), 130);
 
     lv_obj_t *btn_reset = create_button(subpage_power, LV_SYMBOL_WARNING " Reset pamieci", 304, 28,
                                         lv_color_make(185, 28, 28), btn_factory_reset_handler, nullptr);
-    lv_obj_set_pos(btn_reset, 8, 210);
+    lv_obj_set_pos(btn_reset, 8, 200);
     apply_colored_3d_button(btn_reset, lv_color_make(185, 28, 28), 286);
     return;
     }
@@ -13549,26 +14565,26 @@ static void build_subpages(ActiveSubpage target) {
     lv_obj_t *time1_lbl = create_label(feed_time1_row, "Godz. 1", lv_color_white(), &lv_font_montserrat_12);
     lv_obj_align(time1_lbl, LV_ALIGN_LEFT_MID, 10, 0);
 
-    lv_obj_t *t1_h_minus = create_button(feed_time1_row, "-", 24, 20, lv_color_make(35, 41, 55), adjust_feed_time_new, reinterpret_cast<void *>(static_cast<intptr_t>(112)));
+    lv_obj_t *t1_h_minus = create_button(feed_time1_row, "-", 28, 24, lv_color_make(35, 41, 55), adjust_feed_time_new, reinterpret_cast<void *>(static_cast<intptr_t>(112)));
     lv_obj_align(t1_h_minus, LV_ALIGN_LEFT_MID, 60, 0);
     feed_time1_h_lbl = create_label(feed_time1_row, "10", lv_color_make(6, 182, 212), &lv_font_montserrat_12);
-    lv_obj_align(feed_time1_h_lbl, LV_ALIGN_LEFT_MID, 90, 0);
-    lv_obj_set_size(feed_time1_h_lbl, 20, 20);
+    lv_obj_align(feed_time1_h_lbl, LV_ALIGN_LEFT_MID, 92, 0);
+    lv_obj_set_size(feed_time1_h_lbl, 24, 22);
     lv_obj_set_style_text_align(feed_time1_h_lbl, LV_TEXT_ALIGN_CENTER, 0);
-    lv_obj_t *t1_h_plus = create_button(feed_time1_row, "+", 24, 20, lv_color_make(35, 41, 55), adjust_feed_time_new, reinterpret_cast<void *>(static_cast<intptr_t>(111)));
-    lv_obj_align(t1_h_plus, LV_ALIGN_LEFT_MID, 116, 0);
+    lv_obj_t *t1_h_plus = create_button(feed_time1_row, "+", 28, 24, lv_color_make(35, 41, 55), adjust_feed_time_new, reinterpret_cast<void *>(static_cast<intptr_t>(111)));
+    lv_obj_align(t1_h_plus, LV_ALIGN_LEFT_MID, 120, 0);
 
     lv_obj_t *t1_colon = create_label(feed_time1_row, ":", lv_color_white(), &lv_font_montserrat_12);
-    lv_obj_align(t1_colon, LV_ALIGN_LEFT_MID, 146, -1);
+    lv_obj_align(t1_colon, LV_ALIGN_LEFT_MID, 152, -1);
 
-    lv_obj_t *t1_m_minus = create_button(feed_time1_row, "-", 24, 20, lv_color_make(35, 41, 55), adjust_feed_time_new, reinterpret_cast<void *>(static_cast<intptr_t>(122)));
-    lv_obj_align(t1_m_minus, LV_ALIGN_LEFT_MID, 156, 0);
+    lv_obj_t *t1_m_minus = create_button(feed_time1_row, "-", 28, 24, lv_color_make(35, 41, 55), adjust_feed_time_new, reinterpret_cast<void *>(static_cast<intptr_t>(122)));
+    lv_obj_align(t1_m_minus, LV_ALIGN_LEFT_MID, 160, 0);
     feed_time1_m_lbl = create_label(feed_time1_row, "00", lv_color_make(6, 182, 212), &lv_font_montserrat_12);
-    lv_obj_align(feed_time1_m_lbl, LV_ALIGN_LEFT_MID, 186, 0);
-    lv_obj_set_size(feed_time1_m_lbl, 20, 20);
+    lv_obj_align(feed_time1_m_lbl, LV_ALIGN_LEFT_MID, 192, 0);
+    lv_obj_set_size(feed_time1_m_lbl, 24, 22);
     lv_obj_set_style_text_align(feed_time1_m_lbl, LV_TEXT_ALIGN_CENTER, 0);
-    lv_obj_t *t1_m_plus = create_button(feed_time1_row, "+", 24, 20, lv_color_make(35, 41, 55), adjust_feed_time_new, reinterpret_cast<void *>(static_cast<intptr_t>(121)));
-    lv_obj_align(t1_m_plus, LV_ALIGN_LEFT_MID, 212, 0);
+    lv_obj_t *t1_m_plus = create_button(feed_time1_row, "+", 28, 24, lv_color_make(35, 41, 55), adjust_feed_time_new, reinterpret_cast<void *>(static_cast<intptr_t>(121)));
+    lv_obj_align(t1_m_plus, LV_ALIGN_LEFT_MID, 220, 0);
 
     // Card 5: Time 2 Row
     feed_time2_row = create_card(feed_list, 300, 46, 0, 0);
@@ -13578,26 +14594,26 @@ static void build_subpages(ActiveSubpage target) {
     lv_obj_t *time2_lbl = create_label(feed_time2_row, "Godz. 2", lv_color_white(), &lv_font_montserrat_12);
     lv_obj_align(time2_lbl, LV_ALIGN_LEFT_MID, 10, 0);
 
-    lv_obj_t *t2_h_minus = create_button(feed_time2_row, "-", 24, 20, lv_color_make(35, 41, 55), adjust_feed_time_new, reinterpret_cast<void *>(static_cast<intptr_t>(212)));
+    lv_obj_t *t2_h_minus = create_button(feed_time2_row, "-", 28, 24, lv_color_make(35, 41, 55), adjust_feed_time_new, reinterpret_cast<void *>(static_cast<intptr_t>(212)));
     lv_obj_align(t2_h_minus, LV_ALIGN_LEFT_MID, 60, 0);
     feed_time2_h_lbl = create_label(feed_time2_row, "18", lv_color_make(6, 182, 212), &lv_font_montserrat_12);
-    lv_obj_align(feed_time2_h_lbl, LV_ALIGN_LEFT_MID, 90, 0);
-    lv_obj_set_size(feed_time2_h_lbl, 20, 20);
+    lv_obj_align(feed_time2_h_lbl, LV_ALIGN_LEFT_MID, 92, 0);
+    lv_obj_set_size(feed_time2_h_lbl, 24, 22);
     lv_obj_set_style_text_align(feed_time2_h_lbl, LV_TEXT_ALIGN_CENTER, 0);
-    lv_obj_t *t2_h_plus = create_button(feed_time2_row, "+", 24, 20, lv_color_make(35, 41, 55), adjust_feed_time_new, reinterpret_cast<void *>(static_cast<intptr_t>(211)));
-    lv_obj_align(t2_h_plus, LV_ALIGN_LEFT_MID, 116, 0);
+    lv_obj_t *t2_h_plus = create_button(feed_time2_row, "+", 28, 24, lv_color_make(35, 41, 55), adjust_feed_time_new, reinterpret_cast<void *>(static_cast<intptr_t>(211)));
+    lv_obj_align(t2_h_plus, LV_ALIGN_LEFT_MID, 120, 0);
 
     lv_obj_t *t2_colon = create_label(feed_time2_row, ":", lv_color_white(), &lv_font_montserrat_12);
-    lv_obj_align(t2_colon, LV_ALIGN_LEFT_MID, 146, -1);
+    lv_obj_align(t2_colon, LV_ALIGN_LEFT_MID, 152, -1);
 
-    lv_obj_t *t2_m_minus = create_button(feed_time2_row, "-", 24, 20, lv_color_make(35, 41, 55), adjust_feed_time_new, reinterpret_cast<void *>(static_cast<intptr_t>(222)));
-    lv_obj_align(t2_m_minus, LV_ALIGN_LEFT_MID, 156, 0);
+    lv_obj_t *t2_m_minus = create_button(feed_time2_row, "-", 28, 24, lv_color_make(35, 41, 55), adjust_feed_time_new, reinterpret_cast<void *>(static_cast<intptr_t>(222)));
+    lv_obj_align(t2_m_minus, LV_ALIGN_LEFT_MID, 160, 0);
     feed_time2_m_lbl = create_label(feed_time2_row, "00", lv_color_make(6, 182, 212), &lv_font_montserrat_12);
-    lv_obj_align(feed_time2_m_lbl, LV_ALIGN_LEFT_MID, 186, 0);
-    lv_obj_set_size(feed_time2_m_lbl, 20, 20);
+    lv_obj_align(feed_time2_m_lbl, LV_ALIGN_LEFT_MID, 192, 0);
+    lv_obj_set_size(feed_time2_m_lbl, 24, 22);
     lv_obj_set_style_text_align(feed_time2_m_lbl, LV_TEXT_ALIGN_CENTER, 0);
-    lv_obj_t *t2_m_plus = create_button(feed_time2_row, "+", 24, 20, lv_color_make(35, 41, 55), adjust_feed_time_new, reinterpret_cast<void *>(static_cast<intptr_t>(221)));
-    lv_obj_align(t2_m_plus, LV_ALIGN_LEFT_MID, 212, 0);
+    lv_obj_t *t2_m_plus = create_button(feed_time2_row, "+", 28, 24, lv_color_make(35, 41, 55), adjust_feed_time_new, reinterpret_cast<void *>(static_cast<intptr_t>(221)));
+    lv_obj_align(t2_m_plus, LV_ALIGN_LEFT_MID, 220, 0);
     return;
     }
 
@@ -13659,26 +14675,26 @@ static void build_subpages(ActiveSubpage target) {
     lv_obj_t *lbl_start = create_label(row_start, "START", lv_color_white(), &lv_font_montserrat_12);
     lv_obj_align(lbl_start, LV_ALIGN_LEFT_MID, 6, 0);
 
-    lv_obj_t *sh_minus = create_button(row_start, "-", 24, 20, lv_color_make(35, 41, 55), adjust_schedule_time_cb, reinterpret_cast<void *>(static_cast<intptr_t>(19)));
+    lv_obj_t *sh_minus = create_button(row_start, "-", 28, 22, lv_color_make(35, 41, 55), adjust_schedule_time_cb, reinterpret_cast<void *>(static_cast<intptr_t>(19)));
     lv_obj_align(sh_minus, LV_ALIGN_LEFT_MID, 60, 0);
     sched_editor_start_h_lbl = create_label(row_start, "10", lv_color_make(6, 182, 212), &lv_font_montserrat_12);
     lv_obj_align(sched_editor_start_h_lbl, LV_ALIGN_LEFT_MID, 90, 0);
-    lv_obj_set_size(sched_editor_start_h_lbl, 20, 20);
+    lv_obj_set_size(sched_editor_start_h_lbl, 22, 20);
     lv_obj_set_style_text_align(sched_editor_start_h_lbl, LV_TEXT_ALIGN_CENTER, 0);
-    lv_obj_t *sh_plus = create_button(row_start, "+", 24, 20, lv_color_make(35, 41, 55), adjust_schedule_time_cb, reinterpret_cast<void *>(static_cast<intptr_t>(11)));
-    lv_obj_align(sh_plus, LV_ALIGN_LEFT_MID, 116, 0);
+    lv_obj_t *sh_plus = create_button(row_start, "+", 28, 22, lv_color_make(35, 41, 55), adjust_schedule_time_cb, reinterpret_cast<void *>(static_cast<intptr_t>(11)));
+    lv_obj_align(sh_plus, LV_ALIGN_LEFT_MID, 114, 0);
 
     lv_obj_t *colon1 = create_label(row_start, ":", lv_color_white(), &lv_font_montserrat_12);
     lv_obj_align(colon1, LV_ALIGN_LEFT_MID, 146, -1);
 
-    lv_obj_t *sm_minus = create_button(row_start, "-", 24, 20, lv_color_make(35, 41, 55), adjust_schedule_time_cb, reinterpret_cast<void *>(static_cast<intptr_t>(29)));
-    lv_obj_align(sm_minus, LV_ALIGN_LEFT_MID, 156, 0);
+    lv_obj_t *sm_minus = create_button(row_start, "-", 28, 22, lv_color_make(35, 41, 55), adjust_schedule_time_cb, reinterpret_cast<void *>(static_cast<intptr_t>(29)));
+    lv_obj_align(sm_minus, LV_ALIGN_LEFT_MID, 154, 0);
     sched_editor_start_m_lbl = create_label(row_start, "00", lv_color_make(6, 182, 212), &lv_font_montserrat_12);
-    lv_obj_align(sched_editor_start_m_lbl, LV_ALIGN_LEFT_MID, 186, 0);
-    lv_obj_set_size(sched_editor_start_m_lbl, 20, 20);
+    lv_obj_align(sched_editor_start_m_lbl, LV_ALIGN_LEFT_MID, 184, 0);
+    lv_obj_set_size(sched_editor_start_m_lbl, 22, 20);
     lv_obj_set_style_text_align(sched_editor_start_m_lbl, LV_TEXT_ALIGN_CENTER, 0);
-    lv_obj_t *sm_plus = create_button(row_start, "+", 24, 20, lv_color_make(35, 41, 55), adjust_schedule_time_cb, reinterpret_cast<void *>(static_cast<intptr_t>(21)));
-    lv_obj_align(sm_plus, LV_ALIGN_LEFT_MID, 212, 0);
+    lv_obj_t *sm_plus = create_button(row_start, "+", 28, 22, lv_color_make(35, 41, 55), adjust_schedule_time_cb, reinterpret_cast<void *>(static_cast<intptr_t>(21)));
+    lv_obj_align(sm_plus, LV_ALIGN_LEFT_MID, 208, 0);
 
     // Row 2: End time
     lv_obj_t *row_end = lv_obj_create(editor_controls);
@@ -13691,26 +14707,26 @@ static void build_subpages(ActiveSubpage target) {
     lv_obj_t *lbl_end = create_label(row_end, "KONIEC", lv_color_white(), &lv_font_montserrat_12);
     lv_obj_align(lbl_end, LV_ALIGN_LEFT_MID, 6, 0);
 
-    lv_obj_t *eh_minus = create_button(row_end, "-", 24, 20, lv_color_make(35, 41, 55), adjust_schedule_time_cb, reinterpret_cast<void *>(static_cast<intptr_t>(39)));
+    lv_obj_t *eh_minus = create_button(row_end, "-", 28, 22, lv_color_make(35, 41, 55), adjust_schedule_time_cb, reinterpret_cast<void *>(static_cast<intptr_t>(39)));
     lv_obj_align(eh_minus, LV_ALIGN_LEFT_MID, 60, 0);
     sched_editor_end_h_lbl = create_label(row_end, "21", lv_color_make(6, 182, 212), &lv_font_montserrat_12);
     lv_obj_align(sched_editor_end_h_lbl, LV_ALIGN_LEFT_MID, 90, 0);
-    lv_obj_set_size(sched_editor_end_h_lbl, 20, 20);
+    lv_obj_set_size(sched_editor_end_h_lbl, 22, 20);
     lv_obj_set_style_text_align(sched_editor_end_h_lbl, LV_TEXT_ALIGN_CENTER, 0);
-    lv_obj_t *eh_plus = create_button(row_end, "+", 24, 20, lv_color_make(35, 41, 55), adjust_schedule_time_cb, reinterpret_cast<void *>(static_cast<intptr_t>(31)));
-    lv_obj_align(eh_plus, LV_ALIGN_LEFT_MID, 116, 0);
+    lv_obj_t *eh_plus = create_button(row_end, "+", 28, 22, lv_color_make(35, 41, 55), adjust_schedule_time_cb, reinterpret_cast<void *>(static_cast<intptr_t>(31)));
+    lv_obj_align(eh_plus, LV_ALIGN_LEFT_MID, 114, 0);
 
     lv_obj_t *colon2 = create_label(row_end, ":", lv_color_white(), &lv_font_montserrat_12);
     lv_obj_align(colon2, LV_ALIGN_LEFT_MID, 146, -1);
 
-    lv_obj_t *em_minus = create_button(row_end, "-", 24, 20, lv_color_make(35, 41, 55), adjust_schedule_time_cb, reinterpret_cast<void *>(static_cast<intptr_t>(49)));
-    lv_obj_align(em_minus, LV_ALIGN_LEFT_MID, 156, 0);
+    lv_obj_t *em_minus = create_button(row_end, "-", 28, 22, lv_color_make(35, 41, 55), adjust_schedule_time_cb, reinterpret_cast<void *>(static_cast<intptr_t>(49)));
+    lv_obj_align(em_minus, LV_ALIGN_LEFT_MID, 154, 0);
     sched_editor_end_m_lbl = create_label(row_end, "00", lv_color_make(6, 182, 212), &lv_font_montserrat_12);
-    lv_obj_align(sched_editor_end_m_lbl, LV_ALIGN_LEFT_MID, 186, 0);
-    lv_obj_set_size(sched_editor_end_m_lbl, 20, 20);
+    lv_obj_align(sched_editor_end_m_lbl, LV_ALIGN_LEFT_MID, 184, 0);
+    lv_obj_set_size(sched_editor_end_m_lbl, 22, 20);
     lv_obj_set_style_text_align(sched_editor_end_m_lbl, LV_TEXT_ALIGN_CENTER, 0);
-    lv_obj_t *em_plus = create_button(row_end, "+", 24, 20, lv_color_make(35, 41, 55), adjust_schedule_time_cb, reinterpret_cast<void *>(static_cast<intptr_t>(41)));
-    lv_obj_align(em_plus, LV_ALIGN_LEFT_MID, 212, 0);
+    lv_obj_t *em_plus = create_button(row_end, "+", 28, 22, lv_color_make(35, 41, 55), adjust_schedule_time_cb, reinterpret_cast<void *>(static_cast<intptr_t>(41)));
+    lv_obj_align(em_plus, LV_ALIGN_LEFT_MID, 208, 0);
 
     // Row 3: Color selection (Lights only)
     sched_editor_color_row = lv_obj_create(editor_controls);
@@ -13743,63 +14759,43 @@ static void build_subpages(ActiveSubpage target) {
     }
 
     if (target == ActiveSubpage::Sounds) {
-    subpage_sounds = create_subpage("Dzwiek");
+        subpage_sounds = create_subpage("Dzwiek", [](lv_event_t *e) {
+            LV_UNUSED(e);
+            if (is_sound_changed()) {
+                sanitize_config(cfg);
+                gui_app_save_settings();
+            }
+            delete_runtime_subpages(true);
+        }, nullptr);
 
-    lv_obj_t *snd_list = lv_obj_create(subpage_sounds);
-    lv_obj_set_size(snd_list, 312, 168);
-    lv_obj_set_pos(snd_list, 4, 34);
-    lv_obj_set_style_bg_opa(snd_list, LV_OPA_TRANSP, 0);
-    lv_obj_set_style_border_width(snd_list, 0, 0);
-    lv_obj_set_style_pad_all(snd_list, 0, 0);
-    lv_obj_set_flex_flow(snd_list, LV_FLEX_FLOW_COLUMN);
-    lv_obj_set_style_pad_row(snd_list, 6, 0);
-    lv_obj_set_scrollbar_mode(snd_list, LV_SCROLLBAR_MODE_AUTO);
+        lv_obj_t *snd_list = lv_obj_create(subpage_sounds);
+        lv_obj_set_size(snd_list, 312, 196);
+        lv_obj_set_pos(snd_list, 4, 34);
+        lv_obj_set_style_bg_opa(snd_list, LV_OPA_TRANSP, 0);
+        lv_obj_set_style_border_width(snd_list, 0, 0);
+        lv_obj_set_style_pad_all(snd_list, 0, 0);
+        lv_obj_set_flex_flow(snd_list, LV_FLEX_FLOW_COLUMN);
+        lv_obj_set_style_pad_row(snd_list, 6, 0);
+        lv_obj_set_scrollbar_mode(snd_list, LV_SCROLLBAR_MODE_AUTO);
 
-    lv_obj_t *sound_enable_row = create_card(snd_list, 300, 46, 0, 0);
-    lv_obj_set_style_pad_all(sound_enable_row, 0, 0);
-    lv_obj_t *sound_enable_lbl = create_label(sound_enable_row, "Dzwieki systemowe", lv_color_white(), &lv_font_montserrat_12);
-    lv_obj_align(sound_enable_lbl, LV_ALIGN_LEFT_MID, 10, 0);
-    sound_enable_sw = lv_switch_create(sound_enable_row);
-    lv_obj_set_size(sound_enable_sw, 42, 22);
-    lv_obj_align(sound_enable_sw, LV_ALIGN_RIGHT_MID, -10, 0);
-    style_switch_cyd(sound_enable_sw);
-    lv_obj_add_event_cb(sound_enable_sw, sound_enable_handler, LV_EVENT_VALUE_CHANGED, nullptr);
+        lv_obj_t *sound_enable_row = create_card(snd_list, 300, 46, 0, 0);
+        lv_obj_set_style_pad_all(sound_enable_row, 0, 0);
+        lv_obj_t *sound_enable_lbl = create_label(sound_enable_row, "Dzwieki systemowe", lv_color_white(), &lv_font_montserrat_12);
+        lv_obj_align(sound_enable_lbl, LV_ALIGN_LEFT_MID, 10, 0);
+        sound_enable_sw = lv_switch_create(sound_enable_row);
+        lv_obj_set_size(sound_enable_sw, 42, 22);
+        lv_obj_align(sound_enable_sw, LV_ALIGN_RIGHT_MID, -10, 0);
+        style_switch_cyd(sound_enable_sw);
+        lv_obj_add_event_cb(sound_enable_sw, sound_enable_handler, LV_EVENT_VALUE_CHANGED, nullptr);
 
-    lv_obj_t *quiet_enable_row = create_card(snd_list, 300, 46, 0, 0);
-    lv_obj_set_style_pad_all(quiet_enable_row, 0, 0);
-    lv_obj_t *quiet_enable_lbl = create_label(quiet_enable_row, "Cisza nocna", lv_color_white(), &lv_font_montserrat_12);
-    lv_obj_align(quiet_enable_lbl, LV_ALIGN_LEFT_MID, 10, 0);
-    sound_quiet_enable_sw = lv_switch_create(quiet_enable_row);
-    lv_obj_set_size(sound_quiet_enable_sw, 42, 22);
-    lv_obj_align(sound_quiet_enable_sw, LV_ALIGN_RIGHT_MID, -10, 0);
-    style_switch_cyd(sound_quiet_enable_sw);
-    lv_obj_add_event_cb(sound_quiet_enable_sw, sound_quiet_enable_handler, LV_EVENT_VALUE_CHANGED, nullptr);
+        lv_obj_t *speaker_test_row = create_card(snd_list, 300, 46, 0, 0);
+        lv_obj_set_style_pad_all(speaker_test_row, 0, 0);
+        lv_obj_t *speaker_test_lbl = create_label(speaker_test_row, "Test glosnika", lv_color_white(), &lv_font_montserrat_12);
+        lv_obj_align(speaker_test_lbl, LV_ALIGN_LEFT_MID, 10, 0);
 
-    lv_obj_t *quiet_sched_row = create_card(snd_list, 300, 46, 0, 0);
-    lv_obj_set_style_pad_all(quiet_sched_row, 0, 0);
-    lv_obj_clear_flag(quiet_sched_row, LV_OBJ_FLAG_SCROLLABLE);
-
-    lv_obj_t *quiet_sched_lbl = create_label(quiet_sched_row, "Harmonogram", lv_color_white(), &lv_font_montserrat_12);
-    lv_obj_align(quiet_sched_lbl, LV_ALIGN_LEFT_MID, 10, 0);
-
-    sound_quiet_sched_lbl = create_label(quiet_sched_row, "20:00 - 10:00", lv_color_make(148, 163, 184), &lv_font_montserrat_12);
-    lv_obj_align(sound_quiet_sched_lbl, LV_ALIGN_RIGHT_MID, -100, 0);
-
-    lv_obj_t *quiet_sched_btn = create_button(quiet_sched_row, "Dostosuj", 80, 28, lv_color_make(35, 41, 55), open_sched_editor_cb, reinterpret_cast<void *>(static_cast<intptr_t>(ScheduleDevice::QuietHours)));
-    lv_obj_align(quiet_sched_btn, LV_ALIGN_RIGHT_MID, -10, 0);
-    apply_3d_button_properties(quiet_sched_btn);
-
-    lv_obj_t *speaker_test_row = create_card(snd_list, 300, 46, 0, 0);
-    lv_obj_set_style_pad_all(speaker_test_row, 0, 0);
-    lv_obj_t *speaker_test_lbl = create_label(speaker_test_row, "Test glosnika", lv_color_white(), &lv_font_montserrat_12);
-    lv_obj_align(speaker_test_lbl, LV_ALIGN_LEFT_MID, 10, 0);
-
-    lv_obj_t *speaker_test_btn = create_button(speaker_test_row, "TEST", 70, 26, lv_color_make(6, 182, 212), test_speaker_cb, nullptr);
-    lv_obj_align(speaker_test_btn, LV_ALIGN_RIGHT_MID, -10, 0);
-
-    lv_obj_t *sound_save = create_button(subpage_sounds, "ZAPISZ DZWIEK", 180, 26, lv_color_make(16, 185, 129), save_sound_settings_cb, nullptr);
-    lv_obj_align(sound_save, LV_ALIGN_BOTTOM_MID, 0, -2);
-    return;
+        lv_obj_t *speaker_test_btn = create_button(speaker_test_row, "TEST", 70, 26, lv_color_make(6, 182, 212), test_speaker_cb, nullptr);
+        lv_obj_align(speaker_test_btn, LV_ALIGN_RIGHT_MID, -10, 0);
+        return;
     }
 
     if (target == ActiveSubpage::Heater) {
@@ -14368,6 +15364,10 @@ static void gui_sync_widgets_to_state() {
             lv_obj_add_flag(clock_ntp_row, LV_OBJ_FLAG_HIDDEN);
         }
     }
+
+    if (day_schedule_panel != nullptr) {
+        update_day_schedule_chart();
+    }
 }
 
 static void style_chart_btn(lv_obj_t *btn) {
@@ -14725,6 +15725,7 @@ static void update_charts_data(float temp, float ph) {
     seed_dev_history(temp, ph, ldr_sample);
     add_history_point(temp, runtime.heaterOn, ph, ldr_sample);
     if (!gui_web_focus_blocks_local_ui()) {
+        update_day_schedule_chart();
         redraw_charts();
         update_chart_stats();
     }
@@ -14929,6 +15930,16 @@ static void reset_gui_object_refs() {
     btn_chart_ph = nullptr;
     btn_chart_ldr = nullptr;
     btn_chart_heap = nullptr;
+    day_schedule_panel = nullptr;
+    for (int i = 0; i < 6; ++i) {
+        day_track_bars[i] = nullptr;
+        day_track_bars_wrap[i] = nullptr;
+        day_track_lbl[i] = nullptr;
+    }
+    day_current_time_marker = nullptr;
+    day_time_lbl = nullptr;
+    day_status_lbl = nullptr;
+    chart_stats_panel = nullptr;
     chart_ph = nullptr;
     chart_ph_series = nullptr;
     chart_ldr = nullptr;
@@ -14966,17 +15977,18 @@ static void reset_gui_object_refs() {
 
 
 static void apply_lvgl_theme() {
+    init_custom_fonts();
     lv_disp_t *disp = lv_disp_get_default();
     lv_theme_t *theme = lv_theme_default_init(
         disp,
         lv_palette_main(LV_PALETTE_CYAN),
         lv_palette_main(LV_PALETTE_GREY),
         !ui_light_theme,
-        &lv_font_montserrat_14
+        &font_montserrat_14_with_icons
     );
     lv_disp_set_theme(disp, theme);
     lv_obj_set_style_bg_color(lv_scr_act(), theme_screen_bg(), 0);
-    lv_obj_set_style_text_font(lv_scr_act(), &lv_font_montserrat_14, 0);
+    lv_obj_set_style_text_font(lv_scr_act(), &font_montserrat_14_with_icons, 0);
     lv_obj_clear_flag(lv_scr_act(), LV_OBJ_FLAG_SCROLLABLE);
 }
 
@@ -15148,15 +16160,17 @@ void gui_app_init(void) {
 }
 
 void gui_app_service_background(void) {
-    GuiMutexGuard guard(50U);
-    if (!guard.locked() || !gui_ready) {
+    if (!gui_ready) {
         return;
     }
 
     static uint32_t last_wifi_service_ms = 0U;
     if (ota_start_pending) {
-        ota_start_pending = false;
-        start_ota_background();
+        GuiMutexGuard guard(50U);
+        if (guard.locked()) {
+            ota_start_pending = false;
+            start_ota_background();
+        }
     }
     if (wifi_autoconnect_pending) {
         wifi_autoconnect_pending = false;
@@ -15173,20 +16187,26 @@ void gui_app_service_background(void) {
         if (!begin_sta_connection(selected_ssid, pending_wifi_password)) {
             is_connecting = false;
             clear_pending_wifi_password();
-            if (wifi_status_message_lbl != nullptr) {
-                lv_label_set_text(wifi_status_message_lbl,
-                                  "Status: nie uruchomiono WiFi");
-                lv_obj_set_style_text_color(
-                    wifi_status_message_lbl,
-                    lv_color_make(239, 68, 68),
-                    0);
+            GuiMutexGuard guard(50U);
+            if (guard.locked()) {
+                if (wifi_status_message_lbl != nullptr) {
+                    lv_label_set_text(wifi_status_message_lbl,
+                                      "Status: nie uruchomiono WiFi");
+                    lv_obj_set_style_text_color(
+                        wifi_status_message_lbl,
+                        lv_color_make(239, 68, 68),
+                        0);
+                }
             }
         }
     }
     const uint32_t now_ms = millis();
     if (static_cast<uint32_t>(now_ms - last_wifi_service_ms) >= 500U) {
         last_wifi_service_ms = now_ms;
-        wifi_check_timer_cb(nullptr);
+        GuiMutexGuard guard(50U);
+        if (guard.locked()) {
+            wifi_check_timer_cb(nullptr);
+        }
     }
     service_ntp_sync(now_ms);
     service_feeder_pulse(now_ms);
@@ -15201,35 +16221,43 @@ void gui_app_service_background(void) {
 }
 
 void gui_app_handle_ota_portal(void) {
-    GuiMutexGuard guard(50U);
-    if (!guard.locked() || !gui_ready) {
+    if (!gui_ready) {
         return;
     }
-    update_relay_tests();
-    if (ota_reboot_pending &&
-        static_cast<int32_t>(millis() - ota_reboot_at_ms) >= 0) {
-        Serial.println("SYSTEM: restarting after an authorized request.");
-        const bool outputs_safe =
-            hal_mcp_latch_all_relays_safe();
-        runtime_safety_record_restart(
-            ota_reboot_reason,
-            outputs_safe);
-        ESP.restart();
+    {
+        GuiMutexGuard guard(20U);
+        if (guard.locked()) {
+            update_relay_tests();
+            if (ota_reboot_pending &&
+                static_cast<int32_t>(millis() - ota_reboot_at_ms) >= 0) {
+                Serial.println("SYSTEM: restarting after an authorized request.");
+                const bool outputs_safe =
+                    hal_mcp_latch_all_relays_safe();
+                runtime_safety_record_restart(
+                    ota_reboot_reason,
+                    outputs_safe);
+                ESP.restart();
+            }
+            if (wifi_disconnect_pending && static_cast<int32_t>(millis() - wifi_disconnect_at_ms) >= 0) {
+                wifi_disconnect_pending = false;
+                stop_ota_portal();
+                stop_mdns_service();
+                WiFi.disconnect(true);
+                WiFi.mode(WIFI_OFF);
+                wifi_connected = false;
+                wifi_rssi = 0;
+                is_connecting = false;
+                gui_app_update_wifi(0, 0);
+                return;
+            }
+        }
     }
-    if (wifi_disconnect_pending && static_cast<int32_t>(millis() - wifi_disconnect_at_ms) >= 0) {
-        wifi_disconnect_pending = false;
-        stop_ota_portal();
-        stop_mdns_service();
-        WiFi.disconnect(true);
-        WiFi.mode(WIFI_OFF);
-        wifi_connected = false;
-        wifi_rssi = 0;
-        is_connecting = false;
-        gui_app_update_wifi(0, 0);
-        return;
-    }
+
     if (!ota_portal_running) {
-        gui_web_focus_update();
+        GuiMutexGuard guard(20U);
+        if (guard.locked()) {
+            gui_web_focus_update();
+        }
         return;
     }
 
@@ -15237,7 +16265,13 @@ void gui_app_handle_ota_portal(void) {
         ota_dns_server.processNextRequest();
     }
     ota_http_server.handleClient();
-    gui_web_focus_update();
+
+    {
+        GuiMutexGuard guard(20U);
+        if (guard.locked()) {
+            gui_web_focus_update();
+        }
+    }
 
     if (ota_shutdown_pending && static_cast<int32_t>(millis() - ota_shutdown_at_ms) >= 0) {
         Serial.println("HTTP_OTA: stopping OTA portal by web request.");
@@ -15734,7 +16768,7 @@ void gui_update_metrics(float temp, float ph, uint32_t free_heap, const char *ti
 
     static bool high_temp_warn = false;
     static bool low_temp_warn = false;
-    if (isfinite(temp)) {
+    if (millis() > 30000UL && temp_valid && isfinite(temp)) {
         if (temp > 28.0f && !high_temp_warn) {
             high_temp_warn = true;
             add_gui_log("Wysoka temperatura wody!", true);
@@ -15753,7 +16787,7 @@ void gui_update_metrics(float temp, float ph, uint32_t free_heap, const char *ti
     }
 
     static bool ph_warn = false;
-    if (ph_valid) {
+    if (millis() > 30000UL && ph_valid) {
         if ((ph < 6.0f || ph > 8.0f) && !ph_warn) {
             ph_warn = true;
             char ph_buf[64];
@@ -15777,9 +16811,19 @@ void gui_update_metrics(float temp, float ph, uint32_t free_heap, const char *ti
                   temp_valid,
                   ph,
                   ph_valid);
-    current_alarm_flags =
-        alarm_stability_filter.update(
-            observed_alarm_flags);
+
+    static bool initial_baseline_set = false;
+    if (!initial_baseline_set) {
+        current_alarm_flags = observed_alarm_flags;
+        if (millis() > 30000UL) {
+            initial_baseline_set = true;
+        }
+    } else {
+        current_alarm_flags =
+            alarm_stability_filter.update(
+                observed_alarm_flags);
+    }
+
     const uint32_t alarm_timestamp =
         controller_clock_reliable
             ? controller_unix_time()
@@ -15789,7 +16833,7 @@ void gui_update_metrics(float temp, float ph, uint32_t free_heap, const char *ti
             current_alarm_flags,
             alarm_timestamp,
             controller_clock_reliable);
-    if (previous_alarm_flags != current_alarm_flags) {
+    if (initial_baseline_set && previous_alarm_flags != current_alarm_flags) {
         Serial.printf(
             "ALARMS: flags 0x%04x -> 0x%04x queue=%s.\n",
             static_cast<unsigned>(previous_alarm_flags),
@@ -15912,19 +16956,28 @@ void gui_app_update_status_bar(uint32_t uptime_sec) {
             : static_cast<uint32_t>(now_ms - status_last_sample_ms) / 1000UL;
     const uint32_t age_sec = measured_age_sec > 99U ? 99U : measured_age_sec;
 
-    const char *ip_tail = strrchr(status_ip_address, '.');
-    ip_tail = ip_tail != nullptr ? ip_tail + 1 : "--";
-    if (strcmp(status_ip_address, "0.0.0.0") == 0) {
-        ip_tail = "--";
-    }
     if (label_date != nullptr) {
-        lv_label_set_text_fmt(
-            label_date,
-            "%02d:%02d .%s %lus",
-            constrain(clock_hour, 0, 23),
-            constrain(clock_minute, 0, 59),
-            ip_tail,
-            static_cast<unsigned long>(age_sec));
+        if (alarm_active_flag && alarm_skipped) {
+            lv_label_set_text_fmt(
+                label_date,
+                LV_SYMBOL_WARNING " %02d:%02d",
+                constrain(clock_hour, 0, 23),
+                constrain(clock_minute, 0, 59));
+            lv_obj_set_style_text_color(label_date, lv_color_make(239, 68, 68), 0);
+        } else {
+            lv_label_set_text_fmt(
+                label_date,
+                "%02d:%02d  %02d.%02d",
+                constrain(clock_hour, 0, 23),
+                constrain(clock_minute, 0, 59),
+                constrain(clock_day, 1, 31),
+                constrain(clock_month, 1, 12));
+            lv_obj_set_style_text_color(label_date, lv_color_make(226, 232, 240), 0);
+        }
+    }
+
+    if (current_page_index == 1 && day_schedule_panel != nullptr) {
+        update_day_schedule_chart();
     }
 
     if (label_rtc_bat == nullptr) {
@@ -15948,10 +17001,16 @@ void gui_app_update_status_bar(uint32_t uptime_sec) {
 
     const bool stale = status_last_sample_ms == 0U || age_sec > 5U;
     const bool healthy = status_sensor_bus_ok && status_temperature_ok && !stale;
-    char badge[8];
-    snprintf(badge, sizeof(badge), "%c%s",
-             cfg.devMode ? 'D' : (healthy ? ' ' : (stale ? '~' : '!')),
-             uptime_text);
+    char badge[10];
+    if (cfg.devMode) {
+        snprintf(badge, sizeof(badge), "D%s", uptime_text);
+    } else if (stale) {
+        snprintf(badge, sizeof(badge), "~%s", uptime_text);
+    } else if (!healthy) {
+        snprintf(badge, sizeof(badge), "!%s", uptime_text);
+    } else {
+        snprintf(badge, sizeof(badge), "%s", uptime_text);
+    }
     lv_label_set_text(label_rtc_bat, badge);
     lv_obj_set_style_text_color(
         label_rtc_bat,
@@ -16170,7 +17229,12 @@ void gui_app_update_sensor_debug(int ldr_value,
         static bool previous_supply_low = false;
         const bool supply_low = (aquarium::dev_simulator().latest().alarmFlags & aquarium::AlarmSupplyLow) != 0U;
 
-        if (dev_inputs_initialized) {
+        if (!dev_inputs_initialized) {
+            previous_water_high = water_raw;
+            previous_leak = leak_raw;
+            previous_supply_low = supply_low;
+            dev_inputs_initialized = true;
+        } else if (millis() > 30000UL) {
             if (water_raw != previous_water_high) {
                 add_gui_log(water_raw ? "DEV: poziom wody przywrocony" : "DEV: niski poziom wody", !water_raw);
             }
@@ -16180,11 +17244,10 @@ void gui_app_update_sensor_debug(int ldr_value,
             if (supply_low != previous_supply_low) {
                 add_gui_log(supply_low ? "DEV: niskie napiecie zasilania" : "DEV: zasilanie stabilne", supply_low);
             }
+            previous_water_high = water_raw;
+            previous_leak = leak_raw;
+            previous_supply_low = supply_low;
         }
-        previous_water_high = water_raw;
-        previous_leak = leak_raw;
-        previous_supply_low = supply_low;
-        dev_inputs_initialized = true;
     }
 
     if (gui_web_focus_blocks_local_ui()) {
