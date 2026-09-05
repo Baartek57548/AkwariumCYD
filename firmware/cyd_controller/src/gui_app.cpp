@@ -7678,8 +7678,13 @@ static void ota_portal_handle_status() {
     const unsigned int alarm_flags = current_alarm_flags;
     const EcoRuntimeStatus eco = eco_collect_status();
     const bool sd_ready_for_status = ota_portal_sd_ready();
-    const uint64_t sd_total_bytes = sd_ready_for_status ? SD.totalBytes() : 0ULL;
-    const uint64_t sd_used_bytes = sd_ready_for_status ? SD.usedBytes() : 0ULL;
+    uint64_t sd_total_bytes = 0ULL;
+    uint64_t sd_used_bytes  = 0ULL;
+    if (sd_ready_for_status && hal_sd_lock(200U)) {
+        sd_total_bytes = SD.totalBytes();
+        sd_used_bytes  = SD.usedBytes();
+        hal_sd_unlock();
+    }
     const uint64_t sd_free_bytes = (sd_total_bytes > sd_used_bytes) ? (sd_total_bytes - sd_used_bytes) : 0ULL;
     const uint32_t status_now_ms = millis();
     const uint8_t active_web_clients = web_ui_active_client_count(status_now_ms);

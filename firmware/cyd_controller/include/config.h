@@ -158,7 +158,7 @@ constexpr uint32_t FEEDER_PULSE_MS = 500UL;
 
 namespace FirmwareInfo {
 
-constexpr char VERSION[] = "6.0.0";
+constexpr char VERSION[] = "6.0.1";
 constexpr uint8_t API_VERSION = 2U;
 constexpr uint32_t SECURITY_VERSION = 2U;
 constexpr uint16_t BOOTLOADER_COMPATIBILITY_VERSION = 1U;
