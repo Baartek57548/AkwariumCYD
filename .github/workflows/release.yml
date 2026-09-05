@@ -273,11 +273,11 @@ jobs:
             --artifact "$RELEASE_APK" \
             --output "$RELEASE_DIR/AquaCYD-Control-$version.cdx.json"
       - name: Attest mobile build provenance
-        uses: actions/attest@f7c74d28b9d84cb8768d0b8ca14a4bac6ef463e6 # v4.2.0
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
         with:
           subject-path: ${{ steps.metadata.outputs.apk }}
       - name: Attest mobile SBOM
-        uses: actions/attest@f7c74d28b9d84cb8768d0b8ca14a4bac6ef463e6 # v4.2.0
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
         with:
           subject-path: ${{ steps.metadata.outputs.apk }}
           sbom-path: ${{ steps.metadata.outputs.directory }}/AquaCYD-Control-${{ steps.metadata.outputs.version }}.cdx.json
@@ -376,7 +376,7 @@ jobs:
             -InstallerPath $setup `
             -InstallDirectory (Join-Path $env:RUNNER_TEMP 'Home Control release smoke')
       - name: Attest Windows installer build provenance
-        uses: actions/attest@f7c74d28b9d84cb8768d0b8ca14a4bac6ef463e6 # v4.2.0
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
         with:
           subject-path: artifacts/home-control-windows/*-Setup.exe
       - name: Upload Windows release artifact
@@ -609,16 +609,16 @@ jobs:
             sha256sum --check SHA256SUMS
           )
       - name: Attest Android build provenance
-        uses: actions/attest@f7c74d28b9d84cb8768d0b8ca14a4bac6ef463e6 # v4.2.0
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
         with:
           subject-path: ${{ steps.home_metadata.outputs.apk }}
       - name: Attest Android SBOM
-        uses: actions/attest@f7c74d28b9d84cb8768d0b8ca14a4bac6ef463e6 # v4.2.0
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
         with:
           subject-path: ${{ steps.home_metadata.outputs.apk }}
           sbom-path: ${{ steps.home_metadata.outputs.directory }}/Home-Control-${{ steps.home_metadata.outputs.version }}.cdx.json
       - name: Attest Windows SBOM
-        uses: actions/attest@f7c74d28b9d84cb8768d0b8ca14a4bac6ef463e6 # v4.2.0
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
         with:
           subject-path: ${{ steps.home_metadata.outputs.windows_setup }}
           sbom-path: ${{ steps.home_metadata.outputs.directory }}/Home-Control-${{ steps.home_metadata.outputs.version }}.cdx.json
@@ -1083,24 +1083,24 @@ jobs:
             sha256sum --check SHA256SUMS
           )
       - name: Attest firmware build provenance
-        uses: actions/attest@f7c74d28b9d84cb8768d0b8ca14a4bac6ef463e6 # v4.2.0
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
         with:
           subject-path: |
             ${{ steps.metadata.outputs.directory }}/*-sbv2.bin
             ${{ steps.metadata.outputs.directory }}/*.aqfw
       - name: Attest firmware SBOM
-        uses: actions/attest@f7c74d28b9d84cb8768d0b8ca14a4bac6ef463e6 # v4.2.0
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
         with:
           subject-path: |
             ${{ steps.metadata.outputs.directory }}/*-sbv2.bin
             ${{ steps.metadata.outputs.directory }}/*.aqfw
           sbom-path: ${{ steps.metadata.outputs.directory }}/AquaCYD-Firmware-${{ steps.metadata.outputs.version }}.cdx.json
       - name: Attest web bundle build provenance
-        uses: actions/attest@f7c74d28b9d84cb8768d0b8ca14a4bac6ef463e6 # v4.2.0
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
         with:
           subject-path: ${{ steps.metadata.outputs.directory }}/AquaCYD-Web-${{ steps.metadata.outputs.version }}.tar.gz
       - name: Attest web bundle SBOM
-        uses: actions/attest@f7c74d28b9d84cb8768d0b8ca14a4bac6ef463e6 # v4.2.0
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
         with:
           subject-path: ${{ steps.metadata.outputs.directory }}/AquaCYD-Web-${{ steps.metadata.outputs.version }}.tar.gz
           sbom-path: ${{ steps.metadata.outputs.directory }}/AquaCYD-Web-${{ steps.metadata.outputs.version }}.cdx.json
