@@ -1655,7 +1655,24 @@ static void apply_display_backlight(int ldr_value, bool ldr_valid) {
         const bool initial_window = last_touch_ms == 0U && now_ms <= 60000UL;
         const bool recently_touched = last_touch_ms != 0U && static_cast<uint32_t>(now_ms - last_touch_ms) <= 60000UL;
         if (!initial_window && !recently_touched) {
+            // Wygaszone – po upływie 60 s od ostatniego dotyku
             desired_percent = 0U;
+        } else if (last_touch_ms != 0U) {
+            // Sprawdź czy jesteśmy w oknie 5 s przed wygaszeniem (55–60 s)
+            const uint32_t elapsed = static_cast<uint32_t>(now_ms - last_touch_ms);
+            if (elapsed >= 55000UL && elapsed < 60000UL) {
+                // Stopniowe przyciemnianie do 20 % w ciągu 5 s przed wygaszeniem
+                const uint32_t fade_pos = elapsed - 55000UL; // 0..5000 ms
+                // Liniowa interpolacja: display_max_brightness → 20 %
+                const uint8_t min_dim = 20U;
+                const uint8_t from_pct = desired_percent;
+                if (from_pct > min_dim) {
+                    const uint32_t span = static_cast<uint32_t>(from_pct - min_dim);
+                    desired_percent = static_cast<uint8_t>(
+                        from_pct - (span * fade_pos + 2500UL) / 5000UL);
+                    if (desired_percent < min_dim) desired_percent = min_dim;
+                }
+            }
         }
     }
 
@@ -12003,7 +12020,7 @@ static void update_day_schedule_chart() {
         lv_color_make(16, 185, 129)  // Pokarm: Emerald Green
     };
 
-    const int bar_max_w = 222;
+    const int bar_max_w = 228;
 
     for (int i = 0; i < 6; ++i) {
         lv_obj_t *bar1 = day_track_bars[i];
@@ -12192,7 +12209,7 @@ static void build_schedules_page() {
     lv_obj_set_style_pad_all(pages[1], 0, 0);
     lv_obj_clear_flag(pages[1], LV_OBJ_FLAG_SCROLLABLE);
 
-    day_schedule_panel = create_card(pages[1], 312, 168, 4, 6);
+    day_schedule_panel = create_card(pages[1], 312, 174, 4, 3);
     lv_obj_set_style_pad_all(day_schedule_panel, 4, 0);
     lv_obj_clear_flag(day_schedule_panel, LV_OBJ_FLAG_SCROLLABLE);
 
@@ -12239,7 +12256,7 @@ static void build_schedules_page() {
         lv_obj_set_pos(lbl, 2, y_pos + 1);
 
         lv_obj_t *bg_bar = lv_obj_create(day_schedule_panel);
-        lv_obj_set_size(bg_bar, 222, 18);
+        lv_obj_set_size(bg_bar, 228, 18);
         lv_obj_set_pos(bg_bar, 78, y_pos);
         lv_obj_set_style_pad_all(bg_bar, 0, 0);
         lv_obj_set_style_bg_color(bg_bar, resolve_bg_color(lv_color_make(18, 24, 38)), 0);
@@ -12289,9 +12306,9 @@ static void build_schedules_page() {
         }
     }
 
-    // Wskaźnik bieżącego czasu (czerwona pionowa linia)
+    // Wskaźnik bieżącego czasu (czerwona pionowa linia) – obejmuje wszystkie 6 ścieżek
     day_current_time_marker = lv_obj_create(day_schedule_panel);
-    lv_obj_set_size(day_current_time_marker, 2, 123);
+    lv_obj_set_size(day_current_time_marker, 2, 132);
     lv_obj_set_pos(day_current_time_marker, 78, 18);
     lv_obj_set_style_pad_all(day_current_time_marker, 0, 0);
     lv_obj_set_style_bg_color(day_current_time_marker, lv_color_make(239, 68, 68), 0);
@@ -12300,8 +12317,26 @@ static void build_schedules_page() {
     lv_obj_clear_flag(day_current_time_marker, LV_OBJ_FLAG_SCROLLABLE);
     lv_obj_clear_flag(day_current_time_marker, LV_OBJ_FLAG_CLICKABLE);
 
-    lv_obj_t *legend_lbl = create_label(day_schedule_panel, "Aquael: DZIEN / SWIT / NOC", lv_color_make(100, 116, 139), &lv_font_montserrat_12);
-    lv_obj_align(legend_lbl, LV_ALIGN_BOTTOM_LEFT, 4, -2);
+    // Legenda kolorów profilu Aquael (mała, pod siatką)
+    // DZIEN=niebieski, SWIT=fiolet, NOC=indygo — widoczne bezpośrednio w kolorach pasków
+    lv_obj_t *legend_row = lv_obj_create(day_schedule_panel);
+    lv_obj_set_size(legend_row, 230, 14);
+    lv_obj_set_pos(legend_row, 78, 148);
+    lv_obj_set_style_pad_all(legend_row, 0, 0);
+    lv_obj_set_style_bg_opa(legend_row, LV_OPA_TRANSP, 0);
+    lv_obj_set_style_border_width(legend_row, 0, 0);
+    lv_obj_clear_flag(legend_row, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_clear_flag(legend_row, LV_OBJ_FLAG_CLICKABLE);
+
+    struct { const char *txt; lv_color_t col; int x; } legend_items[3] = {
+        { LV_SYMBOL_STOP " DZIEN", lv_color_make(14, 165, 233),   0 },
+        { LV_SYMBOL_STOP " SWIT",  lv_color_make(168, 85, 247),  72 },
+        { LV_SYMBOL_STOP " NOC",   lv_color_make(59, 130, 246), 138 },
+    };
+    for (int k = 0; k < 3; ++k) {
+        lv_obj_t *li = create_label(legend_row, legend_items[k].txt, legend_items[k].col, &lv_font_montserrat_12);
+        lv_obj_set_pos(li, legend_items[k].x, 1);
+    }
 
     update_day_schedule_chart();
 }
