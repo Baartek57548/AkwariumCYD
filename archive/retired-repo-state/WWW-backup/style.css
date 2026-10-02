@@ -1,0 +1,1969 @@
+/* ==========================================================================
+   AquaCYD ESP32 & WeMos D1 R3 - Industrial IoT Control Panel
+   Stylistyka: Przemysłowy HMI / Home Assistant / Grafana / ThingsBoard
+   Zasady: Czysty matowy grafit, zerowy neon/glow, potrójne kodowanie stanu,
+           siatka 4px/8px, tabular-nums, umiarkowane zaokrąglenia 6-10px.
+   ========================================================================== */
+
+:root {
+  /* Podstawowa paleta matowa (Industrial Dark) */
+  --bg-canvas: #0B1017;
+  --bg-surface: #121822;
+  --bg-card: #182230;
+  --bg-card-hover: #1C2737;
+  --bg-elevated: #202D40;
+  --bg-input: #0E1520;
+  --bg-input-focus: #141E2D;
+
+  /* Obramowania (Crisp 1px borders) */
+  --border-subtle: #1C2736;
+  --border-default: #253346;
+  --border-strong: #33455E;
+  --border-focus: #3B82F6;
+
+  /* Typografia & Kontrast */
+  --text-primary: #F1F5F9;
+  --text-secondary: #94A3B8;
+  --text-muted: #64748B;
+  --text-disabled: #475569;
+  --text-inverse: #0B1017;
+
+  /* Kolory Semantyczne */
+  --color-success: #10B981;
+  --color-success-bg: rgba(16, 185, 129, 0.12);
+  --color-success-border: rgba(16, 185, 129, 0.35);
+
+  --color-warning: #F59E0B;
+  --color-warning-bg: rgba(245, 158, 11, 0.12);
+  --color-warning-border: rgba(245, 158, 11, 0.35);
+
+  --color-danger: #EF4444;
+  --color-danger-bg: rgba(239, 68, 68, 0.12);
+  --color-danger-border: rgba(239, 68, 68, 0.35);
+
+  --color-info: #3B82F6;
+  --color-info-bg: rgba(59, 130, 246, 0.12);
+  --color-info-border: rgba(59, 130, 246, 0.35);
+
+  --color-neutral: #64748B;
+  --color-neutral-bg: rgba(100, 116, 139, 0.10);
+  --color-neutral-border: rgba(100, 116, 139, 0.25);
+
+  /* Pomiary na wykresach (Grafana standard) */
+  --chart-temp: #F97316;
+  --chart-ph: #8B5CF6;
+  --chart-ec: #06B6D4;
+  --chart-ldr: #EAB308;
+  --chart-grid: #1E293B;
+
+  /* Typografia & Siatka */
+  --font-sans: 'Inter', system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  --font-mono: 'JetBrains Mono', 'SFMono-Regular', Consolas, 'Liberation Mono', Menlo, monospace;
+
+  /* Promienie zaokrągleń (Umiarkowane, 6–10px) */
+  --radius-sm: 6px;
+  --radius-md: 8px;
+  --radius-lg: 10px;
+  --radius-pill: 999px;
+
+  /* Odstępy (Siatka 4px / 8px) */
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 20px;
+  --space-6: 24px;
+  --space-8: 32px;
+
+  /* Wymiary Layoutu */
+  --sidebar-w: 220px;
+  --topbar-h: 56px;
+  --bottom-nav-h: 56px;
+
+  /* Cienie - Dyskretne techniczne bez świecenia */
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.25);
+  --shadow-md: 0 2px 6px rgba(0, 0, 0, 0.35);
+  --shadow-lg: 0 8px 16px rgba(0, 0, 0, 0.45);
+}
+
+/* ==========================================================================
+   Reset & Baza
+   ========================================================================== */
+*, *::before, *::after {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+html, body {
+  width: 100%;
+  height: 100%;
+  background-color: var(--bg-canvas);
+  color: var(--text-primary);
+  font-family: var(--font-sans);
+  font-size: 14px;
+  line-height: 1.45;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  overflow-x: hidden;
+}
+
+button, input, select, textarea {
+  font-family: inherit;
+  font-size: inherit;
+  color: inherit;
+}
+
+/* ==========================================================================
+   Układ Główny SPA
+   ========================================================================== */
+.app-root {
+  display: flex;
+  min-height: 100vh;
+  width: 100%;
+  background-color: var(--bg-canvas);
+}
+
+/* Sidebar Desktopowy (220px) */
+.sidebar {
+  width: var(--sidebar-w);
+  background-color: var(--bg-surface);
+  border-right: 1px solid var(--border-subtle);
+  display: flex;
+  flex-direction: column;
+  flex-shrink: 0;
+  z-index: 100;
+  position: sticky;
+  top: 0;
+  height: 100vh;
+}
+
+.brand-header {
+  padding: var(--space-4) var(--space-4);
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  border-bottom: 1px solid var(--border-subtle);
+}
+
+.brand-logo-box {
+  width: 32px;
+  height: 32px;
+  border-radius: var(--radius-sm);
+  background-color: var(--color-info-bg);
+  border: 1px solid var(--color-info-border);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--color-info);
+  flex-shrink: 0;
+}
+
+.brand-titles h1 {
+  font-size: 15px;
+  font-weight: 700;
+  letter-spacing: 0.5px;
+  color: var(--text-primary);
+  line-height: 1.1;
+}
+
+.brand-titles span {
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--text-secondary);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+/* Menu Nawigacji */
+.nav-menu {
+  list-style: none;
+  padding: var(--space-3) var(--space-2);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  flex: 1;
+  overflow-y: auto;
+}
+
+.nav-link {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding: 10px var(--space-3);
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  color: var(--text-secondary);
+  font-size: 13px;
+  font-weight: 500;
+  text-align: left;
+  cursor: pointer;
+  transition: background-color 0.15s ease, color 0.15s ease, border-color 0.15s ease;
+}
+
+.nav-link svg {
+  width: 18px;
+  height: 18px;
+  stroke: currentColor;
+  fill: none;
+  stroke-width: 2;
+  flex-shrink: 0;
+}
+
+.nav-link:hover {
+  background-color: var(--bg-card);
+  color: var(--text-primary);
+}
+
+.nav-link.active {
+  background-color: var(--bg-card);
+  color: var(--text-primary);
+  border-color: var(--border-default);
+  font-weight: 600;
+  box-shadow: inset 3px 0 0 var(--color-info);
+}
+
+.sidebar-footer {
+  padding: var(--space-3) var(--space-4);
+  border-top: 1px solid var(--border-subtle);
+  font-size: 11px;
+  color: var(--text-muted);
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  background-color: rgba(0, 0, 0, 0.15);
+}
+
+.sidebar-footer strong {
+  color: var(--text-secondary);
+}
+
+/* Obszar Główny */
+.main-wrapper {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  background-color: var(--bg-canvas);
+}
+
+/* Topbar */
+.topbar {
+  height: var(--topbar-h);
+  background-color: var(--bg-surface);
+  border-bottom: 1px solid var(--border-subtle);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 var(--space-6);
+  position: sticky;
+  top: 0;
+  z-index: 90;
+}
+
+.topbar-left {
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+}
+
+.view-title {
+  font-size: 16px;
+  font-weight: 600;
+  letter-spacing: 0.2px;
+  color: var(--text-primary);
+}
+
+.topbar-right {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+/* Status Pills w pasku górnym */
+.status-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px;
+  background-color: var(--bg-card);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-pill);
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--text-secondary);
+  font-variant-numeric: tabular-nums;
+  cursor: default;
+  transition: border-color 0.15s ease, background-color 0.15s ease;
+}
+
+.status-pill.clickable {
+  cursor: pointer;
+}
+
+.status-pill.clickable:hover {
+  background-color: var(--bg-elevated);
+  border-color: var(--border-strong);
+  color: var(--text-primary);
+}
+
+.status-pill .dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background-color: var(--color-neutral);
+  flex-shrink: 0;
+}
+
+.status-pill.online .dot {
+  background-color: var(--color-success);
+}
+
+.status-pill.warning .dot {
+  background-color: var(--color-warning);
+}
+
+.status-pill.alarm .dot {
+  background-color: var(--color-danger);
+}
+
+/* Obszar Treści */
+.content-area {
+  flex: 1;
+  padding: var(--space-6);
+  max-width: 1280px;
+  width: 100%;
+  margin: 0 auto;
+}
+
+/* Pasek Ostrzegawczy Braku Łączności */
+.offline-banner {
+  background-color: rgba(217, 119, 6, 0.15);
+  border: 1px solid #D97706;
+  color: #FDE68A;
+  padding: var(--space-3) var(--space-4);
+  border-radius: var(--radius-md);
+  margin-bottom: var(--space-4);
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  font-size: 13px;
+  font-weight: 500;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.2);
+  animation: pulse-offline-border 2s infinite ease-in-out;
+}
+
+.offline-banner svg {
+  color: #F59E0B;
+  flex-shrink: 0;
+}
+
+@keyframes pulse-offline-border {
+  0%, 100% { border-color: #D97706; }
+  50% { border-color: #F59E0B; }
+}
+
+.offline-disabled {
+  opacity: 0.55 !important;
+  pointer-events: none !important;
+  filter: grayscale(0.6) !important;
+}
+
+/* Panele Widoków */
+.view-panel {
+  display: none;
+}
+
+.view-panel.active {
+  display: block;
+}
+
+/* ==========================================================================
+   WIDOK 1: PULPIT (Overview 2–3 Sekundy)
+   ========================================================================== */
+
+/* 1. System Health Banner */
+.system-health-banner {
+  background-color: var(--bg-surface);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-md);
+  padding: var(--space-4) var(--space-5);
+  margin-bottom: var(--space-4);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: var(--space-3);
+  box-shadow: var(--shadow-sm);
+}
+
+.health-status-group {
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+  flex-wrap: wrap;
+}
+
+.health-indicator {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.health-indicator-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px;
+  border-radius: var(--radius-sm);
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: 0.3px;
+}
+
+.health-indicator-badge.safe {
+  background-color: var(--color-success-bg);
+  border: 1px solid var(--color-success-border);
+  color: var(--color-success);
+}
+
+.health-indicator-badge.alarm {
+  background-color: var(--color-danger-bg);
+  border: 1px solid var(--color-danger-border);
+  color: var(--color-danger);
+}
+
+.health-meta {
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+  font-size: 13px;
+  color: var(--text-secondary);
+  font-variant-numeric: tabular-nums;
+}
+
+.health-meta-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.health-meta-item strong {
+  color: var(--text-primary);
+}
+
+.health-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+/* 2. Pasek Bezpieczeństwa (Alarms Strip) */
+.alarms-strip {
+  border-radius: var(--radius-md);
+  padding: var(--space-3) var(--space-4);
+  margin-bottom: var(--space-5);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: 13px;
+  font-weight: 500;
+  transition: all 0.2s ease;
+}
+
+.alarms-strip.clean {
+  background-color: rgba(16, 185, 129, 0.08);
+  border: 1px solid var(--color-success-border);
+  color: var(--color-success);
+}
+
+.alarms-strip.alert {
+  background-color: var(--color-danger-bg);
+  border: 1px solid var(--color-danger-border);
+  color: var(--color-danger);
+}
+
+.alarms-strip-content {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+}
+
+.alarms-strip-content svg {
+  width: 18px;
+  height: 18px;
+  flex-shrink: 0;
+  stroke: currentColor;
+  fill: none;
+  stroke-width: 2;
+}
+
+/* 3. Kluczowe Metryki Sensoryczne (4 Kolumny) */
+.metrics-row {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: var(--space-4);
+  margin-bottom: var(--space-5);
+}
+
+.metric-panel {
+  background-color: var(--bg-surface);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-md);
+  padding: var(--space-4);
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  min-height: 110px;
+  box-shadow: var(--shadow-sm);
+  transition: all var(--transition-fast);
+}
+
+.metric-panel.clickable-card {
+  cursor: pointer;
+}
+
+.metric-panel.clickable-card:hover {
+  border-color: var(--color-info);
+  background-color: var(--bg-card-hover);
+  transform: translateY(-2px);
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.3);
+}
+
+.clickable-node {
+  cursor: pointer;
+  transition: all var(--transition-fast);
+}
+
+.clickable-node:hover {
+  border-color: var(--color-info);
+  background-color: var(--bg-card-hover);
+  transform: translateY(-1px);
+}
+
+.metric-panel-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: var(--space-2);
+}
+
+.metric-label {
+  font-size: 12px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: var(--text-secondary);
+}
+
+.metric-icon {
+  width: 18px;
+  height: 18px;
+  color: var(--text-muted);
+}
+
+.metric-val-wrap {
+  display: flex;
+  align-items: baseline;
+  gap: 4px;
+  font-variant-numeric: tabular-nums;
+  margin-bottom: var(--space-2);
+}
+
+.metric-val-large {
+  font-size: 28px;
+  font-weight: 700;
+  color: var(--text-primary);
+  line-height: 1;
+}
+
+.metric-unit-large {
+  font-size: 14px;
+  font-weight: 500;
+  color: var(--text-secondary);
+}
+
+.metric-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: 12px;
+  color: var(--text-secondary);
+  font-variant-numeric: tabular-nums;
+  border-top: 1px solid var(--border-subtle);
+  padding-top: var(--space-2);
+}
+
+.tag-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 6px;
+  border-radius: var(--radius-sm);
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.tag-status.ok {
+  background-color: var(--color-success-bg);
+  color: var(--color-success);
+}
+
+.tag-status.warn {
+  background-color: var(--color-warning-bg);
+  color: var(--color-warning);
+}
+
+.tag-status.off {
+  background-color: var(--color-neutral-bg);
+  color: var(--color-neutral);
+}
+
+/* 4. Macierz Stanu Urządzeń (Equipment Matrix) */
+.section-panel {
+  background-color: var(--bg-surface);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-md);
+  margin-bottom: var(--space-5);
+  overflow: hidden;
+  box-shadow: var(--shadow-sm);
+}
+
+.section-panel-header {
+  padding: var(--space-3) var(--space-4);
+  background-color: var(--bg-card);
+  border-bottom: 1px solid var(--border-subtle);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.section-panel-title {
+  font-size: 13px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: var(--text-primary);
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.table-responsive {
+  width: 100%;
+  overflow-x: auto;
+}
+
+.data-table {
+  width: 100%;
+  border-collapse: collapse;
+  text-align: left;
+  font-size: 13px;
+}
+
+.data-table th {
+  padding: 10px var(--space-4);
+  background-color: var(--bg-surface);
+  color: var(--text-muted);
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  border-bottom: 1px solid var(--border-subtle);
+  white-space: nowrap;
+}
+
+.data-table td {
+  padding: 10px var(--space-4);
+  border-bottom: 1px solid var(--border-subtle);
+  color: var(--text-primary);
+  vertical-align: middle;
+  white-space: nowrap;
+}
+
+.data-table tr:last-child td {
+  border-bottom: none;
+}
+
+.data-table tr:hover td {
+  background-color: var(--bg-card-hover);
+}
+
+.device-name-cell {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  font-weight: 500;
+}
+
+.device-icon-wrap {
+  width: 28px;
+  height: 28px;
+  border-radius: var(--radius-sm);
+  background-color: var(--bg-elevated);
+  border: 1px solid var(--border-subtle);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-secondary);
+  flex-shrink: 0;
+}
+
+/* Potrójne Kodowanie Stanu (Triple State Encoding) */
+.state-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 8px;
+  border-radius: var(--radius-sm);
+  font-size: 12px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  border: 1px solid transparent;
+}
+
+.state-badge .state-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.state-badge.state-on {
+  background-color: var(--color-success-bg);
+  border-color: var(--color-success-border);
+  color: var(--color-success);
+}
+.state-badge.state-on .state-dot {
+  background-color: var(--color-success);
+}
+
+.state-badge.state-off {
+  background-color: var(--color-neutral-bg);
+  border-color: var(--color-neutral-border);
+  color: var(--color-neutral);
+}
+.state-badge.state-off .state-dot {
+  background-color: var(--color-neutral);
+}
+
+.state-badge.state-warn {
+  background-color: var(--color-warning-bg);
+  border-color: var(--color-warning-border);
+  color: var(--color-warning);
+}
+.state-badge.state-warn .state-dot {
+  background-color: var(--color-warning);
+}
+
+.mode-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 7px;
+  border-radius: var(--radius-sm);
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.3px;
+}
+
+.mode-badge.auto {
+  background-color: var(--color-info-bg);
+  color: var(--color-info);
+  border: 1px solid var(--color-info-border);
+}
+
+.mode-badge.manual {
+  background-color: var(--color-warning-bg);
+  color: var(--color-warning);
+  border: 1px solid var(--color-warning-border);
+}
+
+/* 5. Kompaktowy Pasek Węzłów Ekosystemu */
+.ecosystem-strip {
+  background-color: var(--bg-surface);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-md);
+  padding: var(--space-3) var(--space-4);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: var(--space-3);
+  font-size: 12px;
+}
+
+.ecosystem-nodes {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex-wrap: wrap;
+}
+
+.eco-node {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 8px;
+  background-color: var(--bg-card);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  color: var(--text-secondary);
+}
+
+.eco-node.active {
+  border-color: var(--color-success-border);
+  color: var(--text-primary);
+}
+
+.eco-node strong {
+  color: var(--text-primary);
+}
+
+.eco-link-arrow {
+  color: var(--text-muted);
+  font-size: 11px;
+  font-weight: 600;
+}
+
+/* ==========================================================================
+   WIDOK 2: STEROWANIE (Controls)
+   ========================================================================== */
+
+.controls-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: var(--space-5);
+  margin-bottom: var(--space-5);
+}
+
+.control-group-card {
+  background-color: var(--bg-surface);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-md);
+  padding: var(--space-4);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  box-shadow: var(--shadow-sm);
+}
+
+.control-group-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  border-bottom: 1px solid var(--border-subtle);
+  padding-bottom: var(--space-2);
+}
+
+.control-group-title {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text-primary);
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.control-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: var(--space-2) 0;
+  border-bottom: 1px solid var(--border-subtle);
+}
+
+.control-item:last-child {
+  border-bottom: none;
+}
+
+.control-item-info {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.control-item-name {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.control-item-desc {
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+.control-actions-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+/* Przyciski Przełączania Trybów (Segmented Control) */
+.btn-group-segmented {
+  display: inline-flex;
+  background-color: var(--bg-input);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-sm);
+  padding: 2px;
+  gap: 2px;
+}
+
+.seg-btn {
+  padding: 5px 10px;
+  background: transparent;
+  border: none;
+  border-radius: 4px;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: all 0.12s ease;
+}
+
+.seg-btn:hover {
+  color: var(--text-primary);
+}
+
+.seg-btn.active {
+  background-color: var(--bg-card);
+  color: var(--text-primary);
+  font-weight: 600;
+  box-shadow: var(--shadow-sm);
+}
+
+/* Profile Oświetlenia Aquael */
+.profile-selector-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin-top: var(--space-2);
+}
+
+.profile-btn {
+  flex: 1;
+  padding: 6px var(--space-2);
+  background-color: var(--bg-input);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-sm);
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--text-secondary);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  transition: all 0.15s ease;
+}
+
+.profile-btn:hover {
+  background-color: var(--bg-card);
+  color: var(--text-primary);
+}
+
+.profile-btn.active {
+  background-color: var(--color-info-bg);
+  border-color: var(--color-info-border);
+  color: var(--color-info);
+  font-weight: 600;
+}
+
+/* Sekcja Akcji ze Stanem (Karmnik Automatyczny) */
+.stateful-action-box {
+  background-color: var(--bg-input);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-sm);
+  padding: var(--space-3);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-4);
+}
+
+.stateful-action-desc h4 {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.stateful-action-desc p {
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+/* Przycisk Akcji z Odliczaniem i Blokadą */
+.btn-feeder {
+  min-width: 140px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 8px 16px;
+  border-radius: var(--radius-sm);
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.15s ease;
+  border: 1px solid var(--border-strong);
+  background-color: var(--bg-card);
+  color: var(--text-primary);
+}
+
+.btn-feeder:hover:not(:disabled) {
+  background-color: var(--bg-elevated);
+  border-color: var(--color-info);
+}
+
+.btn-feeder:disabled {
+  opacity: 0.8;
+  cursor: not-allowed;
+}
+
+.btn-feeder.running {
+  background-color: var(--color-warning-bg);
+  border-color: var(--color-warning-border);
+  color: var(--color-warning);
+}
+
+.btn-feeder.success {
+  background-color: var(--color-success-bg);
+  border-color: var(--color-success-border);
+  color: var(--color-success);
+}
+
+/* Sprzętowy Tester Przekaźników K1–K8 */
+.relay-tester-grid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: var(--space-2);
+}
+
+.btn-relay-test {
+  padding: 8px var(--space-2);
+  background-color: var(--bg-input);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-sm);
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-secondary);
+  cursor: pointer;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  transition: all 0.15s ease;
+}
+
+.btn-relay-test:hover:not(:disabled) {
+  background-color: var(--bg-card);
+  border-color: var(--color-info);
+  color: var(--text-primary);
+}
+
+.btn-relay-test:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.btn-relay-test.testing {
+  background-color: var(--color-warning-bg);
+  border-color: var(--color-warning-border);
+  color: var(--color-warning);
+}
+
+.relay-test-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  gap: 4px;
+}
+
+.relay-status-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background-color: #334155;
+  display: inline-block;
+  flex-shrink: 0;
+  transition: all 0.2s ease;
+}
+
+.relay-status-dot.active {
+  background-color: var(--color-success);
+  box-shadow: 0 0 6px rgba(34, 197, 94, 0.4);
+}
+
+/* Przycisk ATO w stanie pracy (Emergency Stop) */
+#btn-test-ato.running {
+  background-color: var(--color-danger-bg) !important;
+  border-color: var(--color-danger) !important;
+  color: #FFFFFF !important;
+  font-weight: 600;
+  animation: pulse-danger 1s infinite alternate;
+}
+
+@keyframes pulse-danger {
+  from { opacity: 0.9; }
+  to { opacity: 1; box-shadow: 0 0 8px rgba(239, 68, 68, 0.5); }
+}
+
+/* ==========================================================================
+   WIDOK 3: HARMONOGRAMY (Schedules)
+   ========================================================================== */
+
+.schedule-card {
+  background-color: var(--bg-surface);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-md);
+  padding: var(--space-4);
+  margin-bottom: var(--space-4);
+  box-shadow: var(--shadow-sm);
+}
+
+.schedule-header-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: var(--space-3);
+}
+
+.schedule-device-title {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text-primary);
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.schedule-times-summary {
+  font-size: 12px;
+  color: var(--text-secondary);
+  font-variant-numeric: tabular-nums;
+}
+
+/* Wizualny Pasek Osi Dobowej 24h */
+.timeline-track-wrap {
+  margin: var(--space-3) 0 var(--space-4) 0;
+}
+
+.timeline-axis-labels {
+  display: flex;
+  justify-content: space-between;
+  font-size: 10px;
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+  margin-bottom: 4px;
+}
+
+.timeline-bar-track {
+  width: 100%;
+  height: 20px;
+  background-color: var(--bg-input);
+  border: 1px solid var(--border-default);
+  border-radius: 4px;
+  position: relative;
+  overflow: hidden;
+}
+
+.timeline-active-range {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  background-color: var(--color-info);
+  opacity: 0.85;
+  border-radius: 2px;
+  transition: left 0.15s ease, width 0.15s ease;
+}
+
+.timeline-active-range.split-start {
+  border-right: none;
+}
+.timeline-active-range.split-end {
+  border-left: none;
+}
+
+/* Kontrolki edycji czasu */
+.schedule-controls-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: var(--space-3);
+  padding-top: var(--space-3);
+  border-top: 1px solid var(--border-subtle);
+}
+
+.time-input-pair {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.time-input-pair label {
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+.input-time {
+  background-color: var(--bg-input);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-sm);
+  padding: 4px 8px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-primary);
+  font-variant-numeric: tabular-nums;
+}
+
+.input-time:focus {
+  outline: none;
+  border-color: var(--border-focus);
+}
+
+/* Harmonogram Karmnika - Dni Tygodnia */
+.days-selector {
+  display: flex;
+  gap: var(--space-1);
+}
+
+.day-btn {
+  width: 34px;
+  height: 32px;
+  background-color: var(--bg-input);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-sm);
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-secondary);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.12s ease;
+}
+
+.day-btn:hover {
+  background-color: var(--bg-card);
+  color: var(--text-primary);
+}
+
+.day-btn.active {
+  background-color: var(--color-info-bg);
+  border-color: var(--color-info-border);
+  color: var(--color-info);
+}
+
+/* ==========================================================================
+   WIDOK 4: WYKRESY (Grafana Style)
+   ========================================================================== */
+
+.chart-module-card {
+  background-color: var(--bg-surface);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-md);
+  padding: var(--space-4);
+  box-shadow: var(--shadow-sm);
+}
+
+.chart-controls-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: var(--space-3);
+  margin-bottom: var(--space-4);
+  padding-bottom: var(--space-3);
+  border-bottom: 1px solid var(--border-subtle);
+}
+
+.series-selector-group, .range-selector-group {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.chart-btn {
+  padding: 4px 10px;
+  background-color: var(--bg-input);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-sm);
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: all 0.12s ease;
+}
+
+.chart-btn:hover {
+  background-color: var(--bg-card);
+  color: var(--text-primary);
+}
+
+.chart-btn.active {
+  background-color: var(--bg-card);
+  border-color: var(--color-info);
+  color: var(--color-info);
+  font-weight: 600;
+}
+
+/* Pasek Statystyk Grafana (Min / Max / Avg) */
+.chart-stats-banner {
+  display: flex;
+  align-items: center;
+  gap: var(--space-6);
+  padding: var(--space-2) var(--space-3);
+  background-color: var(--bg-input);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  margin-bottom: var(--space-4);
+  font-variant-numeric: tabular-nums;
+  flex-wrap: wrap;
+}
+
+.stat-item {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  font-size: 12px;
+}
+
+.stat-item .stat-label {
+  color: var(--text-muted);
+  font-weight: 600;
+  text-transform: uppercase;
+  font-size: 11px;
+}
+
+.stat-item .stat-val {
+  color: var(--text-primary);
+  font-weight: 700;
+  font-size: 14px;
+}
+
+.chart-canvas-container {
+  width: 100%;
+  height: 380px;
+  position: relative;
+}
+
+.chart-canvas-container canvas {
+  width: 100%;
+  height: 100%;
+  display: block;
+  cursor: crosshair;
+}
+
+.chart-tooltip {
+  position: absolute;
+  top: 12px;
+  right: 16px;
+  background: rgba(14, 21, 32, 0.95);
+  backdrop-filter: blur(6px);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-sm);
+  padding: 6px 12px;
+  font-size: 12px;
+  color: var(--text-primary);
+  pointer-events: none;
+  z-index: 10;
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.45);
+  font-variant-numeric: tabular-nums;
+  line-height: 1.5;
+}
+
+/* ==========================================================================
+   WIDOK 5: DIAGNOSTYKA (Diagnostics)
+   ========================================================================== */
+
+.diagnostics-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: var(--space-5);
+  margin-bottom: var(--space-5);
+}
+
+.param-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
+}
+
+.param-table tr {
+  border-bottom: 1px solid var(--border-subtle);
+}
+
+.param-table tr:last-child {
+  border-bottom: none;
+}
+
+.param-table td {
+  padding: 8px var(--space-2);
+}
+
+.param-table td:first-child {
+  color: var(--text-secondary);
+  width: 45%;
+}
+
+.param-table td:last-child {
+  color: var(--text-primary);
+  font-weight: 500;
+  text-align: right;
+}
+
+/* Terminal Logów */
+.log-terminal-wrap {
+  background-color: var(--bg-surface);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-md);
+  padding: var(--space-4);
+  box-shadow: var(--shadow-sm);
+}
+
+.log-terminal-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: var(--space-3);
+  padding-bottom: var(--space-2);
+  border-bottom: 1px solid var(--border-subtle);
+}
+
+.log-viewer {
+  background-color: #06090E;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  padding: var(--space-3);
+  height: 240px;
+  overflow-y: auto;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--text-secondary);
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+
+.log-entry.warn { color: var(--color-warning); }
+.log-entry.error { color: var(--color-danger); }
+.log-entry.info { color: var(--text-secondary); }
+
+/* ==========================================================================
+   WIDOK 6: USTAWIENIA I OTA (Settings)
+   ========================================================================== */
+
+.settings-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: var(--space-5);
+  margin-bottom: var(--space-5);
+}
+
+.settings-card {
+  background-color: var(--bg-surface);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-md);
+  padding: var(--space-4);
+  box-shadow: var(--shadow-sm);
+}
+
+.settings-card-header {
+  border-bottom: 1px solid var(--border-subtle);
+  padding-bottom: var(--space-2);
+  margin-bottom: var(--space-4);
+}
+
+.settings-card-header h3 {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text-primary);
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.form-row {
+  margin-bottom: var(--space-3);
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.form-row label {
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--text-secondary);
+}
+
+.form-input {
+  background-color: var(--bg-input);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-sm);
+  padding: 8px var(--space-3);
+  font-size: 13px;
+  color: var(--text-primary);
+  transition: border-color 0.15s ease;
+}
+
+.form-input:focus {
+  outline: none;
+  border-color: var(--border-focus);
+}
+
+.input-with-action {
+  position: relative;
+  display: flex;
+  align-items: center;
+  width: 100%;
+}
+
+.input-with-action .form-input {
+  width: 100%;
+  padding-right: 38px;
+}
+
+.btn-input-action {
+  position: absolute;
+  right: 8px;
+  background: none;
+  border: none;
+  color: var(--text-muted);
+  cursor: pointer;
+  padding: 4px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: var(--radius-sm);
+  transition: color 0.15s ease;
+}
+
+.btn-input-action:hover {
+  color: var(--text-primary);
+}
+
+.danger-zone-card {
+  border-color: rgba(239, 68, 68, 0.35) !important;
+  background: rgba(35, 18, 20, 0.4) !important;
+}
+
+.danger-header h3 {
+  color: #F87171 !important;
+}
+
+.danger-desc {
+  font-size: 12px;
+  color: var(--text-secondary);
+  line-height: 1.5;
+  margin-bottom: var(--space-3);
+}
+
+.form-helper {
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+/* Suwaki i Kontrolki Wyświetlacza CYD */
+.slider-wrapper {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+}
+
+.slider-range {
+  flex: 1;
+  accent-color: var(--color-info);
+  cursor: pointer;
+}
+
+.slider-val {
+  width: 44px;
+  text-align: right;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-primary);
+  font-variant-numeric: tabular-nums;
+}
+
+/* Odcisk Certyfikatu TLS */
+.tls-fingerprint-box {
+  background-color: var(--bg-input);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  padding: var(--space-2) var(--space-3);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--text-secondary);
+  word-break: break-all;
+}
+
+/* Pasek Postępu OTA */
+.ota-progress-track {
+  width: 100%;
+  height: 12px;
+  background-color: var(--bg-input);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-pill);
+  overflow: hidden;
+  margin: var(--space-3) 0;
+  display: none;
+}
+
+.ota-progress-track.active {
+  display: block;
+}
+
+.ota-progress-fill {
+  height: 100%;
+  width: 0%;
+  background-color: var(--color-info);
+  border-radius: var(--radius-pill);
+  transition: width 0.15s ease;
+}
+
+/* ==========================================================================
+   Wspólne Elementy UI (Przyciski, Toasty, Modale)
+   ========================================================================== */
+
+.btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 8px 14px;
+  border-radius: var(--radius-sm);
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  border: 1px solid transparent;
+  transition: all 0.12s ease;
+}
+
+.btn-primary {
+  background-color: var(--color-info);
+  color: #FFFFFF;
+}
+
+.btn-primary:hover {
+  background-color: #2563EB;
+}
+
+.btn-secondary {
+  background-color: var(--bg-card);
+  border-color: var(--border-default);
+  color: var(--text-primary);
+}
+
+.btn-secondary:hover {
+  background-color: var(--bg-elevated);
+  border-color: var(--border-strong);
+}
+
+.btn-danger {
+  background-color: var(--color-danger-bg);
+  border-color: var(--color-danger-border);
+  color: var(--color-danger);
+}
+
+.btn-danger:hover {
+  background-color: var(--color-danger);
+  color: #FFFFFF;
+}
+
+.btn-sm {
+  padding: 5px 10px;
+  font-size: 12px;
+}
+
+/* Toasty Powiadomień */
+.toast-container {
+  position: fixed;
+  bottom: 24px;
+  right: 24px;
+  z-index: 1000;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  pointer-events: none;
+}
+
+.toast {
+  pointer-events: auto;
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: 10px var(--space-4);
+  border-radius: var(--radius-sm);
+  font-size: 13px;
+  font-weight: 500;
+  background-color: var(--bg-elevated);
+  border: 1px solid var(--border-strong);
+  color: var(--text-primary);
+  box-shadow: var(--shadow-lg);
+  animation: toastIn 0.2s ease forwards;
+}
+
+.toast.toast-success {
+  border-color: var(--color-success-border);
+  border-left: 4px solid var(--color-success);
+}
+
+.toast.toast-danger {
+  border-color: var(--color-danger-border);
+  border-left: 4px solid var(--color-danger);
+}
+
+.toast.toast-info {
+  border-color: var(--color-info-border);
+  border-left: 4px solid var(--color-info);
+}
+
+@keyframes toastIn {
+  from { opacity: 0; transform: translateY(12px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+/* Modal Potwierdzenia */
+.modal-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  background-color: rgba(0, 0, 0, 0.7);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 999;
+  opacity: 0;
+  visibility: hidden;
+  transition: opacity 0.15s ease, visibility 0.15s ease;
+  padding: var(--space-4);
+}
+
+.modal-overlay.active {
+  opacity: 1;
+  visibility: visible;
+}
+
+.modal-box {
+  width: 100%;
+  max-width: 440px;
+  background-color: var(--bg-surface);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-lg);
+  padding: var(--space-5);
+  box-shadow: var(--shadow-lg);
+}
+
+.modal-title {
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--text-primary);
+  margin-bottom: var(--space-2);
+}
+
+.modal-message {
+  font-size: 13px;
+  color: var(--text-secondary);
+  line-height: 1.5;
+  margin-bottom: var(--space-5);
+}
+
+.modal-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--space-2);
+}
+
+/* Dolna Nawigacja Mobilna (< 900px) */
+.bottom-nav {
+  display: none;
+  position: fixed;
+  bottom: 0;
+  left: 0;
+  width: 100%;
+  height: var(--bottom-nav-h);
+  background-color: var(--bg-surface);
+  border-top: 1px solid var(--border-subtle);
+  z-index: 100;
+  justify-content: space-around;
+  align-items: center;
+  padding: 0 4px;
+}
+
+.bottom-nav-btn {
+  flex: 1;
+  min-height: 48px;
+  background: transparent;
+  border: none;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 3px;
+  color: var(--text-muted);
+  font-size: 10px;
+  font-weight: 500;
+  cursor: pointer;
+  padding: 4px 0;
+}
+
+.bottom-nav-btn svg {
+  width: 20px;
+  height: 20px;
+  stroke: currentColor;
+  fill: none;
+  stroke-width: 2;
+}
+
+.bottom-nav-btn.active {
+  color: var(--color-info);
+  font-weight: 600;
+}
+
+/* ==========================================================================
+   Responsywność i Media Queries
+   ========================================================================== */
+
+/* Tablet & Mobile (< 900px) */
+@media (max-width: 899px) {
+  .sidebar {
+    display: none;
+  }
+
+  .bottom-nav {
+    display: flex;
+  }
+
+  .content-area {
+    padding: var(--space-4);
+    padding-bottom: calc(var(--bottom-nav-h) + var(--space-4));
+  }
+
+  .topbar {
+    padding: 0 var(--space-4);
+  }
+
+  .metrics-row {
+    grid-template-columns: repeat(2, 1fr);
+  }
+
+  .controls-grid, .diagnostics-grid, .settings-grid {
+    grid-template-columns: 1fr;
+  }
+
+  /* Powiększenie kontrolek dotykowych (min 42-44px wg standardu WCAG/HIG) */
+  input[type="text"],
+  input[type="password"],
+  input[type="time"],
+  input[type="number"],
+  select {
+    min-height: 42px;
+    font-size: 14px;
+  }
+
+  .btn {
+    min-height: 42px;
+    padding: 10px 16px;
+    font-size: 13px;
+  }
+
+  .btn-sm {
+    min-height: 38px;
+    padding: 6px 12px;
+  }
+
+  .seg-btn {
+    min-height: 38px;
+    font-size: 13px;
+  }
+
+  .profile-btn {
+    min-height: 40px;
+    font-size: 13px;
+  }
+
+  .btn-relay-test {
+    min-height: 54px;
+    padding: 8px 6px;
+  }
+
+  .day-btn {
+    min-height: 38px;
+    min-width: 38px;
+  }
+
+  /* Powiększony checkbox dotykowy */
+  input[type="checkbox"]#cyd-auto-brightness {
+    width: 20px;
+    height: 20px;
+    accent-color: var(--color-info);
+    cursor: pointer;
+  }
+
+  .slider-range {
+    min-height: 32px;
+  }
+}
+
+/* Kompaktowe Ekrany HMI / Tablety (1024x600 px) */
+@media (min-width: 900px) and (max-height: 650px) {
+  :root {
+    --sidebar-w: 200px;
+    --topbar-h: 48px;
+  }
+  .content-area {
+    padding: var(--space-3) var(--space-4);
+  }
+  .system-health-banner {
+    padding: var(--space-2) var(--space-4);
+    margin-bottom: var(--space-3);
+  }
+  .alarms-strip {
+    padding: var(--space-2) var(--space-3);
+    margin-bottom: var(--space-3);
+  }
+  .metrics-row {
+    gap: var(--space-3);
+    margin-bottom: var(--space-3);
+  }
+  .metric-panel {
+    padding: var(--space-2) var(--space-3);
+    min-height: 90px;
+  }
+  .metric-val-large {
+    font-size: 22px;
+  }
+  .section-panel {
+    margin-bottom: var(--space-3);
+  }
+}
+
+/* Mały Telefon (< 480px) */
+@media (max-width: 479px) {
+  .metrics-row {
+    grid-template-columns: 1fr;
+  }
+  .topbar-right .status-pill:not(#pill-controller) {
+    display: none;
+  }
+  .health-meta {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 4px;
+  }
+  .relay-tester-grid {
+    grid-template-columns: repeat(2, 1fr);
+  }
+}

@@ -1,0 +1,49 @@
+assert_bounds Wszystko w normie|492 100 761 203
+assert_bounds TEMPERATURA WODY|24 102 230 120
+assert_not_contains Serwis akwarium
+assert_motion 492 273 761 316 1000 30 36
+click Karmienie
+click Rozpocznij karmienie
+assert Podawanie dawki
+assert_motion 502 360 548 396 500 14 20
+snapshot v6-dose-motion
+wait 2000
+assert_contains Pauza /
+assert_motion 502 360 548 396 1000 30 36
+contains Pauza /
+click Zakończ teraz
+wait 4000
+assert Karmienie
+click System
+click Interakcja
+tap 640 260
+wait 1600
+click Wróć
+click Panel
+assert_static 492 273 761 316 1000 0 5
+snapshot v6-static-water
+click System
+click Interakcja
+tap 640 260
+wait 1600
+click Wróć
+click Sieć Wi-Fi
+click Dom / router
+wait 1600
+assert_contains Podaj SSID
+wait 4000
+tap_start 696 390
+assert_toast Podaj SSID|-90 -15 0 100
+wait 120
+assert_toast Podaj SSID|-14 75 101 254
+wait 300
+assert_toast Podaj SSID|64 64 255 255
+snapshot v6-toast-top
+wait 3150
+assert_toast Podaj SSID|-80 63 1 254
+wait 300
+assert_no_toast Podaj SSID
+toast_soak 100
+click Cofnij
+click Wróć
+click Panel

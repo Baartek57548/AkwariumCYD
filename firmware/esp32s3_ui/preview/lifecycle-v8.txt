@@ -1,0 +1,56 @@
+click System
+click Sterowanie
+click Karmnik
+tap 455 185
+tap 455 185
+tap 455 185
+tap 455 185
+wait 1600
+assert 60 s
+click Wróć
+click Panel
+click Karmienie
+wait 3000
+assert_contains Pauza /
+contains Pauza /
+assert Zakończ teraz
+wait 60000
+assert_not_contains Zakończ teraz
+assert Karmienie
+assert_not_contains Pauza /
+assert_contains Model karmienia zakończony
+snapshot v8-feeding-timeout
+wait 4000
+click Karmienie
+assert_not_contains Rozpocznij karmienie
+wait 3000
+contains Pauza /
+click Zakończ teraz
+wait 4000
+click Serwis
+click Rozpocznij serwis
+click -
+click -
+click -
+click -
+click -
+click -
+click -
+click -
+click -
+click -
+click -
+click -
+click -
+click -
+assert 1 min
+click Rozpocznij serwis
+wait 4000
+click Zakończ serwis
+assert Przywróć AUTO
+wait 57000
+assert_not_contains Przywróć AUTO
+assert Rozpocznij serwis
+assert_contains Serwis zakończony / przywrócono AUTO
+wait 4000
+click Panel

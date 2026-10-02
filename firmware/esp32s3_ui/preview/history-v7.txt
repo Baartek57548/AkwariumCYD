@@ -1,0 +1,60 @@
+wait 15000
+scenario 2
+wait 15000
+scenario 1
+wait 15000
+scenario 0
+wait 15000
+click Historia
+assert_centered
+assert_contains Minimum: 24,8
+assert_contains Maksimum: 28,7
+snapshot v7-history-temperature
+tap 130 270
+assert_contains Próbka:
+click Ostatnia próbka
+assert Ostatni pomiar
+assert_disabled Ostatnia próbka
+click pH
+assert_contains Maksimum: 8,30
+snapshot v7-history-ph
+click EC
+snapshot v7-history-ec
+event 2|Najstarszy alarm testowy
+wait 1000
+event 0|Nowsze zwykłe zdarzenie
+event 1|Nowsze ostrzeżenie testowe
+event 0|Najnowsze zwykłe zdarzenie
+click Zdarzenia
+click Ważne →
+assert_contains Ważne zdarzenia
+assert_y_before Nowsze ostrzeżenie testowe|Najstarszy alarm testowy
+assert_y_before Najstarszy alarm testowy|Najnowsze zwykłe zdarzenie
+snapshot v7-important-events
+click Zwykłe →
+assert_contains Zwykłe zdarzenia
+assert_y_before Najnowsze zwykłe zdarzenie|Nowsze zwykłe zdarzenie
+snapshot v7-ordinary-events
+click System
+click Obsługa
+click Ekran
+tap 640 173
+wait 1600
+click Wróć
+click Historia
+click Temperatura
+snapshot v7-history-night
+click Wyczyść historię
+click Wyczyść
+wait 4000
+assert Ostatni pomiar
+assert_contains 1 próbek
+snapshot v7-history-single
+click Zdarzenia
+click Wyczyść dziennik
+click Wyczyść
+wait 4000
+click Ważne →
+assert_contains Brak alarmów i ostrzeżeń
+snapshot v7-events-cleared
+click Panel

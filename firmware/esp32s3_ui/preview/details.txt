@@ -1,0 +1,161 @@
+click System
+click Mapa sprzętu
+snapshot hardware
+click Lampa przednia
+snapshot lamp
+assert Sterowanie w serwisie →
+click System
+click Mapa sprzętu
+click Filtr
+snapshot filter
+click System
+click Mapa sprzętu
+click Napowietrzanie
+snapshot air
+click System
+click Mapa sprzętu
+click Karmnik
+snapshot feeder
+click System
+click Mapa sprzętu
+click Elektrozawór CO2
+snapshot co2
+click System
+click Mapa sprzętu
+click Poziom wody / ATO
+snapshot ato
+assert_contains niepełna
+click System
+click Mapa sprzętu
+click Przepływ
+snapshot flow
+click System
+click Mapa sprzętu
+click Przewodność EC
+snapshot ec
+click Zakres normy →
+snapshot range-ec
+tap 723 216
+click Zapisz zmiany
+wait 3600
+click Panel
+tap 315 205
+snapshot ph-detail
+click Zakres normy →
+snapshot range-ph
+tap 335 216
+click Anuluj
+click Panel
+tap 315 205
+click Zakres normy →
+assert 6,5
+click Anuluj
+click System
+click Sieć Wi-Fi
+snapshot network
+click Dom / router
+click Zapisz zmiany
+assert_contains Podaj SSID
+wait 3600
+tap 220 245
+snapshot keyboard
+input Jamnik
+tap 220 327
+input haslotestowe
+click Zapisz zmiany
+wait 3600
+assert Jamnik
+restart_ui
+assert Jamnik
+click System
+click Sieć Wi-Fi
+click AquaBox AP
+click Pokaż hasło AP
+snapshot network-ap
+click Zapisz zmiany
+wait 3600
+assert AquaBox AP
+click System
+click Sieć Wi-Fi
+click Wyłączone
+click Zapisz zmiany
+wait 3600
+click System
+click Zegar i czas
+click +
+snapshot clock-edited
+click Ustaw datę i czas
+wait 3600
+assert 15:32
+click System
+click Interakcja
+snapshot interaction
+tap 640 260
+click Zapisz zmiany
+wait 3600
+click System
+click Ekran
+click Test wygaszania
+snapshot sleep
+tap 700 450
+assert Ekran
+assert_disabled System
+click Anuluj
+click Diagnostyka
+snapshot diagnostics
+click Test dotyku
+snapshot touch-test
+click Cel 1 / 5
+click Cel 2 / 5
+click Cel 3 / 5
+click Cel 4 / 5
+click Cel 5 / 5
+assert Diagnostyka
+wait 3600
+click Dziennik zdarzeń
+assert_contains zaliczono 5 pól
+snapshot touch-completed
+click Wyczyść dziennik
+click Anuluj
+click System
+click Firmware
+snapshot update
+click Sprawdź firmware
+assert_contains Kontrola obrazu: poprawna
+wait 3600
+snapshot firmware-verified
+click System
+click Zasilanie i restart
+snapshot power
+click Uruchom ponownie
+click Anuluj
+assert_restarts 0
+click Uruchom ponownie
+click Uruchom ponownie
+wait 1000
+assert_restarts 1
+wait 3600
+click Przywróć ustawienia
+click Anuluj
+click Panel
+tap 100 205
+click Zakres normy →
+tap 335 216
+fail_save
+click Zapisz zmiany
+assert_contains Błąd zapisu
+wait 3600
+click Anuluj
+click Panel
+tap 100 205
+click Zakres normy →
+assert 24,0
+click Zapisz zmiany
+wait 3600
+click Historia
+click Temperatura
+click Wyczyść historię
+click Wyczyść
+wait 3600
+snapshot cleared-history
+click Panel

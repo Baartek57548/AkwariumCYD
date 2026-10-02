@@ -1,0 +1,98 @@
+assert AquaBox
+assert 14:32
+assert_not_contains Wi-Fi wył.
+assert_not_contains Alarmy /
+snapshot aquabox-home
+tap 752 25
+assert Połączenie Wi-Fi
+assert_contains Wi-Fi panelu jest wyłączone
+click Zamknij
+network home -65
+assert Dom-Bartek
+snapshot header-home-network
+click Dom-Bartek
+assert_contains Sieć: Dom-Bartek
+assert_contains -65 dBm
+snapshot header-network-details
+network home -92
+assert_contains bardzo słaby
+snapshot header-weak-details
+click Zamknij
+snapshot header-weak
+network home 0
+click Dom-Bartek
+assert_contains Sygnał: niedostępny
+click Zamknij
+network ap 2
+assert AquaBox AP
+snapshot header-ap
+tap 752 25
+assert_contains Połączone urządzenia: 2
+assert_contains RSSI do routera nie dotyczy
+assert_not_contains dBm
+snapshot header-ap-details
+network ap 0
+assert_contains Połączone urządzenia: 0
+click Zamknij
+network dual -54 1
+assert Dom-Bartek
+snapshot header-dual
+tap 752 25
+assert_contains Sygnał do routera: -54 dBm
+assert_contains Połączone urządzenia AP: 1
+click Zamknij
+network lost
+assert Brak sieci
+snapshot header-disconnected
+network unknown
+assert Brak danych
+network off
+assert_not_contains Wi-Fi wył.
+clock 23 59
+assert 23:59
+wait 60000
+assert 00:00
+snapshot header-midnight
+click System
+assert Łączność i czas
+assert Serwis i diagnostyka
+snapshot aquabox-system
+click Zegar i czas
+assert_contains Strefa: Warszawa
+snapshot clock
+click Anuluj
+click Test czujników
+click Brak łącza
+network home -55
+click Panel
+assert Dom-Bartek
+assert Brak łącza ze sterownikiem
+snapshot header-wifi-not-uart
+click System
+click Test czujników
+click Normalna praca
+click System
+click Ekran
+click Wyłączone
+click Zapisz zmiany
+wait 3600
+click Panel
+snapshot aquabox-night
+click System
+snapshot aquabox-system-night
+click Ekran
+click Włączone
+click Zapisz zmiany
+wait 3600
+click Panel
+click Dom-Bartek
+click Ustawienia sieci →
+assert NAZWA SIECI / SSID
+assert_disabled System
+tap 752 25
+assert NAZWA SIECI / SSID
+assert_not_contains Połączenie Wi-Fi
+click Anuluj
+click Panel
+network off
+snapshot aquabox-final

@@ -1,0 +1,222 @@
+/* Loaded after the legacy desktop stylesheet: keep phone sizing in one place.
+   Important declarations override older mobile rules and inline widget sizes. */
+@media (max-width: 760px) {
+    body {
+        font-size: 16px;
+        line-height: 1.5;
+        -webkit-text-size-adjust: 100%;
+        text-size-adjust: 100%;
+    }
+
+    .mobile-nav-copy strong { font-size: 17px; }
+    .mobile-nav-copy small,
+    .mobile-nav-action { font-size: 14px; }
+    .sidebar .nav-item a { font-size: 16px !important; min-height: 48px; }
+    .sidebar .nav-section-title { font-size: 13px !important; }
+
+    .topbar-widgets { grid-template-columns: auto minmax(0, 1fr) !important; }
+    .topbar-widgets .time-widget { align-items: flex-end; }
+    .topbar-widgets .theme-toggle { font-size: 14px !important; }
+    .topbar-widgets .theme-toggle span { width: auto; font-size: inherit; }
+    .topbar-widgets #current-time { font-size: 22px !important; }
+    .topbar-widgets #current-date { font-size: 13px !important; }
+    .topbar-active-list { overflow-x: auto !important; }
+    html[data-theme] .topbar .status-badge,
+    html[data-theme] .topbar .status-badge + .status-badge {
+        font-size: 12px !important;
+        min-height: 32px !important;
+        line-height: 1.3 !important;
+    }
+
+    .connection-health { gap: 10px; margin-bottom: 16px; }
+    .connection-health-kicker,
+    .connection-health-metric small { font-size: 12px; line-height: 1.4; }
+    #connection-health-title { font-size: 17px; white-space: normal; }
+    #connection-health-detail { font-size: 14px; line-height: 1.45; }
+    .connection-health-metric strong {
+        font-size: 16px;
+        white-space: normal;
+        overflow-wrap: anywhere;
+    }
+
+    .view-header h2,
+    .chart-title { font-size: 24px !important; line-height: 1.25; }
+    .view-header p,
+    .chart-subtitle { font-size: 15px !important; line-height: 1.5 !important; }
+    .card-header,
+    .history-header { flex-wrap: wrap; gap: 12px; }
+    .card-title { min-width: 0; }
+    .card-title h2 { font-size: 18px !important; line-height: 1.35; }
+    .safety-title { font-size: 16px; }
+    .safety-desc { font-size: 14px; line-height: 1.5; }
+    .card-chip,
+    .status-badge { font-size: 13px !important; }
+
+    .telemetry-grid { gap: 12px !important; }
+    .telemetry-item { padding: 16px !important; min-height: 0 !important; }
+    .telemetry-label { font-size: 13px !important; line-height: 1.5; }
+    .telemetry-value {
+        font-size: clamp(44px, 13vw, 56px) !important;
+        line-height: 1.15;
+        font-variant-numeric: tabular-nums;
+    }
+    .telemetry-value .unit { font-size: 24px !important; }
+    .telemetry-sub { font-size: 14px !important; line-height: 1.5 !important; }
+    .chem-row {
+        display: grid !important;
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+        gap: 12px !important;
+        font-size: 14px !important;
+    }
+    .chem-row > div { display: flex; flex-direction: column; min-width: 0; }
+    .chem-row strong {
+        font-size: clamp(22px, 6.7vw, 28px);
+        line-height: 1.3;
+        font-variant-numeric: tabular-nums;
+        color: var(--mode-info-text) !important;
+    }
+    .main-safety-item,
+    .main-network-item { grid-column: 1 / -1; }
+    .safety-metric-block > div { flex-wrap: wrap; gap: 4px 12px; }
+    .safety-metric-block span { font-size: 14px !important; }
+    .safety-metric-block strong { font-size: 16px !important; }
+    .network-metric { font-size: 24px !important; }
+
+    .btn,
+    button,
+    .btn-export,
+    .range-btn,
+    .settings-nav-item,
+    .form-control,
+    select,
+    textarea,
+    input:not([type="checkbox"]):not([type="radio"]):not([type="range"]):not([type="hidden"]) {
+        font-size: 16px !important;
+        min-height: 48px !important;
+        line-height: 1.4;
+    }
+    .btn,
+    .btn-export { padding: 10px 14px !important; white-space: normal; }
+    .form-control,
+    select,
+    textarea { max-width: 100%; min-width: 0; }
+    .connection-refresh-btn,
+    .fullscreen-btn,
+    .app-toast-close { min-width: 48px !important; flex-shrink: 0; }
+    .app-toast-close { font-size: 24px !important; }
+    .form-group label,
+    .settings-panel label,
+    .automatyka-grid label { font-size: 15px !important; line-height: 1.5; }
+    .settings-panel .text-muted,
+    .automatyka-grid .text-muted,
+    .settings-panel [role="status"],
+    .automatyka-grid [role="status"],
+    .settings-panel span[style*="font-size: 11px"],
+    .automatyka-grid span[style*="font-size: 11px"] {
+        font-size: 14px !important;
+        line-height: 1.5 !important;
+    }
+    .relay-row-item { flex-wrap: wrap; gap: 12px; }
+    .relay-row-info { flex: 1 1 170px; min-width: 0; }
+    .relay-row-name { font-size: 16px !important; }
+    .relay-row-name-line { flex-wrap: wrap; }
+    .relay-row-state,
+    .relay-row-meta,
+    .relay-group-label,
+    .schedule-description,
+    .schedule-summary-meta,
+    .schedule-next-copy,
+    .factory-phase-legend,
+    .schedule-static-item strong { font-size: 14px !important; line-height: 1.5; }
+    .schedule-title,
+    .schedule-summary-title { font-size: 16px !important; }
+    #harmonogramy input[type="time"].time-pill {
+        width: 132px !important;
+        font-size: 16px !important;
+        min-height: 48px !important;
+    }
+    .pin-modal-content p,
+    .pin-modal-error,
+    .app-toast-copy span,
+    .archive-status,
+    .archive-item-meta { font-size: 14px !important; line-height: 1.5; }
+    .app-toast-copy strong { font-size: 16px; }
+    .pin-modal-content #pin-modal-input { font-size: 24px !important; }
+
+    .view-command-card > span,
+    .module-command-card > span { font-size: 13px !important; }
+    .view-command-card strong,
+    .module-command-card strong { font-size: 24px !important; }
+    .view-command-card small,
+    .module-command-card small { font-size: 14px !important; line-height: 1.5; }
+    .temp-summary-strip { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+    .summary-card { padding: 14px !important; min-width: 0; }
+    .summary-label,
+    .summary-trend,
+    .summary-band { font-size: 14px !important; }
+    .summary-value { font-size: clamp(24px, 7vw, 30px) !important; line-height: 1.3; }
+    .summary-current .summary-value { color: var(--mode-info-text); }
+    .summary-target .summary-value { color: var(--mode-warning-text); }
+    .summary-max .summary-value { color: var(--mode-danger-text); }
+    html[data-theme="dark"] .summary-min .summary-value { color: #93c5fd; }
+    .chart-legend,
+    .legend-item,
+    .chart-time-axis,
+    .temp-chart-legend,
+    .temp-chart-scale,
+    .temp-chart-range,
+    .swipe-hint { font-size: 13px !important; }
+    .chart-time-axis { padding-left: 60px; }
+    .temp-chart-stat-label { font-size: 13px !important; }
+    .temp-chart-stat-value { font-size: 20px !important; }
+    .temp-chart-stats { flex-wrap: wrap; }
+    .range-selector,
+    .fullscreen-range-selector { display: flex; flex-wrap: wrap; width: 100%; }
+    .range-btn { flex: 1 1 44px; padding: 8px 6px !important; }
+    .fullscreen-btn { align-self: flex-end; }
+
+    /* Keep every reading visible without horizontal scrolling. Explicit table
+       roles in the markup preserve its semantics when rows become cards. */
+    #wykresy .history-table-wrapper { max-height: 70dvh; overflow-x: hidden !important; }
+    #wykresy .history-table { display: block; min-width: 0 !important; width: 100%; }
+    .history-table thead {
+        position: absolute;
+        width: 1px;
+        height: 1px;
+        overflow: hidden;
+        clip-path: inset(50%);
+    }
+    .history-table tbody { display: grid; gap: 12px; }
+    .history-table tbody tr {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 12px;
+        padding: 14px;
+        border: 1px solid var(--mode-line);
+        border-radius: 8px;
+        background: var(--mode-surface-soft);
+    }
+    #wykresy .history-table td {
+        display: flex;
+        flex-direction: column;
+        align-items: flex-start;
+        gap: 4px;
+        min-width: 0;
+        padding: 0 !important;
+        border: 0 !important;
+        font-size: 16px;
+        white-space: normal;
+    }
+    .history-table td::before {
+        content: attr(data-label);
+        color: var(--mode-muted);
+        font-size: 13px;
+        font-weight: 500;
+    }
+    .history-table td:first-child { grid-column: 1 / -1; }
+    #wykresy .history-table td:nth-child(2) {
+        font-size: 24px;
+        color: var(--mode-info-text) !important;
+    }
+    .history-table .status-pill { font-size: 14px; white-space: normal; }
+}

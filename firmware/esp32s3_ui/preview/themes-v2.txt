@@ -1,0 +1,99 @@
+click System
+click Motywy interfejsu
+assert Oryginalny panel
+assert Matrix
+assert Ocean
+assert Koral
+assert Grafit
+assert Bursztyn
+assert_page Jasny
+assert_not_contains CZERWONY
+snapshot themes-original-light
+click Ocean
+wait 1800
+assert_colors 2 0 0 9FC6D4
+assert_colors 0 1 0 050C17
+assert_rendered_theme light
+click Ciemny
+assert_page Ciemny
+click Matrix
+wait 1800
+assert_page Matrix
+assert_colors 1 1 0 030D07
+assert_colors 2 0 0 9FC6D4
+assert_rendered_theme light
+snapshot themes-independent-modes
+restart_ui
+assert_rendered_theme light
+click System
+click Motywy interfejsu
+assert_page Ocean
+assert_colors 2 0 0 9FC6D4
+assert_colors 1 1 0 030D07
+click ←
+click Ekran
+click Ciemny
+wait 1800
+assert_rendered_theme dark
+click ←
+click Panel
+snapshot themes-matrix-dark-panel
+click System
+click Motywy interfejsu
+assert_page Ciemny
+assert_page Matrix
+click Grafit
+wait 1800
+assert_colors 4 1 0 090D13
+assert_colors 2 0 0 9FC6D4
+assert_rendered_theme dark
+snapshot themes-grafit-dark
+fail_save
+click Bursztyn
+wait 1800
+assert Ponów
+assert_colors 4 1 0 090D13
+assert_rendered_theme dark
+click Ponów
+wait 1800
+assert_colors 5 1 0 120D04
+assert_rendered_theme dark
+snapshot themes-bursztyn-dark
+click Oryginalny panel
+wait 1800
+assert_colors 0 1 0 050C17
+assert_colors 2 0 0 9FC6D4
+assert_palette dark
+snapshot themes-original-dark
+click Jasny
+click Koral
+wait 1800
+assert_colors 3 0 0 D9B5B2
+assert_colors 0 1 0 050C17
+assert_palette dark
+click ←
+click Ekran
+click Jasny
+wait 1800
+assert_rendered_theme light
+click ←
+click Motywy interfejsu
+assert_page Koral
+snapshot themes-koral-light
+click Bursztyn
+wait 1800
+assert_colors 5 0 0 D3BC94
+assert_rendered_theme light
+snapshot themes-bursztyn-light
+click Grafit
+wait 1800
+assert_colors 4 0 0 B9C1CB
+assert_rendered_theme light
+snapshot themes-grafit-light
+click Oryginalny panel
+wait 1800
+assert_colors 0 0 0 AFC3D8
+assert_colors 0 1 0 050C17
+assert_palette light
+restart_ui
+assert_palette light

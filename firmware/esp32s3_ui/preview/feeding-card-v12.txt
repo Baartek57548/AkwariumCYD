@@ -1,0 +1,42 @@
+click Karmienie
+assert_contains Karmienie w toku
+assert_contains POSTĘP SILNIKA
+assert_contains MODEL LOKALNY / symulacja
+assert_contains Czekam na pozycję karmnika
+assert_not_contains 100%
+snapshot feeding-card-wait
+wait 850
+assert_contains Podawanie dawki
+assert_contains %
+snapshot feeding-card-model
+wait 1800
+assert_contains Obrót zakończony
+assert_contains 100%
+snapshot feeding-card-pause
+click Przerwij karmienie
+assert_contains Przerwać karmienie?
+click Anuluj
+assert_contains Karmienie w toku
+click Przerwij karmienie
+click Zakończ teraz
+assert_not_contains Karmienie w toku
+advance 600000
+controller_source
+click Karmienie
+assert_contains Czekam na pozycję karmnika
+assert_contains Pozycja: brak odczytu
+assert_contains STEROWNIK / informacja zwrotna
+assert_not_contains 100%
+snapshot feeding-card-controller-wait
+position 37.25 0
+assert_contains 41%
+assert_contains 37° / 90°
+snapshot feeding-card-controller-progress
+position 90 1
+assert_contains 100%
+assert_contains Obrót zakończony
+snapshot feeding-card-controller-pause
+click Zamknij podgląd
+assert_not_contains POSTĘP SILNIKA
+contains Pauza /
+assert_contains Karmienie w toku

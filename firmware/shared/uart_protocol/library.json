@@ -1,0 +1,12 @@
+{
+  "name": "uart_protocol",
+  "version": "1.0.0",
+  "description": "NDJSON-based UART communication protocol between AquaCYD HMI (ESP32) and Aquarium Controller (ESP8266)",
+  "build": {
+    "includeDir": "include",
+    "srcDir": "src"
+  },
+  "dependencies": {
+    "bblanchon/ArduinoJson": "^6.21.4"
+  }
+}

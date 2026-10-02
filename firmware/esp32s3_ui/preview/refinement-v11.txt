@@ -1,0 +1,148 @@
+date 2026 9 28 14 20
+assert_page Panel
+assert pH WODY
+assert_not_contains KWASOWOŚĆ
+assert_not_contains MIN: OK
+assert_not_contains MAX: OK
+assert_contains Ostatnie
+assert_contains Następne
+assert_palette light
+snapshot v11-panel-light
+click Karmienie
+assert_feed 1 2
+wait 2200
+assert_feed 1 3
+assert_contains 14:20:
+contains Pauza /
+click Zakończ teraz
+wait 4000
+assert_contains Kolejna dawka / PIN
+tap 640 367
+assert_feed 1 3
+assert Dodatkowa dawka
+click Anuluj
+snapshot v11-feeding-guard
+advance 600000
+assert Karmienie
+click Karmienie
+assert_feed 2 2
+wait 2200
+contains Pauza /
+click Zakończ teraz
+wait 4000
+click Historia
+tap 400 290
+click Zakres: 1 h
+click 12 h
+click pH
+click EC
+click Grzałka
+assert_history 1 7 43200
+tap 500 225
+remember_history_point
+tap 44 290
+assert_history_focus 1
+assert_history_point
+assert_history 1 7 43200
+snapshot v11-history-focus-ph
+click ←
+assert_history_focus 255
+assert_history_point
+tap 44 350
+assert_history_focus 2
+assert_history_point
+snapshot v11-history-focus-ec
+click ←
+assert_history_focus 255
+assert_history_point
+tap 230 83
+assert_history_focus 0
+assert_history_point
+snapshot v11-history-focus-temperature
+click ←
+click ←
+click Panel
+click Historia
+assert_history 0 7 43200
+tap 400 290
+assert_history 1 7 43200
+snapshot v11-history-remembered
+click ←
+scenario 5
+scenario 0
+scenario 5
+event 1|Powtarzający się błąd transportu
+event 0|Informacja pomiędzy błędami
+event 1|Powtarzający się błąd transportu
+click Zdarzenia
+assert_not_contains Na początek
+assert_unified_events
+assert_not_contains Wyczyść dziennik
+assert_not_contains Czas od uruchomienia
+assert_contains 28.09
+assert_contains 2 wystąpień
+assert_contains Przyczyna nadal aktywna
+snapshot v11-events-active
+scenario 0
+scroll_to Niski poziom wody
+assert_contains Ustąpiło:
+snapshot v11-events-resolved
+click System
+click Sterowanie
+assert Mapa sprzętu
+assert_contains 11 modułów / dwa pływaki
+snapshot v11-system-control
+click Sieć i czas
+click Sieć Wi-Fi
+click ←
+click Sterowanie
+click Termostat
+assert_contains Sterowanie / Termostat
+click ←
+click Karmnik
+assert_contains Sterowanie / Karmnik
+click Odstęp: 10 min
+assert Odstęp między dawkami
+set_slider 1
+assert 1 min
+click -
+assert 1 min
+set_slider 60
+click +
+assert 60 min
+set_slider 7
+click ←
+wait 1600
+assert Odstęp: 7 min
+assert_no_save_popup
+snapshot v11-feeder-settings
+click ←
+click Diagnostyka
+snapshot v11-system-advanced
+click Dziennik zdarzeń
+assert_contains Diagnostyka / Dziennik zdarzeń
+click Wyczyść dziennik
+assert Wyczyścić dziennik zdarzeń?
+click Anuluj
+assert Dane tymczasowe
+click Wyczyść dziennik
+click Wyczyść
+wait 4000
+click Otwórz zdarzenia
+assert_contains Wyczyszczono dziennik
+click System
+click Obsługa
+click Ekran
+click Ciemny
+wait 1600
+click ←
+click Panel
+assert_palette dark
+snapshot v11-panel-dark
+restart_ui
+click System
+click Sterowanie
+click Karmnik
+assert Odstęp: 7 min
+assert_palette dark
+assert_chrome dim

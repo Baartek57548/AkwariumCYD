@@ -1,0 +1,68 @@
+click System
+assert Obsługa
+assert Sterowanie
+assert Sieć i czas
+assert Urządzenie
+snapshot v8-system
+click Ekran
+snapshot v8-display
+click Wróć
+click Sterowanie
+assert Karmnik
+assert Termostat
+snapshot v8-system-control
+click Karmnik
+assert 90°
+assert 300 s
+assert Filtr / pauza
+assert Powietrze / bez zmian
+snapshot v8-feeder-settings
+tap 345 185
+click Powietrze / bez zmian
+wait 1600
+assert Zapisano automatycznie
+assert 91°
+assert Powietrze / pauza
+click Wróć
+click Obsługa
+click Ekran
+tap 640 173
+wait 1600
+snapshot v8-display-night
+click Wróć
+snapshot v8-system-night
+click Sieć i czas
+snapshot v8-system-network
+click Zegar i czas
+snapshot v8-clock
+click Wróć
+click Urządzenie
+snapshot v8-system-device
+click Diagnostyka
+snapshot v8-diagnostics
+click System
+click Zasilanie i restart
+snapshot v8-power
+click System
+click Obsługa
+click Ekran
+tap 640 173
+wait 1600
+click Wróć
+click Panel
+click Karmienie
+wait 250
+assert_contains Model podawania dawki
+assert_not_contains Rozpocznij karmienie
+snapshot v8-feeding-position
+wait 2200
+assert_contains Model: obrót zakończony
+snapshot v8-feeding-pause
+wait 4000
+click Plan dnia
+snapshot v8-plan-pause
+click Historia
+snapshot v8-history
+click Zdarzenia
+assert_unified_events
+snapshot v8-log

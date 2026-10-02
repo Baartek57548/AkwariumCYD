@@ -1,0 +1,166 @@
+assert_palette light
+click Historia
+assert_centered
+assert Parametry wody
+assert Temperatura
+assert_not_contains próbek
+assert_not_contains Dotknij, aby
+assert_not_contains Wyczyść historię
+assert_not_contains pH
+assert_not_contains Zakres:
+assert_history 0 0 3600
+snapshot v10-history-unknown
+tap 130 290
+assert_history 1 0 3600
+assert_contains Godzina nieznana
+assert_not_contains 12 h
+assert_not_contains próbek
+click Szczegóły
+assert_contains próbek
+assert_contains Bez zapisanej godziny:
+snapshot v10-history-unknown-details
+click ←
+click ←
+date 2026 9 28 23 59
+wait 15000
+scenario 2
+wait 15000
+scenario 1
+wait 15000
+scenario 0
+wait 15000
+wait 15000
+assert_not_contains próbek
+assert_contains 23:59:
+assert_contains 00:00:
+snapshot v10-history-temperature
+tap 400 290
+assert_history 1 0 3600
+click Na żywo
+assert_disabled Na żywo
+assert_contains 29.09 00:00:
+snapshot v10-history-temperature-full
+click pH
+assert_history 1 1 3600
+snapshot v10-history-ph
+click EC
+assert_history 1 3 3600
+snapshot v10-history-water
+click Grzałka
+assert_history 1 7 3600
+assert_contains Grzałka / ON
+snapshot v10-history-all
+click Szczegóły
+assert_contains Temperatura [°C] / min: 24,8 / max: 28,7
+assert_contains pH / min: 6,92 / max: 8,30
+assert_contains EC [µS/cm]
+snapshot v10-history-details
+click ←
+click pH
+assert_history 1 6 3600
+click EC
+assert_history 1 4 3600
+click Grzałka
+assert_history 1 0 3600
+click Zakres: 1 h
+assert Zakres czasu
+assert 1 h
+assert 12 h
+assert 24 h
+assert 48 h
+assert 72 h
+tap 285 130
+assert_history 1 0 3600
+snapshot v10-history-range
+click 12 h
+assert_history 1 0 43200
+assert Zakres: 12 h
+assert_not_contains Zakres czasu
+click Zakres: 12 h
+click 24 h
+assert_history 1 0 86400
+click Zakres: 24 h
+click 48 h
+assert_history 1 0 172800
+click Zakres: 48 h
+click 72 h
+assert_history 1 0 259200
+assert_not_contains próbek
+snapshot v10-history-72h-short
+seed_history 78
+scenario 0
+snapshot v10-history-72h
+click pH
+click EC
+click Grzałka
+assert_history 1 7 259200
+tap 460 280
+swipe 260 285 600 285 360
+assert_history 1 7 259200
+assert_contains 01.10
+snapshot v10-history-all-selected
+click Szczegóły
+assert_contains zebrano
+snapshot v10-history-72h-details
+click ←
+click ←
+date 2026 10 2 12 0
+wait 15000
+tap 700 290
+click Szczegóły
+assert_contains korekty zegara: 1
+snapshot v10-history-clock-correction
+click ←
+click ←
+click Dolewki / ATO
+snapshot v10-history-ato
+tap 650 290
+assert Dolewki / ATO
+assert_contains Czas:
+assert_contains Odstęp:
+assert_contains ~
+click Zakres: 1 h
+click 72 h
+snapshot v10-history-ato-full
+tap 82 290
+click Zakres: 72 h
+click 1 h
+assert_not_contains Brak dolewek
+assert_not_contains Brak telemetrii dolewek
+assert_contains Czas:
+assert_disabled Na żywo
+click Szczegóły
+assert_contains dolewek / razem
+click ←
+click ←
+event 2|Najstarszy alarm testowy
+wait 1000
+event 0|Nowsze zwykłe zdarzenie
+event 1|Nowsze ostrzeżenie testowe
+event 0|Najnowsze zwykłe zdarzenie
+click Zdarzenia
+assert_not_contains Na początek
+assert_unified_events
+assert_y_before Nowsze ostrzeżenie testowe|Najstarszy alarm testowy
+assert_y_before Najstarszy alarm testowy|Najnowsze zwykłe zdarzenie
+snapshot v10-events
+click System
+click Obsługa
+click Ekran
+tap 640 173
+wait 1600
+assert_palette dark
+click ←
+click Historia
+click Parametry wody
+snapshot v10-history-night
+tap 400 290
+click Zakres: 1 h
+click 72 h
+click pH
+click EC
+click Grzałka
+assert_history 1 7 259200
+snapshot v10-history-night-all
+click ←
+graph_soak 100

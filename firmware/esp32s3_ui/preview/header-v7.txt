@@ -1,0 +1,60 @@
+assert AquaBox
+assert 14:32
+assert_not_contains Alarmy /
+tap 752 25
+assert_contains Wi-Fi panelu jest wyłączone
+click Zamknij
+network home -65
+assert Dom-Bartek
+click Dom-Bartek
+assert_contains -65 dBm
+network home -92
+assert_contains bardzo słaby
+click Zamknij
+network home 0
+click Dom-Bartek
+assert_contains Sygnał: niedostępny
+click Zamknij
+network ap 2
+assert AquaBox AP
+tap 752 25
+assert_contains Połączone urządzenia: 2
+assert_not_contains dBm
+click Zamknij
+network dual -54 1
+assert Dom-Bartek
+tap 752 25
+assert_contains Połączone urządzenia AP: 1
+click Zamknij
+network lost
+assert Brak sieci
+network unknown
+assert Brak danych
+network off
+clock 23 59
+wait 60000
+assert 00:00
+click System
+assert Obsługa
+assert Sieć i czas
+assert Urządzenie
+click Sieć i czas
+click Zegar i czas
+assert_disabled Synchronizuj teraz
+network home -65
+assert Synchronizuj teraz
+assert_not_contains Brak internetu / NTP wymaga routera
+click Wróć
+click Urządzenie
+click Test czujników
+click Brak łącza
+click Panel
+assert Dom-Bartek
+assert Brak łącza ze sterownikiem
+click System
+click Urządzenie
+click Test czujników
+click Normalna praca
+click Panel
+wait 300
+snapshot v7-header

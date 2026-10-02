@@ -1,0 +1,141 @@
+click Plan dnia
+click Lampa przednia
+assert_not_contains Zapisz
+click Całą dobę
+click Godziny
+click Wyłączony
+assert_saves 0
+wait 1600
+assert_saves 1
+click Wróć
+click Panel
+tap 100 205
+click Zakres normy →
+delay_completion 1600
+tap 335 216
+wait 1250
+assert Zapisywanie
+tap 335 216
+assert_contains Trwa zapis
+tap 752 25
+assert_disabled Ustawienia sieci →
+click Zamknij
+wait 1800
+assert 24,1
+assert_stored_range 24.1 26
+wait 4000
+fail_save
+tap 335 216
+wait 1600
+assert_stored_range 24.1 26
+assert Ponów
+wait 4000
+click Cofnij
+assert 24,1
+click Wróć
+click System
+click Sieć i czas
+click Zegar i czas
+date 2026 3 29 1 30
+click Zmień datę i czas
+click +
+click Ustaw zegar
+assert_contains nie istnieje
+assert 01:30
+wait 4000
+click Wróć
+click Sieć i czas
+click Zegar i czas
+date 2026 10 25 1 30
+click Zmień datę i czas
+click +
+assert Czas letni
+assert Czas zimowy
+click Ustaw zegar
+assert_contains dwukrotnie
+wait 4000
+click Czas zimowy
+click Ustaw zegar
+wait 4000
+assert 02:30
+snapshot v8-clock-autumn
+click Wróć
+click Obsługa
+click PIN i dostęp
+tap 220 285
+input 9876
+tap 640 173
+wait 1600
+click Wróć
+restart_ui
+click Serwis
+click Rozpocznij serwis
+assert Odblokuj edycję
+click 1
+click 2
+click 3
+click 4
+click OK
+assert_contains Błędny PIN
+wait 4000
+click 9
+click 8
+click 7
+click 6
+click OK
+click Rozpocznij serwis
+wait 4000
+assert_contains Powrót AUTO za
+click Zakończ serwis
+click Przywróć AUTO
+wait 4000
+restart_ui
+click Plan dnia
+click Lampa przednia
+assert Odblokuj edycję
+click 0
+click 0
+click 0
+click 0
+click OK
+click 0
+click 0
+click 0
+click 0
+click OK
+click 0
+click 0
+click 0
+click 0
+click OK
+click 0
+click 0
+click 0
+click 0
+click OK
+click 0
+click 0
+click 0
+click 0
+click OK
+assert_disabled OK
+assert_contains Blokada po 5 próbach
+wait 31000
+click 9
+click 8
+click 7
+click 6
+click OK
+click Wróć
+click System
+click Urządzenie
+click Zasilanie i restart
+click Przywróć panel
+click Przywróć
+wait 4000
+assert_page Panel
+click Plan dnia
+click Lampa przednia
+assert_not_contains Odblokuj edycję
+click Wróć
+click Panel

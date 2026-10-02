@@ -1,0 +1,73 @@
+click Plan dnia
+wait 400
+assert_centered
+assert_not_contains Stan teraz
+assert 0:00
+assert 2:00
+assert 4:00
+assert 6:00
+assert 8:00
+assert 10:00
+assert 12:00
+assert 14:00
+assert 16:00
+assert 18:00
+assert 20:00
+assert 22:00
+assert 24:00
+assert_label_count 1:00|0
+assert_label_count 23:00|0
+assert_not_contains 09:00 / 18:00
+assert_not_contains WŁ.
+assert_not_contains WYŁ.
+assert_not_contains →
+assert_plan_feeding_rail
+click Karmienie
+assert Plan karmienia
+click ←
+assert_plan_marker
+assert Teraz 14:32
+date 2026 9 28 0 0
+assert Teraz 00:00
+assert_plan_marker
+date 2026 9 28 12 0
+assert Teraz 12:00
+assert_plan_marker
+assert_plan_sparse_rails
+snapshot v9-plan-noon
+date 2026 9 28 23 59
+assert Teraz 23:59
+assert_plan_marker
+wait 60000
+assert Teraz 00:00
+assert_plan_marker
+assert Wtorek
+snapshot v9-plan-midnight
+click Napowietrzanie
+assert Od 22:00
+assert_centered
+click ←
+scenario 3
+assert_plan_marker
+assert_not_contains Pauza
+assert_centered
+snapshot v9-plan-feeding
+scenario 1
+assert_not_contains Brak
+assert_plan_marker
+snapshot v9-plan-offline
+scenario 0
+click System
+click Obsługa
+click Ekran
+tap 640 173
+wait 1600
+assert_chrome dim
+assert_centered
+click ←
+assert_chrome normal
+click Plan dnia
+wait 400
+assert_plan_marker
+snapshot v9-plan-night
+click Panel

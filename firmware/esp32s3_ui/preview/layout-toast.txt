@@ -1,0 +1,91 @@
+# Geometry checks use the real LVGL object tree, not a second drawing implementation.
+assert_page Panel
+assert_not_contains Serwis akwarium
+assert_bounds TEMPERATURA WODY|24 102 230 120
+assert_bounds KWASOWOŚĆ|249 102 455 120
+assert_bounds PRZEWODNOŚĆ EC|24 272 230 290
+assert_bounds PRZEPŁYW WODY|249 272 455 290
+assert_bounds Wszystko w normie|492 100 761 203
+assert_bounds Czujniki nie zgłaszają alarmów / szczegóły →|492 100 761 203
+assert_bounds POZIOM WODY|492 208 761 355
+assert_bounds Karmienie|492 358 761 401
+snapshot panel-layout
+click System
+click Test czujników
+click Aktywne alarmy
+click Panel
+assert_bounds Za wysoka temperatura|492 100 761 203
+assert_bounds TEMPERATURA WODY|24 102 230 120
+snapshot panel-layout-alarm
+click System
+click Test czujników
+click Brak łącza
+click Panel
+assert_bounds Brak łącza ze sterownikiem|492 100 761 203
+snapshot panel-layout-offline
+click System
+click Test czujników
+click Niski poziom wody
+click Panel
+assert_bounds Niski poziom wody|492 100 761 203
+snapshot panel-layout-low
+click System
+click Test czujników
+click Sprzeczne pływaki
+click Panel
+assert_bounds Sprzeczne wskazania pływaków|492 100 761 203
+snapshot panel-layout-fault
+click System
+click Test czujników
+click Normalna praca
+click Panel
+assert_not_contains Serwis akwarium
+click Serwis
+snapshot service-icon
+click System
+click Sieć Wi-Fi
+click Dom / router
+# Short release permits sampling animation near the beginning of its entrance.
+tap_start 655 390
+assert_toast Podaj SSID|-90 -15 0 100
+snapshot toast-enter
+wait 120
+assert_toast Podaj SSID|-14 75 101 254
+snapshot toast-mid
+wait 300
+assert_toast Podaj SSID|64 64 255 255
+snapshot toast-top
+wait 3150
+assert_toast Podaj SSID|-80 63 1 254
+snapshot toast-exit
+wait 300
+assert_no_toast Podaj SSID
+# A new message replaces an entering or exiting one; a tap dismisses without activating underneath.
+tap_start 655 390
+tap_start 655 390
+wait 400
+assert_toast Podaj SSID|64 64 255 255
+tap_start 100 90
+wait 300
+assert_no_toast Podaj SSID
+assert Sieć Wi-Fi
+toast_soak 100
+click Anuluj
+click Interakcja
+tap 640 260
+click Zapisz zmiany
+wait 4000
+click System
+click Sieć Wi-Fi
+click Dom / router
+tap_start 655 390
+assert_toast Podaj SSID|64 64 255 255
+snapshot toast-reduced-motion
+tap_start 100 90
+assert_no_toast Podaj SSID
+tap_start 655 390
+wait 3600
+assert_no_toast Podaj SSID
+click Anuluj
+click Panel
+assert_page Panel

@@ -1,0 +1,145 @@
+assert_nav_order
+assert_palette light
+click System
+assert_bounds Obsługa|24 140 230 190
+assert_bounds Sterowanie|24 190 230 240
+assert_bounds Sieć i czas|24 240 230 290
+assert_bounds Urządzenie|24 290 230 340
+assert_bounds Diagnostyka|24 340 230 390
+assert_label_count AquaBox|1
+assert_not_contains Zmiany zapisują się same
+snapshot v9-system-ordered
+click Urządzenie
+assert_not_contains Mapa sprzętu
+assert Firmware
+assert Zasilanie i restart
+assert_not_contains Sterownik ESP8266
+click Diagnostyka
+assert Stan panelu
+assert Sterownik ESP8266
+assert Dziennik zdarzeń
+assert Test czujników
+snapshot v9-advanced
+click Sterownik ESP8266
+assert UART niepodłączony
+assert_contains Ostatni ACK: brak danych
+assert_contains TX / RX: niedostępne
+assert_not_contains Wróć
+assert_chrome dim
+snapshot v9-controller-diagnostics
+click ←
+click Sterowanie
+click Mapa sprzętu
+assert Światło
+assert Obieg wody
+assert Karmienie
+assert Chemia
+snapshot v9-hardware-map
+click Obieg wody
+snapshot v9-hardware-water
+click Filtr
+assert_contains Filtr
+click ←
+assert Mapa sprzętu
+assert Obieg wody
+click ←
+click Karmnik
+assert 90°
+assert_saves 0
+click 90°
+assert Obrót jednej dawki
+set_slider 400
+assert 360 °
+click +
+assert 360 °
+set_slider -10
+assert 1 °
+click -
+assert 1 °
+set_slider 123
+swipe 120 267 700 267 360
+assert Obrót jednej dawki
+assert_disabled System
+set_slider 123
+wait 1600
+assert_saves 0
+assert_no_save_popup
+snapshot v9-feeder-slider
+click ←
+assert 123°
+wait 1600
+assert_saves 1
+assert_no_save_popup
+assert_not_contains Wróć
+click 300 s
+set_slider 75
+click ←
+wait 1600
+assert 75 s
+assert_saves 2
+snapshot v9-feeder-controls
+click ←
+click Obsługa
+click Ekran
+click 5 min
+set_slider 70
+assert 60 min
+set_slider -1
+assert Wyłączone
+snapshot v9-sleep-slider
+click ←
+wait 1600
+assert_no_save_popup
+click ←
+click Sterowanie
+click Termostat
+click 25,0°C
+set_slider 280
+assert 28,0 °C
+set_slider 251
+click ←
+wait 1600
+assert 25,1°C
+click 0,3°C
+set_slider 0
+assert 0,1 °C
+set_slider 30
+assert 2,0 °C
+set_slider 4
+click ←
+wait 1600
+assert 0,4°C
+assert_no_save_popup
+snapshot v9-thermostat-controls
+click ←
+click Panel
+assert_nav_order
+click Serwis
+click Rozpocznij serwis
+click 15 min
+set_slider 0
+assert 1 min
+set_slider 200
+assert 120 min
+set_slider 1
+snapshot v9-service-slider
+click ←
+assert Dotknij, aby ustawić czas
+click Anuluj
+click Mapa urządzeń →
+click Obieg wody
+click Filtr
+click ←
+assert Mapa sprzętu
+assert Obieg wody
+click ←
+assert Serwis akwarium
+restart_ui
+click System
+click Sterowanie
+click Karmnik
+assert 123°
+assert 75 s
+assert_no_save_popup
+click ←
+click Panel

@@ -1,0 +1,41 @@
+controller_source
+click Karmienie
+assert_feed 1 1
+assert_contains Czekam na pozycję
+assert_not_contains Rozpocznij karmienie
+contains Czekam na pozycję
+assert Zakończ teraz
+assert_feed 1 1
+click Anuluj
+position 37.25 0
+assert_feed 1 2
+assert_contains Podawanie dawki
+assert_contains 37° / 90°
+snapshot v9-feeding-controller
+position 90 1
+assert_feed 1 3
+assert_contains Obrót potwierdzony
+wait 4000
+contains Pauza /
+click Zakończ teraz
+wait 4000
+click Karmienie
+assert_feed 2 1
+wait 8100
+assert_feed 2 4
+assert Karmienie
+assert_contains Brak pozycji karmnika
+snapshot v9-feeding-feedback-timeout
+wait 4000
+click Historia
+click Zdarzenia
+assert_not_contains Na początek
+assert_contains brak potwierdzenia pozycji
+click Panel
+assert_contains Karmnik bez potwierdzenia
+click Karmnik bez potwierdzenia
+assert Niepewne zakończenie karmienia
+click Sprawdziłem karmnik
+assert_feed 2 0
+click Panel
+assert Wszystko w normie

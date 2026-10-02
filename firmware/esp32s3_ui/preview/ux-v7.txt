@@ -1,0 +1,152 @@
+assert_page Panel
+assert_not_contains Zapisz
+snapshot v7-panel
+click Karmienie
+wait 250
+assert_contains Model podawania dawki
+snapshot v7-feeding-dose
+wait 2200
+assert_contains Pauza /
+snapshot v7-feeding-pause
+contains Pauza /
+click Zakończ teraz
+wait 4000
+assert Karmienie
+snapshot v7-feeding-complete
+click System
+snapshot v7-system
+click Obsługa
+click Ekran
+assert_not_contains Zapisz
+tap 640 173
+wait 1600
+assert Zapisano automatycznie
+click Wróć
+click Panel
+snapshot v7-night
+restart_ui
+click System
+click Obsługa
+click Ekran
+assert Włączone
+tap 640 173
+wait 1600
+click Wróć
+click Panel
+tap 100 205
+click Zakres normy →
+assert 24,0
+tap 335 216
+wait 1600
+assert 24,1
+click Wróć
+click Panel
+tap 100 205
+click Zakres normy →
+assert 24,1
+fail_save
+tap 335 216
+wait 1600
+assert_contains Błąd zapisu
+assert Ponów
+wait 4000
+click Ponów
+wait 1600
+assert 24,2
+click Wróć
+restart_ui
+tap 100 205
+click Zakres normy →
+assert 24,2
+click Wróć
+click System
+click Sieć i czas
+click Sieć Wi-Fi
+click Dom / router
+wait 1600
+assert_contains Podaj SSID
+wait 4000
+assert Cofnij
+click Cofnij
+assert Wyłączone
+tap 220 245
+input Jamnik
+tap 220 327
+input haslotestowe
+click Dom / router
+wait 1600
+assert Jamnik
+snapshot v7-network
+click Wróć
+click Sieć i czas
+click Zegar i czas
+assert Synchronizacja czasu
+assert 28.09.2026
+snapshot v7-clock
+click Zmień datę i czas
+click +
+snapshot v7-clock-edit
+click Ustaw zegar
+wait 4000
+assert 15:32
+assert Ręczna
+snapshot v7-clock-manual
+click Wróć
+click Urządzenie
+click Diagnostyka
+click Test dotyku
+click Cel 1 / 5
+click Cel 2 / 5
+click Cel 3 / 5
+click Cel 4 / 5
+click Cel 5 / 5
+wait 4000
+click Dziennik zdarzeń
+click Zwykłe →
+assert_contains zaliczono 5 pól
+click System
+click Urządzenie
+click Firmware
+click Sprawdź firmware
+assert_contains Kontrola obrazu: poprawna
+wait 4000
+click System
+click Urządzenie
+click Test czujników
+click Sprzeczne pływaki
+click Panel
+assert Sprzeczne wskazania pływaków
+snapshot v7-water-fault
+click System
+click Urządzenie
+click Test czujników
+click Niski poziom wody
+click Panel
+assert Niski poziom wody
+snapshot v7-water-low
+click System
+click Urządzenie
+click Test czujników
+click Normalna praca
+click Panel
+click Serwis
+click Rozpocznij serwis
+click Rozpocznij serwis
+wait 4000
+assert Druga lampa / WYŁ.
+click Druga lampa / WYŁ.
+assert Druga lampa / WŁ.
+click Zakończ serwis
+click Przywróć AUTO
+wait 4000
+click Panel
+swipe 650 250 180 250
+assert_page Serwis
+swipe 650 250 180 250
+assert_page Plan dnia
+swipe 650 250 180 250
+assert_page Historia
+swipe 650 250 180 250
+assert_page System
+click Panel
+snapshot v7-final

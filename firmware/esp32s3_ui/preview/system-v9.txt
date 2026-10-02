@@ -1,0 +1,75 @@
+click System
+assert Obsługa
+assert Sterowanie
+assert Sieć i czas
+assert Urządzenie
+assert Diagnostyka
+snapshot v9-system
+click Ekran
+snapshot v9-display
+click ←
+click Sterowanie
+assert Karmnik
+assert Termostat
+snapshot v9-system-control
+click Karmnik
+assert 90°
+assert 300 s
+assert Filtr / pauza
+assert Powietrze / bez zmian
+snapshot v9-feeder-settings
+click 90°
+click +
+click ←
+click Powietrze / bez zmian
+wait 1600
+assert Zapisano automatycznie
+assert 91°
+assert Powietrze / pauza
+click ←
+click Obsługa
+click Ekran
+click Ciemny
+wait 1600
+snapshot v9-display-night
+click ←
+snapshot v9-system-night
+click Sieć i czas
+snapshot v9-system-network
+click Zegar i czas
+snapshot v9-clock
+click ←
+click Urządzenie
+snapshot v9-system-device
+assert Firmware
+assert Zasilanie i restart
+click Diagnostyka
+click Stan panelu
+snapshot v9-diagnostics
+click System
+click Urządzenie
+click Zasilanie i restart
+snapshot v9-power
+click System
+click Obsługa
+click Ekran
+click Jasny
+wait 1600
+click ←
+click Panel
+click Karmienie
+wait 250
+assert_contains Model podawania dawki
+assert_not_contains Rozpocznij karmienie
+snapshot v9-feeding-position
+wait 2200
+assert_contains Model: obrót zakończony
+snapshot v9-feeding-pause
+wait 4000
+click Plan dnia
+snapshot v9-plan-pause
+click Historia
+snapshot v9-history
+click Zdarzenia
+assert_unified_events
+snapshot v9-log

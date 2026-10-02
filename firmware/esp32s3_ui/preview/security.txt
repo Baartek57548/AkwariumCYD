@@ -1,0 +1,81 @@
+click System
+click PIN i dostęp
+tap 220 285
+input 9876
+click Wyłączone
+click Zapisz zmiany
+wait 3600
+restart_ui
+click Serwis
+click Rozpocznij serwis
+assert Odblokuj edycję
+click 1
+click 2
+click 3
+click 4
+click OK
+assert_contains Błędny PIN
+wait 3600
+click 9
+click 8
+click 7
+click 6
+click OK
+assert Rozpocznij serwis
+click Rozpocznij serwis
+wait 3600
+assert_contains Powrót AUTO za
+click Zakończ serwis
+click Przywróć AUTO
+wait 3600
+restart_ui
+click Plan dnia
+click Lampa przednia
+assert Odblokuj edycję
+click 0
+click 0
+click 0
+click 0
+click OK
+click 0
+click 0
+click 0
+click 0
+click OK
+click 0
+click 0
+click 0
+click 0
+click OK
+click 0
+click 0
+click 0
+click 0
+click OK
+click 0
+click 0
+click 0
+click 0
+click OK
+assert_disabled OK
+assert_contains Blokada po 5 próbach
+snapshot pin-blocked
+wait 31000
+click 9
+click 8
+click 7
+click 6
+click OK
+assert Od 09:00
+click Anuluj
+click System
+click Zasilanie i restart
+click Przywróć ustawienia
+click Przywróć
+wait 3600
+click Plan dnia
+click Lampa przednia
+assert Od 09:00
+assert_not_contains Odblokuj edycję
+click Anuluj
+click Panel

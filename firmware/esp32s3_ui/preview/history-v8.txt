@@ -1,0 +1,137 @@
+assert_palette light
+wait 15000
+scenario 2
+wait 15000
+scenario 1
+wait 15000
+scenario 0
+wait 15000
+click Historia
+assert_centered
+assert Parametry wody
+assert Dolewki / ATO
+assert_not_contains Wyczyść historię
+assert_not_contains Minimum:
+assert_contains próbek
+snapshot v8-history-temperature
+tap 130 290
+assert Temperatura / historia
+assert 1 h
+assert 12 h
+assert 24 h
+assert 48 h
+assert 72 h
+assert_contains Obecne progi:
+assert_contains Grzałka / ON
+assert_contains Próbka:
+assert_contains Min: 24,8
+assert_contains Max: 28,7
+snapshot v8-history-temperature-full
+click Na żywo
+assert Ostatni pomiar
+assert_disabled Na żywo
+click 12 h
+click 24 h
+click 48 h
+click 72 h
+snapshot v8-history-72h-empty-coverage
+click Wróć do historii
+click pH
+snapshot v8-history-ph
+tap 130 290
+assert pH / historia
+assert_contains Max: 8,30
+assert_not_contains Grzałka / ON
+snapshot v8-history-ph-full
+click Wróć do historii
+click EC
+snapshot v8-history-ec
+tap 130 290
+assert EC / historia
+snapshot v8-history-ec-full
+click Wróć do historii
+click Dolewki / ATO
+assert_contains 0 dolewek
+tap 130 290
+assert_contains Brak telemetrii dolewek
+assert_contains Objętość przybliżona
+snapshot v8-history-ato-empty
+click Wróć do historii
+seed_history 78
+scenario 0
+click Parametry wody
+tap 130 290
+click 1 h
+snapshot v8-history-1h
+click 12 h
+snapshot v8-history-12h
+click 24 h
+snapshot v8-history-24h
+click 48 h
+snapshot v8-history-48h
+click 72 h
+assert_contains zebrano 72:
+snapshot v8-history-72h
+tap 460 280
+assert_contains Próbka:
+swipe 260 290 600 290 360
+assert_contains Próbka:
+assert Temperatura / historia
+click Wróć do historii
+click Dolewki / ATO
+snapshot v8-history-ato
+tap 650 290
+assert Dolewki / ATO
+assert_contains Czas:
+assert_contains Odstęp:
+assert_contains ~
+click 72 h
+snapshot v8-history-ato-full
+tap 700 260
+snapshot v8-history-ato-selected
+click Wróć do historii
+event 2|Najstarszy alarm testowy
+wait 1000
+event 0|Nowsze zwykłe zdarzenie
+event 1|Nowsze ostrzeżenie testowe
+event 0|Najnowsze zwykłe zdarzenie
+click Zdarzenia
+assert_not_contains Na początek
+assert_unified_events
+assert_y_before Nowsze ostrzeżenie testowe|Najstarszy alarm testowy
+assert_y_before Najstarszy alarm testowy|Najnowsze zwykłe zdarzenie
+snapshot v8-events
+scroll_to Najnowsze zwykłe zdarzenie
+assert_y_before Najnowsze zwykłe zdarzenie|Nowsze zwykłe zdarzenie
+snapshot v8-events-scrolled
+click System
+click Obsługa
+click Ekran
+tap 640 173
+wait 1600
+assert_palette dark
+assert_chrome dim
+snapshot v8-display-night
+click Wróć
+click Historia
+click Parametry wody
+snapshot v8-history-night
+tap 130 290
+click 72 h
+snapshot v8-history-night-full
+click Wróć do historii
+click Dolewki / ATO
+tap 650 290
+click 72 h
+snapshot v8-history-ato-night
+click Wróć do historii
+click Zdarzenia
+click Wyczyść dziennik
+click Wyczyść
+wait 4000
+scroll_to Wyczyszczono dziennik
+assert_unified_events
+assert_contains Wyczyszczono dziennik
+snapshot v8-events-cleared
+click Parametry wody
+graph_soak 100

@@ -1,0 +1,143 @@
+assert_page Panel
+assert_not_contains Zapisz
+snapshot v6-panel
+click Karmienie
+click Rozpocznij karmienie
+wait 250
+assert Podawanie dawki
+snapshot v6-feeding-dose
+wait 2200
+assert_contains Pauza /
+snapshot v6-feeding-pause
+contains Pauza /
+click Zakończ teraz
+wait 4000
+assert Karmienie
+snapshot v6-feeding-complete
+click System
+snapshot v6-system
+click Ekran
+assert_not_contains Zapisz
+tap 640 173
+wait 1600
+assert Zapisano automatycznie
+click Wróć
+click Panel
+snapshot v6-night
+restart_ui
+click System
+click Ekran
+assert Włączone
+tap 640 173
+wait 1600
+click Wróć
+click Panel
+tap 100 205
+click Zakres normy →
+assert 24,0
+tap 335 216
+wait 1600
+assert 24,1
+click Wróć
+click Panel
+tap 100 205
+click Zakres normy →
+assert 24,1
+fail_save
+tap 335 216
+wait 1600
+assert_contains Błąd zapisu
+assert Ponów
+wait 4000
+click Ponów
+wait 1600
+assert 24,2
+click Wróć
+restart_ui
+tap 100 205
+click Zakres normy →
+assert 24,2
+click Wróć
+click System
+click Sieć Wi-Fi
+click Dom / router
+wait 1600
+assert_contains Podaj SSID
+wait 4000
+assert Cofnij
+click Cofnij
+assert Wyłączone
+tap 220 245
+input Jamnik
+tap 220 327
+input haslotestowe
+click Dom / router
+wait 1600
+assert Jamnik
+snapshot v6-network
+click Wróć
+click Zegar i czas
+assert Synchronizacja czasu
+assert 28.09.2026
+snapshot v6-clock
+click Zmień datę i czas
+click +
+snapshot v6-clock-edit
+click Ustaw zegar
+wait 4000
+assert 15:32
+assert Ręczna
+snapshot v6-clock-manual
+click Wróć
+click Diagnostyka
+click Test dotyku
+click Cel 1 / 5
+click Cel 2 / 5
+click Cel 3 / 5
+click Cel 4 / 5
+click Cel 5 / 5
+wait 4000
+click Dziennik zdarzeń
+assert_contains zaliczono 5 pól
+click System
+click Firmware
+click Sprawdź firmware
+assert_contains Kontrola obrazu: poprawna
+wait 4000
+click System
+click Test czujników
+click Sprzeczne pływaki
+click Panel
+assert Sprzeczne wskazania pływaków
+snapshot v6-water-fault
+click System
+click Test czujników
+click Niski poziom wody
+click Panel
+assert Niski poziom wody
+snapshot v6-water-low
+click System
+click Test czujników
+click Normalna praca
+click Panel
+click Serwis
+click Rozpocznij serwis
+click Rozpocznij serwis
+wait 4000
+assert Druga lampa / WYŁ.
+click Druga lampa / WYŁ.
+assert Druga lampa / WŁ.
+click Zakończ serwis
+click Przywróć AUTO
+wait 4000
+click Panel
+swipe 650 250 180 250
+assert_page Serwis
+swipe 650 250 180 250
+assert_page Plan dnia
+swipe 650 250 180 250
+assert_page Historia
+swipe 650 250 180 250
+assert_page System
+click Panel
+snapshot v6-final

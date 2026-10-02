@@ -1,0 +1,3 @@
+swipe_soak 100
+assert_page Panel
+snapshot swipe-soak-home

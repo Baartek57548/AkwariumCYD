@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
+  <defs>
+    <linearGradient id="aqGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#06b6d4"/>
+      <stop offset="100%" stop-color="#3b82f6"/>
+    </linearGradient>
+  </defs>
+  <rect width="64" height="64" rx="16" fill="#0f172a"/>
+  <path d="M16 22 C22 14, 42 14, 48 22 C52 26, 52 38, 48 42 C42 50, 22 50, 16 42 C12 38, 12 26, 16 22 Z" fill="none" stroke="url(#aqGrad)" stroke-width="4" stroke-linecap="round"/>
+  <path d="M20 32 C26 28, 30 36, 36 32 C40 29, 43 31, 46 32" fill="none" stroke="#22d3ee" stroke-width="3" stroke-linecap="round"/>
+  <circle cx="26" cy="24" r="2.5" fill="#38bdf8"/>
+  <circle cx="38" cy="22" r="1.5" fill="#38bdf8"/>
+</svg>

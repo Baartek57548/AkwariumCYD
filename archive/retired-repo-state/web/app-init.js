@@ -1,0 +1,355 @@
+function bindScheduleShortcuts() {
+    document.getElementById('dashboard-edit-schedule-btn')?.addEventListener('click', () => {
+        switchTab('harmonogramy');
+    });
+    document.getElementById('feeder-manage-btn')?.addEventListener('click', () => {
+        switchTab('harmonogramy');
+    });
+    document.getElementById('save-schedule-btn')?.addEventListener('click', saveScheduleSettings);
+}
+
+function bindLogsControls() {
+    const currentBtn = document.getElementById('logs-current-btn');
+    const criticalBtn = document.getElementById('logs-critical-btn');
+    const clearBtn = document.getElementById('clear-logs-btn');
+    const deleteCriticalBtn = document.getElementById('delete-critical-btn');
+    const downloadBtn = document.getElementById('download-logs-btn');
+    const searchInput = document.getElementById('logs-search');
+    const prevLogsBtn = document.getElementById('logs-prev-btn');
+    const nextLogsBtn = document.getElementById('logs-next-btn');
+
+    currentBtn?.addEventListener('click', () => {
+        activeLogType = 'normal';
+        renderLogs();
+    });
+    criticalBtn?.addEventListener('click', () => {
+        activeLogType = 'critical';
+        renderLogs();
+    });
+    clearBtn?.addEventListener('click', () => {
+        if (searchInput) {
+            searchInput.value = '';
+        }
+        logsPage[activeLogType] = 0;
+        renderLogs();
+    });
+    deleteCriticalBtn?.addEventListener('click', async () => {
+        try {
+            if (!window.confirm('Usunac wszystkie logi krytyczne zapisane w sterowniku?')) {
+                return;
+            }
+            await sendAction('clear_critical_logs');
+            await fetchLogs(true);
+        } catch (_) {}
+    });
+    downloadBtn?.addEventListener('click', async () => {
+        try {
+            if (!isAdminAuthenticated()) {
+                await loginAsAdmin();
+            }
+            const token = getAdminTokenForRequest();
+            if (!token) {
+                throw new Error('Wymagane logowanie admina.');
+            }
+            const result = await fetchWithTimeout(
+                `${API_LOGS}?format=text&type=${encodeURIComponent(activeLogType)}`,
+                {
+                    cache: 'no-store',
+                    headers: { 'X-AquaCYD-Session': token }
+                },
+                API_REQUEST_TIMEOUT_MS,
+                (response) => response.ok ? response.text() : null
+            );
+            const { response, body: lines } = result;
+            if (!response.ok) {
+                if (response.status === 401 || response.status === 403) {
+                    logoutAdmin();
+                }
+                throw new Error('Nie udalo sie pobrac logow z urzadzenia.');
+            }
+            const blob = new Blob([lines], { type: 'text/plain;charset=utf-8' });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = `akwarium_logs_${activeLogType}_${Date.now()}.txt`;
+            a.click();
+            URL.revokeObjectURL(url);
+        } catch (error) {
+            console.warn('Nie udalo sie pobrac eksportu logow.', error);
+        }
+    });
+    prevLogsBtn?.addEventListener('click', () => {
+        logsPage[activeLogType] = Math.max(0, (logsPage[activeLogType] || 0) - 1);
+        renderLogs();
+    });
+    nextLogsBtn?.addEventListener('click', () => {
+        logsPage[activeLogType] = (logsPage[activeLogType] || 0) + 1;
+        renderLogs();
+    });
+    searchInput?.addEventListener('input', () => {
+        logsPage[activeLogType] = 0;
+        renderLogs();
+    });
+}
+
+function showSettingsPanel(targetId) {
+    const targetPanel = document.getElementById(targetId);
+    if (!targetPanel || !targetPanel.classList.contains('settings-panel')) {
+        return;
+    }
+
+    document.querySelectorAll('.settings-panel').forEach((panel) => {
+        const isActive = panel.id === targetId;
+        panel.classList.toggle('active', isActive);
+        panel.hidden = !isActive;
+    });
+
+    document.querySelectorAll('.settings-nav-item').forEach((button) => {
+        const isActive = button.dataset.settingsTarget === targetId;
+        button.classList.toggle('active', isActive);
+        button.setAttribute('aria-selected', isActive ? 'true' : 'false');
+        button.tabIndex = isActive ? 0 : -1;
+    });
+}
+
+function bindSettingsControls() {
+    const buttons = Array.from(document.querySelectorAll('.settings-nav-item[data-settings-target]'));
+
+    buttons.forEach((button, index) => {
+        button.setAttribute('aria-selected', button.classList.contains('active') ? 'true' : 'false');
+        button.tabIndex = button.classList.contains('active') ? 0 : -1;
+        button.addEventListener('click', () => showSettingsPanel(button.dataset.settingsTarget));
+        button.addEventListener('keydown', (event) => {
+            let nextIndex = index;
+            if (event.key === 'ArrowRight' || event.key === 'ArrowDown') {
+                nextIndex = (index + 1) % buttons.length;
+            } else if (event.key === 'ArrowLeft' || event.key === 'ArrowUp') {
+                nextIndex = (index - 1 + buttons.length) % buttons.length;
+            } else if (event.key === 'Home') {
+                nextIndex = 0;
+            } else if (event.key === 'End') {
+                nextIndex = buttons.length - 1;
+            } else {
+                return;
+            }
+
+            event.preventDefault();
+            const nextButton = buttons[nextIndex];
+            showSettingsPanel(nextButton.dataset.settingsTarget);
+            nextButton.focus();
+            nextButton.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+        });
+    });
+
+    document.getElementById('save-network-btn')?.addEventListener('click', saveNetworkSettings);
+    document.getElementById('start-wifi-session-btn')?.addEventListener('click', () => runWifiSessionAction('start'));
+    document.getElementById('stop-wifi-session-btn')?.addEventListener('click', () => runWifiSessionAction('stop'));
+    document.getElementById('save-temperature-btn')?.addEventListener('click', saveTemperatureSettings);
+    document.getElementById('save-display-btn')?.addEventListener('click', saveDisplaySettings);
+    document.getElementById('save-co2-btn')?.addEventListener('click', saveCo2Settings);
+    document.getElementById('save-water-btn')?.addEventListener('click', saveWaterSettings);
+    document.getElementById('sync-browser-time-btn')?.addEventListener('click', syncBrowserTime);
+    document.getElementById('sync-ntp-btn')?.addEventListener('click', syncTimeWithNtp);
+    document.getElementById('restart-device-btn')?.addEventListener('click', () => {
+        runDeviceAction(
+            'restart_device',
+            'Zrestartowac sterownik teraz?',
+            'Polecenie restartu wyslane. Sterownik powinien wrocic online za chwile.'
+        );
+    });
+    document.getElementById('factory-reset-btn')?.addEventListener('click', () => {
+        runDeviceAction(
+            'factory_reset',
+            'Przywrocic ustawienia fabryczne? Ta operacja skasuje konfiguracje i zrestartuje urzadzenie.',
+            'Factory reset zainicjowany. Urzadzenie uruchomi sie z ustawieniami domyslnymi.'
+        );
+    });
+}
+
+function bindAuthControls() {
+    document.getElementById('admin-login-btn')?.addEventListener('click', async () => {
+        try {
+            await loginAsAdmin();
+            showToast('Zalogowano', 'Dostęp administracyjny jest aktywny w tej karcie.', 'success', 3000);
+        } catch (error) {
+            if (error?.code !== 'admin_login_cancelled' && error?.code !== 'pin_replaced') {
+                showToast('Nie udało się zalogować', error?.message || 'Sterownik odrzucił próbę logowania.', 'error', 5000);
+            }
+        }
+    });
+
+    document.getElementById('admin-logout-btn')?.addEventListener('click', () => {
+        logoutAdmin();
+        showToast('Wylogowano', 'Panel wrócił do bezpiecznego trybu podglądu.', 'info', 2800);
+    });
+}
+
+function bindDashboardControls() {
+    document.getElementById('feed-now-btn')?.addEventListener('click', triggerFeed);
+    document.getElementById('relay-light-toggle')?.addEventListener('click', () => toggleRelayQuickAction('light'));
+    document.getElementById('relay-filter-toggle')?.addEventListener('click', () => toggleRelayQuickAction('filter'));
+    document.getElementById('relay-plant-toggle')?.addEventListener('click', () => toggleRelayQuickAction('plant'));
+    document.getElementById('relay-heater-toggle')?.addEventListener('click', () => toggleRelayQuickAction('heater'));
+    document.getElementById('relay-aeration-toggle')?.addEventListener('click', () => toggleRelayQuickAction('aeration'));
+    document.getElementById('bus-scan-refresh')?.addEventListener('click', () => fetchHardwareBusDiagnostics(true));
+}
+
+function bindPinModalEvents() {
+    const modal = document.getElementById('pin-modal');
+    if (!modal) return;
+
+    const form = document.getElementById('pin-modal-form');
+    const input = document.getElementById('pin-modal-input');
+
+    input?.addEventListener('input', () => {
+        input.value = input.value.replace(/\D/g, '').slice(0, 8);
+    });
+
+    const cancelBtn = document.getElementById('pin-modal-cancel');
+    cancelBtn?.addEventListener('click', () => {
+        window.handlePinCancel();
+    });
+
+    form?.addEventListener('submit', (event) => {
+        event.preventDefault();
+        window.handlePinSubmit();
+    });
+
+    document.addEventListener('keydown', (event) => {
+        if (modal.style.display !== 'flex') return;
+        if (event.key === 'Escape') {
+            window.handlePinCancel();
+            event.preventDefault();
+            return;
+        }
+        if (event.key !== 'Tab') return;
+
+        const focusable = Array.from(modal.querySelectorAll(
+            'button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])'
+        )).filter((element) => element.offsetParent !== null);
+        if (focusable.length === 0) {
+            event.preventDefault();
+            return;
+        }
+
+        const first = focusable[0];
+        const last = focusable[focusable.length - 1];
+        if (event.shiftKey && document.activeElement === first) {
+            event.preventDefault();
+            last.focus();
+        } else if (!event.shiftKey && document.activeElement === last) {
+            event.preventDefault();
+            first.focus();
+        }
+    });
+}
+
+function bindConnectionControls() {
+    const refreshButton = document.getElementById('connection-refresh-btn');
+    refreshButton?.addEventListener('click', async () => {
+        if (refreshButton.dataset.busy === '1') {
+            return;
+        }
+
+        setElementBusy(refreshButton, true);
+        try {
+            const refreshed = await fetchStatus(true);
+            if (refreshed) {
+                showToast('Dane odświeżone', 'Sterownik przesłał aktualną telemetrię.', 'success', 2800);
+            } else {
+                showToast('Brak odpowiedzi', 'Automatyczne ponawianie połączenia pozostaje aktywne.', 'warning', 4200);
+            }
+        } finally {
+            setElementBusy(refreshButton, false);
+        }
+    });
+}
+
+function initDirtyTracking() {
+    ['settings-sta-ssid', 'settings-sta-password'].forEach((id) => {
+        const el = document.getElementById(id);
+        el?.addEventListener('input', () => {
+            el.dataset.dirty = '1';
+        });
+    });
+    ['settings-temp-enabled', 'settings-temp-target', 'settings-temp-hyst'].forEach((id) => {
+        const el = document.getElementById(id);
+        const eventName = el?.type === 'checkbox' ? 'change' : 'input';
+        el?.addEventListener(eventName, () => {
+            el.dataset.dirty = '1';
+            setTemperatureStatus('Masz niezapisane zmiany ustawien temperatury.', 'muted');
+        });
+    });
+    ['settings-co2-enabled', 'settings-co2-ph-target', 'settings-co2-limit'].forEach((id) => {
+        const el = document.getElementById(id);
+        const eventName = el?.type === 'checkbox' ? 'change' : 'input';
+        el?.addEventListener(eventName, () => {
+            el.dataset.dirty = '1';
+            setCo2Status('Masz niezapisane zmiany automatyki CO2.', 'muted');
+        });
+    });
+    ['settings-water-enabled', 'settings-water-timeout'].forEach((id) => {
+        const el = document.getElementById(id);
+        const eventName = el?.type === 'checkbox' ? 'change' : 'input';
+        el?.addEventListener(eventName, () => {
+            el.dataset.dirty = '1';
+            setWaterStatus('Masz niezapisane zmiany automatycznej dolewki.', 'muted');
+        });
+    });
+}
+
+document.addEventListener('DOMContentLoaded', () => {
+    initLocalIcons();
+    updateClock();
+    setInterval(updateClock, 1000);
+
+    initMobileNavigation();
+    initNavigation();
+    switchTab(getInitialTabFromHash(), false);
+    initOTA();
+    initScheduleTimeline();
+    initDirtyTracking();
+    bindScheduleShortcuts();
+    bindLogsControls();
+    bindSettingsControls();
+    bindAuthControls();
+    bindDashboardControls();
+    bindPinModalEvents();
+    bindConnectionControls();
+    initDisplaySettingsListeners();
+    applyAuthState();
+    document.getElementById('upload-btn')?.addEventListener('click', uploadFirmwarePackage);
+
+    setSettingsNetworkStatus('Zmiany SSID i haseł są stosowane przy kolejnej sesji WiFi.', 'muted');
+    setTemperatureStatus('Sterowanie grzałką jest synchronizowane ze sterownikiem.', 'muted');
+    setDeviceActionStatus('Akcje administracyjne wymagają potwierdzenia.', 'muted');
+
+    initConnectionMonitoring();
+    startWebSessionHeartbeat();
+    startEventStream();
+    startPollingFallback();
+    if (typeof window.AquaCydGatewayPwa?.restoreSnapshot === 'function') {
+        window.AquaCydGatewayPwa.restoreSnapshot()
+            .then((snapshot) => {
+                if (!snapshot || backendConnected || lastStatusData) {
+                    return;
+                }
+                applyStatusPayload(snapshot.status, 0, { offlineSnapshot: true });
+                const savedAt = snapshot.savedAt > 0
+                    ? new Date(snapshot.savedAt).toLocaleString('pl-PL')
+                    : 'nieznany czas';
+                showToast(
+                    'Podgląd offline',
+                    `Wyświetlam dane zapisane ${savedAt}. Sterowanie pozostaje zablokowane.`,
+                    'warning',
+                    6200
+                );
+            })
+            .catch((error) => {
+                console.warn('Nie udało się przywrócić snapshotu offline.', error);
+            });
+    }
+    fetchStatus(true, true);
+    fetchLogs(true);
+    renderLogs();
+});

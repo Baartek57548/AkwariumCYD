@@ -1,0 +1,42 @@
+click Plan dnia
+click Lampa przednia
+assert 3 tryby: WŁ.
+assert_contains Świt
+assert_contains Zmierzch
+assert_contains Wyłączenie
+snapshot v12-light-program
+click 3 tryby: WŁ.
+wait 1600
+assert Zapisano automatycznie
+click 3 tryby: WYŁ.
+wait 1600
+assert Zapisano automatycznie
+click ←
+assert_not_contains Dzień
+assert_not_contains Świt
+assert_not_contains Noc
+snapshot v12-plan-light-phases
+click System
+click Obsługa
+click Ekran
+assert Jasny
+assert Ciemny
+assert Auto
+click Auto
+wait 1600
+assert Zapisano automatycznie
+assert_contains Brak danych o słońcu
+tap 100 318
+input Gdansk
+wait 1600
+assert Gdansk
+snapshot v12-solar-auto
+restart_ui
+click System
+click Obsługa
+click Ekran
+assert Auto
+assert Gdansk
+click Jasny
+wait 1600
+assert Zapisano automatycznie

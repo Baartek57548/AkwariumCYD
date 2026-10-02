@@ -1,0 +1,36 @@
+# Capture the five preserved top-level screens in both production palettes.
+assert_palette light
+snapshot premium-panel-light
+click Plan dnia
+wait 300
+snapshot premium-plan-light
+click Historia
+wait 300
+snapshot premium-history-light
+click Serwis
+wait 300
+snapshot premium-service-light
+click System
+wait 300
+snapshot premium-system-light
+click Obsługa
+click Ekran
+click Ciemny
+wait 1600
+assert_palette dark
+click ←
+click Panel
+wait 300
+snapshot premium-panel-dark
+click Plan dnia
+wait 300
+snapshot premium-plan-dark
+click Historia
+wait 300
+snapshot premium-history-dark
+click Serwis
+wait 300
+snapshot premium-service-dark
+click System
+wait 300
+snapshot premium-system-dark

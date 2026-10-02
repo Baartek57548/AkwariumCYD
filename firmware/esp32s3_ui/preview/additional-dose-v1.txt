@@ -1,0 +1,38 @@
+click Karmienie
+wait 2500
+assert_feed 1 3
+click Kolejna dawka / PIN
+assert Dodatkowa dawka
+wait 400
+snapshot additional-dose-pin
+click 1
+click 2
+click 3
+click 4
+click OK
+assert Błędny PIN administratora.
+assert_feed 1 3
+assert Dodatkowa dawka
+click 2
+click 1
+click 7
+click 7
+click OK
+assert_feed 2 2
+assert Karmienie w toku
+snapshot additional-dose-active
+advance 300000
+assert_feed 2 3
+assert Kolejna dawka / PIN
+click Kolejna dawka / PIN
+assert Dodatkowa dawka
+click Anuluj
+assert_feed 2 3
+click Kolejna dawka / PIN
+click 2
+click 1
+click 7
+click 7
+click OK
+assert_feed 3 2
+snapshot additional-dose-after-pause

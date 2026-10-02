@@ -1,0 +1,113 @@
+click System
+click Urządzenie
+click Mapa sprzętu
+snapshot v8-hardware
+click Lampa przednia
+assert Sterowanie w serwisie →
+click System
+click Urządzenie
+click Mapa sprzętu
+click Lampa tylna
+click System
+click Urządzenie
+click Mapa sprzętu
+click Filtr
+click System
+click Urządzenie
+click Mapa sprzętu
+click Napowietrzanie
+click System
+click Urządzenie
+click Mapa sprzętu
+click Grzałka
+click System
+click Urządzenie
+click Mapa sprzętu
+click Karmnik
+click System
+click Urządzenie
+click Mapa sprzętu
+click Elektrozawór CO2
+click System
+click Urządzenie
+click Mapa sprzętu
+click Poziom wody / ATO
+assert_contains niepełna
+click System
+click Urządzenie
+click Mapa sprzętu
+click Przepływ
+click System
+click Urządzenie
+click Mapa sprzętu
+click Pomiar pH
+click System
+click Urządzenie
+click Mapa sprzętu
+click Przewodność EC
+click Zakres normy →
+tap 723 216
+wait 1600
+assert Zapisano automatycznie
+snapshot v8-range-ec
+click Wróć
+click System
+click Sieć i czas
+click Sieć Wi-Fi
+click AquaBox AP
+wait 1600
+assert AquaBox AP
+click Pokaż hasło AP
+snapshot v8-network-ap
+click Wróć
+restart_ui
+assert AquaBox AP
+click System
+click Sieć i czas
+click Sieć Wi-Fi
+click Wyłączone
+wait 1600
+click Wróć
+click Obsługa
+click Interakcja
+tap 640 260
+wait 1600
+assert Zapisano automatycznie
+snapshot v8-interaction
+click Wróć
+click Obsługa
+click Ekran
+click Test wygaszania
+snapshot v8-sleep
+tap 700 450
+assert Ekran
+assert_disabled System
+click Wróć
+click Urządzenie
+click Diagnostyka
+snapshot v8-diagnostics
+click System
+click Urządzenie
+click Firmware
+click Sprawdź firmware
+assert_contains Kontrola obrazu: poprawna
+wait 4000
+snapshot v8-firmware
+click System
+click Urządzenie
+click Zasilanie i restart
+click Restart panelu
+click Anuluj
+assert_restarts 0
+click Restart panelu
+click Uruchom ponownie
+wait 1000
+assert_restarts 1
+wait 4000
+click Przywróć panel
+click Anuluj
+click Historia
+click Temperatura
+assert_not_contains Wyczyść historię
+snapshot v8-history-cleared
+click Panel

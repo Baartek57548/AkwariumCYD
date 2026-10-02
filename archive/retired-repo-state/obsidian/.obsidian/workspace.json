@@ -1,0 +1,212 @@
+{
+  "main": {
+    "id": "8dfe941411357a66",
+    "type": "split",
+    "children": [
+      {
+        "id": "693102a3dbac56c3",
+        "type": "tabs",
+        "children": [
+          {
+            "id": "a18f6ef683c54cde",
+            "type": "leaf",
+            "state": {
+              "type": "markdown",
+              "state": {
+                "file": "00 - AquaCYD Knowledge Hub.md",
+                "mode": "source",
+                "source": false
+              },
+              "icon": "lucide-file",
+              "title": "00 - AquaCYD Knowledge Hub"
+            }
+          }
+        ]
+      }
+    ],
+    "direction": "vertical"
+  },
+  "left": {
+    "id": "a079039e89d48e38",
+    "type": "split",
+    "children": [
+      {
+        "id": "46239d2758fe5c80",
+        "type": "tabs",
+        "children": [
+          {
+            "id": "a4e6cb492add4320",
+            "type": "leaf",
+            "state": {
+              "type": "file-explorer",
+              "state": {
+                "sortOrder": "alphabetical",
+                "autoReveal": false,
+                "showSearch": false,
+                "searchQuery": ""
+              },
+              "icon": "lucide-folder-closed",
+              "title": "Przeglądarka plików"
+            }
+          },
+          {
+            "id": "587b9a9417da4b6c",
+            "type": "leaf",
+            "state": {
+              "type": "search",
+              "state": {
+                "query": "tag:#uart",
+                "matchingCase": false,
+                "explainSearch": false,
+                "collapseAll": false,
+                "extraContext": false,
+                "sortOrder": "alphabetical"
+              },
+              "icon": "lucide-search",
+              "title": "Wyszukiwarka"
+            }
+          },
+          {
+            "id": "6f4ab80b2764803a",
+            "type": "leaf",
+            "state": {
+              "type": "bookmarks",
+              "state": {
+                "showSearch": false,
+                "searchQuery": ""
+              },
+              "icon": "lucide-bookmark",
+              "title": "Ulubione"
+            }
+          }
+        ],
+        "currentTab": 1
+      }
+    ],
+    "direction": "horizontal",
+    "width": 300
+  },
+  "right": {
+    "id": "dc842c08288942f8",
+    "type": "split",
+    "children": [
+      {
+        "id": "9c9988ea6ecb26bf",
+        "type": "tabs",
+        "children": [
+          {
+            "id": "10bcf26d9cf3f652",
+            "type": "leaf",
+            "state": {
+              "type": "backlink",
+              "state": {
+                "file": "Hardware - Zasilanie i Przetwornica 5V.md",
+                "collapseAll": false,
+                "extraContext": false,
+                "sortOrder": "alphabetical",
+                "showSearch": false,
+                "searchQuery": "",
+                "backlinkCollapsed": false,
+                "unlinkedCollapsed": true
+              },
+              "icon": "links-coming-in",
+              "title": "Linki zwrotne"
+            }
+          },
+          {
+            "id": "76ecfe014774f55b",
+            "type": "leaf",
+            "state": {
+              "type": "outgoing-link",
+              "state": {
+                "file": "Hardware - Zasilanie i Przetwornica 5V.md",
+                "linksCollapsed": false,
+                "unlinkedCollapsed": true
+              },
+              "icon": "links-going-out",
+              "title": "Łącza wychodzące"
+            }
+          },
+          {
+            "id": "3b134d84c2c7d8a2",
+            "type": "leaf",
+            "state": {
+              "type": "tag",
+              "state": {
+                "sortOrder": "frequency",
+                "useHierarchy": true,
+                "showSearch": false,
+                "searchQuery": ""
+              },
+              "icon": "lucide-tags",
+              "title": "Tagi"
+            }
+          },
+          {
+            "id": "650fa2c18763f5e0",
+            "type": "leaf",
+            "state": {
+              "type": "all-properties",
+              "state": {
+                "sortOrder": "frequency",
+                "showSearch": false,
+                "searchQuery": ""
+              },
+              "icon": "lucide-archive",
+              "title": "Wszystkie atrybuty"
+            }
+          },
+          {
+            "id": "93b5a1a838b47bf7",
+            "type": "leaf",
+            "state": {
+              "type": "outline",
+              "state": {
+                "file": "Hardware - Zasilanie i Przetwornica 5V.md",
+                "followCursor": false,
+                "showSearch": false,
+                "searchQuery": ""
+              },
+              "icon": "lucide-list",
+              "title": "Konspekt"
+            }
+          }
+        ]
+      }
+    ],
+    "direction": "horizontal",
+    "width": 300,
+    "collapsed": true
+  },
+  "left-ribbon": {
+    "hiddenItems": {
+      "switcher:Otwórz okno szybkiego wyboru": false,
+      "graph:Otwórz podgląd grafu": false,
+      "canvas:Stwórz nową tablicę": false,
+      "daily-notes:Otwórz dzisiejszy dziennik": false,
+      "templates:Wstaw szablon": false,
+      "command-palette:Otwórz paletę poleceń": false,
+      "bases:Stwórz nową bazę danych": false
+    }
+  },
+  "active": "a18f6ef683c54cde",
+  "lastOpenFiles": [
+    "Procedura - Programowanie i Wgrywanie Firmware.md",
+    "00 - AquaCYD Knowledge Hub.md",
+    "Firmware - WeMos Hardware I2C.md",
+    "Hardware - Ekspander MCP23017.md",
+    "MOC - Sprzęt i Peryferia.md",
+    "AquaBox - Piętrowy Mostek Przekaźników.md",
+    "Bez nazwy 1.canvas",
+    "Hardware - Zworki UART i Izolacja.md",
+    "Hardware - ESP32 CYD 2432S028R.md",
+    "2026-09-19.md",
+    "Bez nazwy.canvas",
+    "Hardware - Zasilanie i Przetwornica 5V.md",
+    "Firmware - WeMos Termostat i TempControl.md",
+    "MOC - Procedury i Diagnostyka.md",
+    "Protokół - Potwierdzenia ACK i Błędy.md",
+    "Protokół - Katalog Komend i Sterowanie.md",
+    "Protokół - Specyfikacja NDJSON UART.md"
+  ]
+}

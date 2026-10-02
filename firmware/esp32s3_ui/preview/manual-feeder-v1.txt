@@ -1,0 +1,20 @@
+click System
+click Sterowanie
+click Karmnik
+assert Ruch ręczny →
+click Ruch ręczny →
+assert Ruch ręczny
+assert Niepodłączony
+assert_contains Ruch fizyczny jest zablokowany.
+assert_disabled ← 15°
+assert_disabled 15° →
+assert_feed 0 0
+snapshot manual-feeder-disconnected
+tap 100 300
+assert_feed 0 0
+click 45°
+assert_disabled ← 45°
+assert_disabled 45° →
+assert_feed 0 0
+click ←
+assert OBRÓT JEDNEJ DAWKI

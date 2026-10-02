@@ -1,0 +1,156 @@
+assert AquaBox
+assert_page Panel
+assert Wszystko w normie
+assert_contains W zakresie
+assert_not_contains DEMO
+assert_not_contains Lampa
+snapshot home
+click Plan dnia
+snapshot plan
+click Napowietrzanie
+assert Od 22:00
+snapshot schedule
+click Od 22:00
+click + godz.
+click + min.
+assert 23:01
+snapshot time-editor
+click Anuluj
+assert Od 22:00
+click Anuluj
+click Karmienie / 09:00 oraz 18:00
+assert Plan karmienia
+click 2 dawki / dzień
+assert 1 dawka / dzień
+click Anuluj
+assert Karmienie / 09:00 oraz 18:00
+click Panel
+tap 100 205
+assert Grzałka
+click Nastawy termostatu →
+tap 330 217
+assert 25,1°C
+snapshot thermostat
+click Anuluj
+click Panel
+tap 100 205
+click Nastawy termostatu →
+assert 25,0°C
+tap 330 217
+click Zapisz zmiany
+wait 3600
+click Panel
+click Karmienie
+snapshot feed-confirm
+click Rozpocznij karmienie
+wait 3600
+click Serwis
+click Rozpocznij serwis
+click Rozpocznij serwis
+assert_contains jest juz aktywny
+click Anuluj
+wait 3600
+tap 300 70
+click Przywróć AUTO
+wait 3600
+click Tylna
+click Rozpocznij serwis
+click Rozpocznij serwis
+wait 3600
+assert_contains Powrót AUTO za
+assert Druga lampa / WYŁ.
+assert Filtr / WYŁ.
+assert Powietrze / WYŁ.
+assert Grzałka / WYŁ.
+assert CO2 / WYŁ.
+snapshot service-active
+click Druga lampa / WYŁ.
+assert Druga lampa / WŁ.
+click Filtr / WYŁ.
+assert Filtr / WŁ.
+click Przednia
+click Druga lampa / WŁ.
+assert Druga lampa / WYŁ.
+wait 3600
+snapshot service-working
+click Zakończ serwis
+click Przywróć AUTO
+wait 3600
+assert_disabled Druga lampa / WYŁ.
+snapshot service-inactive
+click System
+click Test czujników
+click Aktywne alarmy
+click Panel
+assert Za wysoka temperatura
+assert_contains Za wysoko
+snapshot alarms-home
+click Za wysoka temperatura
+assert Centrum uwagi
+snapshot alarms
+click Potwierdź odczytanie
+assert_contains przyczyny nadal
+wait 3600
+snapshot acknowledged
+click System
+click Test czujników
+click Brak łącza
+click Panel
+assert Brak łącza ze sterownikiem
+assert_contains Brak danych
+snapshot offline
+click System
+click Test czujników
+click Niski poziom wody
+click Panel
+assert Niski poziom wody
+snapshot water-low
+click System
+click Test czujników
+click Sprzeczne pływaki
+click Panel
+assert Sprzeczne wskazania pływaków
+snapshot water-fault
+click System
+click Test czujników
+click Normalna praca
+click Historia
+snapshot history
+click pH
+click EC
+click Zdarzenia
+snapshot logs
+click System
+click Ekran
+click Wyłączone
+click Zapisz zmiany
+wait 3600
+click Panel
+snapshot night
+restart_ui
+assert Wszystko w normie
+snapshot persisted-night
+click System
+click Ekran
+assert Włączone
+click Włączone
+click Zapisz zmiany
+wait 3600
+click System
+click PIN i dostęp
+click Wyłączone
+click Zapisz zmiany
+wait 3600
+click Plan dnia
+click Lampa przednia
+assert Odblokuj edycję
+snapshot pin
+click 1
+click 2
+click 3
+click 4
+click OK
+assert Od 09:00
+click Anuluj
+click Panel
+snapshot final-home

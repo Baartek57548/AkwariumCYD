@@ -1,0 +1,1532 @@
+<!DOCTYPE html>
+<html lang="pl">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+  <meta name="theme-color" content="#0B1017">
+  <title>AquaCYD - Sterownik Akwarium (ESP32 CYD + WeMos D1 R3)</title>
+  <link rel="icon" type="image/svg+xml" href="assets/favicon.svg">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+  <!-- Główny Kontener Aplikacji -->
+  <div class="app-root">
+
+    <!-- Boczny Pasek Nawigacji (Desktop Sidebar 220px) -->
+    <aside class="sidebar">
+      <div class="brand-header">
+        <div class="brand-logo-box">
+          <svg viewBox="0 0 24 24" width="20" height="20" stroke="currentColor" fill="none" stroke-width="2">
+            <path d="M12 2.69l5.66 5.66a8 8 0 1 1-11.31 0z"/>
+          </svg>
+        </div>
+        <div class="brand-titles">
+          <h1>AquaCYD</h1>
+          <span>ESP32 CYD + WeMos R3</span>
+        </div>
+      </div>
+
+      <ul class="nav-menu">
+        <li>
+          <button class="nav-link active" data-view="dashboard">
+            <svg viewBox="0 0 24 24">
+              <rect x="3" y="3" width="7" height="9" rx="1"/>
+              <rect x="14" y="3" width="7" height="5" rx="1"/>
+              <rect x="14" y="12" width="7" height="9" rx="1"/>
+              <rect x="3" y="16" width="7" height="5" rx="1"/>
+            </svg>
+            <span>Pulpit</span>
+          </button>
+        </li>
+        <li>
+          <button class="nav-link" data-view="controls">
+            <svg viewBox="0 0 24 24">
+              <circle cx="12" cy="12" r="3"/>
+              <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/>
+            </svg>
+            <span>Sterowanie</span>
+          </button>
+        </li>
+        <li>
+          <button class="nav-link" data-view="schedules">
+            <svg viewBox="0 0 24 24">
+              <rect x="3" y="4" width="18" height="18" rx="2"/>
+              <line x1="16" y1="2" x2="16" y2="6"/>
+              <line x1="8" y1="2" x2="8" y2="6"/>
+              <line x1="3" y1="10" x2="21" y2="10"/>
+            </svg>
+            <span>Harmonogramy</span>
+          </button>
+        </li>
+        <li>
+          <button class="nav-link" data-view="charts">
+            <svg viewBox="0 0 24 24">
+              <line x1="18" y1="20" x2="18" y2="10"/>
+              <line x1="12" y1="20" x2="12" y2="4"/>
+              <line x1="6" y1="20" x2="6" y2="14"/>
+            </svg>
+            <span>Wykresy</span>
+          </button>
+        </li>
+        <li>
+          <button class="nav-link" data-view="diagnostics">
+            <svg viewBox="0 0 24 24">
+              <polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/>
+            </svg>
+            <span>Diagnostyka</span>
+          </button>
+        </li>
+        <li>
+          <button class="nav-link" data-view="settings">
+            <svg viewBox="0 0 24 24">
+              <rect x="2" y="3" width="20" height="14" rx="2"/>
+              <line x1="8" y1="21" x2="16" y2="21"/>
+              <line x1="12" y1="17" x2="12" y2="21"/>
+            </svg>
+            <span>Ustawienia & OTA</span>
+          </button>
+        </li>
+      </ul>
+
+      <div class="sidebar-footer">
+        <div>System: <strong>AquaCYD v2.4.0</strong></div>
+        <div>Sprzęt: <strong>ESP32 CYD + WeMos R3</strong></div>
+        <div>Pamięć: <strong>Flash PROGMEM (No-SD)</strong></div>
+      </div>
+    </aside>
+
+    <!-- Główny Kontener Treści -->
+    <div class="main-wrapper">
+
+      <!-- Pasek Górny (Topbar) -->
+      <header class="topbar">
+        <div class="topbar-left">
+          <h2 class="view-title" id="current-view-title">Pulpit Systemu</h2>
+        </div>
+
+        <div class="topbar-right">
+          <!-- Pigułka Kontrolera CYD -->
+          <div class="status-pill online" id="pill-controller" title="Główny sterownik ESP32 CYD (Web Server & UI)">
+            <span class="dot"></span>
+            <span id="pill-controller-text">CYD Online</span>
+          </div>
+
+          <!-- Pigułka WeMos D1 R3 (ESP8266) UART -->
+          <div class="status-pill online" id="pill-wemos-link" title="Sterownik wykonawczy WeMos D1 R3 (UART 115200)">
+            <span class="dot"></span>
+            <span id="pill-wemos-link-text">WeMos UART OK</span>
+          </div>
+
+          <!-- Pigułka Sieci Wi-Fi -->
+          <div class="status-pill" id="pill-network" title="Połączenie sieciowe Wi-Fi">
+            <span class="dot"></span>
+            <span id="pill-network-text">Wi-Fi STA (-58 dBm)</span>
+          </div>
+
+          <!-- Pigułka Zegara RTC -->
+          <div class="status-pill clickable" id="pill-clock" title="Kliknij, aby zsynchronizować zegar z przeglądarką">
+            <span id="pill-clock-text">--:--:--</span>
+          </div>
+        </div>
+      </header>
+
+      <!-- Główny Obszar Treści -->
+      <main class="content-area">
+
+        <!-- Pasek Ostrzegawczy Braku Łączności ze Sterownikiem -->
+        <div class="offline-banner" id="offline-banner" style="display: none;">
+          <svg viewBox="0 0 24 24" width="16" height="16" stroke="currentColor" fill="none" stroke-width="2">
+            <circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/>
+          </svg>
+          <span id="offline-banner-text">Brak łączności ze sterownikiem ESP32 CYD / WeMos. Ponawianie próby połączenia...</span>
+        </div>
+
+        <!-- ====================================================================
+             WIDOK 1: PULPIT (Overview 2–3 Sekundy)
+             ==================================================================== -->
+        <section class="view-panel active" id="view-dashboard">
+
+          <!-- 1. System Health Banner (Podsumowanie 2-3 sekundy) -->
+          <div class="system-health-banner">
+            <div class="health-status-group">
+              <div class="health-indicator">
+                <span class="health-indicator-badge safe" id="system-health-badge">
+                  <span class="state-dot" style="background-color: var(--color-success);"></span>
+                  AKWARIUM: BEZPIECZNE
+                </span>
+              </div>
+              <div class="health-meta">
+                <div class="health-meta-item">
+                  <span>Sterownik CYD:</span>
+                  <strong id="system-controller-badge">ONLINE</strong>
+                </div>
+                <div class="health-meta-item">
+                  <span>Moduł WeMos R3:</span>
+                  <strong id="system-wemos-badge" style="color: var(--color-success);">POŁĄCZONY (UART)</strong>
+                </div>
+                <div class="health-meta-item">
+                  <span>Tryb pracy:</span>
+                  <strong id="system-mode-badge">AUTOMATYKA</strong>
+                </div>
+                <div class="health-meta-item">
+                  <span>Odświeżenie:</span>
+                  <span id="system-last-refresh">1 s temu</span>
+                </div>
+              </div>
+            </div>
+
+            <div class="health-actions">
+              <button class="btn btn-secondary btn-sm" id="btn-refresh-dashboard" title="Wymuś natychmiastowe odświeżenie danych">
+                <svg viewBox="0 0 24 24" width="14" height="14" stroke="currentColor" fill="none" stroke-width="2">
+                  <path d="M21.5 2v6h-6M21.34 15.57a10 10 0 1 1-.57-8.38l5.67-5.67"/>
+                </svg>
+                Odśwież
+              </button>
+            </div>
+          </div>
+
+          <!-- 2. Pasek Bezpieczeństwa i Alarmów (Alarms Strip) -->
+          <div class="alarms-strip clean" id="alarms-strip">
+            <div class="alarms-strip-content">
+              <svg viewBox="0 0 24 24" id="alarms-strip-icon">
+                <polyline points="20 6 9 17 4 12"/>
+              </svg>
+              <span id="alarms-strip-text">Wszystkie parametry w normie. Brak aktywnych alarmów operacyjnych.</span>
+            </div>
+            <button class="btn btn-danger btn-sm" id="btn-clear-alarms" style="display: none;">
+              Potwierdź i Skasuj Logi
+            </button>
+          </div>
+
+          <!-- 3. Kluczowe Metryki Sensoryczne (4 Kolumny) -->
+          <div class="metrics-row">
+            <!-- Temperatura Wody -->
+            <div class="metric-panel clickable-card" id="card-metric-temp" data-target-series="temp" title="Kliknij, aby otworzyć wykres temperatury">
+              <div class="metric-panel-header">
+                <span class="metric-label">Temperatura Wody</span>
+                <svg class="metric-icon" viewBox="0 0 24 24" stroke="currentColor" fill="none" stroke-width="2">
+                  <path d="M14 14.76V3.5a2.5 2.5 0 0 0-5 0v11.26a4.5 4.5 0 1 0 5 0z"/>
+                </svg>
+              </div>
+              <div class="metric-val-wrap">
+                <span class="metric-val-large" id="val-temperature">24.8</span>
+                <span class="metric-unit-large">°C</span>
+              </div>
+              <div class="metric-footer">
+                <span id="sub-temp-target">Zadana: 25.0 °C (±0.3)</span>
+                <span class="tag-status ok" id="chip-temp-status">○ Czuwanie</span>
+              </div>
+            </div>
+
+            <!-- Odczyn pH -->
+            <div class="metric-panel clickable-card" id="card-metric-ph" data-target-series="ph" title="Kliknij, aby otworzyć wykres pH">
+              <div class="metric-panel-header">
+                <span class="metric-label">Odczyn pH</span>
+                <svg class="metric-icon" viewBox="0 0 24 24" stroke="currentColor" fill="none" stroke-width="2">
+                  <path d="M6 3v12a6 6 0 0 0 12 0V3"/>
+                </svg>
+              </div>
+              <div class="metric-val-wrap">
+                <span class="metric-val-large" id="val-ph">6.85</span>
+                <span class="metric-unit-large">pH</span>
+              </div>
+              <div class="metric-footer">
+                <span id="sub-ph-buffer">Zakres: 6.50 – 7.20</span>
+                <span class="tag-status ok" id="chip-ph-status">Optymalne</span>
+              </div>
+            </div>
+
+            <!-- Przewodność EC -->
+            <div class="metric-panel clickable-card" id="card-metric-ec" data-target-series="ec" title="Kliknij, aby otworzyć wykres EC">
+              <div class="metric-panel-header">
+                <span class="metric-label">Przewodność EC</span>
+                <svg class="metric-icon" viewBox="0 0 24 24" stroke="currentColor" fill="none" stroke-width="2">
+                  <polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/>
+                </svg>
+              </div>
+              <div class="metric-val-wrap">
+                <span class="metric-val-large" id="val-ec">450</span>
+                <span class="metric-unit-large">µS/cm</span>
+              </div>
+              <div class="metric-footer">
+                <span id="sub-ec-tds">TDS: ~225 ppm</span>
+                <span class="tag-status ok" id="chip-ec-status">Komp. 25°C</span>
+              </div>
+            </div>
+
+            <!-- Poziom Wody (ATO) -->
+            <div class="metric-panel clickable-card" id="card-metric-water" data-target-view="controls" title="Kliknij, aby przejść do sterowania dolewką">
+              <div class="metric-panel-header">
+                <span class="metric-label">Poziom Wody (ATO)</span>
+                <svg class="metric-icon" viewBox="0 0 24 24" stroke="currentColor" fill="none" stroke-width="2">
+                  <path d="M12 2.69l5.66 5.66a8 8 0 1 1-11.31 0z"/>
+                </svg>
+              </div>
+              <div class="metric-val-wrap">
+                <span class="metric-val-large" id="val-water-level" style="font-size: 22px;">Prawidłowy</span>
+              </div>
+              <div class="metric-footer">
+                <span id="sub-water-pump">Pompa: Czuwa</span>
+                <span class="tag-status ok" id="chip-water-status">Pływak OK</span>
+              </div>
+            </div>
+          </div>
+
+          <!-- Pasek Metryk Pomocniczych (LDR, Zasilanie, Przepływ) -->
+          <div class="ecosystem-strip" style="margin-bottom: var(--space-5);">
+            <div class="ecosystem-nodes">
+              <div class="eco-node">
+                <span>Światło otoczenia LDR:</span>
+                <strong id="val-ldr">68%</strong>
+                <span class="tag-status ok" style="margin-left: 4px;">Dzień</span>
+              </div>
+              <div class="eco-node">
+                <span>Szyna zasilania:</span>
+                <strong id="val-power">5.04 V</strong>
+                <span class="tag-status ok" style="margin-left: 4px;">Stabilne</span>
+              </div>
+              <div class="eco-node">
+                <span>Przepływ filtra:</span>
+                <strong id="val-flow">Prawidłowy</strong>
+                <span class="tag-status ok" style="margin-left: 4px;">Ciągły</span>
+              </div>
+            </div>
+            <div style="font-size: 11px; color: var(--text-muted);">
+              WeMos D1: ADS1115 (0x48) | MCP23017 (0x20) | DS18B20 OneWire
+            </div>
+          </div>
+
+          <!-- 4. Macierz Stanu Urządzeń (Equipment Status Matrix) -->
+          <div class="section-panel">
+            <div class="section-panel-header">
+              <div class="section-panel-title">
+                <svg viewBox="0 0 24 24" width="16" height="16" stroke="currentColor" fill="none" stroke-width="2">
+                  <rect x="2" y="7" width="20" height="14" rx="2" ry="2"/>
+                  <path d="M16 21V5a2 2 0 0 0-2-2h-4a2 2 0 0 0-2 2v16"/>
+                </svg>
+                Stan Urządzeń i Obwodów Wykonawczych MCP23017 (8 Kanałów)
+              </div>
+              <button class="btn btn-secondary btn-sm" id="btn-goto-controls">
+                Przejdź do Sterowania
+              </button>
+            </div>
+
+            <div class="table-responsive">
+              <table class="data-table">
+                <thead>
+                  <tr>
+                    <th>Urządzenie</th>
+                    <th>Tryb Sterowania</th>
+                    <th>Stan Fizyczny</th>
+                    <th>Szczegóły / Harmonogram</th>
+                    <th>Kanał Sprzętowy</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <!-- 1. Filtr Kanistrowy -->
+                  <tr>
+                    <td>
+                      <div class="device-name-cell">
+                        <div class="device-icon-wrap">
+                          <svg viewBox="0 0 24 24" width="16" height="16" stroke="currentColor" fill="none" stroke-width="2">
+                            <circle cx="12" cy="12" r="10"/>
+                            <path d="M8 12a4 4 0 0 1 8 0"/>
+                          </svg>
+                        </div>
+                        <div>
+                          <strong>Filtr Kanistrowy</strong>
+                          <div style="font-size: 11px; color: var(--text-muted);">Pompa obiegowa 230V</div>
+                        </div>
+                      </div>
+                    </td>
+                    <td><span class="mode-badge auto" id="eq-filter-mode">AUTO</span></td>
+                    <td>
+                      <span class="state-badge state-on" id="eq-filter-state">
+                        <span class="state-dot"></span> WŁĄCZONY
+                      </span>
+                    </td>
+                    <td id="eq-filter-meta">Ciągła filtracja (24h/dobę)</td>
+                    <td><span class="tag-status ok">MCP K3 (GPA2)</span></td>
+                  </tr>
+
+                  <!-- 2. Grzałka Akwarium -->
+                  <tr>
+                    <td>
+                      <div class="device-name-cell">
+                        <div class="device-icon-wrap">
+                          <svg viewBox="0 0 24 24" width="16" height="16" stroke="currentColor" fill="none" stroke-width="2">
+                            <path d="M14 14.76V3.5a2.5 2.5 0 0 0-5 0v11.26a4.5 4.5 0 1 0 5 0z"/>
+                          </svg>
+                        </div>
+                        <div>
+                          <strong>Grzałka Akwarium</strong>
+                          <div style="font-size: 11px; color: var(--text-muted);">Termostat progowy z histerezą</div>
+                        </div>
+                      </div>
+                    </td>
+                    <td><span class="mode-badge auto" id="eq-heater-mode">AUTO</span></td>
+                    <td>
+                      <span class="state-badge state-off" id="eq-heater-state">
+                        <span class="state-dot"></span> WYŁĄCZONA
+                      </span>
+                    </td>
+                    <td id="eq-heater-meta">Temp. w normie (24.8 / 25.0 °C)</td>
+                    <td><span class="tag-status ok">MCP K5 (GPA4)</span></td>
+                  </tr>
+
+                  <!-- 3. Światło Główne (Aquael) -->
+                  <tr>
+                    <td>
+                      <div class="device-name-cell">
+                        <div class="device-icon-wrap">
+                          <svg viewBox="0 0 24 24" width="16" height="16" stroke="currentColor" fill="none" stroke-width="2">
+                            <circle cx="12" cy="12" r="5"/>
+                            <line x1="12" y1="1" x2="12" y2="3"/>
+                            <line x1="12" y1="21" x2="12" y2="23"/>
+                          </svg>
+                        </div>
+                        <div>
+                          <strong>Światło Główne (Aquael)</strong>
+                          <div style="font-size: 11px; color: var(--text-muted);">Leddy Slim (Słoneczny / Świt / Noc)</div>
+                        </div>
+                      </div>
+                    </td>
+                    <td><span class="mode-badge auto" id="eq-light1-mode">AUTO</span></td>
+                    <td>
+                      <span class="state-badge state-on" id="eq-light1-state">
+                        <span class="state-dot"></span> WŁĄCZONE
+                      </span>
+                    </td>
+                    <td id="eq-light1-meta">Profil Słoneczny 100% (do 21:00)</td>
+                    <td><span class="tag-status ok">MCP K1 (GPA0)</span></td>
+                  </tr>
+
+                  <!-- 4. Światło Roślinne -->
+                  <tr>
+                    <td>
+                      <div class="device-name-cell">
+                        <div class="device-icon-wrap">
+                          <svg viewBox="0 0 24 24" width="16" height="16" stroke="currentColor" fill="none" stroke-width="2">
+                            <path d="M12 2a9 9 0 0 1 9 9c0 5-4 9-9 9s-9-4-9-9a9 9 0 0 1 9-9z"/>
+                          </svg>
+                        </div>
+                        <div>
+                          <strong>Światło Roślinne</strong>
+                          <div style="font-size: 11px; color: var(--text-muted);">Sekcja LED Plant</div>
+                        </div>
+                      </div>
+                    </td>
+                    <td><span class="mode-badge auto" id="eq-light2-mode">AUTO</span></td>
+                    <td>
+                      <span class="state-badge state-on" id="eq-light2-state">
+                        <span class="state-dot"></span> WŁĄCZONE
+                      </span>
+                    </td>
+                    <td id="eq-light2-meta">Harmonogram: 10:00 – 19:00</td>
+                    <td><span class="tag-status ok">MCP K2 (GPA1)</span></td>
+                  </tr>
+
+                  <!-- 5. Napowietrzanie -->
+                  <tr>
+                    <td>
+                      <div class="device-name-cell">
+                        <div class="device-icon-wrap">
+                          <svg viewBox="0 0 24 24" width="16" height="16" stroke="currentColor" fill="none" stroke-width="2">
+                            <path d="M5 12.55a11 11 0 0 1 14.08 0"/>
+                            <path d="M8.53 16.11a6 6 0 0 1 6.95 0"/>
+                          </svg>
+                        </div>
+                        <div>
+                          <strong>Napowietrzanie (Aerator)</strong>
+                          <div style="font-size: 11px; color: var(--text-muted);">Kurtyna powietrzna nocna</div>
+                        </div>
+                      </div>
+                    </td>
+                    <td><span class="mode-badge auto" id="eq-air-mode">AUTO</span></td>
+                    <td>
+                      <span class="state-badge state-off" id="eq-air-state">
+                        <span class="state-dot"></span> WYŁĄCZONE
+                      </span>
+                    </td>
+                    <td id="eq-air-meta">Cykl nocny: start 23:00</td>
+                    <td><span class="tag-status ok">MCP K4 (GPA3)</span></td>
+                  </tr>
+
+                  <!-- 6. Elektrozawór CO2 -->
+                  <tr>
+                    <td>
+                      <div class="device-name-cell">
+                        <div class="device-icon-wrap">
+                          <svg viewBox="0 0 24 24" width="16" height="16" stroke="currentColor" fill="none" stroke-width="2">
+                            <polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/>
+                          </svg>
+                        </div>
+                        <div>
+                          <strong>Elektrozawór CO2</strong>
+                          <div style="font-size: 11px; color: var(--text-muted);">Dozowanie sprzężone z pH</div>
+                        </div>
+                      </div>
+                    </td>
+                    <td><span class="mode-badge auto" id="eq-co2-mode">AUTO</span></td>
+                    <td>
+                      <span class="state-badge state-off" id="eq-co2-state">
+                        <span class="state-dot"></span> ZAMKNIĘTY
+                      </span>
+                    </td>
+                    <td id="eq-co2-meta">pH (6.85) poniżej limitu odcięcia</td>
+                    <td><span class="tag-status ok">MCP K6 (GPA5)</span></td>
+                  </tr>
+
+                  <!-- 7. Dolewka Wody ATO -->
+                  <tr>
+                    <td>
+                      <div class="device-name-cell">
+                        <div class="device-icon-wrap">
+                          <svg viewBox="0 0 24 24" width="16" height="16" stroke="currentColor" fill="none" stroke-width="2">
+                            <path d="M12 2.69l5.66 5.66a8 8 0 1 1-11.31 0z"/>
+                          </svg>
+                        </div>
+                        <div>
+                          <strong>Automatyczna Dolewka (ATO)</strong>
+                          <div style="font-size: 11px; color: var(--text-muted);">Pompa uzupełniania odparowanej wody</div>
+                        </div>
+                      </div>
+                    </td>
+                    <td><span class="mode-badge auto" id="eq-ato-mode">AUTO</span></td>
+                    <td>
+                      <span class="state-badge state-off" id="eq-ato-state">
+                        <span class="state-dot"></span> CZUWANIE
+                      </span>
+                    </td>
+                    <td id="eq-ato-meta">Pływak w pozycji wysokiej (zbiornik pełny)</td>
+                    <td><span class="tag-status ok">MCP K7 (GPA6)</span></td>
+                  </tr>
+
+                  <!-- 8. Karmnik Automatyczny -->
+                  <tr>
+                    <td>
+                      <div class="device-name-cell">
+                        <div class="device-icon-wrap">
+                          <svg viewBox="0 0 24 24" width="16" height="16" stroke="currentColor" fill="none" stroke-width="2">
+                            <path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/>
+                          </svg>
+                        </div>
+                        <div>
+                          <strong>Karmnik Automatyczny</strong>
+                          <div style="font-size: 11px; color: var(--text-muted);">Dozownik obrotowy pokarmu</div>
+                        </div>
+                      </div>
+                    </td>
+                    <td><span class="mode-badge auto" id="eq-feeder-mode">AUTO</span></td>
+                    <td>
+                      <span class="state-badge state-off" id="eq-feeder-state">
+                        <span class="state-dot"></span> GOTOWY
+                      </span>
+                    </td>
+                    <td id="eq-feeder-meta">Ostatnia dawka: 14:00 | Następna: jutro 14:00</td>
+                    <td><span class="tag-status ok">WeMos D1 (GPIO)</span></td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+          <!-- 5. Pasek Łączności Urządzeń (ESP32 CYD ⟷ WeMos D1 R3) -->
+          <div class="ecosystem-strip">
+            <div class="ecosystem-nodes">
+              <div class="eco-node active clickable-node" data-target-view="diagnostics" title="Kliknij, aby otworzyć diagnostykę ESP32 CYD">
+                <span class="state-dot" style="background-color: var(--color-success);"></span>
+                <span>ESP32 CYD: <strong>Główny Sterownik & Web (Dual-Core)</strong></span>
+              </div>
+              <span class="eco-link-arrow">⟷ UART Serial (115200 baud) ⟷</span>
+              <div class="eco-node active clickable-node" data-target-view="diagnostics" title="Kliknij, aby otworzyć diagnostykę WeMos D1 R3">
+                <span class="state-dot" style="background-color: var(--color-success);"></span>
+                <span>WeMos D1 R3: <strong>ESP8266 Sterownik Wykonawczy (I2C/1-Wire)</strong></span>
+              </div>
+            </div>
+            <div style="font-size: 11px; color: var(--text-secondary);">
+              Architektura sprzętowa: CYD + WeMos D1 R3 (Kliknij węzeł, aby przejść do Diagnostyki)
+            </div>
+          </div>
+
+        </section>
+
+        <!-- ====================================================================
+             WIDOK 2: STEROWANIE (Controls)
+             ==================================================================== -->
+        <section class="view-panel" id="view-controls">
+
+          <div class="controls-grid">
+            <!-- Grupa 1: Oświetlenie Akwarium -->
+            <div class="control-group-card">
+              <div class="control-group-header">
+                <div class="control-group-title">
+                  <svg viewBox="0 0 24 24" width="16" height="16" stroke="currentColor" fill="none" stroke-width="2">
+                    <circle cx="12" cy="12" r="5"/>
+                    <line x1="12" y1="1" x2="12" y2="3"/>
+                    <line x1="12" y1="21" x2="12" y2="23"/>
+                  </svg>
+                  Oświetlenie Akwarium
+                </div>
+                <span class="tag-status ok" id="ctrl-lights-summary">Aktywne</span>
+              </div>
+
+              <!-- Lampa 1 (Aquael) -->
+              <div class="control-item">
+                <div class="control-item-info">
+                  <span class="control-item-name">Światło Główne (Aquael Leddy)</span>
+                  <span class="control-item-desc">Sterowanie trybem pracy i profilami barwnymi</span>
+                </div>
+                <div class="btn-group-segmented" id="ctrl-light1-modes">
+                  <button class="seg-btn active" data-mode="auto">AUTO</button>
+                  <button class="seg-btn" data-mode="on">WŁĄCZ</button>
+                  <button class="seg-btn" data-mode="off">WYŁĄCZ</button>
+                </div>
+              </div>
+
+              <!-- Profile barwne Aquael -->
+              <div>
+                <label style="font-size: 11px; color: var(--text-muted); text-transform: uppercase; font-weight: 600; margin-bottom: 4px; display: block;">Profil Oświetlenia Aquael:</label>
+                <div class="profile-selector-row">
+                  <button class="profile-btn active" id="btn-prof-sunny" data-profile="sunny">
+                    <span>☀️</span> Słoneczny 100%
+                  </button>
+                  <button class="profile-btn" id="btn-prof-daybreak" data-profile="daybreak">
+                    <span>🌅</span> Świt 50%
+                  </button>
+                  <button class="profile-btn" id="btn-prof-night" data-profile="night">
+                    <span>🌙</span> Nocny (Niebieski)
+                  </button>
+                </div>
+              </div>
+
+              <div style="display: flex; justify-content: flex-end;">
+                <button class="btn btn-secondary btn-sm" id="btn-sync-aquael">
+                  <svg viewBox="0 0 24 24" width="14" height="14" stroke="currentColor" fill="none" stroke-width="2">
+                    <path d="M21.5 2v6h-6M21.34 15.57a10 10 0 1 1-.57-8.38l5.67-5.67"/>
+                  </svg>
+                  Synchronizuj Cykl Aquael
+                </button>
+              </div>
+
+              <!-- Lampa 2 (Roślinna) -->
+              <div class="control-item" style="margin-top: var(--space-2);">
+                <div class="control-item-info">
+                  <span class="control-item-name">Światło Roślinne (Plant LED)</span>
+                  <span class="control-item-desc">Dedykowane spektrum dla fotosyntezy roślin</span>
+                </div>
+                <div class="btn-group-segmented" id="ctrl-light2-modes">
+                  <button class="seg-btn active" data-mode="auto">AUTO</button>
+                  <button class="seg-btn" data-mode="on">WŁĄCZ</button>
+                  <button class="seg-btn" data-mode="off">WYŁĄCZ</button>
+                </div>
+              </div>
+            </div>
+
+            <!-- Grupa 2: Urządzenia Krytyczne (Zabezpieczone) -->
+            <div class="control-group-card">
+              <div class="control-group-header">
+                <div class="control-group-title">
+                  <svg viewBox="0 0 24 24" width="16" height="16" stroke="currentColor" fill="none" stroke-width="2">
+                    <rect x="3" y="11" width="18" height="11" rx="2" ry="2"/>
+                    <path d="M7 11V7a5 5 0 0 1 10 0v4"/>
+                  </svg>
+                  Urządzenia Krytyczne Akwarium
+                </div>
+                <span class="tag-status warn">Wymaga potwierdzenia</span>
+              </div>
+
+              <!-- Filtr Kanistrowy (Zabezpieczony) -->
+              <div class="control-item">
+                <div class="control-item-info">
+                  <span class="control-item-name">Filtr Kanistrowy (Pompa)</span>
+                  <span class="control-item-desc">Wyłączenie grozi zatrzymaniem flory bakteryjnej</span>
+                </div>
+                <button class="btn btn-secondary btn-sm" id="btn-toggle-filter">
+                  <span class="state-dot" style="background-color: var(--color-success);"></span>
+                  Włączony (Kliknij, aby zmienić)
+                </button>
+              </div>
+
+              <!-- Termostat Grzałki -->
+              <div class="control-item">
+                <div class="control-item-info">
+                  <span class="control-item-name">Grzałka (Termostat)</span>
+                  <span class="control-item-desc">Automatyczna regulacja progowa (Cel: 25.0 °C)</span>
+                </div>
+                <div class="btn-group-segmented" id="ctrl-heater-modes">
+                  <button class="seg-btn active" data-mode="auto">AUTO</button>
+                  <button class="seg-btn" data-mode="off">WYŁĄCZ</button>
+                </div>
+              </div>
+
+              <!-- Elektrozawór CO2 -->
+              <div class="control-item">
+                <div class="control-item-info">
+                  <span class="control-item-name">Elektrozawór CO2</span>
+                  <span class="control-item-desc">Dozowanie dwutlenku węgla (pH optymalne)</span>
+                </div>
+                <div class="btn-group-segmented" id="ctrl-co2-modes">
+                  <button class="seg-btn active" data-mode="auto">AUTO</button>
+                  <button class="seg-btn" data-mode="off">ZAMKNIĘTY</button>
+                </div>
+              </div>
+
+              <!-- Dolewka ATO -->
+              <div class="control-item">
+                <div class="control-item-info">
+                  <span class="control-item-name">Dolewka Wody (ATO)</span>
+                  <span class="control-item-desc">Ręczny test pompy z natychmiastowym wyłącznikiem awaryjnym</span>
+                </div>
+                <button class="btn btn-secondary btn-sm" id="btn-test-ato" data-running="false">
+                  <span id="btn-test-ato-label">Uruchom Test (10s)</span>
+                </button>
+              </div>
+            </div>
+          </div>
+
+          <!-- Grupa 3: Operacja Niebezpieczna - Karmnik Automatyczny -->
+          <div class="control-group-card" style="margin-bottom: var(--space-5);">
+            <div class="control-group-header">
+              <div class="control-group-title">
+                <svg viewBox="0 0 24 24" width="16" height="16" stroke="currentColor" fill="none" stroke-width="2">
+                  <path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/>
+                </svg>
+                Karmnik Automatyczny - Wywołanie Dawki
+              </div>
+              <span class="tag-status ok">Mechanizm gotowy</span>
+            </div>
+
+            <div class="stateful-action-box">
+              <div class="stateful-action-desc">
+                <h4>Wydanie pojedynczej porcji pokarmu</h4>
+                <p>Kliknięcie natychmiast blokuje przycisk przed podwójnym wykonaniem, wysyła komendę UART do WeMos i odlicza 3 sekundy cyklu dozowania.</p>
+                <div style="margin-top: 6px; font-size: 11px; color: var(--text-secondary);" id="feeder-last-info">
+                  Ostatnie karmienie: <strong id="val-last-feed-time">Dzisiaj 14:00</strong>
+                </div>
+              </div>
+              <button class="btn-feeder" id="btn-feed-now">
+                <svg viewBox="0 0 24 24" width="16" height="16" stroke="currentColor" fill="none" stroke-width="2">
+                  <polygon points="5 3 19 12 5 21 5 3"/>
+                </svg>
+                <span>Nakarm Teraz</span>
+              </button>
+            </div>
+          </div>
+
+          <!-- Grupa 4: Sprzętowy Tester Przekaźników WeMos MCP23017 (K1–K8) -->
+          <div class="control-group-card">
+            <div class="control-group-header">
+              <div class="control-group-title">
+                <svg viewBox="0 0 24 24" width="16" height="16" stroke="currentColor" fill="none" stroke-width="2">
+                  <polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/>
+                </svg>
+                Sprzętowy Test Przekaźników WeMos D1 R3 (MCP23017 K1–K8)
+              </div>
+              <span class="tag-status warn">Impuls 3 sekundy przez UART</span>
+            </div>
+            <p style="font-size: 12px; color: var(--text-secondary); margin-bottom: var(--space-3);">
+              Kliknięcie wybranego kanału załącza przekaźnik na 3 sekundy. Zielona kropka wskazuje aktualnie załączone obwody.
+            </p>
+
+            <div class="relay-tester-grid">
+              <button class="btn-relay-test" data-relay="1" id="btn-test-k1">
+                <div class="relay-test-header">
+                  <strong>K1: Światło 1</strong>
+                  <span class="relay-status-dot" id="dot-relay-1" title="Stan: Wyłączony"></span>
+                </div>
+                <span class="relay-test-action" id="action-relay-1">Test 3s</span>
+              </button>
+              <button class="btn-relay-test" data-relay="2" id="btn-test-k2">
+                <div class="relay-test-header">
+                  <strong>K2: Światło 2</strong>
+                  <span class="relay-status-dot" id="dot-relay-2" title="Stan: Wyłączony"></span>
+                </div>
+                <span class="relay-test-action" id="action-relay-2">Test 3s</span>
+              </button>
+              <button class="btn-relay-test" data-relay="3" id="btn-test-k3">
+                <div class="relay-test-header">
+                  <strong>K3: Filtr</strong>
+                  <span class="relay-status-dot" id="dot-relay-3" title="Stan: Wyłączony"></span>
+                </div>
+                <span class="relay-test-action" id="action-relay-3">Test 3s</span>
+              </button>
+              <button class="btn-relay-test" data-relay="4" id="btn-test-k4">
+                <div class="relay-test-header">
+                  <strong>K4: Napowietrzacz</strong>
+                  <span class="relay-status-dot" id="dot-relay-4" title="Stan: Wyłączony"></span>
+                </div>
+                <span class="relay-test-action" id="action-relay-4">Test 3s</span>
+              </button>
+              <button class="btn-relay-test" data-relay="5" id="btn-test-k5">
+                <div class="relay-test-header">
+                  <strong>K5: Grzałka</strong>
+                  <span class="relay-status-dot" id="dot-relay-5" title="Stan: Wyłączony"></span>
+                </div>
+                <span class="relay-test-action" id="action-relay-5">Test 3s</span>
+              </button>
+              <button class="btn-relay-test" data-relay="6" id="btn-test-k6">
+                <div class="relay-test-header">
+                  <strong>K6: Zawór CO2</strong>
+                  <span class="relay-status-dot" id="dot-relay-6" title="Stan: Wyłączony"></span>
+                </div>
+                <span class="relay-test-action" id="action-relay-6">Test 3s</span>
+              </button>
+              <button class="btn-relay-test" data-relay="7" id="btn-test-k7">
+                <div class="relay-test-header">
+                  <strong>K7: Pompa ATO</strong>
+                  <span class="relay-status-dot" id="dot-relay-7" title="Stan: Wyłączony"></span>
+                </div>
+                <span class="relay-test-action" id="action-relay-7">Test 3s</span>
+              </button>
+              <button class="btn-relay-test" data-relay="8" id="btn-test-k8">
+                <div class="relay-test-header">
+                  <strong>K8: Rezerwa</strong>
+                  <span class="relay-status-dot" id="dot-relay-8" title="Stan: Wyłączony"></span>
+                </div>
+                <span class="relay-test-action" id="action-relay-8">Test 3s</span>
+              </button>
+            </div>
+          </div>
+
+        </section>
+
+        <!-- ====================================================================
+             WIDOK 3: HARMONOGRAMY (Schedules)
+             ==================================================================== -->
+        <section class="view-panel" id="view-schedules">
+
+          <!-- 1. Oświetlenie Główne 24h Timeline -->
+          <div class="schedule-card">
+            <div class="schedule-header-row">
+              <div class="schedule-device-title">
+                <svg viewBox="0 0 24 24" width="16" height="16" stroke="currentColor" fill="none" stroke-width="2">
+                  <circle cx="12" cy="12" r="5"/>
+                  <line x1="12" y1="1" x2="12" y2="3"/>
+                  <line x1="12" y1="21" x2="12" y2="23"/>
+                </svg>
+                Oświetlenie Główne (Aquael Leddy)
+              </div>
+              <div class="schedule-times-summary" id="summary-sched-light1">
+                ON: 09:00 — OFF: 21:00 (Czas trwania: 12h 00m)
+              </div>
+            </div>
+
+            <!-- Oś Dobowa -->
+            <div class="timeline-track-wrap">
+              <div class="timeline-axis-labels">
+                <span>00:00</span>
+                <span>04:00</span>
+                <span>08:00</span>
+                <span>12:00</span>
+                <span>16:00</span>
+                <span>20:00</span>
+                <span>24:00</span>
+              </div>
+              <div class="timeline-bar-track">
+                <div class="timeline-active-range" id="timeline-bar-light1" style="left: 37.5%; width: 50%;"></div>
+              </div>
+            </div>
+
+            <div class="schedule-controls-row">
+              <div class="time-input-pair">
+                <label>Załączenie (ON):</label>
+                <input type="time" class="input-time" id="sched-light1-start" value="09:00">
+                <label style="margin-left: 12px;">Wyłączenie (OFF):</label>
+                <input type="time" class="input-time" id="sched-light1-end" value="21:00">
+              </div>
+              <div style="font-size: 11px; color: var(--text-muted);">
+                Profil: Słoneczny (100% fotoperiod)
+              </div>
+            </div>
+          </div>
+
+          <!-- 2. Oświetlenie Roślinne 24h Timeline -->
+          <div class="schedule-card">
+            <div class="schedule-header-row">
+              <div class="schedule-device-title">
+                <svg viewBox="0 0 24 24" width="16" height="16" stroke="currentColor" fill="none" stroke-width="2">
+                  <path d="M12 2a9 9 0 0 1 9 9c0 5-4 9-9 9s-9-4-9-9a9 9 0 0 1 9-9z"/>
+                </svg>
+                Oświetlenie Roślinne (Plant LED)
+              </div>
+              <div class="schedule-times-summary" id="summary-sched-light2">
+                ON: 10:00 — OFF: 19:00 (Czas trwania: 9h 00m)
+              </div>
+            </div>
+
+            <div class="timeline-track-wrap">
+              <div class="timeline-axis-labels">
+                <span>00:00</span>
+                <span>04:00</span>
+                <span>08:00</span>
+                <span>12:00</span>
+                <span>16:00</span>
+                <span>20:00</span>
+                <span>24:00</span>
+              </div>
+              <div class="timeline-bar-track">
+                <div class="timeline-active-range" id="timeline-bar-light2" style="left: 41.6%; width: 37.5%;"></div>
+              </div>
+            </div>
+
+            <div class="schedule-controls-row">
+              <div class="time-input-pair">
+                <label>Załączenie (ON):</label>
+                <input type="time" class="input-time" id="sched-light2-start" value="10:00">
+                <label style="margin-left: 12px;">Wyłączenie (OFF):</label>
+                <input type="time" class="input-time" id="sched-light2-end" value="19:00">
+              </div>
+              <div style="font-size: 11px; color: var(--text-muted);">
+                Optymalne okno fotosyntezy roślin
+              </div>
+            </div>
+          </div>
+
+          <!-- 3. Napowietrzanie 24h Timeline -->
+          <div class="schedule-card">
+            <div class="schedule-header-row">
+              <div class="schedule-device-title">
+                <svg viewBox="0 0 24 24" width="16" height="16" stroke="currentColor" fill="none" stroke-width="2">
+                  <path d="M5 12.55a11 11 0 0 1 14.08 0"/>
+                </svg>
+                Napowietrzanie Nocne (Aerator)
+              </div>
+              <div class="schedule-times-summary" id="summary-sched-air">
+                ON: 23:00 — OFF: 06:30 (Czas trwania: 7h 30m)
+              </div>
+            </div>
+
+            <div class="timeline-track-wrap">
+              <div class="timeline-axis-labels">
+                <span>00:00</span>
+                <span>04:00</span>
+                <span>08:00</span>
+                <span>12:00</span>
+                <span>16:00</span>
+                <span>20:00</span>
+                <span>24:00</span>
+              </div>
+              <div class="timeline-bar-track">
+                <div class="timeline-active-range" id="timeline-bar-air" style="left: 0%; width: 27%;"></div>
+              </div>
+            </div>
+
+            <div class="schedule-controls-row">
+              <div class="time-input-pair">
+                <label>Załączenie (ON):</label>
+                <input type="time" class="input-time" id="sched-air-start" value="23:00">
+                <label style="margin-left: 12px;">Wyłączenie (OFF):</label>
+                <input type="time" class="input-time" id="sched-air-end" value="06:30">
+              </div>
+              <div style="font-size: 11px; color: var(--text-muted);">
+                Zapewnia dotlenienie wody nocą
+              </div>
+            </div>
+          </div>
+
+          <!-- 4. Parametry Termostatu, CO2 i Karmnika -->
+          <div class="controls-grid" style="margin-top: var(--space-4);">
+            <!-- Nastawy Termostatu Akwarium -->
+            <div class="control-group-card">
+              <div class="control-group-header">
+                <div class="control-group-title">
+                  <svg viewBox="0 0 24 24" width="16" height="16" stroke="currentColor" fill="none" stroke-width="2">
+                    <path d="M14 14.76V3.5a2.5 2.5 0 0 0-5 0v11.26a4.5 4.5 0 1 0 5 0z"/>
+                  </svg>
+                  Termostat Akwarium (WeMos R3)
+                </div>
+                <span class="tag-status ok">Sensor DS18B20 OneWire</span>
+              </div>
+
+              <div class="form-row">
+                <label>Temperatura docelowa (°C):</label>
+                <div class="slider-wrapper">
+                  <input type="range" class="slider-range" id="sched-temp-slider" min="20.0" max="30.0" step="0.1" value="25.0">
+                  <input type="number" class="form-input" id="sched-temp-target" min="20.0" max="30.0" step="0.1" value="25.0" style="width: 70px;">
+                </div>
+              </div>
+
+              <div class="form-row">
+                <label>Histereza termostatu (± °C):</label>
+                <input type="number" class="form-input" id="sched-temp-hyst" min="0.10" max="2.00" step="0.05" value="0.30">
+                <span class="form-helper" id="sched-temp-hyst-helper">Grzałka załącza się przy (Cel - Histereza), a wyłącza przy temperaturze docelowej (min. 0.10°C, maks. 2.00°C).</span>
+                <span id="temp-hyst-error" style="display: none; font-size: 11px; color: var(--color-danger); margin-top: 4px;">Histereza musi wynosić od 0.10 do 2.00 °C.</span>
+              </div>
+
+              <div style="display: flex; justify-content: flex-end; margin-top: var(--space-3);">
+                <button class="btn btn-secondary btn-sm" id="btn-save-temp">
+                  <svg viewBox="0 0 24 24" width="14" height="14" stroke="currentColor" fill="none" stroke-width="2">
+                    <path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/>
+                    <polyline points="17 21 17 13 7 13 7 21"/>
+                  </svg>
+                  Zapisz Nastawy Termostatu
+                </button>
+              </div>
+            </div>
+
+            <!-- Harmonogram Karmnika Automatycznego -->
+            <div class="control-group-card">
+              <div class="control-group-header">
+                <div class="control-group-title">
+                  <svg viewBox="0 0 24 24" width="16" height="16" stroke="currentColor" fill="none" stroke-width="2">
+                    <path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/>
+                  </svg>
+                  Harmonogram Karmnika
+                </div>
+                <span class="tag-status ok" id="feeder-status-tag">Dozownik aktywny</span>
+              </div>
+
+              <div class="form-row">
+                <label>Dni karmienia w tygodniu:</label>
+                <div class="days-selector" id="feeder-days-group">
+                  <button class="day-btn active" data-day="1">Pn</button>
+                  <button class="day-btn active" data-day="2">Wt</button>
+                  <button class="day-btn active" data-day="3">Śr</button>
+                  <button class="day-btn active" data-day="4">Cz</button>
+                  <button class="day-btn active" data-day="5">Pt</button>
+                  <button class="day-btn active" data-day="6">Sb</button>
+                  <button class="day-btn active" data-day="0">Nd</button>
+                </div>
+                <div id="feeder-days-warning" style="display: none; margin-top: 8px;">
+                  <span class="tag-status warn" style="display: inline-block;">⚠ Uwaga: Brak wybranych dni — harmonogram karmnika jest nieaktywny!</span>
+                </div>
+              </div>
+
+              <div class="form-row">
+                <div style="display: flex; gap: var(--space-4);">
+                  <div style="flex: 1;">
+                    <label>Dawka 1:</label>
+                    <input type="time" class="input-time" id="sched-feeder-time1" value="14:00" style="width: 100%;">
+                  </div>
+                  <div style="flex: 1;">
+                    <label>Dawka 2:</label>
+                    <input type="time" class="input-time" id="sched-feeder-time2" value="18:30" style="width: 100%;">
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Pasek Zapisu Harmonogramów -->
+          <div style="display: flex; justify-content: flex-end; margin-top: var(--space-4);">
+            <button class="btn btn-primary" id="btn-save-schedules">
+              <svg viewBox="0 0 24 24" width="16" height="16" stroke="currentColor" fill="none" stroke-width="2">
+                <path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/>
+                <polyline points="17 21 17 13 7 13 7 21"/>
+                <polyline points="7 3 7 8 15 8"/>
+              </svg>
+              Zapisz Wszystkie Harmonogramy
+            </button>
+          </div>
+
+        </section>
+
+        <!-- ====================================================================
+             WIDOK 4: WYKRESY (Grafana Style)
+             ==================================================================== -->
+        <section class="view-panel" id="view-charts">
+
+          <div class="chart-module-card">
+            <!-- Pasek Kontrolek Wykresu -->
+            <div class="chart-controls-toolbar">
+              <div class="series-selector-group">
+                <button class="chart-btn active" id="btn-series-all" data-series="all">Wszystkie</button>
+                <button class="chart-btn" id="btn-series-temp" data-series="temp">Temperatura</button>
+                <button class="chart-btn" id="btn-series-ph" data-series="ph">pH</button>
+                <button class="chart-btn" id="btn-series-ec" data-series="ec">EC</button>
+                <button class="chart-btn" id="btn-series-ldr" data-series="ldr">LDR</button>
+              </div>
+
+              <div class="range-selector-group">
+                <button class="chart-btn" id="btn-range-1h" data-range="1h">1h</button>
+                <button class="chart-btn" id="btn-range-6h" data-range="6h">6h</button>
+                <button class="chart-btn active" id="btn-range-24h" data-range="24h">24h</button>
+                <button class="chart-btn" id="btn-range-7d" data-range="7d">7 dni</button>
+                <button class="btn btn-secondary btn-sm" id="btn-export-csv" title="Pobierz surowe dane pomiarowe w formacie CSV">
+                  <svg viewBox="0 0 24 24" width="14" height="14" stroke="currentColor" fill="none" stroke-width="2">
+                    <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+                    <polyline points="7 10 12 15 17 10"/>
+                    <line x1="12" y1="15" x2="12" y2="3"/>
+                  </svg>
+                  CSV
+                </button>
+              </div>
+            </div>
+
+            <!-- Baner Statystyk Grafana (Min / Max / Avg) -->
+            <div class="chart-stats-banner">
+              <div class="stat-item">
+                <span class="stat-label">BIEŻĄCA:</span>
+                <span class="stat-val" id="stat-current" style="color: var(--chart-temp);">24.85 °C</span>
+              </div>
+              <div class="stat-item">
+                <span class="stat-label">MINIMUM:</span>
+                <span class="stat-val" id="stat-min">24.20 °C</span>
+              </div>
+              <div class="stat-item">
+                <span class="stat-label">MAKSIMUM:</span>
+                <span class="stat-val" id="stat-max">25.10 °C</span>
+              </div>
+              <div class="stat-item">
+                <span class="stat-label">ŚREDNIA:</span>
+                <span class="stat-val" id="stat-avg">24.78 °C</span>
+              </div>
+              <div class="stat-item" style="margin-left: auto;">
+                <span class="stat-label">BUFOR RAM:</span>
+                <span style="font-size: 12px; color: var(--text-secondary);" id="stat-samples-count">288 próbek kołowych</span>
+              </div>
+            </div>
+
+            <!-- Kontener Canvas Retina z Tooltipem -->
+            <div class="chart-canvas-container" id="chart-container">
+              <canvas id="telemetry-canvas"></canvas>
+              <div class="chart-tooltip" id="chart-tooltip" style="display: none;"></div>
+            </div>
+          </div>
+
+        </section>
+
+        <!-- ====================================================================
+             WIDOK 5: DIAGNOSTYKA (Diagnostics)
+             ==================================================================== -->
+        <section class="view-panel" id="view-diagnostics">
+
+          <div class="diagnostics-grid">
+            <!-- Tabela Parametrów Sterownika CYD -->
+            <div class="control-group-card">
+              <div class="control-group-header">
+                <div class="control-group-title">
+                  <svg viewBox="0 0 24 24" width="16" height="16" stroke="currentColor" fill="none" stroke-width="2">
+                    <rect x="4" y="4" width="16" height="16" rx="2"/>
+                    <rect x="9" y="9" width="6" height="6"/>
+                  </svg>
+                  Parametry ESP32 CYD (Płyta Główna)
+                </div>
+                <span class="tag-status ok">Online</span>
+              </div>
+
+              <table class="param-table">
+                <tbody>
+                  <tr>
+                    <td>Czas pracy CYD (Uptime):</td>
+                    <td id="diag-uptime">12d 4h 32m</td>
+                  </tr>
+                  <tr>
+                    <td>Wolna pamięć RAM (Free Heap):</td>
+                    <td id="diag-heap">188 KB</td>
+                  </tr>
+                  <tr>
+                    <td>Największy wolny blok RAM:</td>
+                    <td id="diag-largest-heap">112 KB</td>
+                  </tr>
+                  <tr>
+                    <td>Sygnał Wi-Fi (RSSI):</td>
+                    <td id="diag-rssi">-58 dBm (Doskonały)</td>
+                  </tr>
+                  <tr>
+                    <td>Adres IP urządzenia:</td>
+                    <td id="diag-ip">192.168.1.120</td>
+                  </tr>
+                  <tr>
+                    <td>Wersja oprogramowania:</td>
+                    <td id="diag-firmware">v2.4.0 (Flash No-SD PROGMEM)</td>
+                  </tr>
+                  <tr>
+                    <td>Zegar czasu rzeczywistego (RTC):</td>
+                    <td id="diag-rtc">DS3231 + NTP Zsynchronizowany</td>
+                  </tr>
+                  <tr>
+                    <td>Przyczyna restartu CYD:</td>
+                    <td id="diag-reset-reason">Software Reset (OTA)</td>
+                  </tr>
+                  <tr>
+                    <td>Licznik uruchomień (Boot Count):</td>
+                    <td id="diag-boot-count">14</td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+
+            <!-- Magistrale WeMos D1 R3 (ESP8266) i UART -->
+            <div class="control-group-card">
+              <div class="control-group-header">
+                <div class="control-group-title">
+                  <svg viewBox="0 0 24 24" width="16" height="16" stroke="currentColor" fill="none" stroke-width="2">
+                    <polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/>
+                  </svg>
+                  WeMos D1 R3 - Magistrale i Peryferia
+                </div>
+                <button class="btn btn-secondary btn-sm" id="btn-scan-bus">
+                  Skanuj UART & I2C
+                </button>
+              </div>
+
+              <table class="param-table">
+                <tbody>
+                  <tr>
+                    <td>Łącze UART CYD ⟷ WeMos:</td>
+                    <td id="diag-wemos-uart">
+                      <span class="tag-status ok">115200 baud (Synchro OK)</span>
+                    </td>
+                  </tr>
+                  <tr>
+                    <td>Tryb pracy WeMos:</td>
+                    <td id="diag-wemos-mode">
+                      <span class="tag-status ok">Normalny (AquaBox)</span>
+                    </td>
+                  </tr>
+                  <tr>
+                    <td>Magistrala I2C (SDA/SCL):</td>
+                    <td id="diag-i2c-status">
+                      <span class="tag-status ok">0x20 (MCP23017)</span>
+                      <span class="tag-status ok" style="margin-left: 4px;">0x48 (ADS1115)</span>
+                    </td>
+                  </tr>
+                  <tr>
+                    <td>Zegar RTC I2C (0x68):</td>
+                    <td id="diag-ds3231-status">
+                      <span class="tag-status ok">DS3231 Aktywny</span>
+                    </td>
+                  </tr>
+                  <tr>
+                    <td>Magistrala OneWire (D5/GPIO14):</td>
+                    <td id="diag-onewire-status">
+                      <span class="tag-status ok">DS18B20: 28-AA-3F-91 (OK)</span>
+                    </td>
+                  </tr>
+                  <tr>
+                    <td>Czujnik pływakowy ATO:</td>
+                    <td id="diag-float-sensor">
+                      <span class="tag-status ok">Wysoki (Zamknięty)</span>
+                    </td>
+                  </tr>
+                  <tr>
+                    <td>Czujnik przepływu filtra:</td>
+                    <td id="diag-flow-sensor">
+                      <span class="tag-status ok">Impulsy aktywne</span>
+                    </td>
+                  </tr>
+                </tbody>
+              </table>
+
+              <p style="font-size: 11px; color: var(--text-muted); margin-top: var(--space-3);">
+                WeMos D1 R3 realizuje bezpośrednie sterowanie przekaźnikami oraz próbkowanie sensorów, raportując telemetrię do CYD przez UART.
+              </p>
+            </div>
+          </div>
+
+          <!-- Terminal Logów na Żywo -->
+          <div class="log-terminal-wrap">
+            <div class="log-terminal-header">
+              <div style="display: flex; align-items: center; gap: var(--space-3);">
+                <strong style="font-size: 13px; color: var(--text-primary);">Terminal Zdarzeń i Logów Sterownika</strong>
+                <span class="tag-status ok">UART + SSE Aktywne</span>
+              </div>
+              <div style="display: flex; gap: var(--space-2);">
+                <button class="btn btn-secondary btn-sm" id="btn-copy-logs" title="Kopiuj zawartość terminala do schowka">
+                  <svg viewBox="0 0 24 24" width="14" height="14" stroke="currentColor" fill="none" stroke-width="2">
+                    <rect x="9" y="9" width="13" height="13" rx="2" ry="2"/>
+                    <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/>
+                  </svg>
+                  Kopiuj Logi
+                </button>
+                <button class="btn btn-secondary btn-sm" id="btn-clear-logs">Wyczyść Ekran</button>
+              </div>
+            </div>
+            <div class="log-viewer" id="log-terminal-viewer">
+[00:00:01] [CYD] AquaCYD v2.4.0 Boot OK. Pamięć Flash PROGMEM załadowana.
+[00:00:02] [UART] Inicjalizacja portu szeregowego 115200 baud (RX: GPIO16, TX: GPIO17).
+[00:00:02] [WEMOS] Połączono ze sterownikiem wykonawczym WeMos D1 R3 (ESP8266).
+[00:00:03] [WEMOS] Magistrala I2C: wykryto MCP23017 (0x20), ADS1115 (0x48), DS3231 (0x68).
+[00:00:03] [WEMOS] Magistrala OneWire: DS18B20 zainicjalizowany (28-AA-3F-91-04-00-00).
+[00:00:04] [WIFI] Połączono z siecią STA: Akwarium_Home (IP: 192.168.1.120, RSSI: -58 dBm).
+[00:00:05] [STATUS] Telemetria WeMos odbierana prawidłowo, automatyka akwarium aktywna.
+            </div>
+          </div>
+
+        </section>
+
+        <!-- ====================================================================
+             WIDOK 6: USTAWIENIA I OTA (Settings)
+             ==================================================================== -->
+        <section class="view-panel" id="view-settings">
+
+          <div class="settings-grid">
+            <!-- 1. Konfiguracja Wi-Fi -->
+            <div class="settings-card">
+              <div class="settings-card-header">
+                <h3>
+                  <svg viewBox="0 0 24 24" width="16" height="16" stroke="currentColor" fill="none" stroke-width="2">
+                    <path d="M5 12.55a11 11 0 0 1 14.08 0"/>
+                    <path d="M1.42 9a16 16 0 0 1 21.16 0"/>
+                  </svg>
+                  Łączność Sieciowa Wi-Fi (ESP32 CYD)
+                </h3>
+              </div>
+
+              <form id="form-wifi">
+                <div class="form-row">
+                  <label for="wifi-ssid">Nazwa sieci (SSID):</label>
+                  <input type="text" class="form-input" id="wifi-ssid" value="Akwarium_Home" required>
+                </div>
+                <div class="form-row">
+                  <label for="wifi-pass">Hasło sieci Wi-Fi:</label>
+                  <div class="input-with-action">
+                    <input type="password" class="form-input" id="wifi-pass" placeholder="••••••••••••">
+                    <button type="button" class="btn-input-action" id="btn-toggle-wifi-pass" title="Pokaż / ukryj hasło">
+                      <svg viewBox="0 0 24 24" width="16" height="16" stroke="currentColor" fill="none" stroke-width="2" id="icon-eye-wifi">
+                        <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/>
+                        <circle cx="12" cy="12" r="3"/>
+                      </svg>
+                    </button>
+                  </div>
+                </div>
+                <div class="form-row">
+                  <label for="wifi-mode">Tryb pracy modułu:</label>
+                  <select class="form-input" id="wifi-mode">
+                    <option value="sta" selected>Stacja klienta (STA - Rekomendowany)</option>
+                    <option value="ap">Punkt dostępowy awaryjny (AP)</option>
+                  </select>
+                </div>
+
+                <div style="display: flex; justify-content: flex-end; margin-top: var(--space-4);">
+                  <button type="submit" class="btn btn-primary" id="btn-save-wifi">
+                    Zapisz Ustawienia Wi-Fi
+                  </button>
+                </div>
+              </form>
+            </div>
+
+            <!-- 2. Ekran Dotykowy CYD (LCD & Podświetlenie) -->
+            <div class="settings-card">
+              <div class="settings-card-header">
+                <h3>
+                  <svg viewBox="0 0 24 24" width="16" height="16" stroke="currentColor" fill="none" stroke-width="2">
+                    <rect x="2" y="3" width="20" height="14" rx="2"/>
+                    <line x1="8" y1="21" x2="16" y2="21"/>
+                  </svg>
+                  Ekran Dotykowy ESP32 CYD (LCD TFT)
+                </h3>
+              </div>
+
+              <div class="form-row">
+                <label>Jasność podświetlenia ekranu LCD (PWM):</label>
+                <div class="slider-wrapper">
+                  <input type="range" class="slider-range" id="cyd-brightness-range" min="10" max="100" value="85">
+                  <span class="slider-val" id="cyd-brightness-badge">85%</span>
+                </div>
+              </div>
+
+              <div class="form-row" style="margin-top: var(--space-2);">
+                <label style="display: flex; align-items: center; gap: 8px; cursor: pointer;">
+                  <input type="checkbox" id="cyd-auto-brightness" checked>
+                  <span>Automatyczna regulacja jasności wg fotorezystora LDR</span>
+                </label>
+              </div>
+
+              <div class="form-row" style="margin-top: var(--space-2);">
+                <label>Profil wygaszania ekranu CYD:</label>
+                <div class="btn-group-segmented" style="width: 100%; display: flex;" id="cyd-profiles-group">
+                  <button class="seg-btn active" style="flex: 1;" data-profile="AlwaysOn">Zawsze Włączony</button>
+                  <button class="seg-btn" style="flex: 1;" data-profile="Dim60s">Wygaszaj po 60s</button>
+                  <button class="seg-btn" style="flex: 1;" data-profile="Eco">Eko Noc</button>
+                </div>
+              </div>
+
+              <div style="display: flex; justify-content: flex-end; margin-top: var(--space-4);">
+                <button class="btn btn-primary" id="btn-save-display-config">
+                  Zapisz Konfigurację Ekranu CYD
+                </button>
+              </div>
+            </div>
+
+            <!-- 3. Aktualizacja Oprogramowania OTA (CYD & WeMos) -->
+            <div class="settings-card">
+              <div class="settings-card-header">
+                <h3>
+                  <svg viewBox="0 0 24 24" width="16" height="16" stroke="currentColor" fill="none" stroke-width="2">
+                    <polyline points="16 16 12 12 8 16"/>
+                    <line x1="12" y1="12" x2="12" y2="21"/>
+                    <path d="M20.39 18.39A5 5 0 0 0 18 9h-1.26A8 8 0 1 0 3 16.3"/>
+                  </svg>
+                  Aktualizacja Oprogramowania (OTA)
+                </h3>
+              </div>
+
+              <div class="form-row">
+                <label for="ota-pin">Kod PIN Administratora:</label>
+                <input type="password" class="form-input" id="ota-pin" placeholder="Wprowadź 4-cyfrowy PIN" maxlength="8">
+              </div>
+
+              <div class="form-row">
+                <label for="ota-file">Plik oprogramowania (.aqfw lub .bin dla ESP32):</label>
+                <input type="file" class="form-input" id="ota-file" accept=".bin,.aqfw">
+                <span class="form-helper">Podpisany pakiet binarny firmware dla ESP32 CYD.</span>
+              </div>
+
+              <div class="ota-progress-track" id="ota-progress-track">
+                <div class="ota-progress-fill" id="ota-progress-fill"></div>
+              </div>
+              <div id="ota-progress-status" style="font-size: 11px; color: var(--text-secondary); text-align: right; margin-bottom: var(--space-3); display: none;">
+                Wgrywanie: 0%
+              </div>
+
+              <div style="display: flex; justify-content: space-between; align-items: center; margin-top: var(--space-2);">
+                <!-- Tryb OTA dla WeMos ESP8266 -->
+                <button class="btn btn-secondary btn-sm" id="btn-wemos-ota" title="Wyślij komendę przełączenia WeMos w tryb OTA">
+                  WeMos: Włącz Tryb OTA
+                </button>
+
+                <button class="btn btn-primary" id="btn-start-ota">
+                  Wgraj Firmware do CYD
+                </button>
+              </div>
+            </div>
+
+            <!-- 4. Czas i Konserwacja Systemu -->
+            <div class="settings-card">
+              <div class="settings-card-header">
+                <h3>
+                  <svg viewBox="0 0 24 24" width="16" height="16" stroke="currentColor" fill="none" stroke-width="2">
+                    <circle cx="12" cy="12" r="10"/>
+                    <polyline points="12 6 12 12 16 14"/>
+                  </svg>
+                  Czas RTC i Konserwacja Urządzeń
+                </h3>
+              </div>
+
+              <div class="form-row">
+                <label>Zegar Sterownika (DS3231 RTC):</label>
+                <div style="display: flex; align-items: center; justify-content: space-between; background: var(--bg-input); padding: 8px 12px; border-radius: var(--radius-sm); border: 1px solid var(--border-default);">
+                  <strong style="font-variant-numeric: tabular-nums;" id="settings-clock-display">--:--:--</strong>
+                  <button class="btn btn-secondary btn-sm" id="btn-sync-browser-time">
+                    Synchronizuj z Przeglądarką
+                  </button>
+                </div>
+              </div>
+
+              <div style="margin-top: var(--space-5); border-top: 1px solid var(--border-subtle); padding-top: var(--space-4);">
+                <label style="font-weight: 600; color: var(--text-primary); margin-bottom: var(--space-2); display: block;">Czynności Serwisowe:</label>
+                <div style="display: flex; gap: var(--space-3); flex-wrap: wrap;">
+                  <button class="btn btn-secondary" id="btn-restart-device">
+                    <svg viewBox="0 0 24 24" width="14" height="14" stroke="currentColor" fill="none" stroke-width="2">
+                      <path d="M21.5 2v6h-6M21.34 15.57a10 10 0 1 1-.57-8.38l5.67-5.67"/>
+                    </svg>
+                    Uruchom Ponownie CYD
+                  </button>
+                </div>
+              </div>
+            </div>
+
+            <!-- 5. Strefa Zagrożenia (Danger Zone) -->
+            <div class="settings-card danger-zone-card">
+              <div class="settings-card-header danger-header">
+                <h3>
+                  <svg viewBox="0 0 24 24" width="16" height="16" stroke="currentColor" fill="none" stroke-width="2">
+                    <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/>
+                    <line x1="12" y1="9" x2="12" y2="13"/>
+                    <line x1="12" y1="17" x2="12.01" y2="17"/>
+                  </svg>
+                  Strefa Zagrożenia (Operacja Nieodwracalna)
+                </h3>
+              </div>
+              <p style="font-size: 12px; color: var(--text-secondary); line-height: 1.5; margin-bottom: var(--space-3);">
+                Przywrócenie ustawień fabrycznych bezpowrotnie wymazuje profile Wi-Fi, harmonogramy i kalibracje sensorów z pamięci NVS mikrokontrolera ESP32.
+              </p>
+              <div style="display: flex; justify-content: flex-end;">
+                <button class="btn btn-danger" id="btn-factory-reset">
+                  <svg viewBox="0 0 24 24" width="14" height="14" stroke="currentColor" fill="none" stroke-width="2">
+                    <polyline points="3 6 5 6 21 6"/>
+                    <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/>
+                  </svg>
+                  Reset Fabryczny (NVS)
+                </button>
+              </div>
+            </div>
+          </div>
+
+        </section>
+
+      </main>
+    </div>
+
+    <!-- Dolna Nawigacja Mobilna (< 900px) -->
+    <nav class="bottom-nav">
+      <button class="bottom-nav-btn active" data-view="dashboard">
+        <svg viewBox="0 0 24 24">
+          <rect x="3" y="3" width="7" height="9" rx="1"/>
+          <rect x="14" y="3" width="7" height="5" rx="1"/>
+          <rect x="14" y="12" width="7" height="9" rx="1"/>
+          <rect x="3" y="16" width="7" height="5" rx="1"/>
+        </svg>
+        <span>Pulpit</span>
+      </button>
+
+      <button class="bottom-nav-btn" data-view="controls">
+        <svg viewBox="0 0 24 24">
+          <circle cx="12" cy="12" r="3"/>
+          <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/>
+        </svg>
+        <span>Steruj</span>
+      </button>
+
+      <button class="bottom-nav-btn" data-view="schedules">
+        <svg viewBox="0 0 24 24">
+          <rect x="3" y="4" width="18" height="18" rx="2"/>
+          <line x1="16" y1="2" x2="16" y2="6"/>
+          <line x1="8" y1="2" x2="8" y2="6"/>
+          <line x1="3" y1="10" x2="21" y2="10"/>
+        </svg>
+        <span>Plany</span>
+      </button>
+
+      <button class="bottom-nav-btn" data-view="charts">
+        <svg viewBox="0 0 24 24">
+          <line x1="18" y1="20" x2="18" y2="10"/>
+          <line x1="12" y1="20" x2="12" y2="4"/>
+          <line x1="6" y1="20" x2="6" y2="14"/>
+        </svg>
+        <span>Wykresy</span>
+      </button>
+
+      <button class="bottom-nav-btn" data-view="diagnostics">
+        <svg viewBox="0 0 24 24">
+          <polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/>
+        </svg>
+        <span>Diag</span>
+      </button>
+
+      <button class="bottom-nav-btn" data-view="settings">
+        <svg viewBox="0 0 24 24">
+          <rect x="2" y="3" width="20" height="14" rx="2"/>
+          <line x1="8" y1="21" x2="16" y2="21"/>
+          <line x1="12" y1="17" x2="12" y2="21"/>
+        </svg>
+        <span>Opcje</span>
+      </button>
+    </nav>
+
+  </div>
+
+  <!-- Modal Potwierdzenia Operacji -->
+  <div class="modal-overlay" id="confirm-modal">
+    <div class="modal-box">
+      <h3 class="modal-title" id="modal-title">Potwierdzenie operacji</h3>
+      <p class="modal-message" id="modal-message">Czy na pewno chcesz wykonać tę operację?</p>
+      <div class="modal-actions">
+        <button class="btn btn-secondary" id="modal-btn-cancel">Anuluj</button>
+        <button class="btn btn-danger" id="modal-btn-confirm">Potwierdź</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Kontener Toastów Powiadomień -->
+  <div class="toast-container" id="toast-container"></div>
+
+  <!-- Skrypty Aplikacji -->
+  <script src="mock-api.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>

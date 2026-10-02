@@ -1,0 +1,97 @@
+click System
+click Mapa sprzętu
+snapshot v6-hardware
+click Lampa przednia
+assert Sterowanie w serwisie →
+click System
+click Mapa sprzętu
+click Lampa tylna
+click System
+click Mapa sprzętu
+click Filtr
+click System
+click Mapa sprzętu
+click Napowietrzanie
+click System
+click Mapa sprzętu
+click Grzałka
+click System
+click Mapa sprzętu
+click Karmnik
+click System
+click Mapa sprzętu
+click Elektrozawór CO2
+click System
+click Mapa sprzętu
+click Poziom wody / ATO
+assert_contains niepełna
+click System
+click Mapa sprzętu
+click Przepływ
+click System
+click Mapa sprzętu
+click Pomiar pH
+click System
+click Mapa sprzętu
+click Przewodność EC
+click Zakres normy →
+tap 723 216
+wait 1600
+assert Zapisano automatycznie
+snapshot v6-range-ec
+click Wróć
+click System
+click Sieć Wi-Fi
+click AquaBox AP
+wait 1600
+assert AquaBox AP
+click Pokaż hasło AP
+snapshot v6-network-ap
+click Wróć
+restart_ui
+assert AquaBox AP
+click System
+click Sieć Wi-Fi
+click Wyłączone
+wait 1600
+click Wróć
+click Interakcja
+tap 640 260
+wait 1600
+assert Zapisano automatycznie
+snapshot v6-interaction
+click Wróć
+click Ekran
+click Test wygaszania
+snapshot v6-sleep
+tap 700 450
+assert Ekran
+assert_disabled System
+click Wróć
+click Diagnostyka
+snapshot v6-diagnostics
+click System
+click Firmware
+click Sprawdź firmware
+assert_contains Kontrola obrazu: poprawna
+wait 4000
+snapshot v6-firmware
+click System
+click Zasilanie i restart
+click Uruchom ponownie
+click Anuluj
+assert_restarts 0
+click Uruchom ponownie
+click Uruchom ponownie
+wait 1000
+assert_restarts 1
+wait 4000
+click Przywróć ustawienia
+click Anuluj
+click Historia
+click Temperatura
+click Wyczyść historię
+click Wyczyść
+wait 4000
+snapshot v6-history-cleared
+click Panel

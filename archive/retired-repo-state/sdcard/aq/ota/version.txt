@@ -1,0 +1,9 @@
+﻿portal=cydAkwarium-panel
+schema=2
+ui=20260921mobile1
+firmware_profile=esp32dev-st7789
+firmware_sha256=67577874e18338cbd29c90e7a201c062d2cc032fa3d9c25d8bacd95c1154e9f1
+entry=/aq/ota/index.html
+sta_url=http://akwarium.local/
+ap_url=http://192.168.4.1/
+

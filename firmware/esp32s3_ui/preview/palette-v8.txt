@@ -1,0 +1,51 @@
+assert_palette light
+snapshot v8-panel-light
+click System
+assert_palette light
+snapshot v8-system-light
+click Sieć i czas
+click Sieć Wi-Fi
+assert_chrome dim
+assert_centered
+assert_palette light
+snapshot v8-network-light-focused
+tap 190 232
+snapshot v8-keyboard-light
+input Jamnik
+wait 1600
+click Wróć
+click Obsługa
+click Ekran
+assert_chrome dim
+snapshot v8-display-light
+tap 640 173
+wait 1600
+assert_palette dark
+assert_chrome dim
+click Wróć
+snapshot v8-system-dark
+click Sieć i czas
+click Sieć Wi-Fi
+assert_chrome dim
+snapshot v8-network-dark-focused
+tap 190 232
+snapshot v8-keyboard-dark
+input Jamnik
+wait 1600
+click Wróć
+click Panel
+assert_palette dark
+snapshot v8-panel-dark
+click Karmienie
+wait 200
+snapshot v8-feeding-dark
+wait 4000
+click System
+click Obsługa
+click Ekran
+tap 640 173
+wait 1600
+assert_palette light
+click Wróć
+click Panel
+snapshot v8-feeding-light

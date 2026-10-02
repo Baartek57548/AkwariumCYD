@@ -1,0 +1,79 @@
+assert_page Panel
+assert_not_contains DEMO
+snapshot swipe-home
+swipe 200 210 550 210
+assert_page Panel
+assert_not_contains Grzałka
+swipe 650 250 180 250 1000
+assert_page Serwis
+assert Rozpocznij serwis
+snapshot swipe-service
+swipe 650 250 180 250
+assert_page Plan dnia
+assert Rytm dobowy
+snapshot swipe-plan
+swipe 650 200 180 200
+assert_page Historia
+assert_contains pomiarów / bufor
+snapshot swipe-history
+swipe 650 280 180 280
+assert_page System
+assert Diagnostyka
+snapshot swipe-system
+swipe 650 200 180 200
+assert_page System
+swipe 180 200 650 200
+assert_page Historia
+swipe 180 200 650 200
+assert_page Plan dnia
+swipe 180 200 650 200
+assert_page Serwis
+swipe 180 200 650 200
+assert_page Panel
+tap 399 437
+assert_page Plan dnia
+tap 97 437
+assert_page Panel
+swipe 780 260 750 260
+assert_page Panel
+swipe 780 350 780 150
+assert_page Panel
+click Plan dnia
+click Napowietrzanie
+assert Od 22:00
+assert_disabled System
+swipe 650 215 180 215
+assert Od 22:00
+tap 701 459
+assert Od 22:00
+click Od 22:00
+click + godz.
+assert 23:00
+swipe 600 340 180 340
+assert 23:00
+click Anuluj
+assert Od 22:00
+click Anuluj
+click Panel
+click Karmienie
+swipe 600 340 180 340
+assert Rozpocznij karmienie
+click Anuluj
+assert_page Panel
+tap 100 205
+swipe 620 210 180 210
+assert Grzałka
+click ←
+assert_page Panel
+click System
+click Sieć Wi-Fi
+tap 220 245
+swipe 600 220 180 220
+assert Sieć / nazwa SSID
+input Jamnik
+click Anuluj
+click Diagnostyka
+assert_contains Źródło danych: model DEMO
+click System
+click Panel
+snapshot swipe-final

@@ -1,0 +1,46 @@
+assert_palette light
+click Serwis
+snapshot polish-service-idle-light
+click Rozpocznij serwis
+click Rozpocznij serwis
+assert Serwis aktywny
+snapshot polish-service-running-light
+click Druga lampa / WYŁ.
+assert Druga lampa / WŁ.
+snapshot polish-service-output-light
+click Zakończ serwis
+click Przywróć AUTO
+click System
+snapshot polish-settings-root-light
+click Obsługa
+click Ekran
+snapshot polish-display-light
+click ←
+click Interakcja
+snapshot polish-interaction-light
+click ←
+click Sterowanie
+click Mapa sprzętu
+snapshot polish-hardware-light
+click ←
+click Diagnostyka
+click Stan panelu
+snapshot polish-diagnostics-light
+click ←
+click Test czujników
+snapshot polish-scenarios-light
+click ←
+click Obsługa
+click Ekran
+click Wyłączone
+wait 1600
+assert_palette dark
+snapshot polish-display-dark
+click ←
+click Serwis
+snapshot polish-service-idle-dark
+click System
+snapshot polish-settings-root-dark
+click Diagnostyka
+click Stan panelu
+snapshot polish-diagnostics-dark

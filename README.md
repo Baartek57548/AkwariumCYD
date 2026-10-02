@@ -1,107 +1,62 @@
-# Home Control + AquaCYD
+# AquaBox — sterownik WeMos i panel ESP32-S3
 
-Monorepo zawiera uniwersalny panel domu **Home Control**, osobną aplikację serwisową **AquaCYD Service**, autonomiczny sterownik akwarium CYD, lokalny AquaHub ESP32-P4, bramkę ESP32-C6 oraz opcjonalne integracje. Home Assistant jest jednym ze źródeł danych, a nie warunkiem działania systemu ani nazwą aplikacji.
+Repozytorium utrzymuje firmware dla dwóch urządzeń: WeMos D1 (ESP8266), który
+obsługuje wejścia i wyjścia akwarium, oraz panelu ESP32-S3 z ekranem Waveshare
+16249 (800 × 480, RGB565, dotyk GT911). Starszy projekt CYD i powiązane
+materiały zachowano w [`archive/retired-repo-state/`](archive/retired-repo-state/);
+nie jest on aktywnym celem kompilacji.
 
-## Architektura w skrócie
+Wcześniej rozważano podział na ESP32-P4 i ESP32-C6, ale była to tylko
+koncepcja i nie została przyjęta. Aktualnymi celami sprzętowymi są WeMos D1
+i ESP32-S3.
 
-- CYD samodzielnie steruje sprzętem i pozostaje jedynym źródłem prawdy dla GPIO, harmonogramów, alarmów, blokad i fail-safe.
-- Home Control łączy cały dom przez wymienne adaptery AquaHub, Home Assistant i Demo.
-- AquaCYD Service zapewnia bezpośredni serwis REST/BLE, provisioning, odzyskiwanie, kalibrację i kontrolowane OTA CYD.
-- ESP32-P4 działa jako siedmiocalowy panel LVGL i lokalny AquaHub; ESP32-C6 jest mostem ESP-NOW/Wi-Fi.
-- Home Assistant, MQTT, brama zdalna i Raspberry Pi są opcjonalne. CYD ani P4 nie są wystawiane bezpośrednio do Internetu.
+## Co zawiera aktywny projekt
 
-```mermaid
-flowchart LR
-    HC["Home Control"] --> HUB["AquaHub ESP32-P4"]
-    HC --> HA["Home Assistant"]
-    HC --> DEMO["Demo offline"]
-    SERVICE["AquaCYD Service"] --> CYD["CYD Controller"]
-    HUB <--> C6["ESP32-C6 Gateway"]
-    C6 <--> CYD
-    CYD --> SAFE["interlocki i fail-safe"]
-```
+- `firmware/wemos_controller/` — odczyt czujników i sterowanie przekaźnikami
+  na WeMos D1; mapę wejść/wyjść opisuje `wemos_config.h`.
+- `firmware/esp32s3_ui/` — interfejs LVGL panelu 800 × 480, ustawienia,
+  harmonogram, historię, diagnostykę, tryb jasny/ciemny i sześć motywów,
+  wybieranych niezależnie dla obu trybów.
+- `firmware/shared/uart_protocol/` — wspólny format komunikatów dla planowanej
+  komunikacji panelu ze sterownikiem.
+- `firmware/esp32s3_bringup/`, `firmware/esp32s3_lcd_test/` i
+  `firmware/wemos_tests/` — oddzielne programy diagnostyczne; nie są domyślnym
+  firmware urządzeń.
+- `docs/` — aktualny opis architektury, połączeń, projektu UI, weryfikacji
+  i renderów LVGL.
 
-## Struktura
+## Granice sprzętowe
 
-| Ścieżka | Odpowiedzialność |
-| --- | --- |
-| `apps/home_control/` | natywna aplikacja całego domu |
-| `apps/aquacyd_service/` | aplikacja serwisowa sterownika akwarium |
-| `firmware/cyd_controller/` | autonomiczny firmware PlatformIO dla CYD |
-| `firmware/esp32p4_hub/` | panel LVGL i AquaHub w ESP-IDF |
-| `firmware/esp32c6_gateway/` | bramka radiowa w ESP-IDF |
-| `firmware/shared/` | współdzielone, wersjonowane kontrakty C++ |
-| `services/remote_gateway/` | opcjonalna brama HTTPS/FCM |
-| `integrations/home_assistant/` | pakiet, dashboard i ACL Home Assistant |
-| `web/`, `sdcard/` | źródła panelu web i pakiet dla urządzenia |
-| `packages/` | współdzielone pakiety Dart |
-| `design/`, `docs/`, `tools/`, `scripts/` | projekty UI, dokumentacja i automatyzacja |
+Panel i firmware WeMos budują się niezależnie. Łącze UART między nimi nie jest
+jeszcze podłączone, więc odczyty i sterowanie widoczne w lokalnym modelu UI nie
+są potwierdzeniem telemetrii z fizycznego akwarium. Karmnik 28BYJ-48 z ULN2003
+pozostaje odłączony; ręczny obrót nie jest aktywowany bez potwierdzonego
+okablowania IN1–IN4 i roli przekaźnika zasilającego sterownik.
 
-## Szybki start
+## Budowanie i weryfikacja
 
-Home Control w bezpiecznym trybie Demo:
+Wymagany jest Python z PlatformIO. Firmware można zbudować poleceniami:
 
 ```powershell
-cd apps/home_control
-flutter pub get
-flutter run -d chrome
+python -m platformio run -e esp32s3_waveshare_ui
+python -m platformio run -e wemos_d1_uno
 ```
 
-AquaCYD Service:
+Renderowanie produkcyjnego UI w LVGL na hoście wraz ze scenariuszami regresji:
 
 ```powershell
-cd apps/aquacyd_service
-flutter pub get
-flutter run
+./tools/verify_s3_ui.ps1
 ```
 
-Sterownik CYD i testy domenowe (otwórz bezpośrednio katalog główny
-`cydAquarium` w PlatformIO):
+Testy sprzętowe wybiera się jawnie przez środowiska `esp32s3_n16r8_bringup`,
+`esp32s3_waveshare_lcd_test` i `test_wemos_*`. Przed wgrywaniem sprawdź port
+podłączonej płytki i wybierz właściwy cel PlatformIO. Port COM16 jest
+zarezerwowany dla drukarki 3D — nie używaj go do ESP32-S3.
 
-```powershell
-pio test -e native
-pio run -e cyd_2_8
-```
+## Dokumentacja
 
-ESP32-P4 i ESP32-C6 z przypiętym ESP-IDF 5.4.4:
-
-```powershell
-.\tools\build-p4-c6.ps1 -IdfPath C:\esp\v5.4.4-full\esp-idf
-```
-
-Panel web i testy Node.js:
-
-```powershell
-npm ci
-npm test
-npm run test:e2e
-```
-
-## Bezpieczeństwo i wydania
-
-Firmware produkcyjny akceptuje podpisane pakiety, a klucze podpisu pozostają w chronionym środowisku CI. Repozytorium nie zapisuje sekretów, nie przepala eFuse i nie uznaje mocków za test sprzętowy. Aktualizacje Home Control, AquaCYD Service, CYD, P4 i C6 mają osobne zgodności, statusy i procesy publikacji.
-
-Aktualne źródła prawdy:
-
-- [specyfikacja produktów](docs/PRODUCT_SPEC.md),
-- [architektura monorepo](docs/MONOREPO_ARCHITECTURE.md),
-- [architektura Home Control](docs/HOME_CONTROL_ARCHITECTURE.md),
-- [granice AquaCYD Service](docs/AQUACYD_SERVICE.md),
-- [kontrakt urządzeń](docs/DEVICE_CONTRACT.md),
-- [bezpieczeństwo](docs/SECURITY.md),
-- [OTA](docs/OTA.md) i [proces wydania](docs/RELEASE.md),
-- [raport QA](docs/QA_REPORT.md) i [checklista HIL](docs/HIL_CHECKLIST.md),
-- [pomysły i roadmapa](docs/IDEAS_AND_ROADMAP.md),
-- [audyt bazowy](docs/BASELINE_AUDIT.md),
-- [plan migracji](docs/MIGRATION_PLAN.md),
-- [bezpieczeństwo runtime CYD](docs/FIRMWARE_RUNTIME_SAFETY.md),
-- [podpisywanie firmware](docs/FIRMWARE_SIGNING_AND_PROVISIONING.md).
-
-Artefakty instalacyjne są publikowane w [GitHub Releases](https://github.com/Baartek57548/AkwariumCYD/releases), nie w drzewie źródłowym. Brak kluczy produkcyjnych lub fizycznego HIL blokuje publikację produkcyjną i jest zawsze raportowany jawnie.
-
-## Projekty HMI
-
-Kod panelu 7″ LVGL znajduje się w `firmware/esp32p4_hub`, a importowalne do
-Figma ramki w `design/hmi`. Wizualizacje aktualnych ekranów CYD 320×240 są w
-`design/cyd-hmi`. Repozytorium zawiera tokeny, manifesty i generator, dzięki
-czemu Figma pozostaje warstwą projektową, a LVGL źródłem produkcyjnym.
+- [Aktualna architektura i migracja sprzętu](docs/ESP32_S3_16249_MIGRATION.md)
+- [Projekt i zachowanie interfejsu](docs/S3_PRZEKROJ_DESIGN.md)
+- [Galeria renderów LVGL](docs/S3_PRZEKROJ_GALLERY.md)
+- [Wyniki testów i ograniczenia weryfikacji](docs/S3_PRZEKROJ_VERIFICATION.md)
+- [Historia starszego projektu CYD](archive/retired-repo-state/README.md)
